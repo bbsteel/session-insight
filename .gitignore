@@ -1,0 +1,25 @@
+docs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+node_modules/
+dist/
+frontend/dist/
+
+# Go
+*.exe
+*.test
+*.out
+
+# Environment
+.env
+.env.local
