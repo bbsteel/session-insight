@@ -23,3 +23,5 @@ frontend/dist/
 # Environment
 .env
 .env.local
+
+.superpowers/
