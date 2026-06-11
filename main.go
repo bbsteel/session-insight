@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 
 	"session-insight/internal/db"
+	"session-insight/internal/reader"
+	"session-insight/internal/server"
 )
 
 //go:embed frontend/dist
@@ -36,9 +38,15 @@ func main() {
 	}
 	defer database.Close()
 
-	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.FS(frontendFS)))
+	readers := reader.Discover()
+	log.Printf("Discovered %d agent reader(s)", len(readers))
+	for _, r := range readers {
+		log.Printf("  - %s", r.AgentType())
+	}
+
+	srv := server.New(database, readers)
+	srv.Mux.Handle("/", http.FileServer(http.FS(frontendFS)))
 
 	log.Printf("SessionInsight listening on http://localhost:%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, srv.Mux))
 }
