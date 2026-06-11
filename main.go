@@ -6,6 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+
+	"session-insight/internal/db"
 )
 
 //go:embed frontend/dist
@@ -21,6 +24,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to get frontend sub-fs: %v", err)
 	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("failed to get home dir: %v", err)
+	}
+	dataDir := filepath.Join(homeDir, ".session-insight")
+	database, err := db.Open(dataDir)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer database.Close()
 
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(frontendFS)))

@@ -1,0 +1,35 @@
+package model
+
+import "time"
+
+type Session struct {
+	ID           string    `json:"id"`
+	AgentType    string    `json:"agent_type"`
+	CWD          string    `json:"cwd"`
+	Repository   string    `json:"repository"`
+	Branch       string    `json:"branch"`
+	Name         string    `json:"name"`
+	ModelName    string    `json:"model_name"`
+	TurnCount    int       `json:"turn_count"`
+	MessageCount int       `json:"message_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type TokenUsage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	PremiumRequests  int   `json:"premium_requests"`
+}
+
+type Turn struct {
+	TurnIndex        int        `json:"turn_index"`
+	UserMessage      string     `json:"user_message"`
+	AssistantMessage string     `json:"assistant_message"`
+	TokenUsage       TokenUsage `json:"token_usage"`
+	ToolCallCount    int        `json:"tool_call_count"`
+	ErrorCount       int        `json:"error_count"`
+	DurationMs       int64      `json:"duration_ms"`
+}
