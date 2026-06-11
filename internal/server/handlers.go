@@ -50,3 +50,27 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Total-Count", fmt.Sprintf("%d", len(sessions)))
 	json.NewEncoder(w).Encode(sessions)
 }
+
+func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	for _, reader := range s.Readers {
+		detail, err := reader.GetSession(id)
+		if err != nil {
+			continue
+		}
+		if detail == nil {
+			continue
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(detail)
+		return
+	}
+
+	http.Error(w, "session not found", http.StatusNotFound)
+}
