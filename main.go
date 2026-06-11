@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-//go:embed frontend/dist/*
+//go:embed frontend/dist
 var frontend embed.FS
 
 func main() {
