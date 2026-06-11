@@ -1,4 +1,10 @@
-export default function MiniMap() {
+import type { TurnVM } from '../types'
+
+interface Props {
+  turns: TurnVM[]
+}
+
+export default function MiniMap({ turns: _turns }: Props) {
   return (
     <nav
       className="h-full flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)]"

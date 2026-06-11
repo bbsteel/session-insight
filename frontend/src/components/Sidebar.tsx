@@ -26,7 +26,12 @@ function getSessionName(s: SessionSummary): string {
   return s.id.slice(0, 8)
 }
 
-export default function Sidebar() {
+interface SidebarProps {
+  selectedId: string | null
+  onSelect: (id: string) => void
+}
+
+export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -83,7 +88,12 @@ export default function Sidebar() {
             {list.map(s => (
               <div
                 key={s.id}
-                className="px-2 py-1.5 rounded-sm cursor-pointer hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+                onClick={() => onSelect(s.id)}
+                className={`px-2 py-1.5 rounded-sm cursor-pointer transition-colors duration-fast ${
+                  s.id === selectedId
+                    ? 'bg-[var(--bg-surface-hover)]'
+                    : 'hover:bg-[var(--bg-surface-hover)]'
+                }`}
               >
                 <div className="text-body text-[var(--text-primary)] truncate">
                   {getSessionName(s)}
