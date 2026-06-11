@@ -96,6 +96,77 @@
   --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
 }
 
+.prose-custom h1,
+.prose-custom h2,
+.prose-custom h3,
+.prose-custom h4,
+.prose-custom h5,
+.prose-custom h6 {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prose-custom h1 { font-size: 1.5em; }
+.prose-custom h2 { font-size: 1.25em; }
+.prose-custom h3 { font-size: 1.1em; }
+
+.prose-custom p {
+  margin: 0.5em 0;
+  line-height: 1.7;
+}
+
+.prose-custom ul,
+.prose-custom ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.prose-custom li {
+  margin: 0.25em 0;
+}
+
+.prose-custom blockquote {
+  border-left: 3px solid var(--border-default);
+  padding-left: 1em;
+  margin: 0.5em 0;
+  color: var(--text-secondary);
+}
+
+.prose-custom table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+}
+
+.prose-custom th,
+.prose-custom td {
+  border: 1px solid var(--border-muted);
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+
+.prose-custom th {
+  background: var(--bg-inset);
+  font-weight: 600;
+}
+
+.prose-custom a {
+  color: var(--accent-blue);
+  text-decoration: underline;
+}
+
+.prose-custom strong {
+  font-weight: 600;
+}
+
+.prose-custom hr {
+  border: none;
+  border-top: 1px solid var(--border-muted);
+  margin: 1em 0;
+}
+
 * {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
