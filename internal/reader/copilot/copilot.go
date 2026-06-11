@@ -1,6 +1,9 @@
 package copilot
 
 import (
+	"bufio"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -79,4 +82,147 @@ func toSession(ws workspaceYAML) model.Session {
 		CreatedAt:  createdAt,
 		UpdatedAt:  updatedAt,
 	}
+}
+
+type jsonlEvent struct {
+	Type      string         `json:"type"`
+	Timestamp string         `json:"timestamp"`
+	Data      map[string]any `json:"data"`
+}
+
+func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
+	wsPath := filepath.Join(r.sessionDir, id, "workspace.yaml")
+	data, err := os.ReadFile(wsPath)
+	if err != nil {
+		return nil, fmt.Errorf("session not found: %s", id)
+	}
+
+	var ws workspaceYAML
+	if err := yaml.Unmarshal(data, &ws); err != nil {
+		return nil, fmt.Errorf("invalid workspace.yaml: %w", err)
+	}
+
+	session := toSession(ws)
+
+	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
+	turns, err := parseEventsJSONL(eventsPath)
+	if err != nil {
+		return &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}, nil
+	}
+
+	session.TurnCount = len(turns)
+	return &model.SessionDetail{Session: session, Turns: turns}, nil
+}
+
+func parseEventsJSONL(path string) ([]model.TurnVM, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var turns []model.TurnVM
+	var currentTurn *model.TurnVM
+	var turnStartTimestamp string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+
+	for scanner.Scan() {
+		var evt jsonlEvent
+		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			continue
+		}
+
+		switch {
+		case evt.Type == "user.message":
+			if currentTurn != nil {
+				turns = append(turns, *currentTurn)
+			}
+			currentTurn = &model.TurnVM{
+				TurnIndex: len(turns),
+				Events:    []model.EventVM{},
+			}
+			turnStartTimestamp = evt.Timestamp
+			if content, ok := extractString(evt.Data, "content"); ok {
+				currentTurn.UserMessage = content
+			}
+
+		case evt.Type == "assistant.message":
+			if currentTurn == nil {
+				continue
+			}
+			if content, ok := extractString(evt.Data, "content"); ok {
+				currentTurn.AssistantMessage += content
+			}
+			if usage, ok := evt.Data["usage"].(map[string]any); ok {
+				currentTurn.TokenUsage.PromptTokens += extractInt64(usage, "prompt_tokens")
+				currentTurn.TokenUsage.CompletionTokens += extractInt64(usage, "completion_tokens")
+				currentTurn.TokenUsage.CacheReadTokens += extractInt64(usage, "cache_read_input_tokens")
+			}
+
+		case evt.Type == "tool.execution_complete":
+			if currentTurn == nil {
+				continue
+			}
+			currentTurn.ToolCallCount++
+			if code := extractFloat(evt.Data, "exit_code"); code != 0 {
+				currentTurn.ErrorCount++
+			}
+
+		case evt.Type == "session.shutdown":
+			if currentTurn != nil {
+				currentTurn.TokenUsage.PremiumRequests = int(extractFloat(evt.Data, "premium_requests"))
+			}
+		}
+
+		if currentTurn != nil {
+			currentTurn.Events = append(currentTurn.Events, model.EventVM{
+				Type:      evt.Type,
+				Timestamp: evt.Timestamp,
+				Data:      evt.Data,
+			})
+		}
+
+		// Calculate duration from first to last event
+		if currentTurn != nil && turnStartTimestamp != "" {
+			if t, err := time.Parse(time.RFC3339Nano, turnStartTimestamp); err == nil {
+				if t2, err2 := time.Parse(time.RFC3339Nano, evt.Timestamp); err2 == nil {
+					currentTurn.DurationMs = t2.Sub(t).Milliseconds()
+				}
+			}
+		}
+	}
+
+	if currentTurn != nil {
+		turns = append(turns, *currentTurn)
+	}
+
+	return turns, scanner.Err()
+}
+
+func extractString(data map[string]any, key string) (string, bool) {
+	if v, ok := data[key]; ok {
+		if s, ok := v.(string); ok {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+func extractInt64(data map[string]any, key string) int64 {
+	if v, ok := data[key]; ok {
+		if f, ok := v.(float64); ok {
+			return int64(f)
+		}
+	}
+	return 0
+}
+
+func extractFloat(data map[string]any, key string) float64 {
+	if v, ok := data[key]; ok {
+		if f, ok := v.(float64); ok {
+			return f
+		}
+	}
+	return 0
 }

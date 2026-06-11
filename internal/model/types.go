@@ -33,3 +33,25 @@ type Turn struct {
 	ErrorCount       int        `json:"error_count"`
 	DurationMs       int64      `json:"duration_ms"`
 }
+
+type EventVM struct {
+	Type      string         `json:"type"`
+	Timestamp string         `json:"timestamp"`
+	Data      map[string]any `json:"data"`
+}
+
+type TurnVM struct {
+	TurnIndex        int        `json:"turn_index"`
+	UserMessage      string     `json:"user_message"`
+	AssistantMessage string     `json:"assistant_message"`
+	TokenUsage       TokenUsage `json:"token_usage"`
+	ToolCallCount    int        `json:"tool_call_count"`
+	ErrorCount       int        `json:"error_count"`
+	DurationMs       int64      `json:"duration_ms"`
+	Events           []EventVM  `json:"events,omitempty"`
+}
+
+type SessionDetail struct {
+	Session
+	Turns []TurnVM `json:"turns"`
+}
