@@ -49,9 +49,18 @@ type TurnVM struct {
 	ErrorCount       int        `json:"error_count"`
 	DurationMs       int64      `json:"duration_ms"`
 	Events           []EventVM  `json:"events,omitempty"`
+	Anomalies        []string   `json:"anomalies,omitempty"`
+}
+
+type AnomalySummary struct {
+	ToolFailures    int  `json:"tool_failures"`
+	DurationSpikes  int  `json:"duration_spikes"`
+	MissingShutdown bool `json:"missing_shutdown"`
+	TotalAnomalies  int  `json:"total_anomalies"`
 }
 
 type SessionDetail struct {
 	Session
-	Turns []TurnVM `json:"turns"`
+	Turns          []TurnVM       `json:"turns"`
+	AnomalySummary AnomalySummary `json:"anomaly_summary"`
 }

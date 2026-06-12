@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -111,7 +112,65 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	}
 
 	session.TurnCount = len(turns)
-	return &model.SessionDetail{Session: session, Turns: turns}, nil
+
+	msgCount := 0
+	for _, t := range turns {
+		msgCount += len(t.Events)
+	}
+	session.MessageCount = msgCount
+
+	detail := &model.SessionDetail{Session: session, Turns: turns}
+
+	// Anomaly detection
+	hasShutdown := false
+	var durations []int64
+	for _, t := range turns {
+		for _, e := range t.Events {
+			if e.Type == "session.shutdown" {
+				hasShutdown = true
+			}
+		}
+		if t.DurationMs > 0 {
+			durations = append(durations, t.DurationMs)
+		}
+	}
+
+	// Duration outlier detection (mean + 3σ)
+	if len(durations) > 1 {
+		var sum int64
+		for _, d := range durations {
+			sum += d
+		}
+		mean := float64(sum) / float64(len(durations))
+		var variance float64
+		for _, d := range durations {
+			variance += (float64(d) - mean) * (float64(d) - mean)
+		}
+		stdDev := math.Sqrt(variance / float64(len(durations)))
+		threshold := mean + 3*stdDev
+
+		summary := model.AnomalySummary{}
+		for i := range turns {
+			if turns[i].ErrorCount > 0 {
+				turns[i].Anomalies = append(turns[i].Anomalies, "tool_failure")
+				summary.ToolFailures++
+			}
+			if float64(turns[i].DurationMs) > threshold && turns[i].DurationMs > 30000 {
+				turns[i].Anomalies = append(turns[i].Anomalies, "duration_spike")
+				summary.DurationSpikes++
+			}
+		}
+		if !hasShutdown && len(turns) > 0 {
+			summary.MissingShutdown = true
+		}
+		summary.TotalAnomalies = summary.ToolFailures + summary.DurationSpikes
+		if summary.MissingShutdown {
+			summary.TotalAnomalies++
+		}
+		detail.AnomalySummary = summary
+	}
+
+	return detail, nil
 }
 
 func parseEventsJSONL(path string) ([]model.TurnVM, error) {
