@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Virtuoso } from 'react-virtuoso'
+import type { VirtuosoHandle } from 'react-virtuoso'
 import { fetchSession } from '../api'
 import type { SessionDetail, TurnVM } from '../types'
 import TurnCard from './TurnCard'
@@ -7,11 +8,15 @@ import TurnCard from './TurnCard'
 interface Props {
   sessionId: string | null
   onTurnsChange?: (turns: TurnVM[]) => void
+  onVisibleRangeChange?: (range: { start: number; end: number }) => void
+  scrollToIndexRef?: React.MutableRefObject<((index: number) => void) | null>
 }
 
-export default function ReplayView({ sessionId, onTurnsChange }: Props) {
+export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeChange, scrollToIndexRef }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
+  const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
+  const virtuosoRef = useRef<VirtuosoHandle>(null)
 
   useEffect(() => {
     if (!sessionId) {
@@ -28,6 +33,14 @@ export default function ReplayView({ sessionId, onTurnsChange }: Props) {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [sessionId])
+
+  useEffect(() => {
+    if (scrollToIndexRef && virtuosoRef.current) {
+      scrollToIndexRef.current = (index: number) => {
+        virtuosoRef.current?.scrollToIndex({ index, align: 'start', behavior: 'smooth' })
+      }
+    }
+  }, [scrollToIndexRef, session])
 
   if (!sessionId) {
     return (
@@ -83,8 +96,14 @@ export default function ReplayView({ sessionId, onTurnsChange }: Props) {
         <span className="text-helper text-[var(--text-muted)] ml-3 whitespace-nowrap">{session.turn_count} turns</span>
       </header>
       <Virtuoso
+        ref={virtuosoRef}
         style={{ flex: 1 }}
         totalCount={session.turns.length}
+        rangeChanged={(range) => {
+          const newRange = { start: range.startIndex, end: range.endIndex }
+          setVisibleRange(newRange)
+          onVisibleRangeChange?.(newRange)
+        }}
         itemContent={(index: number) => <TurnCard turn={session.turns[index]} />}
       />
     </main>
