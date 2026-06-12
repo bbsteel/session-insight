@@ -117,11 +117,14 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	session := toSession(ws)
 
 	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
-	turns, err := parseEventsJSONL(eventsPath)
+	turns, modelName, err := parseEventsJSONL(eventsPath)
 	if err != nil {
 		return &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}, nil
 	}
 
+	if modelName != "" {
+		session.ModelName = modelName
+	}
 	session.TurnCount = len(turns)
 
 	msgCount := 0
@@ -183,14 +186,15 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	return detail, nil
 }
 
-func parseEventsJSONL(path string) ([]model.TurnVM, error) {
+func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer f.Close()
 
 	var turns []model.TurnVM
+	var foundModel string
 	var currentTurn *model.TurnVM
 	var turnStartTimestamp string
 	scanner := bufio.NewScanner(f)
@@ -246,6 +250,12 @@ func parseEventsJSONL(path string) ([]model.TurnVM, error) {
 				currentTurn.ErrorCount++
 			}
 
+		case evt.Type == "session.model_change":
+			if foundModel == "" {
+				if name, ok := extractString(evt.Data, "newModel"); ok && name != "" {
+					foundModel = name
+				}
+			}
 		case evt.Type == "session.shutdown":
 			if currentTurn != nil {
 				currentTurn.TokenUsage.PremiumRequests = int(extractFloat(evt.Data, "premium_requests"))
@@ -273,7 +283,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, error) {
 		turns = append(turns, *currentTurn)
 	}
 
-	return turns, scanner.Err()
+	return turns, foundModel, scanner.Err()
 }
 
 func extractString(data map[string]any, key string) (string, bool) {
