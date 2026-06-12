@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -47,6 +48,12 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 			continue
 		}
 
+		// Only list sessions that have events.jsonl
+		eventsPath := filepath.Join(r.sessionDir, entry.Name(), "events.jsonl")
+		if _, err := os.Stat(eventsPath); err != nil {
+			continue
+		}
+
 		wsPath := filepath.Join(r.sessionDir, entry.Name(), "workspace.yaml")
 		data, err := os.ReadFile(wsPath)
 		if err != nil {
@@ -60,6 +67,10 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 
 		sessions = append(sessions, toSession(ws))
 	}
+
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
+	})
 
 	return sessions, nil
 }
@@ -135,7 +146,6 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 		}
 	}
 
-	// Duration outlier detection (mean + 3σ)
 	if len(durations) > 1 {
 		var sum int64
 		for _, d := range durations {
@@ -242,7 +252,6 @@ func parseEventsJSONL(path string) ([]model.TurnVM, error) {
 			})
 		}
 
-		// Calculate duration from first to last event
 		if currentTurn != nil && turnStartTimestamp != "" {
 			if t, err := time.Parse(time.RFC3339Nano, turnStartTimestamp); err == nil {
 				if t2, err2 := time.Parse(time.RFC3339Nano, evt.Timestamp); err2 == nil {

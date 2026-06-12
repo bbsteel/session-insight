@@ -22,6 +22,7 @@ created_at: 2026-06-12T10:00:00Z
 updated_at: 2026-06-12T11:00:00Z
 `
 	os.WriteFile(filepath.Join(sessionDir, "workspace.yaml"), []byte(wsYAML), 0644)
+	os.WriteFile(filepath.Join(sessionDir, "events.jsonl"), []byte(`{"type":"user.message","timestamp":"2026-01-01T00:00:00Z","data":{"content":"hi"}}`), 0644)
 
 	reader := New(dir)
 	sessions, err := reader.ListSessions()
@@ -58,6 +59,7 @@ created_at: 2026-06-12T10:00:00Z
 updated_at: 2026-06-12T11:00:00Z
 `
 	os.WriteFile(filepath.Join(sessionDir, "workspace.yaml"), []byte(wsYAML), 0644)
+	os.WriteFile(filepath.Join(sessionDir, "events.jsonl"), []byte(`{"type":"user.message","timestamp":"2026-01-01T00:00:00Z","data":{"content":"hi"}}`), 0644)
 
 	reader := New(dir)
 	sessions, _ := reader.ListSessions()
