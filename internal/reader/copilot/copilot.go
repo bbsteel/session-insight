@@ -220,14 +220,14 @@ func parseEventsJSONL(path string) ([]model.TurnVM, error) {
 			if currentTurn == nil {
 				continue
 			}
-			if content, ok := extractString(evt.Data, "content"); ok {
+			content, hasContent := extractString(evt.Data, "content")
+			if !hasContent {
+				content, hasContent = extractString(evt.Data, "encryptedContent")
+			}
+			if hasContent {
 				currentTurn.AssistantMessage += content
 			}
-			if usage, ok := evt.Data["usage"].(map[string]any); ok {
-				currentTurn.TokenUsage.PromptTokens += extractInt64(usage, "prompt_tokens")
-				currentTurn.TokenUsage.CompletionTokens += extractInt64(usage, "completion_tokens")
-				currentTurn.TokenUsage.CacheReadTokens += extractInt64(usage, "cache_read_input_tokens")
-			}
+			currentTurn.TokenUsage.CompletionTokens += extractInt64(evt.Data, "outputTokens")
 
 		case evt.Type == "tool.execution_complete":
 			if currentTurn == nil {
