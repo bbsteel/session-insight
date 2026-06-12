@@ -16,18 +16,6 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
   const containerRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState(false)
 
-  // Empty state
-  if (barCount === 0) {
-    return (
-      <nav className="h-full flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex items-center justify-center" style={{ width: '64px' }}>
-        <span className="text-meta text-[var(--text-muted)]" style={{ writingMode: 'vertical-rl' }}>MiniMap</span>
-      </nav>
-    )
-  }
-
-  const maxTokens = Math.max(...turns.map(getTotalTokens), 1)
-
-  // Pointer event handlers for drag scroll
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     setIsDragging(true)
     ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
@@ -43,6 +31,17 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
   }, [isDragging, barCount, scrollToIndexRef])
 
   const handlePointerUp = useCallback(() => setIsDragging(false), [])
+
+  // Empty state
+  if (barCount === 0) {
+    return (
+      <nav className="h-full flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex items-center justify-center" style={{ width: '64px' }}>
+        <span className="text-meta text-[var(--text-muted)]" style={{ writingMode: 'vertical-rl' }}>MiniMap</span>
+      </nav>
+    )
+  }
+
+  const maxTokens = Math.max(...turns.map(getTotalTokens), 1)
 
   return (
     <nav
