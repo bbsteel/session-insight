@@ -26,6 +26,7 @@ export interface TurnVM {
   tool_call_count: number
   error_count: number
   duration_ms: number
+tool_names?: string[]
   anomalies?: string[]
 }
 

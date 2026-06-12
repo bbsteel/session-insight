@@ -50,6 +50,7 @@ type TurnVM struct {
 	DurationMs       int64      `json:"duration_ms"`
 	Events           []EventVM  `json:"events,omitempty"`
 	Anomalies        []string   `json:"anomalies,omitempty"`
+	ToolNames        []string   `json:"tool_names,omitempty"`
 }
 
 type AnomalySummary struct {

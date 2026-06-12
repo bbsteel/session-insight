@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { TurnVM } from '../types'
 import Badge from './Badge'
 import MarkdownRenderer from './MarkdownRenderer'
@@ -24,6 +25,7 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
   const isDigest = mode === 'digest'
   const totalTokens = turn.token_usage.prompt_tokens + turn.token_usage.completion_tokens
   const hasAnomaly = turn.anomalies && turn.anomalies.length > 0
+  const [showTools, setShowTools] = useState(false)
 
   return (
     <div
@@ -33,10 +35,25 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
       {/* Badge bar */}
       <div className={`flex items-center gap-1.5 ${isTight ? 'px-2 py-0.5' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
         <Badge label="tok" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />
-        {turn.tool_call_count > 0 && <Badge label="tool" value={String(turn.tool_call_count)} />}
+        {turn.tool_call_count > 0 && (
+          <button onClick={() => setShowTools(v => !v)} className="cursor-pointer">
+            <Badge label="tool" value={String(turn.tool_call_count)} />
+          </button>
+        )}
         {turn.error_count > 0 && <Badge label="err" value={String(turn.error_count)} intent="error" />}
         {turn.duration_ms > 0 && <Badge label="dur" value={fmtDuration(turn.duration_ms)} />}
       </div>
+
+      {/* Tool name expansion */}
+      {showTools && turn.tool_names && turn.tool_names.length > 0 && (
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
+          <div className="text-helper text-[var(--text-secondary)] flex flex-wrap gap-1">
+            {turn.tool_names.map((name, i) => (
+              <span key={i} className="bg-[var(--bg-surface)] px-1.5 py-0.5 rounded-sm text-meta">{name}</span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Turn index + summary line (Digest mode only) */}
       {isDigest && (

@@ -229,6 +229,14 @@ func parseEventsJSONL(path string) ([]model.TurnVM, error) {
 			}
 			currentTurn.TokenUsage.CompletionTokens += extractInt64(evt.Data, "outputTokens")
 
+		case evt.Type == "tool.execution_start":
+			if currentTurn == nil {
+				continue
+			}
+			if name, ok := extractString(evt.Data, "toolName"); ok && name != "" {
+				currentTurn.ToolNames = append(currentTurn.ToolNames, name)
+			}
+
 		case evt.Type == "tool.execution_complete":
 			if currentTurn == nil {
 				continue
