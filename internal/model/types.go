@@ -52,6 +52,7 @@ type TurnVM struct {
 	Anomalies        []string   `json:"anomalies,omitempty"`
 	ToolNames        []string   `json:"tool_names,omitempty"`
 		Subagents        []string   `json:"subagents,omitempty"`
+		Skills           []string   `json:"skills,omitempty"`
 }
 
 type AnomalySummary struct {

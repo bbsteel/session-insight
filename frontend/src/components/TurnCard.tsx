@@ -67,6 +67,18 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
         </div>
       )}
 
+      {/* Skill invocations */}
+      {turn.skills && turn.skills.length > 0 && (
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} bg-[var(--bg-inset)]/30 border-b border-[var(--border-muted)]`}>
+          <div className="text-helper text-[var(--text-muted)] flex flex-wrap items-center gap-1.5">
+            <span className="text-meta">&#9881;</span>
+            {turn.skills.map((name, i) => (
+              <span key={i} className="bg-[var(--accent-purple)]/10 text-[var(--accent-purple)] px-1.5 py-0.5 rounded-sm text-meta font-medium">{name}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Turn index + summary line (Digest mode only) */}
       {isDigest && (
         <div className={`${isTight ? 'px-2 py-0.5' : 'px-4 py-1'} text-helper text-[var(--text-muted)] border-b border-[var(--border-muted)]`}>

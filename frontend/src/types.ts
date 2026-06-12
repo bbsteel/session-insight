@@ -28,6 +28,7 @@ export interface TurnVM {
   duration_ms: number
 tool_names?: string[]
   subagents?: string[]
+  skills?: string[]
   anomalies?: string[]
 }
 
