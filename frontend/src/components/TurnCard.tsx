@@ -19,9 +19,10 @@ interface Props {
 
 export default function TurnCard({ turn }: Props) {
   const totalTokens = turn.token_usage.prompt_tokens + turn.token_usage.completion_tokens
+  const hasAnomaly = turn.anomalies && turn.anomalies.length > 0
 
   return (
-    <div id={`turn-${turn.turn_index}`} className="border-b border-[var(--border-muted)]">
+    <div id={`turn-${turn.turn_index}`} className={`border-b border-[var(--border-muted)] ${hasAnomaly ? 'border-l-2 border-l-[var(--error)]' : ''}`}>
       {/* Badge bar */}
       <div className="flex items-center gap-1.5 px-4 py-1.5 bg-[var(--bg-inset)] border-b border-[var(--border-muted)]">
         <Badge label="tok" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />

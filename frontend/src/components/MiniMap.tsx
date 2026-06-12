@@ -89,6 +89,7 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef, current
             const tokens = getTotalTokens(turn)
             const widthPercent = Math.max((tokens / maxTokens) * 100, 3)
             const hasError = turn.error_count > 0
+            const hasAnomaly = turn.anomalies && turn.anomalies.length > 0
             const inView = !visibleRange || (i >= visibleRange.start && i <= visibleRange.end)
 
             let color: string
@@ -106,9 +107,9 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef, current
                   maxHeight: '6px',
                   width: `${widthPercent}%`,
                   background: color,
-                  opacity: inView ? 1 : 0.45,
+                  opacity: hasAnomaly ? 1 : (inView ? 1 : 0.45),
                 }}
-                title={`Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens`}
+                title={`Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${hasAnomaly ? ' ⚠ ' + turn.anomalies!.join(', ') : ''}`}
               />
             )
           })}

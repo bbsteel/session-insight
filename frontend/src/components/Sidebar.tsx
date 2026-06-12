@@ -99,8 +99,7 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
                   {getSessionName(s)}
                 </div>
                 <div className="text-helper text-[var(--text-secondary)] mt-0.5">
-                  {s.message_count > 0 ? `${s.message_count} 条消息` : ''}
-                  {s.message_count > 0 && ' · '}
+                  {s.message_count > 0 && `${s.message_count} 条消息 · `}
                   {timeAgo(s.updated_at)}
                 </div>
               </div>
