@@ -180,14 +180,14 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
       <Virtuoso
         ref={virtuosoRef}
         style={{ flex: 1 }}
-        totalCount={session.turns.length}
+        data={session.turns}
         rangeChanged={(range) => {
           const newRange = { start: range.startIndex, end: range.endIndex }
           setVisibleRange(newRange)
           onVisibleRangeChange?.(newRange)
         }}
-        itemContent={(index: number) => (
-          <TurnCard turn={session.turns[index]} mode={mode} density={density} />
+        itemContent={(index: number, turn: TurnVM) => (
+          <TurnCard turn={turn} mode={mode} density={density} />
         )}
       />
     </main>
