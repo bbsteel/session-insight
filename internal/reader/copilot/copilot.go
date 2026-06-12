@@ -233,6 +233,12 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 			}
 			currentTurn.TokenUsage.CompletionTokens += extractInt64(evt.Data, "outputTokens")
 
+		case evt.Type == "subagent.started":
+			if currentTurn != nil {
+				if name, ok := extractString(evt.Data, "agentDisplayName"); ok && name != "" {
+					currentTurn.Subagents = append(currentTurn.Subagents, name)
+				}
+			}
 		case evt.Type == "tool.execution_start":
 			if currentTurn == nil {
 				continue
