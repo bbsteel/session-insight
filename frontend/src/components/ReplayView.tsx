@@ -42,6 +42,30 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
     }
   }, [scrollToIndexRef, session])
 
+  // Keyboard navigation
+  useEffect(() => {
+    if (!sessionId || !session?.turns.length) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        if (visibleRange && visibleRange.end < session.turns.length - 1) {
+          virtuosoRef.current?.scrollToIndex({ index: visibleRange.start + 1, align: 'start', behavior: 'smooth' })
+        }
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        if (visibleRange && visibleRange.start > 0) {
+          virtuosoRef.current?.scrollToIndex({ index: visibleRange.start - 1, align: 'start', behavior: 'smooth' })
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [sessionId, session, visibleRange])
+
   if (!sessionId) {
     return (
       <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden">

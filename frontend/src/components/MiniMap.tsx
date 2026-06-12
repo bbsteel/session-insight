@@ -5,13 +5,15 @@ interface Props {
   turns: TurnVM[]
   visibleRange?: { start: number; end: number }
   scrollToIndexRef?: React.MutableRefObject<((index: number) => void) | null>
+  currentTurnIndex?: number
+  onTurnNav?: (direction: 'prev' | 'next') => void
 }
 
 function getTotalTokens(t: TurnVM): number {
   return t.token_usage.prompt_tokens + t.token_usage.completion_tokens
 }
 
-export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props) {
+export default function MiniMap({ turns, visibleRange, scrollToIndexRef, currentTurnIndex, onTurnNav }: Props) {
   const barCount = turns.length
   const containerRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -50,6 +52,29 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
       className="h-full flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col relative"
       style={{ width: '64px' }}
     >
+      {/* Turn nav controls */}
+      {barCount > 1 && (
+        <div className="flex-shrink-0 flex flex-col border-b border-[var(--border-muted)]" style={{ height: '32px' }}>
+          <button
+            className="flex-1 flex items-center justify-center hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast text-meta text-[var(--text-muted)]"
+            onClick={() => scrollToIndexRef?.current?.(Math.max(0, (visibleRange?.start ?? 0) - 1))}
+            title="Previous turn (k)"
+          >
+            ▲
+          </button>
+          <button
+            className="flex-1 flex items-center justify-center hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast text-meta text-[var(--text-muted)] border-t border-[var(--border-muted)]"
+            onClick={() => {
+              const nextIndex = (visibleRange?.start ?? 0) + 1
+              if (nextIndex < barCount) scrollToIndexRef?.current?.(nextIndex)
+            }}
+            title="Next turn (j)"
+          >
+            ▼
+          </button>
+        </div>
+      )}
+
       {/* Bar area — draggable */}
       <div
         ref={containerRef}
