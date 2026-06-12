@@ -4,6 +4,7 @@ import type { VirtuosoHandle } from 'react-virtuoso'
 import { fetchSession } from '../api'
 import type { SessionDetail, TurnVM } from '../types'
 import TurnCard from './TurnCard'
+import AnalyticsView from './AnalyticsView'
 
 interface Props {
   sessionId: string | null
@@ -33,6 +34,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
   const [mode, setMode] = useState<'full' | 'digest'>('full')
   const [density, setDensity] = useState<'standard' | 'tight'>('standard')
+  const [showAnalytics, setShowAnalytics] = useState(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
 
   useEffect(() => {
@@ -97,6 +99,10 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
         <div className="flex items-center gap-2">
           <button onClick={() => setMode(m => m === 'full' ? 'digest' : 'full')} className="text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)]">{mode === 'full' ? 'Full' : 'Digest'}</button>
           <button onClick={() => setDensity(d => d === 'standard' ? 'tight' : 'standard')} className="text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)]">{density === 'standard' ? 'Std' : 'Tight'}</button>
+          <span className="text-[var(--border-default)]">|</span>
+          <button onClick={() => setShowAnalytics(a => !a)} className={`text-nav ${showAnalytics ? 'text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'} hover:text-[var(--text-primary)]`}>
+            {showAnalytics ? 'Replay' : 'Stats'}
+          </button>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {modelName} &middot; {fmtTokens(totalTokens)} tok &middot; {session.turn_count} turns &middot; {sessionDuration}
@@ -105,17 +111,21 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
           Turn {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '?'}/{session.turn_count}
         </span>
       </header>
-      <Virtuoso
-        ref={virtuosoRef}
-        style={{ flex: 1 }}
-        data={session.turns}
-        rangeChanged={(range) => {
-          const newRange = { start: range.startIndex, end: range.endIndex }
-          setVisibleRange(newRange)
-          onVisibleRangeChange?.(newRange)
-        }}
-        itemContent={(_: number, turn: TurnVM) => <TurnCard turn={turn} mode={mode} density={density} />}
-      />
+      {showAnalytics ? (
+        <AnalyticsView sessionId={session.id} />
+      ) : (
+        <Virtuoso
+          ref={virtuosoRef}
+          style={{ flex: 1 }}
+          data={session.turns}
+          rangeChanged={(range) => {
+            const newRange = { start: range.startIndex, end: range.endIndex }
+            setVisibleRange(newRange)
+            onVisibleRangeChange?.(newRange)
+          }}
+          itemContent={(_: number, turn: TurnVM) => <TurnCard turn={turn} mode={mode} density={density} />}
+        />
+      )}
     </main>
   )
 }

@@ -38,4 +38,5 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+		s.Mux.HandleFunc("GET /api/sessions/{id}/analytics", s.handleSessionAnalytics)
 }
