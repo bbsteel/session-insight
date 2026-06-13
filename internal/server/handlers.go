@@ -181,6 +181,7 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			"tool_freq":         toolFreq,
 			"skill_freq":        skillFreq,
 			"todo_count":        len(detail.Todos),
+			"todos":             detail.Todos,
 			"todo_done":          countDone(detail.Todos),
 			"context_window":    estimateContext(modelName),
 			"context_peak":      maxCumulative,

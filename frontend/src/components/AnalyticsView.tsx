@@ -11,6 +11,7 @@ interface AnalyticsData {
   total_tokens: number
   todo_count: number
   todo_done: number
+  todos: { id: string; title: string; description: string; status: string; deps?: string[] }[]
   prompt_tokens: number
   completion_tokens: number
   cache_read_tokens: number
@@ -134,6 +135,30 @@ export default function AnalyticsView({ sessionId }: Props) {
                 <span className="text-[var(--text-primary)] font-medium">{count}</span>
                 <span className="text-[var(--text-muted)] ml-1">{name}</span>
               </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Todos */}
+      {data.todos && data.todos.length > 0 && (
+        <div className="px-4 pb-4">
+          <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-2">Todos</h3>
+          <div className="bg-[var(--bg-inset)] rounded-lg p-2 space-y-1">
+            {data.todos.map(todo => (
+              <div key={todo.id} className="flex items-center gap-2 px-2 py-1 rounded-sm bg-[var(--bg-surface)]">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  todo.status === 'done' ? 'bg-[var(--success)]' :
+                  todo.status === 'in_progress' ? 'bg-[var(--accent-blue)] animate-pulse' :
+                  todo.status === 'blocked' ? 'bg-[var(--error)]' :
+                  'bg-[var(--text-muted)]'
+                }`} />
+                <span className="text-body text-[var(--text-primary)] flex-1">{todo.title}</span>
+                {todo.deps && todo.deps.length > 0 && (
+                  <span className="text-meta text-[var(--text-muted)]">{todo.deps.length} deps</span>
+                )}
+                <span className="text-meta text-[var(--text-muted)]">{todo.status}</span>
+              </div>
             ))}
           </div>
         </div>
