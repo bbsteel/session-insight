@@ -4,12 +4,14 @@ import MiniMap from './components/MiniMap'
 import ReplayView from './components/ReplayView'
 import type { TurnVM } from './types'
 
+type ReplayScrollBehavior = 'auto' | 'smooth'
+
 export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [turns, setTurns] = useState<TurnVM[]>([])
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const scrollToIndexRef = useRef<((index: number) => void) | null>(null)
+  const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
 
   const selectSession = (id: string) => {
     setSelectedId(id)

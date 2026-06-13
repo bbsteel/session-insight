@@ -8,11 +8,13 @@ import ThemeToggle from './ThemeToggle'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 
+type ReplayScrollBehavior = 'auto' | 'smooth'
+
 interface Props {
   sessionId: string | null
   onTurnsChange?: (turns: TurnVM[]) => void
   onVisibleRangeChange?: (range: { start: number; end: number }) => void
-  scrollToIndexRef?: React.MutableRefObject<((index: number) => void) | null>
+  scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
 }
 
 function fmtTokens(n: number): string {
@@ -41,8 +43,8 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
 
   useEffect(() => {
     if (scrollToIndexRef && virtuosoRef.current) {
-      scrollToIndexRef.current = (index: number) => {
-        virtuosoRef.current?.scrollToIndex({ index, align: 'start', behavior: 'smooth' })
+      scrollToIndexRef.current = (index: number, behavior: ReplayScrollBehavior = 'smooth') => {
+        virtuosoRef.current?.scrollToIndex({ index, align: 'start', behavior })
       }
     }
   }, [scrollToIndexRef, session])

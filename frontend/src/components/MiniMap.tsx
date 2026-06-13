@@ -1,14 +1,22 @@
-import { useMemo, useState, useRef, useCallback } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { TurnVM } from '../types'
+
+type ReplayScrollBehavior = 'auto' | 'smooth'
 
 interface Props {
   turns: TurnVM[]
   visibleRange?: { start: number; end: number }
-  scrollToIndexRef?: React.MutableRefObject<((index: number) => void) | null>
+  scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
 }
+
+type JumpTarget = 'turn' | 'user' | 'anomaly' | 'compaction'
 
 function getTotalTokens(t: TurnVM): number {
   return t.token_usage.prompt_tokens + t.token_usage.completion_tokens
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
 }
 
 function getPressureColor(ratio: number): string {
@@ -17,51 +25,88 @@ function getPressureColor(ratio: number): string {
   return 'var(--success)'
 }
 
+function hasCompaction(turn: TurnVM): boolean {
+  return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false
+}
+
 export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props) {
   const barCount = turns.length
   const containerRef = useRef<HTMLDivElement>(null)
+  const draggingRef = useRef(false)
   const [isDragging, setIsDragging] = useState(false)
-  const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
+  const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
 
-  const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    setIsDragging(true)
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-  }, [])
-
-  const scrollByY = useCallback((clientY: number) => {
-    if (!isDragging || !containerRef.current || !scrollToIndexRef?.current) return
-    const rect = containerRef.current.getBoundingClientRect()
-    const y = clientY - rect.top
-    const ratio = Math.max(0, Math.min(1, y / rect.height))
-    const targetIndex = Math.min(barCount - 1, Math.floor(ratio * barCount))
-    scrollToIndexRef.current(targetIndex)
-  }, [isDragging, barCount, scrollToIndexRef])
-
-  const handlePointerMove = useCallback((e: React.PointerEvent) => scrollByY(e.clientY), [scrollByY])
-  const handlePointerUp = useCallback(() => setIsDragging(false), [])
+  const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
+  const visibleCount = visibleRange ? visibleRange.end - visibleRange.start + 1 : 1
 
   const anomalyIndexes = useMemo(() => turns
-    .map((t, i) => ({ t, i }))
-    .filter(({ t }) => (t.anomalies && t.anomalies.some(a => !hiddenAnomalyTypes.has(a))) || (t.error_count > 0 && !hiddenAnomalyTypes.has('tool_failure')))
-    .map(({ i }) => i), [turns, hiddenAnomalyTypes])
+    .map((turn, index) => ({ turn, index }))
+    .filter(({ turn }) => {
+      const hasVisibleAnomaly = turn.anomalies?.some(a => !hiddenAnomalyTypes.has(a))
+      const hasVisibleError = turn.error_count > 0 && !hiddenAnomalyTypes.has('tool_failure')
+      return hasVisibleAnomaly || hasVisibleError
+    })
+    .map(({ index }) => index), [turns, hiddenAnomalyTypes])
 
-  const userIndexes = useMemo(() => turns.map((t, i) => t.user_message ? i : -1).filter(i => i >= 0), [turns])
-  const compactionIndexes = useMemo(() => turns.map((t, i) => t.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ? i : -1).filter(i => i >= 0), [turns])
+  const userIndexes = useMemo(() => turns
+    .map((turn, index) => turn.user_message ? index : -1)
+    .filter(index => index >= 0), [turns])
 
-  function jump(direction: -1 | 1, indexes?: number[]) {
-    const base = visibleRange?.start ?? 0
-    if (!indexes) {
-      scrollToIndexRef?.current?.(Math.min(barCount - 1, Math.max(0, base + direction)))
-      return
-    }
-    const target = direction > 0
-      ? indexes.find(i => i > base)
-      : [...indexes].reverse().find(i => i < base)
-    if (target !== undefined) scrollToIndexRef?.current?.(target)
+  const compactionIndexes = useMemo(() => turns
+    .map((turn, index) => hasCompaction(turn) ? index : -1)
+    .filter(index => index >= 0), [turns])
+
+  function scrollTo(index: number, behavior: ReplayScrollBehavior = 'smooth') {
+    if (barCount === 0) return
+    scrollToIndexRef?.current?.(clamp(index, 0, barCount - 1), behavior)
   }
 
-  // Empty state
+  function jump(direction: -1 | 1, target: JumpTarget) {
+    const base = visibleRange?.start ?? 0
+    if (target === 'turn') {
+      scrollTo(base + direction)
+      return
+    }
+
+    const indexes =
+      target === 'user' ? userIndexes :
+      target === 'anomaly' ? anomalyIndexes :
+      compactionIndexes
+
+    const next = direction > 0
+      ? indexes.find(index => index > base)
+      : [...indexes].reverse().find(index => index < base)
+    if (next !== undefined) scrollTo(next)
+  }
+
+  function scrollFromPointer(clientY: number) {
+    if (!containerRef.current || barCount === 0) return
+    const rect = containerRef.current.getBoundingClientRect()
+    const ratio = clamp((clientY - rect.top) / rect.height, 0, 1)
+    const maxStart = Math.max(0, barCount - visibleCount)
+    const targetIndex = Math.round(ratio * maxStart)
+    scrollTo(targetIndex, 'auto')
+  }
+
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    draggingRef.current = true
+    setIsDragging(true)
+    e.currentTarget.setPointerCapture(e.pointerId)
+    scrollFromPointer(e.clientY)
+  }
+
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!draggingRef.current) return
+    scrollFromPointer(e.clientY)
+  }
+
+  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    draggingRef.current = false
+    setIsDragging(false)
+    e.currentTarget.releasePointerCapture(e.pointerId)
+  }
+
   if (barCount === 0) {
     return (
       <nav className="minimap-shell flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex items-center justify-center" aria-label="MiniMap">
@@ -70,140 +115,127 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
     )
   }
 
-  const maxTokens = Math.max(...turns.map(getTotalTokens), 1)
-  const rowHeight = 100 / barCount
-
   return (
     <nav
       className="minimap-shell flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col select-none"
       aria-label="MiniMap"
     >
-      {/* Control bar — 32px */}
-      {barCount > 1 && (
-        <div className="flex-shrink-0 grid grid-cols-4 border-b border-[var(--border-muted)]" style={{ height: '32px' }}>
-          {[
-            { label: '轮次', up: () => jump(-1), down: () => jump(1), title: '上一轮/下一轮' },
-            { label: '用户', up: () => jump(-1, userIndexes), down: () => jump(1, userIndexes), title: '上个/下个用户输入' },
-            { label: '异常', up: () => jump(-1, anomalyIndexes), down: () => jump(1, anomalyIndexes), title: '上个/下个异常点' },
-            { label: '压缩', up: () => jump(-1, compactionIndexes), down: () => jump(1, compactionIndexes), title: '上个/下个压缩点' },
-          ].map(item => (
-            <div key={item.label} className="min-w-0 border-r border-[var(--border-muted)] last:border-r-0">
-              <button
-                className="h-4 w-full flex items-center justify-center hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast text-[8px] text-[var(--text-muted)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]"
-                onClick={item.up}
-                title={`${item.title}：向上`}
-                aria-label={`${item.label}向上`}
-              >▲</button>
-              <button
-                className="h-4 w-full flex items-center justify-center hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast text-[8px] text-[var(--text-muted)] border-t border-[var(--border-muted)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]"
-                onClick={item.down}
-                title={`${item.title}：向下`}
-                aria-label={`${item.label}向下`}
-              >▼</button>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="grid grid-cols-4 border-b border-[var(--border-muted)] bg-[var(--bg-surface)]" style={{ height: 32 }}>
+        {[
+          ['T', '轮次', 'turn'],
+          ['U', '用户输入', 'user'],
+          ['!', '异常', 'anomaly'],
+          ['C', '压缩', 'compaction'],
+        ].map(([icon, label, target]) => (
+          <div key={target} className="min-w-0 border-r border-[var(--border-muted)] last:border-r-0">
+            <button
+              className="h-4 w-full text-[8px] leading-none text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]"
+              onClick={() => jump(-1, target as JumpTarget)}
+              title={`上一个${label}`}
+              aria-label={`上一个${label}`}
+            >
+              {icon}↑
+            </button>
+            <button
+              className="h-4 w-full border-t border-[var(--border-muted)] text-[8px] leading-none text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]"
+              onClick={() => jump(1, target as JumpTarget)}
+              title={`下一个${label}`}
+              aria-label={`下一个${label}`}
+            >
+              {icon}↓
+            </button>
+          </div>
+        ))}
+      </div>
 
-      {/* Channel area: 5px type + 44px token/pressure + 5px compaction + 5px user */}
       <div
         ref={containerRef}
-        className="flex-1 relative overflow-hidden"
-        style={{ touchAction: 'none', cursor: isDragging ? 'grabbing' : 'grab' }}
+        className="flex-1 relative overflow-hidden bg-[var(--bg-inset)]"
+        style={{ cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
-        <div className="absolute inset-0">
-          {turns.map((turn, i) => {
-            const tokens = getTotalTokens(turn)
-            const widthPercent = Math.max((tokens / maxTokens) * 100, 5)
-            const pressureRatio = tokens / maxTokens
-            const hasAnomaly = turn.anomalies && turn.anomalies.some(a => !hiddenAnomalyTypes.has(a))
-            const hasError = turn.error_count > 0 && !hiddenAnomalyTypes.has('tool_failure')
-            const isUserTurn = !!turn.user_message
-            const hasCompaction = turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression'))
-            const inView = !visibleRange || (i >= visibleRange.start && i <= visibleRange.end)
-            const barColor = (hasAnomaly || hasError) ? 'var(--error)' : getPressureColor(pressureRatio)
-            const top = `${i * rowHeight}%`
-            const height = `${Math.max(rowHeight, 0.4)}%`
+        <div className="absolute inset-y-2 left-[8px] w-px bg-[var(--border-muted)]" />
+        <div className="absolute inset-y-2 left-[20px] w-[56px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
+        <div className="absolute inset-y-2 right-[8px] w-px bg-[var(--border-muted)]" />
 
-            return (
-              <button
-                key={i}
-                className="absolute left-0 right-0 grid items-center transition-opacity duration-fast hover:bg-[var(--accent-blue)]/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]"
+        {turns.map((turn, index) => {
+          const tokens = getTotalTokens(turn)
+          const rowTop = `${((index + 0.5) / barCount) * 100}%`
+          const tokenWidth = Math.max(5, (tokens / maxTokens) * 50)
+          const pressureRatio = tokens / maxTokens
+          const isAnomaly = anomalyIndexes.includes(index)
+          const isUserTurn = !!turn.user_message
+          const isCompaction = hasCompaction(turn)
+          const inView = visibleRange ? index >= visibleRange.start && index <= visibleRange.end : false
+          const color = isAnomaly ? 'var(--error)' : getPressureColor(pressureRatio)
+
+          return (
+            <div
+              key={index}
+              className="pointer-events-none absolute left-0 right-0 h-3 -translate-y-1/2"
+              style={{ top: rowTop }}
+              title={`Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${isAnomaly ? ' · 异常' : ''}${isUserTurn ? ' · 用户输入' : ''}`}
+            >
+              <span
+                className="absolute left-[6px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full"
+                style={{ background: isAnomaly ? 'var(--error)' : isUserTurn ? 'var(--success)' : 'var(--text-muted)' }}
+              />
+              <span
+                className="absolute left-[23px] top-1/2 h-2 -translate-y-1/2 rounded-sm"
                 style={{
-                  top,
-                  height,
-                  gridTemplateColumns: '5px 44px 5px 5px',
-                  columnGap: '2px',
-                  paddingLeft: '2px',
-                  paddingRight: '1px',
-                  opacity: inView ? 1 : 0.35,
+                  width: tokenWidth,
+                  background: color,
+                  boxShadow: inView ? '0 0 0 1px var(--accent-blue)' : undefined,
                 }}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  scrollToIndexRef?.current?.(i)
-                }}
-                aria-label={`Turn ${turn.turn_index}, ${tokens.toLocaleString()} tokens, ${turn.tool_call_count} tools, ${(turn.anomalies?.length || 0) + turn.error_count} anomalies`}
-                title={`Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${hasAnomaly ? ' ⚠ ' + turn.anomalies?.join(', ') : ''}${isUserTurn ? ' 💬 user' : ''}`}
-              >
-                <span className="h-1.5 w-1.5 rounded-full flex items-center justify-center text-[7px]" style={{ color: hasAnomaly || hasError ? 'var(--error)' : 'var(--text-muted)' }}>
-                  {hasAnomaly || hasError ? '!' : isUserTurn ? '›' : '•'}
-                </span>
-                <div
-                  className="h-1.5 rounded-sm"
-                  style={{
-                    width: `${widthPercent}%`,
-                    background: barColor,
-                  }}
-                />
-                <span className="h-1.5 w-1.5 rounded-sm" style={{ background: hasCompaction ? 'var(--accent-blue)' : 'transparent' }} />
-                <span className="h-1.5 w-1.5 rounded-full" style={{ background: isUserTurn ? 'var(--success)' : 'transparent' }} />
-              </button>
-            )
-          })}
-        </div>
+              />
+              {isCompaction && (
+                <span className="absolute right-[15px] top-1/2 h-2.5 w-1 -translate-y-1/2 rounded-sm bg-[var(--accent-blue)]" />
+              )}
+              {isUserTurn && (
+                <span className="absolute right-[6px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-[var(--success)]" />
+              )}
+            </div>
+          )
+        })}
 
-        {/* Viewport indicator */}
-        {visibleRange && barCount > 1 && (
+        {visibleRange && (
           <div
             className="absolute left-0 right-0 pointer-events-none"
             style={{
               top: `${(visibleRange.start / barCount) * 100}%`,
-              height: `${Math.max(((visibleRange.end - visibleRange.start + 1) / barCount) * 100, 3)}%`,
-              background: 'rgba(37, 99, 235, var(--opacity-viewport))',
-              opacity: isDragging ? 1 : 0.9,
+              height: `${Math.max((visibleCount / barCount) * 100, 4)}%`,
+              background: 'rgba(37, 99, 235, 0.14)',
               borderTop: '1px solid var(--accent-blue)',
               borderBottom: '1px solid var(--accent-blue)',
-              transition: isDragging ? 'none' : 'opacity 150ms ease-out',
+              boxShadow: isDragging ? 'inset 0 0 0 1px var(--accent-blue)' : undefined,
             }}
           >
-            <span className="absolute -top-1 left-1/2 -translate-x-1/2 text-[8px] leading-none text-[var(--accent-blue)]">▲</span>
-            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] leading-none text-[var(--accent-blue)]">▼</span>
+            <span className="absolute left-1/2 top-0 h-1 w-3 -translate-x-1/2 rounded-b-sm bg-[var(--accent-blue)]" />
+            <span className="absolute bottom-0 left-1/2 h-1 w-3 -translate-x-1/2 rounded-t-sm bg-[var(--accent-blue)]" />
           </div>
         )}
       </div>
 
-      {/* Footer — turn count + anomalies */}
-      <div className="flex-shrink-0 text-center py-0.5 border-t border-[var(--border-muted)] flex items-center justify-center gap-1.5 relative">
-        <span className="text-meta text-[var(--text-muted)]">{barCount}t</span>
-        {turns.filter(t => t.anomalies?.length || t.error_count > 0).length > 0 && (
+      <div className="relative flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
+        <span className="text-meta text-[var(--text-muted)]">
+          {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '1'} / {barCount}
+        </span>
+        {anomalyIndexes.length > 0 && (
           <button
             onClick={() => setShowAnomalyFilter(v => !v)}
-            className={`text-meta ${hiddenAnomalyTypes.size > 0 ? 'text-[var(--text-muted)]' : 'text-[var(--error)]'} hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]`}
+            className={`absolute right-1 text-meta ${hiddenAnomalyTypes.size > 0 ? 'text-[var(--text-muted)]' : 'text-[var(--error)]'} hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]`}
             aria-label="异常类型过滤"
           >
-            {turns.filter(t => (t.anomalies?.length || t.error_count > 0) &&
-              (!t.anomalies || t.anomalies.some(a => !hiddenAnomalyTypes.has(a))) &&
-              (!t.error_count || !hiddenAnomalyTypes.has('tool_failure'))
-            ).length} ⚠
+            {anomalyIndexes.length}!
           </button>
         )}
         {showAnomalyFilter && (
-          <div className="absolute bottom-full right-0 mb-1 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-md p-2 shadow-md z-20 min-w-[140px]">
+          <div className="absolute bottom-full right-0 mb-1 min-w-[140px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-md z-20">
             {['tool_failure', 'duration_spike', 'missing_shutdown'].map(type => (
-              <label key={type} className="flex items-center gap-1.5 py-0.5 text-meta text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-surface-hover)] px-1 rounded-sm">
+              <label key={type} className="flex cursor-pointer items-center gap-1.5 rounded-sm px-1 py-0.5 text-meta text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]">
                 <input
                   type="checkbox"
                   checked={!hiddenAnomalyTypes.has(type)}
@@ -212,7 +244,7 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
                     prev.has(type) ? next.delete(type) : next.add(type)
                     return next
                   })}
-                  className="w-3 h-3"
+                  className="h-3 w-3"
                 />
                 {type.replace(/_/g, ' ')}
               </label>
