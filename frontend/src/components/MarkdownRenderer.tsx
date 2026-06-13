@@ -1,11 +1,12 @@
+import { lazy, Suspense } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 interface Props {
   content: string
 }
+
+const CodeBlock = lazy(() => import('./SyntaxCodeBlock'))
 
 export default function MarkdownRenderer({ content }: Props) {
   return (
@@ -18,14 +19,9 @@ export default function MarkdownRenderer({ content }: Props) {
           const isInline = !match && !String(children).includes('\n')
           if (match && !isInline) {
             return (
-              <SyntaxHighlighter
-                style={oneDark}
-                language={match[1]}
-                PreTag="div"
-                customStyle={{ borderRadius: '4px', fontSize: '13px', margin: '8px 0' }}
-              >
-                {codeStr}
-              </SyntaxHighlighter>
+              <Suspense fallback={<pre className="rounded-sm bg-[var(--code-bg)] p-3 text-meta text-[var(--code-text)] overflow-x-auto"><code>{codeStr}</code></pre>}>
+                <CodeBlock code={codeStr} language={match[1]} />
+              </Suspense>
             )
           }
           return (

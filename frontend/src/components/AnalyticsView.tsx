@@ -43,10 +43,8 @@ interface Props {
   sessionId: string
 }
 
-function fmtK(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
+function fmtNumber(n: number): string {
+  return n.toLocaleString()
 }
 
 export default function AnalyticsView({ sessionId }: Props) {
@@ -59,33 +57,42 @@ export default function AnalyticsView({ sessionId }: Props) {
       .catch(console.error)
   }, [sessionId])
 
-  if (!data) return <div className="p-4 text-helper text-[var(--text-muted)]">Loading analytics...</div>
+  if (!data) return (
+    <div className="p-4 space-y-3">
+      <div className="grid grid-cols-4 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-16 rounded-md bg-[var(--bg-inset)] animate-pulse" />)}
+      </div>
+      <div className="h-[200px] rounded-lg bg-[var(--bg-inset)] animate-pulse" />
+    </div>
+  )
 
   // Cumulative token data
   let cumul = 0
   const cumulativeData = data.timeline.map(t => { cumul += t.tokens; return cumul })
 
-  const isDark = document.documentElement.classList.contains('dark')
-  const textColor = isDark ? '#9ea5b4' : '#555b6e'
-  const gridColor = isDark ? '#232330' : '#e4e6ec'
+  const styles = getComputedStyle(document.documentElement)
+  const textColor = styles.getPropertyValue('--text-secondary').trim()
+  const gridColor = styles.getPropertyValue('--border-muted').trim()
+  const accentBlue = styles.getPropertyValue('--accent-blue').trim()
+  const accentPurple = styles.getPropertyValue('--accent-purple').trim()
 
   const tokenTimeline = {
     tooltip: { trigger: 'axis' as const },
     grid: { left: 40, right: 40, top: 8, bottom: 24 },
     xAxis: { type: 'category' as const, data: data.timeline.map(t => `T${t.turn_index}`), axisLabel: { fontSize: 10, color: textColor } },
-    yAxis: { type: 'value' as const, axisLabel: { fontSize: 10, color: textColor, formatter: (v: number) => fmtK(v) }, splitLine: { lineStyle: { color: gridColor } } },
+    yAxis: { type: 'value' as const, axisLabel: { fontSize: 10, color: textColor, formatter: (v: number) => fmtNumber(v) }, splitLine: { lineStyle: { color: gridColor } } },
     series: [{
       name: 'Tokens',
       type: 'bar',
       data: data.timeline.map(t => t.tokens),
-      itemStyle: { color: 'var(--accent-blue)', borderRadius: [2, 2, 0, 0] },
+      itemStyle: { color: accentBlue, borderRadius: [2, 2, 0, 0] },
     }, {
       name: 'Cumulative',
       type: 'line',
       data: cumulativeData,
       smooth: true,
-      lineStyle: { color: 'var(--accent-purple)', width: 2 },
-      itemStyle: { color: 'var(--accent-purple)' },
+      lineStyle: { color: accentPurple, width: 2 },
+      itemStyle: { color: accentPurple },
       symbol: 'none',
     }],
     legend: { data: ['Tokens', 'Cumulative'], textStyle: { fontSize: 10, color: textColor }, top: 0 },
@@ -96,17 +103,17 @@ export default function AnalyticsView({ sessionId }: Props) {
       {/* Key metrics */}
       <div className="grid grid-cols-7 gap-3 p-4">
         {[
-          ['Total Tokens', fmtK(data.total_tokens)],
+          ['Total Tokens', fmtNumber(data.total_tokens)],
           ['Cache Rate', `${data.cache_hit_rate.toFixed(1)}%`],
           ['Tools Used', String(data.total_tools)],
           ['Anomalies', String(data.anomaly_count)],
           ['Turn Count', String(data.turn_count)],
           ['Errors', String(data.total_errors)],
-          ['Avg Tok/Turn', fmtK(Math.round(data.token_efficiency))],
-          ['Context Peak', fmtK(data.context_peak)],
+          ['Avg Tok/Turn', fmtNumber(Math.round(data.token_efficiency))],
+          ['Context Peak', fmtNumber(data.context_peak)],
           ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
           ['Health', `${data.health_score} (${data.health_grade})`],
-          ['Prompt Tok', fmtK(data.prompt_tokens)],
+          ['Prompt Tok', fmtNumber(data.prompt_tokens)],
 ['Todos', data.todo_count > 0 ? `${data.todo_done}/${data.todo_count}` : '-'],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2 text-center">

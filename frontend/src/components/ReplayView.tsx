@@ -1,10 +1,12 @@
-import { useEffect, useState, useRef } from 'react'
+import { lazy, Suspense, useEffect, useState, useRef } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { fetchSession } from '../api'
 import type { SessionDetail, TurnVM } from '../types'
 import TurnCard from './TurnCard'
-import AnalyticsView from './AnalyticsView'
+import ThemeToggle from './ThemeToggle'
+
+const AnalyticsView = lazy(() => import('./AnalyticsView'))
 
 interface Props {
   sessionId: string | null
@@ -14,9 +16,7 @@ interface Props {
 }
 
 function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
+  return n.toLocaleString()
 }
 
 function formatDuration(ms: number): string {
@@ -36,7 +36,6 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const [density, setDensity] = useState<'standard' | 'tight'>('standard')
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
-  const [followMode, setFollowMode] = useState(true)
   const [userScrolled, setUserScrolled] = useState(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
 
@@ -77,26 +76,39 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   }, [sessionId])
 
   if (!sessionId) return (
-    <main className="flex-1 flex items-center justify-center min-w-[360px] bg-[var(--bg-surface)]">
-      <div className="text-center"><div className="text-4xl mb-4 opacity-40">&#128269;</div>
-        <h3 className="text-body font-medium text-[var(--text-primary)]">Select a session</h3>
-        <p className="text-helper text-[var(--text-muted)] mt-1">Choose a session from the sidebar to view its replay.</p>
-        <div className="mt-4 flex gap-2 justify-center text-meta text-[var(--text-muted)]">
-          <span><kbd className="bg-[var(--bg-inset)] px-1 py-0.5 rounded-sm border border-[var(--border-default)]">j</kbd>/<kbd className="bg-[var(--bg-inset)] px-1 py-0.5 rounded-sm border border-[var(--border-default)]">k</kbd> navigate turns</span>
-          <span>&middot;</span>
-          <span><kbd className="bg-[var(--bg-inset)] px-1 py-0.5 rounded-sm border border-[var(--border-default)]">?</kbd> shortcuts</span>
+    <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
+      <GlobalTopBar />
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center px-6">
+          <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
+          <h3 className="text-body font-medium text-[var(--text-primary)]">还没有选中会话</h3>
+          <p className="text-helper text-[var(--text-muted)] mt-1">从左侧选择一个会话后，这里会显示对话回放。</p>
         </div>
       </div>
     </main>
   )
   if (loading) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)]">
-      <div className="p-4 space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-24 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />)}</div>
+      <GlobalTopBar />
+      <div className="p-4 space-y-3">{Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-3">
+          <div className="h-5 w-44 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
+          <div className="mt-3 h-3 w-3/4 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
+          <div className="mt-2 h-3 w-1/2 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
+        </div>
+      ))}</div>
     </main>
   )
   if (!session || !session.turns.length) return (
-    <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex items-center justify-center">
-      <p className="text-helper text-[var(--text-muted)]">No turns found</p>
+    <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
+      <GlobalTopBar />
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center px-6">
+          <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
+          <h3 className="text-body font-medium text-[var(--text-primary)]">还没有会话记录</h3>
+          <p className="text-helper text-[var(--text-muted)] mt-1">使用 agent 进行编码后，会话将自动出现在这里。</p>
+        </div>
+      </div>
     </main>
   )
 
@@ -106,19 +118,21 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
-      <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '32px' }}>
+      <GlobalTopBar />
+      <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
-          <button onClick={() => setMode(m => m === 'full' ? 'digest' : 'full')} className="text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)]">{mode === 'full' ? 'Full' : 'Digest'}</button>
-          <button onClick={() => setDensity(d => d === 'standard' ? 'tight' : 'standard')} className="text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)]">{density === 'standard' ? 'Std' : 'Tight'}</button>
+          <button onClick={() => setMode(m => m === 'full' ? 'digest' : 'full')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{mode === 'full' ? 'Full' : 'Digest'}</button>
+          <button onClick={() => setDensity(d => d === 'standard' ? 'tight' : 'standard')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{density === 'standard' ? 'Standard' : 'Tight'}</button>
           <span className="text-[var(--border-default)]">|</span>
-          <button onClick={() => setShowAnalytics(a => !a)} className={`text-nav ${showAnalytics ? 'text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'} hover:text-[var(--text-primary)]`}>
-            {showAnalytics ? 'Replay' : 'Stats'}
+          <button onClick={() => setShowAnalytics(a => !a)} className={`h-7 rounded-md px-2 text-nav ${showAnalytics ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}>
+            {showAnalytics ? '回放' : '分析'}
           </button>
           <span className="text-[var(--border-default)]">|</span>
-          <a href={`/api/sessions/${session.id}/export`} className="text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] no-underline">Export</a>
+          <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
-          {session.repository && <span className="text-[var(--text-muted)]">{session.repository.split('/').pop()}</span>}{session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>} &middot; {modelName} &middot; {fmtTokens(totalTokens)} tok &middot; {session.turn_count}t &middot; {sessionDuration}
+          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tok · {session.turn_count} turns · {sessionDuration}
+          {session.repository && <span className="text-[var(--text-muted)]"> · {session.repository.split('/').pop()}</span>}{session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>}
           {session.created_at && (
             <span className="text-[var(--text-muted)] ml-1 text-meta">
               {new Date(session.created_at).toLocaleDateString()}
@@ -133,15 +147,15 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
         </span>
       </header>
 {showHelp && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20" onClick={() => setShowHelp(false)}>
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(0,0,0,var(--opacity-overlay))]" onClick={() => setShowHelp(false)}>
           <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-lg p-6 max-w-sm" onClick={e => e.stopPropagation()}>
-            <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-3">Keyboard Shortcuts</h3>
+            <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-3">快捷键</h3>
             <div className="space-y-2 text-helper">
               {[
-                ['j / ↓', 'Next turn'],
-                ['k / ↑', 'Previous turn'],
-                ['?', 'Toggle this help'],
-                ['Esc', 'Close panels'],
+                ['j / ↓', '下一轮'],
+                ['k / ↑', '上一轮'],
+                ['?', '打开/关闭帮助'],
+                ['Esc', '关闭面板'],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">
                   <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[60px] text-center">{key}</kbd>
@@ -149,13 +163,15 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
                 </div>
               ))}
             </div>
-            <button onClick={() => setShowHelp(false)} className="mt-4 text-meta text-[var(--accent-blue)] hover:underline">Close</button>
+            <button onClick={() => setShowHelp(false)} className="mt-4 text-meta text-[var(--accent-blue)] hover:underline">关闭</button>
           </div>
         </div>
       )}
 
       {showAnalytics ? (
-        <AnalyticsView sessionId={session.id} />
+        <Suspense fallback={<AnalyticsSkeleton />}>
+          <AnalyticsView sessionId={session.id} />
+        </Suspense>
       ) : (
         <div className="flex-1 relative">
           <Virtuoso
@@ -165,10 +181,8 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
             atBottomStateChange={(atBottom) => {
               if (!atBottom && !userScrolled) {
                 setUserScrolled(true)
-                setFollowMode(false)
               } else if (atBottom && userScrolled) {
                 setUserScrolled(false)
-                setFollowMode(true)
               }
             }}
             rangeChanged={(range) => {
@@ -177,7 +191,8 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
               onVisibleRangeChange?.(newRange)
             }}
             itemContent={(_: number, turn: TurnVM) => {
-              const cumul = session.turns.slice(0, turn.turn_index + 1).reduce((s, t) => s + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
+              const currentIndex = session.turns.findIndex(t => t.turn_index === turn.turn_index)
+              const cumul = session.turns.slice(0, currentIndex + 1).reduce((s, t) => s + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
               return <TurnCard turn={turn} mode={mode} density={density} cumulativeTokens={cumul} />
             }}
           />
@@ -186,7 +201,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
               onClick={() => virtuosoRef.current?.scrollToIndex({ index: 0, behavior: 'smooth' })}
               className="absolute top-3 right-3 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-md px-2 py-1 text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] shadow-sm transition-colors duration-fast z-10"
             >
-              &#9650; Top
+              &#9650; 顶部
             </button>
           )}
           {userScrolled && (
@@ -194,15 +209,44 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
               onClick={() => {
                 virtuosoRef.current?.scrollToIndex({ index: session.turns.length - 1, behavior: 'smooth' })
                 setUserScrolled(false)
-                setFollowMode(true)
               }}
-              className="absolute bottom-3 right-3 bg-[var(--accent-blue)] text-white border border-[var(--accent-blue)] rounded-md px-2 py-1 text-meta hover:opacity-90 shadow-sm transition-colors duration-fast z-10"
+              className="absolute bottom-3 right-3 bg-[var(--accent-blue)] text-[var(--text-inverse)] border border-[var(--accent-blue)] rounded-md px-2 py-1 text-meta hover:opacity-90 shadow-sm transition-colors duration-fast z-10"
             >
-              &#9660; Follow
+              &#9660; 回到底部
             </button>
           )}
         </div>
       )}
     </main>
+  )
+}
+
+function AnalyticsSkeleton() {
+  return (
+    <div className="p-4 space-y-3">
+      <div className="grid grid-cols-4 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-16 rounded-md bg-[var(--bg-inset)] animate-pulse" />)}
+      </div>
+      <div className="h-[200px] rounded-lg bg-[var(--bg-inset)] animate-pulse" />
+    </div>
+  )
+}
+
+function GlobalTopBar() {
+  return (
+    <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }}>
+      <div className="relative w-full max-w-[360px]">
+        <input
+          type="search"
+          placeholder="全文搜索..."
+          className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
+          aria-label="全文搜索"
+        />
+      </div>
+      <div className="ml-auto flex items-center gap-1">
+        <ThemeToggle />
+        <button className="h-7 w-7 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]" title="设置" aria-label="设置">⚙</button>
+      </div>
+    </header>
   )
 }

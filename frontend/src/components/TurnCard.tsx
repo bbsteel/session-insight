@@ -4,8 +4,7 @@ import Badge from './Badge'
 import MarkdownRenderer from './MarkdownRenderer'
 
 function fmtTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-  return String(n)
+  return n.toLocaleString()
 }
 
 function fmtDuration(ms: number): string {
@@ -32,27 +31,29 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
   return (
     <div
       id={`turn-${turn.turn_index}`}
-      className={`border-b border-[var(--border-muted)] ${hasAnomaly ? 'border-l-2 border-l-[var(--error)]' : ''}`}
+      className={`border-b border-[var(--border-muted)] bg-[var(--bg-surface)] ${hasAnomaly ? 'border-l-2 border-l-[var(--error)]' : ''}`}
     >
       {/* Badge bar */}
-      <div className={`flex items-center gap-1.5 flex-wrap ${isTight ? 'px-2 py-0.5' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
-        <button onClick={() => setShowTokens(v => !v)} className="cursor-pointer">
-            <Badge label="tok" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />
+      <div role="list" className={`flex items-center gap-1.5 flex-wrap ${isTight ? 'px-2 py-1' : 'px-4 py-2'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
+        <span className="mr-1 text-meta text-[var(--text-muted)]">Turn {turn.turn_index}</span>
+        <button onClick={() => setShowTokens(v => !v)} className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">
+            <Badge label="Token" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />
           </button>
+        {cumulativeTokens !== undefined && <Badge label="Context" value={fmtTokens(cumulativeTokens)} />}
         {turn.tool_call_count > 0 && (
-          <button onClick={() => setShowTools(v => !v)} className="cursor-pointer">
-            <Badge label="tool" value={String(turn.tool_call_count)} />
+          <button onClick={() => setShowTools(v => !v)} className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">
+            <Badge label="Tool" value={String(turn.tool_call_count)} />
           </button>
         )}
-        {turn.error_count > 0 && <Badge label="err" value={String(turn.error_count)} intent="error" />}
-        {turn.duration_ms > 0 && <Badge label="dur" value={fmtDuration(turn.duration_ms)} />}
+        {turn.error_count > 0 && <Badge label="Err" value={String(turn.error_count)} intent="error" />}
+        {turn.duration_ms > 0 && <Badge label="Duration" value={fmtDuration(turn.duration_ms)} />}
       </div>
 
       {/* Token breakdown */}
       {showTokens && (
         <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
           <div className="text-helper flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-[var(--text-secondary)]">Tokens:</span>
+            <span className="text-[var(--text-secondary)]">Token 分解:</span>
             <span className="text-[var(--text-primary)] font-medium">{fmtTokens(totalTokens)}</span>
             {turn.token_usage.prompt_tokens > 0 && <span className="text-[var(--text-muted)]">prompt {fmtTokens(turn.token_usage.prompt_tokens)}</span>}
             {turn.token_usage.completion_tokens > 0 && <span className="text-[var(--text-muted)]">compl {fmtTokens(turn.token_usage.completion_tokens)}</span>}
@@ -128,7 +129,8 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
 
       {/* User message */}
       {turn.user_message && (
-        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'}`}>
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'} grid gap-2`} style={{ gridTemplateColumns: '18px minmax(0, 1fr)' }}>
+          <div className="text-[var(--text-muted)] text-body leading-5">&gt;</div>
           <div className={`text-[var(--text-primary)] whitespace-pre-wrap break-words ${isTight ? 'text-nav' : 'text-body'}`}>
             {turn.user_message}
           </div>
@@ -144,8 +146,11 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
 
       {/* Assistant message */}
       {turn.assistant_message && (
-        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'} prose-custom`}>
-          <MarkdownRenderer content={turn.assistant_message} />
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'} grid gap-2`} style={{ gridTemplateColumns: '18px minmax(0, 1fr)' }}>
+          <div className="text-[var(--accent-blue)] text-body leading-5">●</div>
+          <div className="prose-custom min-w-0">
+            <MarkdownRenderer content={turn.assistant_message} />
+          </div>
         </div>
       )}
     </div>
