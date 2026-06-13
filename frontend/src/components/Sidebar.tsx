@@ -91,7 +91,7 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
     >
       <div className="p-4 flex items-center justify-between">
         <h2 className="text-nav font-semibold text-[var(--text-primary)]">
-          Sessions ({sessions.length})
+          {query ? `Results (${filtered.length}/${sessions.length})` : `Sessions (${sessions.length})`}
         </h2>
         <ThemeToggle />
       </div>
