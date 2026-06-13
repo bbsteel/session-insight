@@ -42,4 +42,5 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/sessions/{id}/analytics", s.handleSessionAnalytics)
 	s.Mux.HandleFunc("GET /api/agents", s.handleListAgents)
 		s.Mux.HandleFunc("GET /api/search", s.handleSearch)
+		s.Mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExportSession)
 }

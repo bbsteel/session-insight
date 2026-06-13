@@ -314,3 +314,56 @@ func countDone(todos []model.Todo) int {
 	}
 	return n
 }
+
+func (s *Server) handleExportSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	for _, reader := range s.Readers {
+		detail, err := reader.GetSession(id)
+		if err != nil || detail == nil {
+			continue
+		}
+
+		var md strings.Builder
+		md.WriteString(fmt.Sprintf("# %s\n\n", detail.Name))
+		if detail.Repository != "" {
+			md.WriteString(fmt.Sprintf("**Repo:** %s", detail.Repository))
+			if detail.Branch != "" {
+				md.WriteString(fmt.Sprintf(" @%s", detail.Branch))
+			}
+			md.WriteString("\n")
+		}
+		md.WriteString(fmt.Sprintf("**Model:** %s | **Turns:** %d | **Todos:** %d/%d done\n\n",
+			detail.ModelName, len(detail.Turns),
+			countDone(detail.Todos), len(detail.Todos)))
+		md.WriteString("---\n\n")
+
+		for _, t := range detail.Turns {
+			md.WriteString(fmt.Sprintf("## Turn %d\n\n", t.TurnIndex))
+			if t.UserMessage != "" {
+				md.WriteString(fmt.Sprintf("**User:** %s\n\n", t.UserMessage))
+			}
+			if t.AssistantMessage != "" {
+				md.WriteString(fmt.Sprintf("**Assistant:** %s\n\n", t.AssistantMessage))
+			}
+			if len(t.ToolNames) > 0 {
+				md.WriteString(fmt.Sprintf("*Tools: %s*\n\n", strings.Join(t.ToolNames, ", ")))
+			}
+			md.WriteString(fmt.Sprintf("*%d tokens | %s*\n\n---\n\n",
+				t.TokenUsage.PromptTokens+t.TokenUsage.CompletionTokens,
+				formatDur(t.DurationMs)))
+		}
+
+		filename := fmt.Sprintf("session-%s.md", id[:8])
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.Write([]byte(md.String()))
+		return
+	}
+	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+func formatDur(ms int64) string {
+	if ms < 1000 { return fmt.Sprintf("%dms", ms) }
+	if ms < 60000 { return fmt.Sprintf("%.1fs", float64(ms)/1000) }
+	return fmt.Sprintf("%dm%ds", ms/60000, (ms%60000)/1000)
+}

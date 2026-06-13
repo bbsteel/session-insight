@@ -114,6 +114,8 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
           <button onClick={() => setShowAnalytics(a => !a)} className={`text-nav ${showAnalytics ? 'text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'} hover:text-[var(--text-primary)]`}>
             {showAnalytics ? 'Replay' : 'Stats'}
           </button>
+          <span className="text-[var(--border-default)]">|</span>
+          <a href={`/api/sessions/${session.id}/export`} className="text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] no-underline">Export</a>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {session.repository && <span className="text-[var(--text-muted)]">{session.repository.split('/').pop()}</span>}{session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>} &middot; {modelName} &middot; {fmtTokens(totalTokens)} tok &middot; {session.turn_count}t &middot; {sessionDuration}
