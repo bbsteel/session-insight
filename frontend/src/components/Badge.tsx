@@ -12,7 +12,7 @@ const intentColors: Record<string, string> = {
 
 export default function Badge({ label, value, intent = 'default' }: BadgeProps) {
   return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-meta ${intentColors[intent]}`}>
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-meta whitespace-nowrap flex-shrink-0 ${intentColors[intent]}`}>
       <span className="font-medium">{value}</span>
       <span className="opacity-60">{label}</span>
     </span>

@@ -34,7 +34,7 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
       className={`border-b border-[var(--border-muted)] ${hasAnomaly ? 'border-l-2 border-l-[var(--error)]' : ''}`}
     >
       {/* Badge bar */}
-      <div className={`flex items-center gap-1.5 ${isTight ? 'px-2 py-0.5' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
+      <div className={`flex items-center gap-1.5 flex-wrap ${isTight ? 'px-2 py-0.5' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
         <button onClick={() => setShowTokens(v => !v)} className="cursor-pointer">
             <Badge label="tok" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />
           </button>
