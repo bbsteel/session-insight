@@ -37,7 +37,6 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Sort by updated_at descending
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].UpdatedAt > sessions[j].UpdatedAt
 	})
@@ -84,21 +83,20 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 		}
 
 		type TurnToken struct {
-			TurnIndex int   `json:"turn_index"`
-			Tokens    int64 `json:"tokens"`
-			Duration  int64 `json:"duration_ms"`
-			ToolCount int   `json:"tool_count"`
-			ErrorCount int  `json:"error_count"`
+			TurnIndex  int   `json:"turn_index"`
+			Tokens     int64 `json:"tokens"`
+			Duration   int64 `json:"duration_ms"`
+			ToolCount  int   `json:"tool_count"`
+			ErrorCount int   `json:"error_count"`
 		}
 
 		var totalPrompt, totalCompletion, totalCache int64
 		var totalTools, totalErrors int
-		var cumulativeTokens int64
 		var timeline []TurnToken
+		toolFreq := make(map[string]int)
 
 		for _, t := range detail.Turns {
 			tok := t.TokenUsage.PromptTokens + t.TokenUsage.CompletionTokens
-			cumulativeTokens += tok
 			totalPrompt += t.TokenUsage.PromptTokens
 			totalCompletion += t.TokenUsage.CompletionTokens
 			totalCache += t.TokenUsage.CacheReadTokens
@@ -112,6 +110,10 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 				ToolCount:  t.ToolCallCount,
 				ErrorCount: t.ErrorCount,
 			})
+
+			for _, name := range t.ToolNames {
+				toolFreq[name]++
+			}
 		}
 
 		cacheRate := 0.0
@@ -138,6 +140,7 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			"turn_count":        len(detail.Turns),
 			"token_efficiency":  tokenEfficiency,
 			"timeline":          timeline,
+			"tool_freq":         toolFreq,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

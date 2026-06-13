@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"session-insight/internal/db"
+	"session-insight/internal/model"
 	"session-insight/internal/reader"
 )
 
