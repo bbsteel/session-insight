@@ -91,10 +91,13 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 		}
 
 		var totalPrompt, totalCompletion, totalCache int64
+		var maxCumulative int64
+		var cumul int64
 		var totalTools, totalErrors int
 		var timeline []TurnToken
 		toolFreq := make(map[string]int)
 
+		modelName := detail.ModelName
 		for _, t := range detail.Turns {
 			tok := t.TokenUsage.PromptTokens + t.TokenUsage.CompletionTokens
 			totalPrompt += t.TokenUsage.PromptTokens
@@ -102,6 +105,10 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			totalCache += t.TokenUsage.CacheReadTokens
 			totalTools += t.ToolCallCount
 			totalErrors += t.ErrorCount
+			cumul += tok
+			if cumul > maxCumulative {
+				maxCumulative = cumul
+			}
 
 			timeline = append(timeline, TurnToken{
 				TurnIndex:  t.TurnIndex,
@@ -116,6 +123,11 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
+		pressurePct := 0.0
+		ctxWindow := int64(estimateContext(modelName))
+		if ctxWindow > 0 && maxCumulative > 0 {
+			pressurePct = float64(maxCumulative) / float64(ctxWindow) * 100
+		}
 		cacheRate := 0.0
 		if totalPrompt+totalCache > 0 {
 			cacheRate = float64(totalCache) / float64(totalPrompt+totalCache) * 100
@@ -141,6 +153,9 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			"token_efficiency":  tokenEfficiency,
 			"timeline":          timeline,
 			"tool_freq":         toolFreq,
+			"context_window":    estimateContext(modelName),
+			"context_peak":      maxCumulative,
+			"pressure_pct":      pressurePct,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -148,4 +163,25 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+func estimateContext(model string) int {
+	switch {
+	case contains(model, "gpt-5"): return 128000
+	case contains(model, "gpt-4"): return 128000
+	case contains(model, "claude"): return 200000
+	case contains(model, "gemini"): return 1000000
+	default: return 128000
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchSub(s, substr)
+}
+
+func searchSub(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub { return true }
+	}
+	return false
 }

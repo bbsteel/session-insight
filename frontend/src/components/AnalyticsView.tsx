@@ -26,6 +26,9 @@ interface AnalyticsData {
     error_count: number
   }[]
   tool_freq: Record<string, number>
+  context_window: number
+  context_peak: number
+  pressure_pct: number
 }
 
 interface Props {
@@ -78,6 +81,8 @@ export default function AnalyticsView({ sessionId }: Props) {
           ['Turn Count', String(data.turn_count)],
           ['Errors', String(data.total_errors)],
           ['Avg Tok/Turn', fmtK(Math.round(data.token_efficiency))],
+          ['Context Peak', fmtK(data.context_peak)],
+          ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
           ['Prompt Tok', fmtK(data.prompt_tokens)],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2 text-center">
