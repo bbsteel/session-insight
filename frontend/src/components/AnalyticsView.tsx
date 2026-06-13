@@ -29,6 +29,8 @@ interface AnalyticsData {
   context_window: number
   context_peak: number
   pressure_pct: number
+  health_score: number
+  health_grade: string
 }
 
 interface Props {

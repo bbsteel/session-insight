@@ -134,6 +134,23 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 		}
 
 		anomalyCount := detail.AnomalySummary.TotalAnomalies
+		healthScore := 100
+		healthScore -= detail.AnomalySummary.ToolFailures * 5
+		healthScore -= detail.AnomalySummary.DurationSpikes * 5
+		if detail.AnomalySummary.MissingShutdown {
+			healthScore -= 20
+		}
+		if healthScore < 0 {
+			healthScore = 0
+		}
+		healthGrade := "A"
+		switch {
+		case healthScore > 90: healthGrade = "A"
+		case healthScore > 75: healthGrade = "B"
+		case healthScore > 60: healthGrade = "C"
+		case healthScore > 40: healthGrade = "D"
+		default: healthGrade = "F"
+		}
 		totalTokens := totalPrompt + totalCompletion
 		tokenEfficiency := 0.0
 		if totalTokens > 0 && len(detail.Turns) > 0 {
@@ -149,6 +166,8 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			"total_tools":       totalTools,
 			"total_errors":      totalErrors,
 			"anomaly_count":     anomalyCount,
+			"health_score":      healthScore,
+			"health_grade":      healthGrade,
 			"turn_count":        len(detail.Turns),
 			"token_efficiency":  tokenEfficiency,
 			"timeline":          timeline,
