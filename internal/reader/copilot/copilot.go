@@ -65,7 +65,26 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 			continue
 		}
 
-		sessions = append(sessions, toSession(ws))
+			session := toSession(ws)
+			// Quick line count for message_count
+			if f, err := os.Open(eventsPath); err == nil {
+				var newlines int
+				buf := make([]byte, 32*1024)
+				for {
+					n, readErr := f.Read(buf)
+					for _, b := range buf[:n] {
+						if b == '\n' {
+							newlines++
+						}
+					}
+					if readErr != nil {
+						break
+					}
+				}
+				f.Close()
+				session.MessageCount = newlines
+			}
+		sessions = append(sessions, session)
 	}
 
 	sort.Slice(sessions, func(i, j int) bool {
