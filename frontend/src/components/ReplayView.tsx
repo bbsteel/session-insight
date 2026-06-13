@@ -75,6 +75,11 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
       <div className="text-center"><div className="text-4xl mb-4 opacity-40">&#128269;</div>
         <h3 className="text-body font-medium text-[var(--text-primary)]">Select a session</h3>
         <p className="text-helper text-[var(--text-muted)] mt-1">Choose a session from the sidebar to view its replay.</p>
+        <div className="mt-4 flex gap-2 justify-center text-meta text-[var(--text-muted)]">
+          <span><kbd className="bg-[var(--bg-inset)] px-1 py-0.5 rounded-sm border border-[var(--border-default)]">j</kbd>/<kbd className="bg-[var(--bg-inset)] px-1 py-0.5 rounded-sm border border-[var(--border-default)]">k</kbd> navigate turns</span>
+          <span>&middot;</span>
+          <span><kbd className="bg-[var(--bg-inset)] px-1 py-0.5 rounded-sm border border-[var(--border-default)]">?</kbd> shortcuts</span>
+        </div>
       </div>
     </main>
   )
