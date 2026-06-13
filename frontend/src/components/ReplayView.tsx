@@ -35,6 +35,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const [mode, setMode] = useState<'full' | 'digest'>('full')
   const [density, setDensity] = useState<'standard' | 'tight'>('standard')
   const [showAnalytics, setShowAnalytics] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
 
   useEffect(() => {
@@ -58,6 +59,9 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
         e.preventDefault()
         if (visibleRange && visibleRange.start > 0)
           virtuosoRef.current?.scrollToIndex({ index: visibleRange.start - 1, align: 'start', behavior: 'smooth' })
+      } else if (e.key === '?' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault()
+        setShowHelp(h => !h)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -116,6 +120,28 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
           Turn {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '?'}/{session.turn_count}
         </span>
       </header>
+{showHelp && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20" onClick={() => setShowHelp(false)}>
+          <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-lg p-6 max-w-sm" onClick={e => e.stopPropagation()}>
+            <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-3">Keyboard Shortcuts</h3>
+            <div className="space-y-2 text-helper">
+              {[
+                ['j / ↓', 'Next turn'],
+                ['k / ↑', 'Previous turn'],
+                ['?', 'Toggle this help'],
+                ['Esc', 'Close panels'],
+              ].map(([key, desc]) => (
+                <div key={key} className="flex items-center gap-3">
+                  <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[60px] text-center">{key}</kbd>
+                  <span className="text-[var(--text-secondary)]">{desc}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setShowHelp(false)} className="mt-4 text-meta text-[var(--accent-blue)] hover:underline">Close</button>
+          </div>
+        </div>
+      )}
+
       {showAnalytics ? (
         <AnalyticsView sessionId={session.id} />
       ) : (
