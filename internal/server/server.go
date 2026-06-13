@@ -21,6 +21,7 @@ type SessionSummary struct {
 	Branch       string `json:"branch"`
 	TurnCount    int    `json:"turn_count"`
 	MessageCount int    `json:"message_count"`
+	IsLive         bool      `json:"is_live"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
 }

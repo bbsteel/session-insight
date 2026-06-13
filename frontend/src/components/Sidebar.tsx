@@ -156,12 +156,17 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
                     : 'hover:bg-[var(--bg-surface-hover)]'
                 }`}
               >
-                <div className="text-body text-[var(--text-primary)] truncate">
+                <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1">
+                  {s.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="Live session" />}
                   {getSessionName(s)}
                 </div>
                 <div className="text-helper text-[var(--text-secondary)] mt-0.5">
-                  {s.message_count > 0 && `${s.message_count} 条消息 · `}
-                  {timeAgo(s.updated_at)}
+                  {s.is_live ? '进行中' : (
+                    <>
+                      {s.message_count > 0 && `${s.message_count} 条消息 · `}
+                      {timeAgo(s.updated_at)}
+                    </>
+                  )}
                 </div>
               </div>
             ))}

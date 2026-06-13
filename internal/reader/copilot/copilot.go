@@ -83,6 +83,12 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 				}
 				f.Close()
 				session.MessageCount = newlines
+			// Check if session is live (events.jsonl modified within 30s)
+			if info, err := os.Stat(eventsPath); err == nil {
+				if time.Since(info.ModTime()) < 30*time.Second {
+					session.IsLive = true
+				}
+			}
 			}
 		sessions = append(sessions, session)
 	}

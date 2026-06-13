@@ -6,6 +6,7 @@ export interface SessionSummary {
   branch: string
   turn_count: number
   message_count: number
+  is_live: boolean
   created_at: string
   updated_at: string
 }
@@ -41,6 +42,7 @@ export interface SessionDetail {
   branch: string
   turn_count: number
   message_count: number
+  is_live: boolean
   created_at: string
   updated_at: string
   model_name: string

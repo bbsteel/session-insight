@@ -12,6 +12,7 @@ type Session struct {
 	ModelName    string    `json:"model_name"`
 	TurnCount    int       `json:"turn_count"`
 	MessageCount int       `json:"message_count"`
+	IsLive    bool   `json:"is_live"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
