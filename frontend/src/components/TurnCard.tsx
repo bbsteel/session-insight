@@ -18,9 +18,10 @@ interface Props {
   turn: TurnVM
   mode?: 'full' | 'digest'
   density?: 'standard' | 'tight'
+  cumulativeTokens?: number
 }
 
-export default function TurnCard({ turn, mode = 'full', density = 'standard' }: Props) {
+export default function TurnCard({ turn, mode = 'full', density = 'standard', cumulativeTokens }: Props) {
   const isTight = density === 'tight'
   const isDigest = mode === 'digest'
   const totalTokens = turn.token_usage.prompt_tokens + turn.token_usage.completion_tokens
@@ -50,13 +51,16 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
       {/* Token breakdown */}
       {showTokens && (
         <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
-          <div className="text-helper flex items-center gap-3">
+          <div className="text-helper flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="text-[var(--text-secondary)]">Tokens:</span>
             <span className="text-[var(--text-primary)] font-medium">{fmtTokens(totalTokens)}</span>
             {turn.token_usage.prompt_tokens > 0 && <span className="text-[var(--text-muted)]">prompt {fmtTokens(turn.token_usage.prompt_tokens)}</span>}
             {turn.token_usage.completion_tokens > 0 && <span className="text-[var(--text-muted)]">compl {fmtTokens(turn.token_usage.completion_tokens)}</span>}
             {turn.token_usage.cache_read_tokens > 0 && <span className="text-[var(--accent-green)]">cache {fmtTokens(turn.token_usage.cache_read_tokens)}</span>}
             {turn.token_usage.premium_requests > 0 && <span className="text-[var(--warning)]">premium {turn.token_usage.premium_requests}</span>}
+            {cumulativeTokens !== undefined && (
+              <span className="text-[var(--text-muted)]">context {fmtTokens(cumulativeTokens)}</span>
+            )}
           </div>
         </div>
       )}

@@ -171,7 +171,10 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
               setVisibleRange(newRange)
               onVisibleRangeChange?.(newRange)
             }}
-            itemContent={(_: number, turn: TurnVM) => <TurnCard turn={turn} mode={mode} density={density} />}
+            itemContent={(_: number, turn: TurnVM) => {
+              const cumul = session.turns.slice(0, turn.turn_index + 1).reduce((s, t) => s + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
+              return <TurnCard turn={turn} mode={mode} density={density} cumulativeTokens={cumul} />
+            }}
           />
           {visibleRange && visibleRange.start > 1 && (
             <button
