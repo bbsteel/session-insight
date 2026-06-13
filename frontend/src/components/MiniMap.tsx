@@ -136,9 +136,14 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
         )}
       </div>
 
-      {/* Footer — turn count */}
-      <div className="flex-shrink-0 text-center py-0.5 border-t border-[var(--border-muted)]">
-        <span className="text-meta text-[var(--text-muted)]">{barCount}</span>
+      {/* Footer — turn count + anomalies */}
+      <div className="flex-shrink-0 text-center py-0.5 border-t border-[var(--border-muted)] flex items-center justify-center gap-1.5">
+        <span className="text-meta text-[var(--text-muted)]">{barCount} turns</span>
+        {turns.filter(t => t.anomalies?.length || t.error_count > 0).length > 0 && (
+          <span className="text-meta text-[var(--error)]">
+            {turns.filter(t => t.anomalies?.length || t.error_count > 0).length} ⚠
+          </span>
+        )}
       </div>
     </nav>
   )
