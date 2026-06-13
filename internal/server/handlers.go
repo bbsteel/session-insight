@@ -210,3 +210,32 @@ func searchSub(s, sub string) bool {
 	}
 	return false
 }
+
+func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
+	type AgentInfo struct {
+		Type        string `json:"type"`
+		DisplayName string `json:"display_name"`
+		SessionCount int   `json:"session_count"`
+	}
+
+	var agents []AgentInfo
+	for _, reader := range s.Readers {
+		sessions, _ := reader.ListSessions()
+		count := 0
+		if sessions != nil {
+			count = len(sessions)
+		}
+		agents = append(agents, AgentInfo{
+			Type:         reader.AgentType(),
+			DisplayName:  reader.DisplayName(),
+			SessionCount: count,
+		})
+	}
+
+	if agents == nil {
+		agents = []AgentInfo{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(agents)
+}

@@ -35,6 +35,7 @@ func New(sessionDir string) *CopilotReader {
 }
 
 func (r *CopilotReader) AgentType() string { return "copilot" }
+func (r *CopilotReader) DisplayName() string { return "Copilot" }
 
 func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 	entries, err := os.ReadDir(r.sessionDir)

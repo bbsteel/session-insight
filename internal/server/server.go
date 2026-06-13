@@ -21,7 +21,7 @@ type SessionSummary struct {
 	Branch       string `json:"branch"`
 	TurnCount    int    `json:"turn_count"`
 	MessageCount int    `json:"message_count"`
-	IsLive         bool      `json:"is_live"`
+	IsLive       bool   `json:"is_live"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
 }
@@ -39,5 +39,6 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
-		s.Mux.HandleFunc("GET /api/sessions/{id}/analytics", s.handleSessionAnalytics)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/analytics", s.handleSessionAnalytics)
+	s.Mux.HandleFunc("GET /api/agents", s.handleListAgents)
 }
