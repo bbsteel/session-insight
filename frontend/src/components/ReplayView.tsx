@@ -36,6 +36,8 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const [density, setDensity] = useState<'standard' | 'tight'>('standard')
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [followMode, setFollowMode] = useState(true)
+  const [userScrolled, setUserScrolled] = useState(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
 
   useEffect(() => {
@@ -150,6 +152,15 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
             ref={virtuosoRef}
             style={{ height: '100%' }}
             data={session.turns}
+            atBottomStateChange={(atBottom) => {
+              if (!atBottom && !userScrolled) {
+                setUserScrolled(true)
+                setFollowMode(false)
+              } else if (atBottom && userScrolled) {
+                setUserScrolled(false)
+                setFollowMode(true)
+              }
+            }}
             rangeChanged={(range) => {
               const newRange = { start: range.startIndex, end: range.endIndex }
               setVisibleRange(newRange)
@@ -157,12 +168,24 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
             }}
             itemContent={(_: number, turn: TurnVM) => <TurnCard turn={turn} mode={mode} density={density} />}
           />
-          {visibleRange && visibleRange.start > 2 && (
+          {visibleRange && visibleRange.start > 1 && (
             <button
               onClick={() => virtuosoRef.current?.scrollToIndex({ index: 0, behavior: 'smooth' })}
-              className="absolute bottom-3 right-3 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-md px-2 py-1 text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] shadow-sm transition-colors duration-fast z-10"
+              className="absolute top-3 right-3 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-md px-2 py-1 text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] shadow-sm transition-colors duration-fast z-10"
             >
               &#9650; Top
+            </button>
+          )}
+          {userScrolled && (
+            <button
+              onClick={() => {
+                virtuosoRef.current?.scrollToIndex({ index: session.turns.length - 1, behavior: 'smooth' })
+                setUserScrolled(false)
+                setFollowMode(true)
+              }}
+              className="absolute bottom-3 right-3 bg-[var(--accent-blue)] text-white border border-[var(--accent-blue)] rounded-md px-2 py-1 text-meta hover:opacity-90 shadow-sm transition-colors duration-fast z-10"
+            >
+              &#9660; Follow
             </button>
           )}
         </div>
