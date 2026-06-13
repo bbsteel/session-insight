@@ -63,11 +63,15 @@ export default function AnalyticsView({ sessionId }: Props) {
   let cumul = 0
   const cumulativeData = data.timeline.map(t => { cumul += t.tokens; return cumul })
 
+  const isDark = document.documentElement.classList.contains('dark')
+  const textColor = isDark ? '#9ea5b4' : '#555b6e'
+  const gridColor = isDark ? '#232330' : '#e4e6ec'
+
   const tokenTimeline = {
     tooltip: { trigger: 'axis' as const },
     grid: { left: 40, right: 40, top: 8, bottom: 24 },
-    xAxis: { type: 'category' as const, data: data.timeline.map(t => `T${t.turn_index}`), axisLabel: { fontSize: 10 } },
-    yAxis: { type: 'value' as const, axisLabel: { fontSize: 10, formatter: (v: number) => fmtK(v) } },
+    xAxis: { type: 'category' as const, data: data.timeline.map(t => `T${t.turn_index}`), axisLabel: { fontSize: 10, color: textColor } },
+    yAxis: { type: 'value' as const, axisLabel: { fontSize: 10, color: textColor, formatter: (v: number) => fmtK(v) }, splitLine: { lineStyle: { color: gridColor } } },
     series: [{
       name: 'Tokens',
       type: 'bar',
@@ -82,7 +86,7 @@ export default function AnalyticsView({ sessionId }: Props) {
       itemStyle: { color: 'var(--accent-purple)' },
       symbol: 'none',
     }],
-    legend: { data: ['Tokens', 'Cumulative'], textStyle: { fontSize: 10, color: 'var(--text-secondary)' }, top: 0 },
+    legend: { data: ['Tokens', 'Cumulative'], textStyle: { fontSize: 10, color: textColor }, top: 0 },
   }
 
   return (
