@@ -62,15 +62,19 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
     )
   }
 
-  // Filter sessions based on query
-  const filtered = query.trim()
-    ? sessions.filter(s => {
-        const q = query.toLowerCase()
-        const name = getSessionName(s).toLowerCase()
-        const repo = (s.repository || '').toLowerCase()
-        return name.includes(q) || repo.includes(q)
-      })
-    : sessions
+  // Collect unique repos
+  const allRepos = [...new Set(sessions.map(s => s.repository).filter(Boolean))].sort()
+
+  // Filter sessions based on query + repo
+  const filtered = sessions.filter(s => {
+    if (query.trim()) {
+      const q = query.toLowerCase()
+      const name = getSessionName(s).toLowerCase()
+      const repo = (s.repository || '').toLowerCase()
+      if (!name.includes(q) && !repo.includes(q)) return false
+    }
+    return true
+  })
 
   // Group by agent_type
   const grouped = new Map<string, SessionSummary[]>()
@@ -112,6 +116,22 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
           )}
         </div>
       </div>
+
+      {/* Repo filter chips */}
+      {allRepos.length > 1 && (
+        <div className="px-4 pb-2 flex flex-wrap gap-1">
+          {allRepos.map(repo => (
+            <button
+              key={repo}
+              onClick={() => setQuery(repo)}
+              className="text-meta px-1.5 py-0.5 rounded-sm bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors duration-fast truncate max-w-[200px]"
+              title={repo}
+            >
+              {repo.split('/').pop()}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="px-2 pb-4">
         {Array.from(grouped.entries()).map(([agent, list]) => (
