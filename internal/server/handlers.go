@@ -99,6 +99,8 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 		var totalTools, totalErrors int
 		var timeline []TurnToken
 		toolFreq := make(map[string]int)
+		toolSuccess := make(map[string]int)
+		toolTotal := make(map[string]int)
 		skillFreq := make(map[string]int)
 
 		modelName := detail.ModelName
@@ -124,6 +126,12 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 
 			for _, name := range t.ToolNames {
 				toolFreq[name]++
+			for _, td := range t.ToolDetails {
+				toolTotal[td.Name]++
+				if td.ExitCode == 0 {
+					toolSuccess[td.Name]++
+				}
+			}
 			for _, name := range t.Skills {
 				skillFreq[name]++
 			}
@@ -179,6 +187,8 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			"token_efficiency":  tokenEfficiency,
 			"timeline":          timeline,
 			"tool_freq":         toolFreq,
+			"tool_success":       toolSuccess,
+			"tool_total":         toolTotal,
 			"skill_freq":        skillFreq,
 			"todo_count":        len(detail.Todos),
 			"todos":             detail.Todos,

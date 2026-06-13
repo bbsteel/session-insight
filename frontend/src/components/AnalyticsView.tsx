@@ -35,6 +35,8 @@ interface AnalyticsData {
   health_score: number
   health_grade: string
   skill_freq: Record<string, number>
+  tool_success: Record<string, number>
+  tool_total: Record<string, number>
 }
 
 interface Props {
@@ -119,12 +121,21 @@ export default function AnalyticsView({ sessionId }: Props) {
         <div className="px-4 pb-4">
           <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-2">Tool Usage</h3>
           <div className="bg-[var(--bg-inset)] rounded-lg p-2 flex flex-wrap gap-1.5">
-            {Object.entries(data.tool_freq).sort((a, b) => b[1] - a[1]).map(([name, count]) => (
+            {Object.entries(data.tool_freq).sort((a, b) => b[1] - a[1]).map(([name, count]) => {
+              const success = data.tool_success?.[name] || 0
+              const total = data.tool_total?.[name] || count
+              const rate = total > 0 ? (success / total * 100) : 100
+              return (
               <span key={name} className="bg-[var(--bg-surface)] px-2 py-1 rounded-sm text-meta">
                 <span className="text-[var(--text-primary)] font-medium">{count}</span>
                 <span className="text-[var(--text-muted)] ml-1">{name}</span>
+                {total > 0 && (
+                  <span className={`ml-1 ${rate === 100 ? 'text-[var(--success)]' : rate > 80 ? 'text-[var(--warning)]' : 'text-[var(--error)]'}`}>
+                    {rate.toFixed(0)}%
+                  </span>
+                )}
               </span>
-            ))}
+            )})}
           </div>
         </div>
       )}
