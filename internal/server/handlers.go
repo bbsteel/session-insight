@@ -191,7 +191,7 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 
 func estimateContext(model string) int {
 	switch {
-	case contains(model, "gpt-5"): return 128000
+	case contains(model, "gpt-5"): return 256000
 	case contains(model, "gpt-4"): return 128000
 	case contains(model, "claude"): return 200000
 	case contains(model, "gemini"): return 1000000
