@@ -181,6 +181,8 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
               <div
                 key={s.id}
                 onClick={() => onSelect(s.id)}
+                onContextMenu={(e) => { e.preventDefault(); navigator.clipboard.writeText(s.id).catch(() => {}) }}
+                title="Right-click to copy session ID"
                 className={`px-2 py-1.5 rounded-sm cursor-pointer transition-colors duration-fast ${
                   s.id === selectedId
                     ? 'bg-[var(--bg-surface-hover)]'
