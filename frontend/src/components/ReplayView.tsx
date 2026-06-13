@@ -103,7 +103,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const sessionDuration = formatDuration(session.turns.reduce((sum, t) => sum + t.duration_ms, 0))
 
   return (
-    <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden">
+    <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '32px' }}>
         <div className="flex items-center gap-2">
           <button onClick={() => setMode(m => m === 'full' ? 'digest' : 'full')} className="text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)]">{mode === 'full' ? 'Full' : 'Digest'}</button>
@@ -114,7 +114,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
           </button>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
-          {session.repository && <>{session.repository} &middot; </>}{modelName} &middot; {fmtTokens(totalTokens)} tok &middot; {session.turn_count} turns &middot; {sessionDuration}
+          {session.repository && <span className="text-[var(--text-muted)]">{session.repository.split('/').pop()} &middot; </span>}{modelName} &middot; {fmtTokens(totalTokens)} tok &middot; {session.turn_count}t &middot; {sessionDuration}
         </span>
         <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">
           Turn {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '?'}/{session.turn_count}
