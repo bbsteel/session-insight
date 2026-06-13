@@ -26,6 +26,7 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
   const totalTokens = turn.token_usage.prompt_tokens + turn.token_usage.completion_tokens
   const hasAnomaly = turn.anomalies && turn.anomalies.length > 0
   const [showTools, setShowTools] = useState(false)
+  const [showTokens, setShowTokens] = useState(false)
 
   return (
     <div
@@ -34,7 +35,9 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
     >
       {/* Badge bar */}
       <div className={`flex items-center gap-1.5 ${isTight ? 'px-2 py-0.5' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
-        <Badge label="tok" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />
+        <button onClick={() => setShowTokens(v => !v)} className="cursor-pointer">
+            <Badge label="tok" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />
+          </button>
         {turn.tool_call_count > 0 && (
           <button onClick={() => setShowTools(v => !v)} className="cursor-pointer">
             <Badge label="tool" value={String(turn.tool_call_count)} />
@@ -43,6 +46,20 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
         {turn.error_count > 0 && <Badge label="err" value={String(turn.error_count)} intent="error" />}
         {turn.duration_ms > 0 && <Badge label="dur" value={fmtDuration(turn.duration_ms)} />}
       </div>
+
+      {/* Token breakdown */}
+      {showTokens && (
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
+          <div className="text-helper flex items-center gap-3">
+            <span className="text-[var(--text-secondary)]">Tokens:</span>
+            <span className="text-[var(--text-primary)] font-medium">{fmtTokens(totalTokens)}</span>
+            {turn.token_usage.prompt_tokens > 0 && <span className="text-[var(--text-muted)]">prompt {fmtTokens(turn.token_usage.prompt_tokens)}</span>}
+            {turn.token_usage.completion_tokens > 0 && <span className="text-[var(--text-muted)]">compl {fmtTokens(turn.token_usage.completion_tokens)}</span>}
+            {turn.token_usage.cache_read_tokens > 0 && <span className="text-[var(--accent-green)]">cache {fmtTokens(turn.token_usage.cache_read_tokens)}</span>}
+            {turn.token_usage.premium_requests > 0 && <span className="text-[var(--warning)]">premium {turn.token_usage.premium_requests}</span>}
+          </div>
+        </div>
+      )}
 
       {/* Tool expansion */}
       {showTools && turn.tool_details && turn.tool_details.length > 0 && (
