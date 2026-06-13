@@ -15,6 +15,8 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
   const barCount = turns.length
   const containerRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
+  const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     setIsDragging(true)
@@ -83,8 +85,8 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
           {turns.map((turn, i) => {
             const tokens = getTotalTokens(turn)
             const heightPercent = Math.max((tokens / maxTokens) * 100, 2)
-            const hasAnomaly = turn.anomalies && turn.anomalies.length > 0
-            const hasError = turn.error_count > 0
+            const hasAnomaly = turn.anomalies && turn.anomalies.some(a => !hiddenAnomalyTypes.has(a))
+            const hasError = turn.error_count > 0 && !hiddenAnomalyTypes.has('tool_failure')
             const isUserTurn = !!turn.user_message
             const inView = !visibleRange || (i >= visibleRange.start && i <= visibleRange.end)
 
@@ -137,12 +139,37 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
       </div>
 
       {/* Footer — turn count + anomalies */}
-      <div className="flex-shrink-0 text-center py-0.5 border-t border-[var(--border-muted)] flex items-center justify-center gap-1.5">
-        <span className="text-meta text-[var(--text-muted)]">{barCount} turns</span>
+      <div className="flex-shrink-0 text-center py-0.5 border-t border-[var(--border-muted)] flex items-center justify-center gap-1.5 relative">
+        <span className="text-meta text-[var(--text-muted)]">{barCount}t</span>
         {turns.filter(t => t.anomalies?.length || t.error_count > 0).length > 0 && (
-          <span className="text-meta text-[var(--error)]">
-            {turns.filter(t => t.anomalies?.length || t.error_count > 0).length} ⚠
-          </span>
+          <button
+            onClick={() => setShowAnomalyFilter(v => !v)}
+            className={`text-meta ${hiddenAnomalyTypes.size > 0 ? 'text-[var(--text-muted)]' : 'text-[var(--error)]'} hover:opacity-80`}
+          >
+            {turns.filter(t => (t.anomalies?.length || t.error_count > 0) &&
+              (!t.anomalies || t.anomalies.some(a => !hiddenAnomalyTypes.has(a))) &&
+              (!t.error_count || !hiddenAnomalyTypes.has('tool_failure'))
+            ).length} ⚠
+          </button>
+        )}
+        {showAnomalyFilter && (
+          <div className="absolute bottom-full right-0 mb-1 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-md p-2 shadow-md z-20 min-w-[140px]">
+            {['tool_failure', 'duration_spike', 'missing_shutdown'].map(type => (
+              <label key={type} className="flex items-center gap-1.5 py-0.5 text-meta text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-surface-hover)] px-1 rounded-sm">
+                <input
+                  type="checkbox"
+                  checked={!hiddenAnomalyTypes.has(type)}
+                  onChange={() => setHiddenAnomalyTypes(prev => {
+                    const next = new Set(prev)
+                    prev.has(type) ? next.delete(type) : next.add(type)
+                    return next
+                  })}
+                  className="w-3 h-3"
+                />
+                {type.replace(/_/g, ' ')}
+              </label>
+            ))}
+          </div>
         )}
       </div>
     </nav>
