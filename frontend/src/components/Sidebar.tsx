@@ -123,7 +123,7 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
           {allRepos.map(repo => (
             <button
               key={repo}
-              onClick={() => setQuery(repo)}
+              onClick={() => setQuery(q => q === repo ? '' : repo)}
               className="text-meta px-1.5 py-0.5 rounded-sm bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors duration-fast truncate max-w-[200px]"
               title={repo}
             >
