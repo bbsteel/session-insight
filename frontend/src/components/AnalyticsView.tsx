@@ -96,8 +96,8 @@ export default function AnalyticsView({ sessionId }: Props) {
           ['Avg Tok/Turn', fmtK(Math.round(data.token_efficiency))],
           ['Context Peak', fmtK(data.context_peak)],
           ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
-          ['Prompt Tok', fmtK(data.prompt_tokens)],
           ['Health', `${data.health_score} (${data.health_grade})`],
+          ['Prompt Tok', fmtK(data.prompt_tokens)],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2 text-center">
             <div className="text-card text-[var(--text-primary)]">{value}</div>
