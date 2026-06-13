@@ -195,6 +195,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 
 	var turns []model.TurnVM
 	var foundModel string
+	var toolStarts = make(map[string]string) // toolCallId -> toolName
 	var currentTurn *model.TurnVM
 	var turnStartTimestamp string
 	scanner := bufio.NewScanner(f)
@@ -251,6 +252,9 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 			}
 			if name, ok := extractString(evt.Data, "toolName"); ok && name != "" {
 				currentTurn.ToolNames = append(currentTurn.ToolNames, name)
+				if callId, ok := extractString(evt.Data, "toolCallId"); ok && callId != "" {
+					toolStarts[callId] = name
+				}
 			}
 
 		case evt.Type == "tool.execution_complete":
@@ -260,6 +264,18 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 			currentTurn.ToolCallCount++
 			if code := extractFloat(evt.Data, "exit_code"); code != 0 {
 				currentTurn.ErrorCount++
+			if callId, ok := extractString(evt.Data, "toolCallId"); ok && callId != "" {
+				name := toolStarts[callId]
+				if name == "" {
+					name = "unknown"
+				}
+				dur := extractFloat(evt.Data, "durationMs")
+				currentTurn.ToolDetails = append(currentTurn.ToolDetails, model.ToolCallVM{
+					Name:     name,
+					ExitCode: int(extractFloat(evt.Data, "exitCode")),
+					Duration: int64(dur),
+				})
+			}
 			}
 
 		case evt.Type == "session.model_change":

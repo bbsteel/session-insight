@@ -40,6 +40,11 @@ type EventVM struct {
 	Data      map[string]any `json:"data"`
 }
 
+type ToolCallVM struct {
+	Name     string `json:"name"`
+	ExitCode int    `json:"exit_code"`
+	Duration int64  `json:"duration_ms"`
+}
 type TurnVM struct {
 	TurnIndex        int        `json:"turn_index"`
 	UserMessage      string     `json:"user_message"`
@@ -52,6 +57,7 @@ type TurnVM struct {
 	Anomalies        []string   `json:"anomalies,omitempty"`
 	ToolNames        []string   `json:"tool_names,omitempty"`
 		Subagents        []string   `json:"subagents,omitempty"`
+		ToolDetails      []ToolCallVM `json:"tool_details,omitempty"`
 		Skills           []string   `json:"skills,omitempty"`
 }
 

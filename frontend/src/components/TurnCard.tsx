@@ -44,8 +44,24 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
         {turn.duration_ms > 0 && <Badge label="dur" value={fmtDuration(turn.duration_ms)} />}
       </div>
 
-      {/* Tool name expansion */}
-      {showTools && turn.tool_names && turn.tool_names.length > 0 && (
+      {/* Tool expansion */}
+      {showTools && turn.tool_details && turn.tool_details.length > 0 && (
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
+          <div className="text-helper flex flex-col gap-0.5">
+            {turn.tool_details.map((td, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${td.exit_code === 0 ? 'bg-[var(--success)]' : 'bg-[var(--error)]'}`} />
+                <span className="text-[var(--text-primary)] text-meta">{td.name}</span>
+                {td.duration_ms > 0 && <span className="text-[var(--text-muted)] text-meta">{td.duration_ms}ms</span>}
+                {td.exit_code !== 0 && <span className="text-[var(--error)] text-meta">exit {td.exit_code}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Fallback: tool names only */}
+      {showTools && (!turn.tool_details || turn.tool_details.length === 0) && turn.tool_names && turn.tool_names.length > 0 && (
         <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
           <div className="text-helper text-[var(--text-secondary)] flex flex-wrap gap-1">
             {turn.tool_names.map((name, i) => (
