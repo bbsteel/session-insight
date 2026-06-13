@@ -76,13 +76,28 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
     return true
   })
 
-  // Group by agent_type
+  // Group by time period
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const weekAgo = new Date(today.getTime() - 7 * 86400000)
+
+  function timeGroup(s: SessionSummary): string {
+    const d = new Date(s.updated_at)
+    if (d >= today) return 'Today'
+    if (d >= weekAgo) return 'This Week'
+    return 'Older'
+  }
+
   const grouped = new Map<string, SessionSummary[]>()
   for (const s of filtered) {
-    const list = grouped.get(s.agent_type) || []
+    const group = timeGroup(s)
+    const list = grouped.get(group) || []
     list.push(s)
-    grouped.set(s.agent_type, list)
+    grouped.set(group, list)
   }
+
+  // Sort groups: Today, This Week, Older
+  const groupOrder = ['Today', 'This Week', 'Older']
 
   return (
     <aside
@@ -141,10 +156,12 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
       )}
 
       <div className="px-2 pb-4">
-        {Array.from(grouped.entries()).map(([agent, list]) => (
-          <div key={agent} className="mb-3">
+        {groupOrder.filter(g => grouped.has(g)).map(group => {
+          const list = grouped.get(group)!
+          return (
+          <div key={group} className="mb-3">
             <div className="px-2 py-1 text-section text-[var(--text-muted)]">
-              {agent} &middot; {list.length}
+              {group} &middot; {list.length}
             </div>
             {list.map(s => (
               <div
@@ -163,7 +180,7 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
                 <div className="text-helper text-[var(--text-secondary)] mt-0.5">
                   {s.is_live ? '进行中' : (
                     <>
-                      {s.message_count > 0 && `${s.message_count} 条消息 · `}
+                      {s.message_count > 0 ? `${s.message_count} 条消息 · ` : ''}
                       {timeAgo(s.updated_at)}
                     </>
                   )}
@@ -171,7 +188,7 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
               </div>
             ))}
           </div>
-        ))}
+        )})}
       </div>
     </aside>
   )
