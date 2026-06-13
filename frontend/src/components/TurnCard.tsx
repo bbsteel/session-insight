@@ -133,8 +133,8 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard' }: 
 
       {/* Encrypted content notice */}
       {!turn.assistant_message && totalTokens > 0 && (
-        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} text-helper text-[var(--text-muted)] italic`}>
-          &#128274; Content encrypted by Copilot. Disable content encryption in Copilot settings to view.
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-1.5'} text-helper text-[var(--text-muted)]`}>
+          &#128274; Content encrypted. Run <code className="bg-[var(--bg-surface)] px-1 rounded-sm text-meta">copilot config set contentEncryption false</code> to enable viewing.
         </div>
       )}
 
