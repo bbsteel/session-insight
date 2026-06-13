@@ -9,6 +9,8 @@ echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, LegendCompone
 
 interface AnalyticsData {
   total_tokens: number
+  todo_count: number
+  todo_done: number
   prompt_tokens: number
   completion_tokens: number
   cache_read_tokens: number
@@ -85,7 +87,7 @@ export default function AnalyticsView({ sessionId }: Props) {
   return (
     <div className="flex-1 overflow-auto bg-[var(--bg-surface)]">
       {/* Key metrics */}
-      <div className="grid grid-cols-6 gap-3 p-4">
+      <div className="grid grid-cols-7 gap-3 p-4">
         {[
           ['Total Tokens', fmtK(data.total_tokens)],
           ['Cache Rate', `${data.cache_hit_rate.toFixed(1)}%`],
@@ -98,6 +100,7 @@ export default function AnalyticsView({ sessionId }: Props) {
           ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
           ['Health', `${data.health_score} (${data.health_grade})`],
           ['Prompt Tok', fmtK(data.prompt_tokens)],
+['Todos', data.todo_count > 0 ? `${data.todo_done}/${data.todo_count}` : '-'],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2 text-center">
             <div className="text-card text-[var(--text-primary)]">{value}</div>

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"session-insight/internal/model"
 	"strings"
 )
 
@@ -179,6 +180,8 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 			"timeline":          timeline,
 			"tool_freq":         toolFreq,
 			"skill_freq":        skillFreq,
+			"todo_count":        len(detail.Todos),
+			"todo_done":          countDone(detail.Todos),
 			"context_window":    estimateContext(modelName),
 			"context_peak":      maxCumulative,
 			"pressure_pct":      pressurePct,
@@ -299,4 +302,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+func countDone(todos []model.Todo) int {
+	n := 0
+	for _, t := range todos {
+		if t.Status == "done" {
+			n++
+		}
+	}
+	return n
 }
