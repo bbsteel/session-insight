@@ -90,9 +90,10 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
             const isUserTurn = !!turn.user_message
             const inView = !visibleRange || (i >= visibleRange.start && i <= visibleRange.end)
 
-            // Color: blue normal, yellow high token, red anomaly
+            // Color: coral subagent, red anomaly, yellow high token, blue normal
             let barColor = 'var(--accent-blue)'
             if (hasAnomaly || hasError) barColor = 'var(--error)'
+            else if (turn.subagents && turn.subagents.length > 0) barColor = 'var(--accent-coral)'
             else if (tokens > 50000) barColor = 'var(--warning)'
 
             return (
