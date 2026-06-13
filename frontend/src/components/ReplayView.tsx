@@ -119,17 +119,27 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
       {showAnalytics ? (
         <AnalyticsView sessionId={session.id} />
       ) : (
-        <Virtuoso
-          ref={virtuosoRef}
-          style={{ flex: 1 }}
-          data={session.turns}
-          rangeChanged={(range) => {
-            const newRange = { start: range.startIndex, end: range.endIndex }
-            setVisibleRange(newRange)
-            onVisibleRangeChange?.(newRange)
-          }}
-          itemContent={(_: number, turn: TurnVM) => <TurnCard turn={turn} mode={mode} density={density} />}
-        />
+        <div className="flex-1 relative">
+          <Virtuoso
+            ref={virtuosoRef}
+            style={{ height: '100%' }}
+            data={session.turns}
+            rangeChanged={(range) => {
+              const newRange = { start: range.startIndex, end: range.endIndex }
+              setVisibleRange(newRange)
+              onVisibleRangeChange?.(newRange)
+            }}
+            itemContent={(_: number, turn: TurnVM) => <TurnCard turn={turn} mode={mode} density={density} />}
+          />
+          {visibleRange && visibleRange.start > 2 && (
+            <button
+              onClick={() => virtuosoRef.current?.scrollToIndex({ index: 0, behavior: 'smooth' })}
+              className="absolute bottom-3 right-3 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-md px-2 py-1 text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] shadow-sm transition-colors duration-fast z-10"
+            >
+              &#9650; Top
+            </button>
+          )}
+        </div>
       )}
     </main>
   )
