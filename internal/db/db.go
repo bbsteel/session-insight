@@ -59,7 +59,10 @@ func migrate(conn *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_type);
 	CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
+
 	`
 	_, err := conn.Exec(query)
 	return err
 }
+
+

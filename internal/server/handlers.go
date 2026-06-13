@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 )
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -238,4 +239,64 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(agents)
+}
+
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]map[string]string{})
+		return
+	}
+
+	qlower := strings.ToLower(q)
+	type result struct {
+		SessionID string `json:"session_id"`
+		Match     string `json:"match"`
+	}
+
+	var results []result
+	for _, reader := range s.Readers {
+		sessions, err := reader.ListSessions()
+		if err != nil {
+			continue
+		}
+		for _, sess := range sessions {
+			if len(results) >= 20 {
+				break
+			}
+			// Check name and repo
+			if strings.Contains(strings.ToLower(sess.Name), qlower) ||
+				strings.Contains(strings.ToLower(sess.Repository), qlower) {
+				results = append(results, result{SessionID: sess.ID, Match: sess.Name})
+				continue
+			}
+			// Check first user message
+			detail, err := reader.GetSession(sess.ID)
+			if err != nil || detail == nil {
+				continue
+			}
+			for _, t := range detail.Turns {
+				if strings.Contains(strings.ToLower(t.UserMessage), qlower) {
+					match := t.UserMessage
+					if len(match) > 100 {
+						idx := strings.Index(strings.ToLower(match), qlower)
+						start := idx - 30
+						if start < 0 { start = 0 }
+						end := idx + len(q) + 40
+						if end > len(match) { end = len(match) }
+						match = "..." + match[start:end] + "..."
+					}
+					results = append(results, result{SessionID: sess.ID, Match: match})
+					break
+				}
+			}
+		}
+	}
+
+	if results == nil {
+		results = []result{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
