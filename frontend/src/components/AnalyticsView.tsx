@@ -74,7 +74,7 @@ export default function AnalyticsView({ sessionId }: Props) {
   return (
     <div className="flex-1 overflow-auto bg-[var(--bg-surface)]">
       {/* Key metrics */}
-      <div className="grid grid-cols-4 gap-3 p-4">
+      <div className="grid grid-cols-6 gap-3 p-4">
         {[
           ['Total Tokens', fmtK(data.total_tokens)],
           ['Cache Rate', `${data.cache_hit_rate.toFixed(1)}%`],
@@ -86,6 +86,7 @@ export default function AnalyticsView({ sessionId }: Props) {
           ['Context Peak', fmtK(data.context_peak)],
           ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
           ['Prompt Tok', fmtK(data.prompt_tokens)],
+          ['Health', `${data.health_score} (${data.health_grade})`],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2 text-center">
             <div className="text-card text-[var(--text-primary)]">{value}</div>
