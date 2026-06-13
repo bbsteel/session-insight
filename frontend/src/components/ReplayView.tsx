@@ -117,6 +117,9 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {session.repository && <span className="text-[var(--text-muted)]">{session.repository.split('/').pop()} &middot; </span>}{modelName} &middot; {fmtTokens(totalTokens)} tok &middot; {session.turn_count}t &middot; {sessionDuration}
+          {session.todos && session.todos.length > 0 && (
+            <span className="ml-1 text-[var(--accent-green)]">{session.todos.filter(t => t.status === 'done').length}/{session.todos.length} done</span>
+          )}
         </span>
         <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">
           Turn {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '?'}/{session.turn_count}

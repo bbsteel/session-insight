@@ -47,4 +47,5 @@ export interface SessionDetail {
   updated_at: string
   model_name: string
   turns: TurnVM[]
+  todos?: { id: string; title: string; description: string; status: string; deps?: string[] }[]
 }

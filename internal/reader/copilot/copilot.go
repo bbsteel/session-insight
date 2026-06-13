@@ -13,6 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"session-insight/internal/model"
+	"database/sql"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type CopilotReader struct {
@@ -160,6 +162,7 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	session.MessageCount = msgCount
 
 	detail := &model.SessionDetail{Session: session, Turns: turns}
+	detail.Todos = readTodos(r.sessionDir, id)
 
 	// Anomaly detection
 	hasShutdown := false
@@ -365,4 +368,46 @@ func extractFloat(data map[string]any, key string) float64 {
 		}
 	}
 	return 0
+}
+
+func readTodos(sessionDir, sessionID string) []model.Todo {
+	dbPath := filepath.Join(sessionDir, sessionID, "session.db")
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+
+	rows, err := db.Query("SELECT id, title, description, status FROM todos ORDER BY created_at")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var todos []model.Todo
+	for rows.Next() {
+		var t model.Todo
+		if err := rows.Scan(&t.ID, &t.Title, &t.Description, &t.Status); err != nil {
+			continue
+		}
+		todos = append(todos, t)
+	}
+
+	// Read deps
+	depRows, err := db.Query("SELECT todo_id, depends_on FROM todo_deps")
+	if err == nil {
+		defer depRows.Close()
+		depMap := make(map[string][]string)
+		for depRows.Next() {
+			var todoID, dep string
+			if err := depRows.Scan(&todoID, &dep); err == nil {
+				depMap[todoID] = append(depMap[todoID], dep)
+			}
+		}
+		for i := range todos {
+			todos[i].Deps = depMap[todos[i].ID]
+		}
+	}
+
+	return todos
 }

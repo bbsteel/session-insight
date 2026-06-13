@@ -73,4 +73,13 @@ type SessionDetail struct {
 	Session
 	Turns          []TurnVM       `json:"turns"`
 	AnomalySummary AnomalySummary `json:"anomaly_summary"`
+	Todos          []Todo         `json:"todos,omitempty"`
+}
+
+type Todo struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Status      string   `json:"status"`
+	Deps        []string `json:"deps,omitempty"`
 }
