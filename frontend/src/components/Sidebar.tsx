@@ -120,16 +120,23 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
       {/* Repo filter chips */}
       {allRepos.length > 1 && (
         <div className="px-4 pb-2 flex flex-wrap gap-1">
-          {allRepos.map(repo => (
-            <button
-              key={repo}
-              onClick={() => setQuery(q => q === repo ? '' : repo)}
-              className="text-meta px-1.5 py-0.5 rounded-sm bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors duration-fast truncate max-w-[200px]"
-              title={repo}
-            >
-              {repo.split('/').pop()}
-            </button>
-          ))}
+          {allRepos.map(repo => {
+            const count = sessions.filter(s => s.repository === repo).length
+            return (
+              <button
+                key={repo}
+                onClick={() => setQuery(q => q === repo ? '' : repo)}
+                className={`text-meta px-1.5 py-0.5 rounded-sm transition-colors duration-fast truncate max-w-[200px] ${
+                  query === repo
+                    ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                    : 'bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+                }`}
+                title={`${repo} (${count} sessions)`}
+              >
+                {repo.split('/').pop()} <span className="opacity-60">{count}</span>
+              </button>
+            )
+          })}
         </div>
       )}
 
