@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { fetchSessions } from '../api'
 import type { SessionSummary } from '../types'
 import ThemeToggle from './ThemeToggle'
@@ -36,6 +36,19 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  // Global Cmd+K / Ctrl+K to focus search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   useEffect(() => {
     fetchSessions()
@@ -114,8 +127,9 @@ export default function Sidebar({ selectedId, onSelect }: SidebarProps) {
       <div className="px-4 pb-2">
         <div className="relative">
           <input
+            ref={searchRef}
             type="text"
-            placeholder="Search sessions..."
+            placeholder="Search sessions... (⌘K)"
             value={query}
             onChange={e => setQuery(e.target.value)}
             className="w-full h-[28px] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 pr-6 text-nav text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20"
