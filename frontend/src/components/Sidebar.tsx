@@ -108,19 +108,13 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     return () => window.removeEventListener('keydown', handler)
   }, [isMobile, onClose])
 
-  const loadSessions = useCallback(() => {
-    const agent = agentFilter || undefined
-    fetchSessions(agent)
+  // Load all sessions once on mount — agent/search filters are client-side
+  useEffect(() => {
+    fetchSessions()
       .then(data => { setSessions(data); setError(null) })
       .catch(err => setError(err instanceof Error ? err.message : '会话列表加载失败'))
       .finally(() => setLoading(false))
-  }, [agentFilter])
-
-  // Initial load + refetch when agent filter changes
-  useEffect(() => {
-    setLoading(true)
-    loadSessions()
-  }, [loadSessions])
+  }, [])
 
   // Fetch agents on mount
   useEffect(() => {
@@ -172,6 +166,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
   }, [showToast])
 
   const filtered = useMemo(() => sessions.filter(s => {
+    if (agentFilter && s.agent_type !== agentFilter) return false
     if (query.trim()) {
       const q = query.toLowerCase()
       const name = getSessionName(s).toLowerCase()
@@ -182,7 +177,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !preview.includes(q)) return false
     }
     return true
-  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query])
+  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter])
 
   const liveCount = useMemo(() => sessions.filter(s => s.is_live).length, [sessions])
 
