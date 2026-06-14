@@ -16,8 +16,6 @@ interface Props {
   scrollToTopRef?: React.MutableRefObject<((top: number, behavior?: ScrollBehavior) => void) | null>
 }
 
-type JumpTarget = 'turn' | 'user' | 'anomaly' | 'compaction'
-
 function getTotalTokens(t: TurnVM): number {
   return t.token_usage.prompt_tokens + t.token_usage.completion_tokens
 }
@@ -46,9 +44,6 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
   const pendingScrollTopRef = useRef<number | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [trackLength, setTrackLength] = useState(0)
-  const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
-  const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
-
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
   const visibleCount = visibleRange ? visibleRange.end - visibleRange.start + 1 : 1
   const viewportFrame = scrollMetrics && trackLength > 0
@@ -66,44 +61,14 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
     return () => resizeObserver.disconnect()
   }, [])
 
-  const anomalyIndexes = useMemo(() => turns
+  const anomalyMarkers = useMemo(() => turns
     .map((turn, index) => ({ turn, index }))
-    .filter(({ turn }) => {
-      const hasVisibleAnomaly = turn.anomalies?.some(a => !hiddenAnomalyTypes.has(a))
-      const hasVisibleError = turn.error_count > 0 && !hiddenAnomalyTypes.has('tool_failure')
-      return hasVisibleAnomaly || hasVisibleError
-    })
-    .map(({ index }) => index), [turns, hiddenAnomalyTypes])
-
-  const userIndexes = useMemo(() => turns
-    .map((turn, index) => turn.user_message ? index : -1)
-    .filter(index => index >= 0), [turns])
-
-  const compactionIndexes = useMemo(() => turns
-    .map((turn, index) => hasCompaction(turn) ? index : -1)
-    .filter(index => index >= 0), [turns])
+    .filter(({ turn }) => (turn.anomalies?.length ?? 0) > 0 || turn.error_count > 0)
+    .map(({ index }) => index), [turns])
 
   function scrollTo(index: number, behavior: ReplayScrollBehavior = 'smooth') {
     if (barCount === 0) return
     scrollToIndexRef?.current?.(clamp(index, 0, barCount - 1), behavior)
-  }
-
-  function jump(direction: -1 | 1, target: JumpTarget) {
-    const base = visibleRange?.start ?? 0
-    if (target === 'turn') {
-      scrollTo(base + direction)
-      return
-    }
-
-    const indexes =
-      target === 'user' ? userIndexes :
-      target === 'anomaly' ? anomalyIndexes :
-      compactionIndexes
-
-    const next = direction > 0
-      ? indexes.find(index => index > base)
-      : [...indexes].reverse().find(index => index < base)
-    if (next !== undefined) scrollTo(next)
   }
 
   function scrollFromPointer(clientY: number) {
@@ -192,34 +157,6 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
       className="minimap-shell flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col select-none"
       aria-label="MiniMap"
     >
-      <div className="grid grid-cols-4 border-b border-[var(--border-muted)] bg-[var(--bg-surface)]" style={{ height: 32 }}>
-        {[
-          ['T', '轮次', 'turn'],
-          ['U', '用户输入', 'user'],
-          ['!', '异常', 'anomaly'],
-          ['C', '压缩', 'compaction'],
-        ].map(([icon, label, target]) => (
-          <div key={target} className="min-w-0 border-r border-[var(--border-muted)] last:border-r-0">
-            <button
-              className="h-4 w-full text-[8px] leading-none text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]"
-              onClick={() => jump(-1, target as JumpTarget)}
-              title={`上一个${label}`}
-              aria-label={`上一个${label}`}
-            >
-              {icon}↑
-            </button>
-            <button
-              className="h-4 w-full border-t border-[var(--border-muted)] text-[8px] leading-none text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]"
-              onClick={() => jump(1, target as JumpTarget)}
-              title={`下一个${label}`}
-              aria-label={`下一个${label}`}
-            >
-              {icon}↓
-            </button>
-          </div>
-        ))}
-      </div>
-
       <div
         ref={containerRef}
         className="flex-1 relative overflow-hidden bg-[var(--bg-inset)]"
@@ -238,7 +175,7 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
           const rowTop = `${((index + 0.5) / barCount) * 100}%`
           const tokenWidth = Math.max(5, (tokens / maxTokens) * 50)
           const pressureRatio = tokens / maxTokens
-          const isAnomaly = anomalyIndexes.includes(index)
+          const isAnomaly = anomalyMarkers.includes(index)
           const isUserTurn = !!turn.user_message
           const isCompaction = hasCompaction(turn)
           const inView = visibleRange ? index >= visibleRange.start && index <= visibleRange.end : false
@@ -292,38 +229,10 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
         )}
       </div>
 
-      <div className="relative flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
+      <div className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
         <span className="text-meta text-[var(--text-muted)]">
           {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '1'} / {barCount}
         </span>
-        {anomalyIndexes.length > 0 && (
-          <button
-            onClick={() => setShowAnomalyFilter(v => !v)}
-            className={`absolute right-1 text-meta ${hiddenAnomalyTypes.size > 0 ? 'text-[var(--text-muted)]' : 'text-[var(--error)]'} hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-blue)]`}
-            aria-label="异常类型过滤"
-          >
-            {anomalyIndexes.length}!
-          </button>
-        )}
-        {showAnomalyFilter && (
-          <div className="absolute bottom-full right-0 mb-1 min-w-[140px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-md z-20">
-            {['tool_failure', 'duration_spike', 'missing_shutdown'].map(type => (
-              <label key={type} className="flex cursor-pointer items-center gap-1.5 rounded-sm px-1 py-0.5 text-meta text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]">
-                <input
-                  type="checkbox"
-                  checked={!hiddenAnomalyTypes.has(type)}
-                  onChange={() => setHiddenAnomalyTypes(prev => {
-                    const next = new Set(prev)
-                    prev.has(type) ? next.delete(type) : next.add(type)
-                    return next
-                  })}
-                  className="h-3 w-3"
-                />
-                {type.replace(/_/g, ' ')}
-              </label>
-            ))}
-          </div>
-        )}
       </div>
     </nav>
   )

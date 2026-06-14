@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { fetchSession } from '../api'
@@ -10,6 +10,11 @@ import ThemeToggle from './ThemeToggle'
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
+type JumpTarget = 'turn' | 'user' | 'anomaly' | 'compaction'
+
+function hasCompaction(turn: TurnVM): boolean {
+  return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false
+}
 
 interface Props {
   sessionId: string | null
@@ -42,6 +47,8 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const [showAnalytics, setShowAnalytics] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [userScrolled, setUserScrolled] = useState(false)
+  const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
+  const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const scrollerRef = useRef<HTMLElement | null>(null)
   const [scrollerElement, setScrollerElement] = useState<HTMLElement | null>(null)
@@ -111,12 +118,10 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.key === 'j' || e.key === 'ArrowDown') {
         e.preventDefault()
-        if (visibleRange && visibleRange.end < session.turns.length - 1)
-          virtuosoRef.current?.scrollToIndex({ index: visibleRange.start + 1, align: 'start', behavior: 'smooth' })
+        jump(1, 'turn')
       } else if (e.key === 'k' || e.key === 'ArrowUp') {
         e.preventDefault()
-        if (visibleRange && visibleRange.start > 0)
-          virtuosoRef.current?.scrollToIndex({ index: visibleRange.start - 1, align: 'start', behavior: 'smooth' })
+        jump(-1, 'turn')
       } else if (e.key === '?' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         setShowHelp(h => !h)
@@ -131,6 +136,58 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
     setLoading(true)
     fetchSession(sessionId).then(data => { setSession(data); onTurnsChange?.(data.turns) }).catch(console.error).finally(() => setLoading(false))
   }, [sessionId])
+
+  const turns = session?.turns ?? []
+
+  const jumpBaseRef = useRef(0)
+  useEffect(() => {
+    if (visibleRange) jumpBaseRef.current = visibleRange.start
+  }, [visibleRange])
+
+  const anomalyIndexes = useMemo(() => turns
+    .map((turn, index) => ({ turn, index }))
+    .filter(({ turn }) => {
+      const hasVisibleAnomaly = turn.anomalies?.some(a => !hiddenAnomalyTypes.has(a))
+      const hasVisibleError = turn.error_count > 0 && !hiddenAnomalyTypes.has('tool_failure')
+      return hasVisibleAnomaly || hasVisibleError
+    })
+    .map(({ index }) => index), [turns, hiddenAnomalyTypes])
+
+  const userIndexes = useMemo(() => turns
+    .map((turn, index) => turn.user_message ? index : -1)
+    .filter(index => index >= 0), [turns])
+
+  const compactionIndexes = useMemo(() => turns
+    .map((turn, index) => hasCompaction(turn) ? index : -1)
+    .filter(index => index >= 0), [turns])
+
+  function jump(direction: -1 | 1, target: JumpTarget) {
+    const barCount = turns.length
+    if (barCount === 0) return
+    const scroller = scrollerRef.current
+    const base = jumpBaseRef.current
+    let targetIndex = -1
+
+    if (target === 'turn') {
+      targetIndex = Math.max(0, Math.min(base + direction, barCount - 1))
+    } else {
+      const indexes =
+        target === 'user' ? userIndexes :
+        target === 'anomaly' ? anomalyIndexes :
+        compactionIndexes
+      const found = direction > 0
+        ? indexes.find(index => index > base)
+        : [...indexes].reverse().find(index => index < base)
+      if (found === undefined) return
+      targetIndex = found
+    }
+
+    jumpBaseRef.current = targetIndex
+    if (scroller && barCount > 0) {
+      const ratio = targetIndex / (barCount - 1)
+      scroller.scrollTop = ratio * (scroller.scrollHeight - scroller.clientHeight)
+    }
+  }
 
   if (!sessionId) return (
     <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
@@ -186,6 +243,60 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
           </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
+        </div>
+        <span className="text-[var(--border-default)] mx-1">|</span>
+        <div className="flex items-center gap-1">
+          {([
+            ['turn', '轮次', '上一轮', '下一轮'],
+            ['user', '用户', '上个用户输入', '下个用户输入'],
+            ['anomaly', '异常', '上个异常', '下个异常'],
+            ['compaction', '压缩', '上个压缩点', '下个压缩点'],
+          ] as const).map(([target, label, prevTitle, nextTitle]) => (
+            <div key={target} className="flex items-center gap-px">
+              <button
+                onClick={() => jump(-1, target)}
+                className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                title={prevTitle}
+                aria-label={prevTitle}
+              >←</button>
+              <span className="text-meta text-[var(--text-muted)] select-none px-0.5">{label}</span>
+              <button
+                onClick={() => jump(1, target)}
+                className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                title={nextTitle}
+                aria-label={nextTitle}
+              >→</button>
+            </div>
+          ))}
+          <div className="relative">
+            <button
+              onClick={() => setShowAnomalyFilter(v => !v)}
+              className={`h-7 rounded-md px-1.5 text-nav ${hiddenAnomalyTypes.size > 0 ? 'text-[var(--text-muted)]' : 'text-[var(--error)]'} hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+              title="异常过滤"
+              aria-label="异常过滤"
+            >
+              {anomalyIndexes.length}!
+            </button>
+            {showAnomalyFilter && (
+              <div className="absolute top-full left-0 mt-1 min-w-[150px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-md z-20">
+                {['tool_failure', 'duration_spike', 'missing_shutdown'].map(type => (
+                  <label key={type} className="flex cursor-pointer items-center gap-1.5 rounded-sm px-1 py-0.5 text-meta text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={!hiddenAnomalyTypes.has(type)}
+                      onChange={() => setHiddenAnomalyTypes(prev => {
+                        const next = new Set(prev)
+                        prev.has(type) ? next.delete(type) : next.add(type)
+                        return next
+                      })}
+                      className="h-3 w-3"
+                    />
+                    {type.replace(/_/g, ' ')}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tok · {session.turn_count} turns · {sessionDuration}
