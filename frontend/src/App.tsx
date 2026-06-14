@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar'
 import MiniMap from './components/MiniMap'
 import ReplayView from './components/ReplayView'
 import type { TurnVM } from './types'
+import type { ScrollMetrics } from './minimapGeometry'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 
@@ -10,8 +11,10 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [turns, setTurns] = useState<TurnVM[]>([])
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
+  const [scrollMetrics, setScrollMetrics] = useState<ScrollMetrics>()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
+  const scrollToTopRef = useRef<((top: number, behavior?: ScrollBehavior) => void) | null>(null)
 
   const selectSession = (id: string) => {
     setSelectedId(id)
@@ -36,12 +39,20 @@ export default function App() {
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-[260] transition-transform duration-normal md:block`}>
         <Sidebar selectedId={selectedId} onSelect={selectSession} drawer={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       </div>
-      <MiniMap turns={turns} visibleRange={visibleRange} scrollToIndexRef={scrollToIndexRef} />
+      <MiniMap
+        turns={turns}
+        visibleRange={visibleRange}
+        scrollMetrics={scrollMetrics}
+        scrollToIndexRef={scrollToIndexRef}
+        scrollToTopRef={scrollToTopRef}
+      />
       <ReplayView
         sessionId={selectedId}
         onTurnsChange={setTurns}
         onVisibleRangeChange={setVisibleRange}
+        onScrollMetricsChange={setScrollMetrics}
         scrollToIndexRef={scrollToIndexRef}
+        scrollToTopRef={scrollToTopRef}
       />
     </div>
   )

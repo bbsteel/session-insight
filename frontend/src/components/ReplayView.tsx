@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useState, useRef } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { fetchSession } from '../api'
 import type { SessionDetail, TurnVM } from '../types'
+import type { ScrollMetrics } from '../minimapGeometry'
 import TurnCard from './TurnCard'
 import ThemeToggle from './ThemeToggle'
 
@@ -14,7 +15,9 @@ interface Props {
   sessionId: string | null
   onTurnsChange?: (turns: TurnVM[]) => void
   onVisibleRangeChange?: (range: { start: number; end: number }) => void
+  onScrollMetricsChange?: (metrics: ScrollMetrics) => void
   scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
+  scrollToTopRef?: React.MutableRefObject<((top: number, behavior?: ScrollBehavior) => void) | null>
 }
 
 function fmtTokens(n: number): string {
@@ -30,7 +33,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeChange, scrollToIndexRef }: Props) {
+export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeChange, onScrollMetricsChange, scrollToIndexRef, scrollToTopRef }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
@@ -40,6 +43,14 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const [showHelp, setShowHelp] = useState(false)
   const [userScrolled, setUserScrolled] = useState(false)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
+  const scrollerRef = useRef<HTMLElement | null>(null)
+  const [scrollerElement, setScrollerElement] = useState<HTMLElement | null>(null)
+
+  const captureScroller = useCallback((ref: HTMLElement | Window | null) => {
+    const element = ref instanceof HTMLElement ? ref : null
+    scrollerRef.current = element
+    setScrollerElement(element)
+  }, [])
 
   useEffect(() => {
     if (scrollToIndexRef && virtuosoRef.current) {
@@ -47,7 +58,51 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
         virtuosoRef.current?.scrollToIndex({ index, align: 'start', behavior })
       }
     }
-  }, [scrollToIndexRef, session])
+    if (scrollToTopRef) {
+      scrollToTopRef.current = (top: number, behavior: ScrollBehavior = 'auto') => {
+        const scroller = scrollerRef.current
+        if (!scroller) {
+          virtuosoRef.current?.scrollTo({ top, behavior })
+          return
+        }
+        if (behavior === 'auto') {
+          scroller.scrollTop = top
+          return
+        }
+        scroller.scrollTo({ top, behavior })
+      }
+    }
+  }, [scrollToIndexRef, scrollToTopRef, scrollerElement, session])
+
+  useEffect(() => {
+    const scroller = scrollerElement
+    if (!scroller || !onScrollMetricsChange) return
+
+    let frame = 0
+    const emitMetrics = () => {
+      frame = 0
+      onScrollMetricsChange({
+        scrollTop: scroller.scrollTop,
+        scrollHeight: scroller.scrollHeight,
+        clientHeight: scroller.clientHeight,
+      })
+    }
+    const scheduleMetrics = () => {
+      if (frame) return
+      frame = window.requestAnimationFrame(emitMetrics)
+    }
+
+    emitMetrics()
+    scroller.addEventListener('scroll', scheduleMetrics, { passive: true })
+    const resizeObserver = new ResizeObserver(scheduleMetrics)
+    resizeObserver.observe(scroller)
+
+    return () => {
+      scroller.removeEventListener('scroll', scheduleMetrics)
+      resizeObserver.disconnect()
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [onScrollMetricsChange, scrollerElement, session, showAnalytics, mode, density])
 
   // Keyboard navigation
   useEffect(() => {
@@ -178,6 +233,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
         <div className="flex-1 relative">
           <Virtuoso
             ref={virtuosoRef}
+            scrollerRef={captureScroller}
             style={{ height: '100%' }}
             data={session.turns}
             atBottomStateChange={(atBottom) => {
@@ -191,6 +247,15 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
               const newRange = { start: range.startIndex, end: range.endIndex }
               setVisibleRange(newRange)
               onVisibleRangeChange?.(newRange)
+            }}
+            totalListHeightChanged={() => {
+              const scroller = scrollerRef.current
+              if (!scroller) return
+              onScrollMetricsChange?.({
+                scrollTop: scroller.scrollTop,
+                scrollHeight: scroller.scrollHeight,
+                clientHeight: scroller.clientHeight,
+              })
             }}
             itemContent={(_: number, turn: TurnVM) => {
               const currentIndex = session.turns.findIndex(t => t.turn_index === turn.turn_index)

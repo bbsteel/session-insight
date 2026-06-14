@@ -1,12 +1,19 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TurnVM } from '../types'
+import {
+  getScrollTopFromTrackPosition,
+  getViewportFrame,
+  type ScrollMetrics,
+} from '../minimapGeometry'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 
 interface Props {
   turns: TurnVM[]
   visibleRange?: { start: number; end: number }
+  scrollMetrics?: ScrollMetrics
   scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
+  scrollToTopRef?: React.MutableRefObject<((top: number, behavior?: ScrollBehavior) => void) | null>
 }
 
 type JumpTarget = 'turn' | 'user' | 'anomaly' | 'compaction'
@@ -29,16 +36,35 @@ function hasCompaction(turn: TurnVM): boolean {
   return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false
 }
 
-export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props) {
+export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIndexRef, scrollToTopRef }: Props) {
   const barCount = turns.length
   const containerRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
+  const dragOffsetRef = useRef(0)
+  const scrollFrameRef = useRef(0)
+  const pendingScrollTopRef = useRef<number | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [trackLength, setTrackLength] = useState(0)
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
   const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
 
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
   const visibleCount = visibleRange ? visibleRange.end - visibleRange.start + 1 : 1
+  const viewportFrame = scrollMetrics && trackLength > 0
+    ? getViewportFrame(scrollMetrics, trackLength)
+    : undefined
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const updateTrackLength = () => setTrackLength(container.getBoundingClientRect().height)
+    updateTrackLength()
+    const resizeObserver = new ResizeObserver(updateTrackLength)
+    resizeObserver.observe(container)
+    return () => resizeObserver.disconnect()
+  }, [])
 
   const anomalyIndexes = useMemo(() => turns
     .map((turn, index) => ({ turn, index }))
@@ -83,6 +109,36 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
   function scrollFromPointer(clientY: number) {
     if (!containerRef.current || barCount === 0) return
     const rect = containerRef.current.getBoundingClientRect()
+    if (scrollMetrics && viewportFrame && scrollToTopRef?.current) {
+      const nextScrollTop = getScrollTopFromTrackPosition({
+        pointerPosition: clientY,
+        trackStart: rect.top,
+        trackLength: rect.height,
+        viewportLength: viewportFrame.height,
+        scrollHeight: scrollMetrics.scrollHeight,
+        clientHeight: scrollMetrics.clientHeight,
+        dragOffset: dragOffsetRef.current,
+      })
+
+      if (viewportRef.current) {
+        const nextFrame = getViewportFrame({ ...scrollMetrics, scrollTop: nextScrollTop }, rect.height)
+        viewportRef.current.style.top = `${nextFrame.top}px`
+        viewportRef.current.style.height = `${nextFrame.height}px`
+      }
+
+      pendingScrollTopRef.current = nextScrollTop
+      if (!scrollFrameRef.current) {
+        scrollFrameRef.current = window.requestAnimationFrame(() => {
+          scrollFrameRef.current = 0
+          const pending = pendingScrollTopRef.current
+          if (pending === null) return
+          pendingScrollTopRef.current = null
+          scrollToTopRef.current?.(pending, 'auto')
+        })
+      }
+      return
+    }
+
     const ratio = clamp((clientY - rect.top) / rect.height, 0, 1)
     const maxStart = Math.max(0, barCount - visibleCount)
     const targetIndex = Math.round(ratio * maxStart)
@@ -93,6 +149,14 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
     draggingRef.current = true
     setIsDragging(true)
     e.currentTarget.setPointerCapture(e.pointerId)
+    if (containerRef.current && viewportFrame) {
+      const rect = containerRef.current.getBoundingClientRect()
+      const trackY = e.clientY - rect.top
+      const insideViewport = trackY >= viewportFrame.top && trackY <= viewportFrame.top + viewportFrame.height
+      dragOffsetRef.current = insideViewport ? trackY - viewportFrame.top : viewportFrame.height / 2
+    } else {
+      dragOffsetRef.current = 0
+    }
     scrollFromPointer(e.clientY)
   }
 
@@ -104,6 +168,14 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
   function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
     draggingRef.current = false
     setIsDragging(false)
+    if (scrollFrameRef.current) {
+      window.cancelAnimationFrame(scrollFrameRef.current)
+      scrollFrameRef.current = 0
+    }
+    if (pendingScrollTopRef.current !== null) {
+      scrollToTopRef?.current?.(pendingScrollTopRef.current, 'auto')
+      pendingScrollTopRef.current = null
+    }
     e.currentTarget.releasePointerCapture(e.pointerId)
   }
 
@@ -203,10 +275,11 @@ export default function MiniMap({ turns, visibleRange, scrollToIndexRef }: Props
 
         {visibleRange && (
           <div
+            ref={viewportRef}
             className="absolute left-0 right-0 pointer-events-none"
             style={{
-              top: `${(visibleRange.start / barCount) * 100}%`,
-              height: `${Math.max((visibleCount / barCount) * 100, 4)}%`,
+              top: viewportFrame ? `${viewportFrame.top}px` : `${(visibleRange.start / barCount) * 100}%`,
+              height: viewportFrame ? `${viewportFrame.height}px` : `${Math.max((visibleCount / barCount) * 100, 4)}%`,
               background: 'rgba(37, 99, 235, 0.14)',
               borderTop: '1px solid var(--accent-blue)',
               borderBottom: '1px solid var(--accent-blue)',
