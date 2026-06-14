@@ -211,6 +211,7 @@ func estimateContext(model string) int {
 	case contains(model, "gpt-4"): return 128000
 	case contains(model, "claude"): return 200000
 	case contains(model, "gemini"): return 1000000
+	case contains(model, "deepseek"): return 131072
 	default: return 128000
 	}
 }
