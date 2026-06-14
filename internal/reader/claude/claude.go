@@ -161,6 +161,7 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 		aiTitle      string
 		lastPrompt   string
 		firstUserMsg string
+		userMessages []string
 		createdAt    time.Time
 		updatedAt    time.Time
 		lineCount    int
@@ -209,13 +210,20 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 				modelName = evt.Message.Model
 			}
 		case "user":
-			if firstUserMsg == "" && !evt.IsMeta && evt.ToolUseResult == nil && evt.Message != nil {
-				firstUserMsg = evt.Message.contentString()
+			if !evt.IsMeta && evt.ToolUseResult == nil && evt.Message != nil {
+				msg := evt.Message.contentString()
+				if firstUserMsg == "" {
+					firstUserMsg = msg
+				}
+				if len(userMessages) < 5 && msg != "" {
+					userMessages = append(userMessages, msg)
+				}
 			}
 		}
 	}
 
 	name := resolveSessionName(aiTitle, lastPrompt, firstUserMsg, createdAt)
+	previewText := buildPreviewText(userMessages)
 
 	return model.Session{
 		ID:           sessionID,
@@ -225,6 +233,7 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 		Branch:       gitBranch,
 		Name:         name,
 		ModelName:    modelName,
+		PreviewText:  previewText,
 		MessageCount: lineCount,
 		CreatedAt:    createdAt,
 		UpdatedAt:    updatedAt,
@@ -253,6 +262,21 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(runes[:n]) + "..."
+}
+
+func buildPreviewText(messages []string) string {
+	// Truncate each message to 200 runes, join, cap total at ~1500 bytes
+	const maxPerMsg = 200
+	const maxTotal = 1500
+	var parts []string
+	for _, m := range messages {
+		parts = append(parts, truncateRunes(m, maxPerMsg))
+	}
+	joined := strings.Join(parts, " | ")
+	if len(joined) > maxTotal {
+		return joined[:maxTotal] + "..."
+	}
+	return joined
 }
 
 // ---- GetSession ----

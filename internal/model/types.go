@@ -10,6 +10,7 @@ type Session struct {
 	Branch       string    `json:"branch"`
 	Name         string    `json:"name"`
 	ModelName    string    `json:"model_name"`
+	PreviewText  string    `json:"preview_text"`
 	TurnCount    int       `json:"turn_count"`
 	MessageCount int       `json:"message_count"`
 	IsLive    bool   `json:"is_live"`

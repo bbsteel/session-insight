@@ -34,7 +34,7 @@ export default function App() {
         />
       )}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-[260] transition-transform duration-normal md:block`}>
-        <Sidebar selectedId={selectedId} onSelect={selectSession} />
+        <Sidebar selectedId={selectedId} onSelect={selectSession} drawer={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       </div>
       <MiniMap turns={turns} visibleRange={visibleRange} scrollToIndexRef={scrollToIndexRef} />
       <ReplayView

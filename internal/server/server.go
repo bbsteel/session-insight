@@ -19,6 +19,7 @@ type SessionSummary struct {
 	Name         string `json:"name"`
 	Repository   string `json:"repository"`
 	Branch       string `json:"branch"`
+	PreviewText  string `json:"preview_text"`
 	TurnCount    int    `json:"turn_count"`
 	MessageCount int    `json:"message_count"`
 	IsLive       bool   `json:"is_live"`

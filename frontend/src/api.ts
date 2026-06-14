@@ -1,4 +1,4 @@
-import type { SessionDetail, SessionSummary } from './types'
+import type { AgentInfo, SessionDetail, SessionSummary } from './types'
 
 export async function fetchSessions(agent?: string): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
@@ -13,6 +13,12 @@ export async function fetchSession(id: string): Promise<SessionDetail> {
   const res = await fetch(`/api/sessions/${id}`)
   if (!res.ok) throw new Error(`Failed to fetch session: ${res.status}`)
   return readJson<SessionDetail>(res, 'session')
+}
+
+export async function fetchAgents(): Promise<AgentInfo[]> {
+  const res = await fetch('/api/agents')
+  if (!res.ok) throw new Error(`Failed to fetch agents: ${res.status}`)
+  return readJson<AgentInfo[]>(res, 'agents')
 }
 
 async function readJson<T>(res: Response, label: string): Promise<T> {

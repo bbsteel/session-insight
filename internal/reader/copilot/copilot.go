@@ -2,19 +2,20 @@ package copilot
 
 import (
 	"bufio"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/yaml.v3"
 
 	"session-insight/internal/model"
-	"database/sql"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type CopilotReader struct {
@@ -36,8 +37,47 @@ func New(sessionDir string) *CopilotReader {
 	return &CopilotReader{sessionDir: sessionDir}
 }
 
-func (r *CopilotReader) AgentType() string { return "copilot" }
+func (r *CopilotReader) AgentType() string  { return "copilot" }
 func (r *CopilotReader) DisplayName() string { return "Copilot" }
+
+func scanPreviewText(eventsPath string) string {
+	f, err := os.Open(eventsPath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	var messages []string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		var evt jsonlEvent
+		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			continue
+		}
+		if evt.Type == "user.message" {
+			if content, ok := extractString(evt.Data, "content"); ok && content != "" {
+				messages = append(messages, truncateRunes(content, 200))
+				if len(messages) >= 5 {
+					break
+				}
+			}
+		}
+	}
+	joined := strings.Join(messages, " | ")
+	if len(joined) > 1500 {
+		return joined[:1500] + "..."
+	}
+	return joined
+}
+
+func truncateRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "..."
+}
 
 func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 	entries, err := os.ReadDir(r.sessionDir)
@@ -69,6 +109,7 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 		}
 
 			session := toSession(ws)
+			session.PreviewText = scanPreviewText(eventsPath)
 			// Quick line count for message_count
 			if f, err := os.Open(eventsPath); err == nil {
 				var newlines int
@@ -86,12 +127,12 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 				}
 				f.Close()
 				session.MessageCount = newlines
-			// Check if session is live (events.jsonl modified within 30s)
-			if info, err := os.Stat(eventsPath); err == nil {
-				if time.Since(info.ModTime()) < 30*time.Second {
-					session.IsLive = true
+				// Check if session is live (events.jsonl modified within 30s)
+				if info, err := os.Stat(eventsPath); err == nil {
+					if time.Since(info.ModTime()) < 30*time.Second {
+						session.IsLive = true
+					}
 				}
-			}
 			}
 		sessions = append(sessions, session)
 	}
