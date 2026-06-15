@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"session-insight/internal/reader/claude"
+	"session-insight/internal/reader/codex"
 	"session-insight/internal/reader/copilot"
 )
 
@@ -19,6 +20,11 @@ func Discover() []BaseSessionReader {
 	copilotDir := filepath.Join(homeDir, ".copilot", "session-state")
 	if info, err := os.Stat(copilotDir); err == nil && info.IsDir() {
 		readers = append(readers, copilot.New(copilotDir))
+	}
+
+	codexDir := filepath.Join(homeDir, ".codex", "sessions")
+	if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
+		readers = append(readers, codex.New(codexDir))
 	}
 
 	claudeDir := filepath.Join(homeDir, ".claude", "projects")
