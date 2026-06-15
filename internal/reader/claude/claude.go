@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"session-insight/internal/model"
@@ -125,7 +126,10 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 		return nil, err
 	}
 
-	var sessions []model.Session
+	type fileJob struct {
+		path, id string
+	}
+	var jobs []fileJob
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == "memory" {
 			continue
@@ -133,11 +137,29 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 		projDir := filepath.Join(r.projectsDir, entry.Name())
 		jsonlFiles, _ := filepath.Glob(filepath.Join(projDir, "*.jsonl"))
 		for _, jf := range jsonlFiles {
-			sessionID := strings.TrimSuffix(filepath.Base(jf), ".jsonl")
-			if sess, ok := readSessionMeta(jf, sessionID); ok {
-				sessions = append(sessions, sess)
-			}
+			jobs = append(jobs, fileJob{jf, strings.TrimSuffix(filepath.Base(jf), ".jsonl")})
 		}
+	}
+
+	results := make(chan model.Session, len(jobs))
+	sem := make(chan struct{}, 20)
+	var wg sync.WaitGroup
+	for _, job := range jobs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(j fileJob) {
+			defer func() { <-sem; wg.Done() }()
+			if sess, ok := readSessionMeta(j.path, j.id); ok {
+				results <- sess
+			}
+		}(job)
+	}
+	wg.Wait()
+	close(results)
+
+	sessions := make([]model.Session, 0, len(results))
+	for s := range results {
+		sessions = append(sessions, s)
 	}
 
 	sort.Slice(sessions, func(i, j int) bool {
@@ -154,6 +176,12 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 	}
 	defer f.Close()
 
+	fi, err := f.Stat()
+	if err != nil {
+		return model.Session{}, false
+	}
+	fileSize := fi.Size()
+
 	var (
 		cwd          string
 		gitBranch    string
@@ -164,61 +192,39 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 		userMessages []string
 		createdAt    time.Time
 		updatedAt    time.Time
-		lineCount    int
+		headLines    int
+		headBytes    int64
 		foundCWD     bool
 	)
 
+	// Phase 1: scan first ~200 lines (with JSON parse) for early metadata
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	for scanner.Scan() {
-		lineCount++
-		var evt claudeEvent
-		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
-			continue
-		}
+	scanner.Buffer(make([]byte, 0, 64*1024), 1*1024*1024)
 
-		if evt.Timestamp != "" {
-			if t, err := time.Parse(time.RFC3339, evt.Timestamp); err == nil {
-				if createdAt.IsZero() || t.Before(createdAt) {
-					createdAt = t
-				}
-				if t.After(updatedAt) {
-					updatedAt = t
-				}
-			}
-		}
+	const headMax = 200
+	for scanner.Scan() && headLines < headMax {
+		headLines++
+		headBytes += int64(len(scanner.Bytes()) + 1)
+		parseEventLine(scanner.Bytes(), &cwd, &gitBranch, &modelName, &aiTitle, &lastPrompt,
+			&firstUserMsg, &userMessages, &createdAt, &updatedAt, &foundCWD)
+	}
 
-		if !foundCWD && evt.CWD != "" {
-			cwd = evt.CWD
-			foundCWD = true
-		}
-		if gitBranch == "" && evt.GitBranch != "" {
-			gitBranch = evt.GitBranch
-		}
+	// Estimate total lines from head scan average (avoids full-file read)
+	lineCount := estimateLineCount(headLines, headBytes, fileSize)
 
-		switch evt.Type {
-		case "ai-title":
-			if evt.AITitle != "" {
-				aiTitle = evt.AITitle
-			}
-		case "last-prompt":
-			if evt.LastPrompt != "" {
-				lastPrompt = evt.LastPrompt
-			}
-		case "assistant":
-			if modelName == "" && evt.Message != nil && evt.Message.Model != "" {
-				modelName = evt.Message.Model
-			}
-		case "user":
-			if !evt.IsMeta && evt.ToolUseResult == nil && evt.Message != nil {
-				msg := evt.Message.contentString()
-				if firstUserMsg == "" {
-					firstUserMsg = msg
-				}
-				if len(userMessages) < 5 && msg != "" {
-					userMessages = append(userMessages, msg)
-				}
-			}
+	// Phase 3: seek to last 8 KB for tail metadata (ai-title, last-prompt, updatedAt)
+	const tailBytes = 8 * 1024
+	if fileSize > tailBytes {
+		seekPos := fileSize - tailBytes
+		if _, err := f.Seek(seekPos, 0); err != nil {
+			return model.Session{}, false
+		}
+		// skip partial first line at seek boundary
+		tailScanner := bufio.NewScanner(f)
+		tailScanner.Buffer(make([]byte, 0, 64*1024), 1*1024*1024)
+		tailScanner.Scan()
+		for tailScanner.Scan() {
+			parseTailEvent(tailScanner.Bytes(), &aiTitle, &lastPrompt, &updatedAt)
 		}
 	}
 
@@ -238,6 +244,90 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 		CreatedAt:    createdAt,
 		UpdatedAt:    updatedAt,
 	}, true
+}
+
+func parseEventLine(line []byte, cwd, gitBranch, modelName, aiTitle, lastPrompt, firstUserMsg *string,
+	userMessages *[]string, createdAt, updatedAt *time.Time, foundCWD *bool) {
+
+	var evt claudeEvent
+	if err := json.Unmarshal(line, &evt); err != nil {
+		return
+	}
+
+	if evt.Timestamp != "" {
+		if t, err := time.Parse(time.RFC3339, evt.Timestamp); err == nil {
+			if createdAt.IsZero() || t.Before(*createdAt) {
+				*createdAt = t
+			}
+			if t.After(*updatedAt) {
+				*updatedAt = t
+			}
+		}
+	}
+
+	if !*foundCWD && evt.CWD != "" {
+		*cwd = evt.CWD
+		*foundCWD = true
+	}
+	if *gitBranch == "" && evt.GitBranch != "" {
+		*gitBranch = evt.GitBranch
+	}
+
+	switch evt.Type {
+	case "ai-title":
+		if evt.AITitle != "" {
+			*aiTitle = evt.AITitle
+		}
+	case "last-prompt":
+		if evt.LastPrompt != "" {
+			*lastPrompt = evt.LastPrompt
+		}
+	case "assistant":
+		if *modelName == "" && evt.Message != nil && evt.Message.Model != "" {
+			*modelName = evt.Message.Model
+		}
+	case "user":
+		if !evt.IsMeta && evt.ToolUseResult == nil && evt.Message != nil {
+			msg := evt.Message.contentString()
+			if *firstUserMsg == "" {
+				*firstUserMsg = msg
+			}
+			if len(*userMessages) < 5 && msg != "" {
+				*userMessages = append(*userMessages, msg)
+			}
+		}
+	}
+}
+
+func parseTailEvent(line []byte, aiTitle, lastPrompt *string, updatedAt *time.Time) {
+	var evt claudeEvent
+	if err := json.Unmarshal(line, &evt); err != nil {
+		return
+	}
+
+	if evt.Type == "ai-title" && evt.AITitle != "" {
+		*aiTitle = evt.AITitle
+	}
+	if evt.Type == "last-prompt" && evt.LastPrompt != "" {
+		*lastPrompt = evt.LastPrompt
+	}
+	if evt.Timestamp != "" {
+		if t, err := time.Parse(time.RFC3339, evt.Timestamp); err == nil {
+			if t.After(*updatedAt) {
+				*updatedAt = t
+			}
+		}
+	}
+}
+
+func estimateLineCount(headLines int, headBytes int64, fileSize int64) int {
+	if headLines == 0 || headBytes == 0 {
+		// fallback: ~400 bytes per JSONL line
+		return int(fileSize / 400)
+	}
+	avgLineLen := float64(headBytes) / float64(headLines)
+	// +10% to compensate for typically longer lines later in sessions
+	return int(float64(fileSize)/avgLineLen * 1.1)
 }
 
 func resolveSessionName(aiTitle, lastPrompt, firstUserMsg string, createdAt time.Time) string {
