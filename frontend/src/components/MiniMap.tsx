@@ -59,7 +59,7 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
     const resizeObserver = new ResizeObserver(updateTrackLength)
     resizeObserver.observe(container)
     return () => resizeObserver.disconnect()
-  }, [])
+  }, [barCount])
 
   const anomalyMarkers = useMemo(() => turns
     .map((turn, index) => ({ turn, index }))
