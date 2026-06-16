@@ -79,6 +79,15 @@ type claudeToolResult struct {
 	Stdout  string `json:"stdout"`
 	Stderr  string `json:"stderr"`
 	IsError bool   `json:"is_error"`
+
+	// AgentID is only present when this ToolUseResult wraps an "Agent"
+	// (subagent/Task) tool call. It matches the <id> in the sibling
+	// "subagents/agent-<id>.jsonl" transcript file, and is the join key
+	// used by ParseClaudeRenderEventsWithSubagents to stitch the subagent's
+	// full transcript into the parent session's render stream. Additive
+	// field — does not change behavior for any existing consumer of this
+	// struct (parseClaudeEvents ignores fields it doesn't read).
+	AgentID string `json:"agentId"`
 }
 
 // ---- Content helpers (handles both string and array content) ----

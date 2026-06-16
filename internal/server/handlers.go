@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"session-insight/internal/model"
+	"session-insight/internal/reader/claude"
 	"strings"
 )
 
@@ -76,6 +77,45 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+// handleRenderSession returns the Phase 2 ANSI terminal text for a session,
+// for xterm.js to write() directly once the frontend TerminalPanel exists.
+//
+// FLAGGED FOR CONFIRMATION (not a quiet decision): this only works for
+// Claude Code sessions right now, via a type assertion to the concrete
+// *claude.ClaudeReader. The other readers don't have a render pipeline yet
+// (Codex/Copilot adapters are Phase 4, not built). Reaching for a concrete
+// type here — instead of adding a method to the shared
+// reader.BaseSessionReader interface — is a deliberate shortcut to get an
+// end-to-end Phase 2 endpoint working without committing the whole
+// interface (and Codex/Copilot stub implementations) to a shape that might
+// change once Phase 4 actually exists. Before Phase 4 lands, this should
+// become a real interface method (e.g. `RenderANSI(id string) (string,
+// error)` on BaseSessionReader) so the handler doesn't need to import a
+// concrete reader package at all.
+func (s *Server) handleRenderSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	for _, rd := range s.Readers {
+		cr, ok := rd.(*claude.ClaudeReader)
+		if !ok {
+			continue
+		}
+		ansi, err := cr.RenderSessionANSI(id)
+		if err != nil {
+			continue
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(ansi))
+		return
+	}
+
+	http.Error(w, "session not found or rendering not supported for its agent type", http.StatusNotFound)
 }
 
 func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) {
