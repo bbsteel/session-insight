@@ -14,14 +14,15 @@ import (
 	"session-insight/internal/render"
 )
 
-// RenderSessionANSI resolves the JSONL file for session id, parses it
-// (including any spliced-in subagent transcripts), and formats the result
-// as an ANSI terminal text block via the Phase 2 renderer.
+// RenderANSI implements reader.BaseSessionReader. It resolves the JSONL
+// file for session id, parses it (including any spliced-in subagent
+// transcripts), and formats the result as an ANSI terminal text block via
+// the Phase 2 renderer.
 //
 // This is a thin convenience wrapper so the HTTP layer doesn't need to know
 // how to find a Claude session's file on disk — that stays encapsulated
 // here, same as GetSession already does for the JSON API.
-func (r *ClaudeReader) RenderSessionANSI(id string) (string, error) {
+func (r *ClaudeReader) RenderANSI(id string) (string, error) {
 	path := r.findSessionFile(id)
 	if path == "" {
 		return "", fmt.Errorf("claude session not found: %s", id)

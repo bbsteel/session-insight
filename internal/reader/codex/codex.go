@@ -27,6 +27,13 @@ func New(sessionsDir string) *CodexReader {
 func (r *CodexReader) AgentType() string  { return "codex" }
 func (r *CodexReader) DisplayName() string { return "Codex" }
 
+// RenderANSI implements reader.BaseSessionReader. Codex has no RenderEvent
+// adapter yet (planned for Phase 4), so this returns a clear error rather
+// than silently producing empty/wrong output.
+func (r *CodexReader) RenderANSI(id string) (string, error) {
+	return "", fmt.Errorf("ANSI rendering is not yet implemented for codex sessions")
+}
+
 // ---- JSONL shapes ----
 
 type codexEvent struct {

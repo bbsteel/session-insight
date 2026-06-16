@@ -40,6 +40,13 @@ func New(sessionDir string) *CopilotReader {
 func (r *CopilotReader) AgentType() string  { return "copilot" }
 func (r *CopilotReader) DisplayName() string { return "Copilot" }
 
+// RenderANSI implements reader.BaseSessionReader. Copilot has no
+// RenderEvent adapter yet (planned for Phase 4), so this returns a clear
+// error rather than silently producing empty/wrong output.
+func (r *CopilotReader) RenderANSI(id string) (string, error) {
+	return "", fmt.Errorf("ANSI rendering is not yet implemented for copilot sessions")
+}
+
 func scanPreviewText(eventsPath string) string {
 	f, err := os.Open(eventsPath)
 	if err != nil {

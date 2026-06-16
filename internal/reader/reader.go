@@ -7,4 +7,13 @@ type BaseSessionReader interface {
 	DisplayName() string
 	ListSessions() ([]model.Session, error)
 	GetSession(id string) (*model.SessionDetail, error)
+
+	// RenderANSI returns the session's RenderEvent stream formatted as ANSI
+	// terminal text (see internal/render). Readers without a RenderEvent
+	// adapter yet (Codex/Copilot, as of Phase 2) should return a non-nil
+	// error rather than panic or silently produce empty output, so the API
+	// layer can tell "session not found" apart from "rendering not
+	// supported for this agent type" and report it clearly instead of
+	// falling through to the next reader.
+	RenderANSI(id string) (string, error)
 }
