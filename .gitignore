@@ -20,6 +20,11 @@ frontend/dist/
 *.test
 *.out
 
+# Runtime
+session-insight
+session-insight.log
+session-insight.pid
+
 # Environment
 .env
 .env.local
