@@ -6,7 +6,7 @@ export interface AgentStyle {
   assistantPrefix: string
 }
 
-const STYLES: Record<string, AgentStyle> = {
+const STYLES: Record<AgentKey, AgentStyle> = {
   claude:  { accent: '#2563eb', userPrefix: '>',  assistantPrefix: '●' },
   codex:   { accent: '#059669', userPrefix: '▸',  assistantPrefix: '◆' },
   copilot: { accent: '#7c3aed', userPrefix: '»',  assistantPrefix: '◉' },
@@ -14,8 +14,8 @@ const STYLES: Record<string, AgentStyle> = {
 
 // Deterministic palette for unknown agents (10 colors, wraps via char-code sum mod 10)
 const FALLBACK_ACCENTS = [
-  '#f59e0b', '#dc2626', '#0891b2', '#7c3aed', '#059669',
-  '#2563eb', '#d97706', '#db2777', '#4f46e5', '#16a34a',
+  '#f59e0b', '#dc2626', '#0891b2', '#a21caf', '#0d9488',
+  '#0284c7', '#d97706', '#db2777', '#4f46e5', '#16a34a',
 ]
 
 function fallbackAccent(agentType: string): string {
@@ -27,7 +27,7 @@ function fallbackAccent(agentType: string): string {
   return FALLBACK_ACCENTS[Math.abs(hash) % FALLBACK_ACCENTS.length]
 }
 
-export function resolveAgentStyle(agentType?: string): AgentStyle | null {
+export function resolveAgentStyle(agentType?: AgentKey): AgentStyle | null {
   if (!agentType) return null
   const lower = agentType.toLowerCase()
   if (STYLES[lower]) return STYLES[lower]
