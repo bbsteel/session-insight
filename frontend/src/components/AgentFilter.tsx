@@ -193,7 +193,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
             <button
               onClick={() => setDropdownOpen(o => !o)}
               aria-expanded={dropdownOpen}
-              aria-haspopup="listbox"
+              aria-haspopup="menu"
               className={`h-6 px-1.5 rounded-sm text-meta transition-colors duration-fast flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                 dropdownOpen ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
               }`}
@@ -213,12 +213,13 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
                   return (
                     <div
                       key={type}
-                      role="menuitem"
                       className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors duration-fast"
+                      role="presentation"
                     >
                       <button
                         onClick={() => selectAgent(type)}
                         className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                        role="menuitem"
                       >
                         <span
                           className="inline-block rounded-full flex-shrink-0"
