@@ -50,6 +50,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
     const ro = new ResizeObserver(entries => {
       for (const entry of entries) {
         setWidth(entry.contentRect.width)
+        setDropdownOpen(false)
       }
     })
     ro.observe(el)
@@ -101,6 +102,8 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
 
     const visible = ordered.slice(0, slots)
     const overflow = ordered.slice(slots)
+    // Folded agents in the dropdown are sorted by session count descending
+    overflow.sort((a, b) => (agentMap.get(b)?.session_count ?? 0) - (agentMap.get(a)?.session_count ?? 0))
     return { visibleKeys: visible, overflowKeys: overflow }
   }, [agents, state, width])
 
