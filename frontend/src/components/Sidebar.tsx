@@ -2,29 +2,38 @@ import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { fetchAgents, fetchSessions } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import AgentFilter from './AgentFilter'
-import { resolveAgentStyle } from '../agentStyles'
+import AgentIcon from './AgentIcon'
 
-function timeAgo(dateStr: string): string {
+function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  const diffHr = Math.floor(diffMs / 3600000)
-  const diffDay = Math.floor(diffMs / 86400000)
-
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return `${diffMin} 分钟前`
-  if (diffHr < 24) return `${diffHr} 小时前`
-  if (diffDay === 1) return '昨天'
-  if (diffDay < 7) return `${diffDay} 天前`
+  if (Number.isNaN(date.getTime())) return dateStr
+  const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
-  return `${month}-${day}`
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hour}:${minute}`
 }
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 const SIDEBAR_VIEW_MODE_KEY = 'sidebar-view-mode'
 const SIDEBAR_COLLAPSED_GROUPS_KEY = 'sidebar-collapsed-groups'
+
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Storage is optional; keep the in-memory UI state working.
+  }
+}
 
 function getSessionName(s: SessionSummary): string {
   if (s.name) return s.name
@@ -54,16 +63,16 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [viewMode, setViewMode] = useState<'grouped' | 'flat'>(() => {
-    const stored = localStorage.getItem(SIDEBAR_VIEW_MODE_KEY)
+    const stored = readStorage(SIDEBAR_VIEW_MODE_KEY)
     return stored === 'flat' ? 'flat' : 'grouped'
   })
   const [width, setWidth] = useState(() => {
-    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+    const stored = Number(readStorage(SIDEBAR_WIDTH_KEY))
     return Number.isFinite(stored) && stored >= 160 && stored <= 400 ? stored : 260
   })
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
     try {
-      const stored = localStorage.getItem(SIDEBAR_COLLAPSED_GROUPS_KEY)
+      const stored = readStorage(SIDEBAR_COLLAPSED_GROUPS_KEY)
       return stored ? new Set(JSON.parse(stored)) : new Set()
     } catch { return new Set() }
   })
@@ -72,7 +81,8 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   )
-  const [agents, setAgents] = useState<AgentInfo[]>([])
+  const [agents, setAgents] = useState<AgentInfo[] | null>(null)
+  const [agentsReady, setAgentsReady] = useState(false)
   const [agentFilter, setAgentFilter] = useState<string>('')
 
   const searchRef = useRef<HTMLInputElement>(null)
@@ -114,16 +124,19 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
   // Fetch agents on mount
   useEffect(() => {
     fetchAgents()
-      .then(setAgents)
-      .catch(() => {}) // silent fail — agents list falls back to hardcoded
+      .then(data => {
+        setAgents(data)
+        setAgentsReady(true)
+      })
+      .catch(() => setAgents([]))
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_VIEW_MODE_KEY, viewMode)
+    writeStorage(SIDEBAR_VIEW_MODE_KEY, viewMode)
   }, [viewMode])
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsedGroups]))
+    writeStorage(SIDEBAR_COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsedGroups]))
   }, [collapsedGroups])
 
   const showToast = useCallback((msg: string) => {
@@ -141,7 +154,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     const move = (event: PointerEvent) => {
       const next = Math.min(400, Math.max(160, startWidth + event.clientX - startX))
       setWidth(next)
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(next)))
+      writeStorage(SIDEBAR_WIDTH_KEY, String(Math.round(next)))
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
@@ -176,6 +189,28 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
 
   const liveCount = useMemo(() => sessions.filter(s => s.is_live).length, [sessions])
 
+  const effectiveAgents = useMemo<AgentInfo[]>(() => {
+    if (agents && agents.length > 0) return agents
+
+    const counts = new Map<string, number>()
+    for (const session of sessions) {
+      if (!session.agent_type) continue
+      counts.set(session.agent_type, (counts.get(session.agent_type) ?? 0) + 1)
+    }
+    return [...counts.entries()].map(([type, session_count]) => ({
+      type,
+      display_name: getAgentLabel(type),
+      session_count,
+    }))
+  }, [agents, sessions])
+
+  useEffect(() => {
+    if (!agentsReady || !agentFilter) return
+    if (!effectiveAgents.some(agent => agent.type === agentFilter)) {
+      setAgentFilter('')
+    }
+  }, [agentFilter, agentsReady, effectiveAgents])
+
   const agentGroups = useMemo(() => {
     const grouped = new Map<string, SessionSummary[]>()
     for (const s of filtered) {
@@ -196,7 +231,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     })
   }
 
-  const SessionRow = ({ session, showAgent }: { session: SessionSummary; showAgent: boolean }) => {
+  const SessionRow = ({ session }: { session: SessionSummary }) => {
     const selected = session.id === selectedId
     const repo = session.repository || ''
     const branch = session.branch || ''
@@ -208,12 +243,9 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
     if (branch) parts.push(branch)
     parts.push(`${session.message_count || session.turn_count} msgs`)
-    if (session.is_live) {
-      parts.push('进行中')
-    } else {
-      parts.push(timeAgo(session.updated_at))
-    }
-    const subtitle = parts.join(' · ')
+    if (session.is_live) parts.push('进行中')
+    const metadata = parts.join(' · ')
+    const dateTime = formatDateTime(session.updated_at)
 
     return (
       <div className="group relative">
@@ -221,29 +253,26 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
           onClick={() => onSelect(session.id)}
           onContextMenu={(e) => { e.preventDefault(); copyId(session.id) }}
           title="右键复制会话 ID"
-          className={`relative w-full text-left pl-3 pr-8 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
+          className={`relative w-full text-left pl-2.5 pr-8 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
             selected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
           style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
         >
           {selected && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-[var(--accent-blue)]" />}
-          <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
-            {session.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="进行中" aria-label="进行中" />}
-            {showAgent && (
-              <span
-                className="inline-block rounded-full flex-shrink-0"
-                style={{
-                  width: 10,
-                  height: 10,
-                  backgroundColor: resolveAgentStyle(session.agent_type)?.accent ?? '#6b7280',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                }}
-              />
-            )}
-            <span className="truncate">{getSessionName(session)}</span>
-          </div>
-          <div className="text-helper text-[var(--text-secondary)] mt-0.5 truncate">
-            {subtitle}
+          <div className="flex items-start gap-1.5">
+            <AgentIcon agentType={session.agent_type} size={20} className="mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
+                {session.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="进行中" aria-label="进行中" />}
+                <span className="truncate">{getSessionName(session)}</span>
+              </div>
+              <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
+                <span className="truncate min-w-0">{metadata}</span>
+                <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at}>
+                  {dateTime}
+                </time>
+              </div>
+            </div>
           </div>
         </button>
         <button
@@ -303,20 +332,22 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <div className="flex rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5">
-            {(['grouped', 'flat'] as const).map(mode => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                aria-pressed={viewMode === mode}
-                className={`h-6 px-2 rounded-sm text-meta transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                  viewMode === mode ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                {mode === 'grouped' ? '分组' : '平铺'}
-              </button>
-            ))}
-          </div>
+          {!agentFilter && (
+            <div className="flex rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5">
+              {(['grouped', 'flat'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  aria-pressed={viewMode === mode}
+                  className={`h-6 px-2 rounded-sm text-meta transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                    viewMode === mode ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  {mode === 'grouped' ? '分组' : '平铺'}
+                </button>
+              ))}
+            </div>
+          )}
           {isMobile && onClose && (
             <button
               onClick={onClose}
@@ -361,7 +392,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
 
       {/* Agent Filter */}
       <AgentFilter
-        agents={agents}
+        agents={effectiveAgents}
         selected={agentFilter}
         onSelect={setAgentFilter}
       />
@@ -388,9 +419,13 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
               </button>
             )}
           </div>
+        ) : agentFilter ? (
+          <div className="space-y-1">
+            {filtered.map(s => <SessionRow key={s.id} session={s} />)}
+          </div>
         ) : viewMode === 'flat' ? (
           <div className="space-y-1">
-            {filtered.map(s => <SessionRow key={s.id} session={s} showAgent />)}
+            {filtered.map(s => <SessionRow key={s.id} session={s} />)}
           </div>
         ) : (
           agentGroups.map(([agent, list]) => {
@@ -406,21 +441,14 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
                     <svg className={`w-2.5 h-2.5 transition-transform duration-fast ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="9 18 15 12 9 6" />
                     </svg>
-                    <span
-                      className="inline-block rounded-full flex-shrink-0"
-                      style={{
-                        width: 10,
-                        height: 10,
-                        backgroundColor: resolveAgentStyle(list[0]?.agent_type)?.accent ?? '#6b7280',
-                        border: '1px solid rgba(255,255,255,0.2)',
-                      }}
-                    /> · {agent}
+                    <AgentIcon agentType={list[0]?.agent_type} size={16} />
+                    <span>{agent}</span>
                   </span>
                   <span>{list.length}</span>
                 </button>
                 {!collapsed && (
                   <div className="space-y-1">
-                    {list.map(s => <SessionRow key={s.id} session={s} showAgent={false} />)}
+                    {list.map(s => <SessionRow key={s.id} session={s} />)}
                   </div>
                 )}
               </div>
