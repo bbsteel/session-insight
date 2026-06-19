@@ -85,7 +85,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
   }, [dropdownOpen])
 
   // Build visible agent list: All + pinned + MRU fill
-  const { visibleKeys, overflowKeys } = useMemo(() => {
+  const { visibleKeys, overflowKeys, agentMap } = useMemo(() => {
     const slots = slotCount(width)
     const agentTypes = agents.map(a => a.type)
     const agentMap = new Map(agents.map(a => [a.type, a]))
@@ -104,26 +104,22 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
     const overflow = ordered.slice(slots)
     // Folded agents in the dropdown are sorted by session count descending
     overflow.sort((a, b) => (agentMap.get(b)?.session_count ?? 0) - (agentMap.get(a)?.session_count ?? 0))
-    return { visibleKeys: visible, overflowKeys: overflow }
+    return { visibleKeys: visible, overflowKeys: overflow, agentMap }
   }, [agents, state, width])
 
   const hasOverflow = overflowKeys.length > 0
 
-  const agentLabel = useCallback((type: string) => {
-    return agents.find(a => a.type === type)?.display_name ?? type
-  }, [agents])
-
-  const agentCount = useCallback((type: string) => {
-    return agents.find(a => a.type === type)?.session_count ?? 0
-  }, [agents])
+  const agentLabel = (type: string) => agentMap.get(type)?.display_name ?? type
+  const agentCount = (type: string) => agentMap.get(type)?.session_count ?? 0
 
   const selectAgent = useCallback((type: string) => {
     onSelect(type)
 
-    // Update MRU: push selected to front
+    // Update MRU: push selected to front (skip if already pinned)
     if (type !== '') {
       setState(prev => {
-        const mru = [type, ...prev.mruOrder.filter(t => t !== type && !prev.pinned.includes(t))]
+        if (prev.pinned.includes(type)) return prev
+        const mru = [type, ...prev.mruOrder.filter(t => t !== type)]
         return { ...prev, mruOrder: mru }
       })
     }
@@ -196,6 +192,8 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setDropdownOpen(o => !o)}
+              aria-expanded={dropdownOpen}
+              aria-haspopup="listbox"
               className={`h-6 px-1.5 rounded-sm text-meta transition-colors duration-fast flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                 dropdownOpen ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
               }`}
@@ -205,6 +203,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
 
             {dropdownOpen && (
               <div
+                role="menu"
                 className="absolute top-full mt-1 left-0 z-[var(--z-dropdown)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1"
                 style={{ minWidth: '100%' }}
               >
@@ -214,6 +213,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
                   return (
                     <div
                       key={type}
+                      role="menuitem"
                       className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors duration-fast"
                     >
                       <button
