@@ -411,7 +411,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
                       style={{
                         width: 10,
                         height: 10,
-                        backgroundColor: resolveAgentStyle(list[0]?.agent_type || agent)?.accent ?? '#6b7280',
+                        backgroundColor: resolveAgentStyle(list[0]?.agent_type)?.accent ?? '#6b7280',
                         border: '1px solid rgba(255,255,255,0.2)',
                       }}
                     /> · {agent}

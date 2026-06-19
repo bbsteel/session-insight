@@ -57,10 +57,15 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
     return () => ro.disconnect()
   }, [])
 
-  // Persist state changes
+  // Persist state changes (prune entries for agents that no longer exist)
   useEffect(() => {
-    saveState(state)
-  }, [state])
+    const existing = new Set(agents.map(a => a.type))
+    const pruned = {
+      pinned: state.pinned.filter(t => existing.has(t)),
+      mruOrder: state.mruOrder.filter(t => existing.has(t)),
+    }
+    saveState(pruned)
+  }, [state, agents])
 
   // Close dropdown on outside click
   useEffect(() => {
