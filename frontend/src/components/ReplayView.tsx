@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import type { VirtuosoHandle } from 'react-virtuoso'
-import { fetchSession } from '../api'
-import type { SessionDetail, TurnVM } from '../types'
+import { fetchSession, fetchSearch } from '../api'
+import type { SearchResult, SessionDetail, TurnVM } from '../types'
 import type { ScrollMetrics } from '../minimapGeometry'
 import TurnCard from './TurnCard'
 import ThemeToggle from './ThemeToggle'
@@ -19,6 +19,7 @@ function hasCompaction(turn: TurnVM): boolean {
 
 interface Props {
   sessionId: string | null
+  onSelect?: (id: string) => void
   onTurnsChange?: (turns: TurnVM[]) => void
   onVisibleRangeChange?: (range: { start: number; end: number }) => void
   onScrollMetricsChange?: (metrics: ScrollMetrics) => void
@@ -39,7 +40,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeChange, onScrollMetricsChange, scrollToIndexRef, scrollToTopRef }: Props) {
+export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisibleRangeChange, onScrollMetricsChange, scrollToIndexRef, scrollToTopRef }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
@@ -192,7 +193,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
 
   if (!sessionId) return (
     <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalTopBar />
+      <GlobalTopBar onSelect={onSelect} />
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
@@ -204,7 +205,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   )
   if (loading) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalTopBar />
+      <GlobalTopBar onSelect={onSelect} />
       <div className="p-4 space-y-3">{Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-3">
           <div className="h-5 w-44 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
@@ -216,7 +217,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   )
   if (!session || !session.turns.length) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
-      <GlobalTopBar />
+      <GlobalTopBar onSelect={onSelect} />
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
@@ -233,7 +234,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
-      <GlobalTopBar />
+      <GlobalTopBar onSelect={onSelect} />
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
           {viewMode === 'replay' && <>
@@ -425,16 +426,121 @@ function AnalyticsSkeleton() {
   )
 }
 
-function GlobalTopBar() {
+function GlobalTopBar({ onSelect }: { onSelect?: (id: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([])
+      setOpen(false)
+      return
+    }
+    setLoading(true)
+    debounceRef.current = setTimeout(() => {
+      fetchSearch(query.trim()).then(data => {
+        setResults(data)
+        setOpen(true)
+        setActiveIndex(-1)
+      }).catch(() => {
+        setResults([])
+      }).finally(() => setLoading(false))
+    }, 250)
+    return () => clearTimeout(debounceRef.current)
+  }, [query])
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const selectResult = (id: string) => {
+    onSelect?.(id)
+    setOpen(false)
+    setQuery('')
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!open || results.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex(i => Math.min(i + 1, results.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex(i => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault()
+      selectResult(results[activeIndex].session_id)
+    } else if (e.key === 'Escape') {
+      setOpen(false)
+      inputRef.current?.blur()
+    }
+  }
+
+  // Global search shortcut: Cmd+K on Mac, Ctrl+K elsewhere
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = isMac ? e.metaKey : e.ctrlKey
+      if (mod && e.key === 'k') {
+        e.preventDefault()
+        inputRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [isMac])
+
   return (
     <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }}>
-      <div className="relative w-full max-w-[360px]">
+      <div ref={containerRef} className="relative w-full max-w-[360px]">
         <input
+          ref={inputRef}
           type="search"
-          placeholder="全文搜索..."
+          placeholder={`全文搜索... (${isMac ? '⌘K' : 'Ctrl+K'})`}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => { if (results.length > 0) setOpen(true) }}
           className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
           aria-label="全文搜索"
         />
+        {open && (
+          <div className="absolute top-full left-0 right-0 mt-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-30 max-h-[320px] overflow-y-auto">
+            {loading && results.length === 0 && (
+              <div className="px-3 py-2 text-helper text-[var(--text-muted)]">搜索中...</div>
+            )}
+            {!loading && results.length === 0 && query.trim() && (
+              <div className="px-3 py-2 text-helper text-[var(--text-muted)]">无匹配结果</div>
+            )}
+            {results.map((r, i) => (
+              <button
+                key={r.session_id}
+                onClick={() => selectResult(r.session_id)}
+                onMouseEnter={() => setActiveIndex(i)}
+                className={`w-full text-left px-3 py-2 text-helper border-b border-[var(--border-muted)] last:border-b-0 transition-colors duration-fast ${
+                  i === activeIndex
+                    ? 'bg-[var(--accent-blue)]/10 text-[var(--text-primary)]'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]'
+                }`}
+              >
+                <div className="truncate text-[var(--text-primary)]">{r.match}</div>
+                <div className="text-meta text-[var(--text-muted)] mt-0.5 truncate">{r.session_id}</div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="ml-auto flex items-center gap-1">
         <ThemeToggle />

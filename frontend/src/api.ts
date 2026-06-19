@@ -1,4 +1,4 @@
-import type { AgentInfo, SessionDetail, SessionSummary } from './types'
+import type { AgentInfo, SearchResult, SessionDetail, SessionSummary } from './types'
 
 export async function fetchSessions(agent?: string): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
@@ -25,6 +25,13 @@ export async function fetchRenderANSI(id: string): Promise<string> {
   const res = await fetch(`/api/sessions/${id}/render`)
   if (!res.ok) throw new Error(`Failed to fetch render: ${res.status}`)
   return res.text()
+}
+
+export async function fetchSearch(q: string): Promise<SearchResult[]> {
+  const params = new URLSearchParams({ q })
+  const res = await fetch(`/api/search?${params}`)
+  if (!res.ok) throw new Error(`Search failed: ${res.status}`)
+  return res.json()
 }
 
 async function readJson<T>(res: Response, label: string): Promise<T> {

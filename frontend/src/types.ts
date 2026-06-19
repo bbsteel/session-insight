@@ -41,6 +41,11 @@ tool_names?: string[]
   anomalies?: string[]
 }
 
+export interface SearchResult {
+  session_id: string
+  match: string
+}
+
 export interface SessionDetail {
   id: string
   agent_type: string

@@ -48,6 +48,7 @@ export default function App() {
       />
       <ReplayView
         sessionId={selectedId}
+        onSelect={selectSession}
         onTurnsChange={setTurns}
         onVisibleRangeChange={setVisibleRange}
         onScrollMetricsChange={setScrollMetrics}
