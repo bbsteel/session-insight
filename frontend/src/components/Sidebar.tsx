@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { fetchAgents, fetchSessions } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
+import AgentFilter from './AgentFilter'
+import { resolveAgentStyle } from '../agentStyles'
 
 function timeAgo(dateStr: string): string {
   const date = new Date(dateStr)
@@ -38,13 +40,6 @@ function getAgentLabel(agent: string): string {
   return agent
 }
 
-function getAgentIcon(agent: string): string {
-  const normalized = agent.toLowerCase()
-  if (normalized.includes('copilot')) return 'CP'
-  if (normalized.includes('claude')) return 'CC'
-  if (normalized.includes('codex')) return 'CX'
-  return 'AI'
-}
 
 interface SidebarProps {
   selectedId: string | null
@@ -234,7 +229,17 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
           {selected && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-[var(--accent-blue)]" />}
           <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
             {session.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="进行中" aria-label="进行中" />}
-            {showAgent && <span className="text-agent text-[var(--text-muted)] flex-shrink-0">{getAgentIcon(session.agent_type)}</span>}
+            {showAgent && (
+              <span
+                className="inline-block rounded-full flex-shrink-0"
+                style={{
+                  width: 10,
+                  height: 10,
+                  backgroundColor: resolveAgentStyle(session.agent_type)?.accent ?? '#6b7280',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                }}
+              />
+            )}
             <span className="truncate">{getSessionName(session)}</span>
           </div>
           <div className="text-helper text-[var(--text-secondary)] mt-0.5 truncate">
@@ -355,31 +360,11 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       </div>
 
       {/* Agent Filter */}
-      <div className="px-4 pb-2 flex-shrink-0">
-        <div className="flex rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5">
-          {[
-            { key: '', label: 'All' },
-            ...(agents.length > 0
-              ? agents.map(a => ({ key: a.type, label: a.display_name }))
-              : [
-                  { key: 'claude', label: 'Claude Code' },
-                  { key: 'copilot', label: 'Copilot' },
-                  { key: 'codex', label: 'Codex' },
-                ]),
-          ].map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setAgentFilter(key)}
-              aria-pressed={agentFilter === key}
-              className={`flex-1 h-6 px-1 rounded-sm text-meta transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                agentFilter === key ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <AgentFilter
+        agents={agents}
+        selected={agentFilter}
+        onSelect={setAgentFilter}
+      />
 
       {/* Session List */}
       <div className="px-2 pb-4 flex-1 overflow-y-auto">
@@ -421,7 +406,15 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
                     <svg className={`w-2.5 h-2.5 transition-transform duration-fast ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="9 18 15 12 9 6" />
                     </svg>
-                    {getAgentIcon(list[0]?.agent_type || agent)} · {agent}
+                    <span
+                      className="inline-block rounded-full flex-shrink-0"
+                      style={{
+                        width: 10,
+                        height: 10,
+                        backgroundColor: resolveAgentStyle(list[0]?.agent_type || agent)?.accent ?? '#6b7280',
+                        border: '1px solid rgba(255,255,255,0.2)',
+                      }}
+                    /> · {agent}
                   </span>
                   <span>{list.length}</span>
                 </button>
