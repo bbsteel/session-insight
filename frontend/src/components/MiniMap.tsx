@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TurnVM } from '../types'
 import {
   getScrollTopFromTrackPosition,
-  getViewportFrame,
   type ScrollMetrics,
 } from '../minimapGeometry'
 
@@ -46,8 +45,12 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
   const [trackLength, setTrackLength] = useState(0)
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
   const visibleCount = visibleRange ? visibleRange.end - visibleRange.start + 1 : 1
-  const viewportFrame = scrollMetrics && trackLength > 0
-    ? getViewportFrame(scrollMetrics, trackLength)
+  const viewportFrame = visibleRange && barCount > 0 && trackLength > 0
+    ? (() => {
+        const height = Math.max(4, (visibleCount / barCount) * trackLength)
+        const top = clamp((visibleRange.start / barCount) * trackLength, 0, trackLength - height)
+        return { top, height }
+      })()
     : undefined
 
   useEffect(() => {
@@ -86,9 +89,14 @@ export default function MiniMap({ turns, visibleRange, scrollMetrics, scrollToIn
       })
 
       if (viewportRef.current) {
-        const nextFrame = getViewportFrame({ ...scrollMetrics, scrollTop: nextScrollTop }, rect.height)
-        viewportRef.current.style.top = `${nextFrame.top}px`
-        viewportRef.current.style.height = `${nextFrame.height}px`
+        const displayHeight = viewportFrame.height
+        const maxScroll = scrollMetrics.scrollHeight - scrollMetrics.clientHeight
+        const maxTop = Math.max(0, rect.height - displayHeight)
+        const visualTop = maxScroll > 0
+          ? clamp((nextScrollTop / maxScroll) * maxTop, 0, maxTop)
+          : 0
+        viewportRef.current.style.top = `${visualTop}px`
+        viewportRef.current.style.height = `${displayHeight}px`
       }
 
       pendingScrollTopRef.current = nextScrollTop

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import type { VirtuosoHandle } from 'react-virtuoso'
 import { fetchSession } from '../api'
@@ -8,6 +8,7 @@ import TurnCard from './TurnCard'
 import ThemeToggle from './ThemeToggle'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
+const TerminalPanel = lazy(() => import('./TerminalPanel'))
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 type JumpTarget = 'turn' | 'user' | 'anomaly' | 'compaction'
@@ -44,7 +45,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
   const [mode, setMode] = useState<'full' | 'digest'>('full')
   const [density, setDensity] = useState<'standard' | 'tight'>('standard')
-  const [showAnalytics, setShowAnalytics] = useState(false)
+  const [viewMode, setViewMode] = useState<'replay' | 'terminal' | 'analytics'>('replay')
   const [showHelp, setShowHelp] = useState(false)
   const [userScrolled, setUserScrolled] = useState(false)
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
@@ -109,7 +110,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
       resizeObserver.disconnect()
       if (frame) window.cancelAnimationFrame(frame)
     }
-  }, [onScrollMetricsChange, scrollerElement, session, showAnalytics, mode, density])
+  }, [onScrollMetricsChange, scrollerElement, session, viewMode, mode, density])
 
   // Keyboard navigation
   useEffect(() => {
@@ -235,12 +236,20 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
       <GlobalTopBar />
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
-          <button onClick={() => setMode(m => m === 'full' ? 'digest' : 'full')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{mode === 'full' ? 'Full' : 'Digest'}</button>
-          <button onClick={() => setDensity(d => d === 'standard' ? 'tight' : 'standard')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{density === 'standard' ? 'Standard' : 'Tight'}</button>
-          <span className="text-[var(--border-default)]">|</span>
-          <button onClick={() => setShowAnalytics(a => !a)} className={`h-7 rounded-md px-2 text-nav ${showAnalytics ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}>
-            {showAnalytics ? '回放' : '分析'}
-          </button>
+          {viewMode === 'replay' && <>
+            <button onClick={() => setMode(m => m === 'full' ? 'digest' : 'full')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{mode === 'full' ? 'Full' : 'Digest'}</button>
+            <button onClick={() => setDensity(d => d === 'standard' ? 'tight' : 'standard')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{density === 'standard' ? 'Standard' : 'Tight'}</button>
+            <span className="text-[var(--border-default)]">|</span>
+          </>}
+          {(['replay', 'terminal', 'analytics'] as const).map(v => (
+            <button
+              key={v}
+              onClick={() => startTransition(() => setViewMode(v))}
+              className={`h-7 rounded-md px-2 text-nav ${viewMode === v ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            >
+              {v === 'replay' ? '回放' : v === 'terminal' ? '终端' : '分析'}
+            </button>
+          ))}
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
         </div>
@@ -336,9 +345,15 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
         </div>
       )}
 
-      {showAnalytics ? (
+      {viewMode === 'analytics' ? (
         <Suspense fallback={<AnalyticsSkeleton />}>
           <AnalyticsView sessionId={session.id} />
+        </Suspense>
+      ) : viewMode === 'terminal' ? (
+        <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <TerminalPanel sessionId={session.id} />
+          </div>
         </Suspense>
       ) : (
         <div className="flex-1 relative">
@@ -371,7 +386,7 @@ export default function ReplayView({ sessionId, onTurnsChange, onVisibleRangeCha
             itemContent={(_: number, turn: TurnVM) => {
               const currentIndex = session.turns.findIndex(t => t.turn_index === turn.turn_index)
               const cumul = session.turns.slice(0, currentIndex + 1).reduce((s, t) => s + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
-              return <TurnCard turn={turn} mode={mode} density={density} cumulativeTokens={cumul} />
+              return <TurnCard turn={turn} mode={mode} density={density} cumulativeTokens={cumul} agentType={session.agent_type} />
             }}
           />
           {visibleRange && visibleRange.start > 1 && (

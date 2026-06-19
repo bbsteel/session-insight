@@ -234,3 +234,13 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Prevent Tailwind preflight from leaking into xterm.js DOM layers */
+.xterm-accessibility,
+.xterm-accessibility *,
+.xterm-message,
+.xterm-accessibility-tree *::selection {
+  color: transparent !important;
+  background: transparent !important;
+  outline: none !important;
+}

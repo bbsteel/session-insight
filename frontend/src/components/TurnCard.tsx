@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { TurnVM } from '../types'
 import Badge from './Badge'
 import MarkdownRenderer from './MarkdownRenderer'
+import { resolveAgentStyle } from '../agentStyles'
 
 function fmtTokens(n: number): string {
   return n.toLocaleString()
@@ -18,9 +19,11 @@ interface Props {
   mode?: 'full' | 'digest'
   density?: 'standard' | 'tight'
   cumulativeTokens?: number
+  agentType?: string
 }
 
-export default function TurnCard({ turn, mode = 'full', density = 'standard', cumulativeTokens }: Props) {
+export default function TurnCard({ turn, mode = 'full', density = 'standard', cumulativeTokens, agentType }: Props) {
+  const agentStyle = resolveAgentStyle(agentType)
   const isTight = density === 'tight'
   const isDigest = mode === 'digest'
   const totalTokens = turn.token_usage.prompt_tokens + turn.token_usage.completion_tokens
@@ -34,7 +37,7 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
       className={`border-b border-[var(--border-muted)] bg-[var(--bg-surface)] ${hasAnomaly ? 'border-l-2 border-l-[var(--error)]' : ''}`}
     >
       {/* Badge bar */}
-      <div role="list" className={`flex items-center gap-1.5 flex-wrap ${isTight ? 'px-2 py-1' : 'px-4 py-2'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`}>
+      <div role="list" className={`flex items-center gap-1.5 flex-wrap ${isTight ? 'px-2 py-1' : 'px-4 py-2'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`} style={agentStyle ? { borderLeft: `2px solid ${agentStyle.accent}` } : undefined}>
         <span className="mr-1 text-meta text-[var(--text-muted)]">Turn {turn.turn_index}</span>
         <button onClick={() => setShowTokens(v => !v)} className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">
             <Badge label="Token" value={fmtTokens(totalTokens)} intent={totalTokens > 100000 ? 'warning' : 'default'} />
@@ -129,8 +132,10 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
 
       {/* User message */}
       {turn.user_message && (
-        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'} grid gap-2`} style={{ gridTemplateColumns: '18px minmax(0, 1fr)' }}>
-          <div className="text-[var(--text-muted)] text-body leading-5">&gt;</div>
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'} grid gap-2${agentStyle ? ' bg-[var(--user-bg)]' : ''}`} style={{ gridTemplateColumns: '18px minmax(0, 1fr)' }}>
+          <div className="text-body leading-5" style={{ color: agentStyle ? agentStyle.accent : 'var(--text-muted)' }}>
+            {agentStyle?.userPrefix ?? '>'}
+          </div>
           <div className={`text-[var(--text-primary)] whitespace-pre-wrap break-words ${isTight ? 'text-nav' : 'text-body'}`}>
             {turn.user_message}
           </div>
@@ -146,8 +151,10 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
 
       {/* Assistant message */}
       {turn.assistant_message && (
-        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'} grid gap-2`} style={{ gridTemplateColumns: '18px minmax(0, 1fr)' }}>
-          <div className="text-[var(--accent-blue)] text-body leading-5">●</div>
+        <div className={`${isTight ? 'px-2 py-1' : 'px-4 py-2'} grid gap-2${agentStyle ? ' bg-[var(--assistant-bg)]' : ''}`} style={{ gridTemplateColumns: '18px minmax(0, 1fr)' }}>
+          <div className="text-body leading-5" style={{ color: agentStyle ? agentStyle.accent : 'var(--accent-blue)' }}>
+            {agentStyle?.assistantPrefix ?? '●'}
+          </div>
           <div className="prose-custom min-w-0">
             <MarkdownRenderer content={turn.assistant_message} />
           </div>

@@ -21,6 +21,12 @@ export async function fetchAgents(): Promise<AgentInfo[]> {
   return readJson<AgentInfo[]>(res, 'agents')
 }
 
+export async function fetchRenderANSI(id: string): Promise<string> {
+  const res = await fetch(`/api/sessions/${id}/render`)
+  if (!res.ok) throw new Error(`Failed to fetch render: ${res.status}`)
+  return res.text()
+}
+
 async function readJson<T>(res: Response, label: string): Promise<T> {
   const contentType = res.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {
