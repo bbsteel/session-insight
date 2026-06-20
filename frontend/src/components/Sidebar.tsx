@@ -46,6 +46,7 @@ function getAgentLabel(agent: string): string {
   if (agent.toLowerCase().includes('copilot')) return 'Copilot'
   if (agent.toLowerCase().includes('claude')) return 'Claude Code'
   if (agent.toLowerCase().includes('codex')) return 'Codex'
+  if (agent.toLowerCase().includes('opencode')) return 'OpenCode'
   return agent
 }
 

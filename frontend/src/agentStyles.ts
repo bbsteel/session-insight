@@ -7,9 +7,10 @@ export interface AgentStyle {
 }
 
 const STYLES: Record<AgentKey, AgentStyle> = {
-  claude:  { accent: '#2563eb', userPrefix: '>',  assistantPrefix: '●' },
-  codex:   { accent: '#059669', userPrefix: '▸',  assistantPrefix: '◆' },
-  copilot: { accent: '#7c3aed', userPrefix: '»',  assistantPrefix: '◉' },
+  claude:   { accent: '#2563eb', userPrefix: '>',  assistantPrefix: '●' },
+  codex:    { accent: '#059669', userPrefix: '▸',  assistantPrefix: '◆' },
+  copilot:  { accent: '#7c3aed', userPrefix: '»',  assistantPrefix: '◉' },
+  opencode: { accent: '#f59e0b', userPrefix: '▸',  assistantPrefix: '◆' },
 }
 
 // Deterministic palette for unknown agents (10 colors, wraps via char-code sum mod 10)

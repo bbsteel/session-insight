@@ -1,12 +1,14 @@
 package reader
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
 	"session-insight/internal/reader/claude"
 	"session-insight/internal/reader/codex"
 	"session-insight/internal/reader/copilot"
+	"session-insight/internal/reader/opencode"
 )
 
 func Discover() []BaseSessionReader {
@@ -30,6 +32,16 @@ func Discover() []BaseSessionReader {
 	claudeDir := filepath.Join(homeDir, ".claude", "projects")
 	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
 		readers = append(readers, claude.New(claudeDir))
+	}
+
+	dbPath, ok := opencode.ResolveDBPath()
+	if ok {
+		reader, err := opencode.New(dbPath)
+		if err != nil {
+			log.Printf("openCode reader init failed: %v", err)
+		} else {
+			readers = append(readers, reader)
+		}
 	}
 
 	return readers
