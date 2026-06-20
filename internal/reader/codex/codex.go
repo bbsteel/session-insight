@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"session-insight/internal/model"
+	"session-insight/internal/render"
 )
 
 type CodexReader struct {
@@ -27,11 +28,17 @@ func New(sessionsDir string) *CodexReader {
 func (r *CodexReader) AgentType() string  { return "codex" }
 func (r *CodexReader) DisplayName() string { return "Codex" }
 
-// RenderANSI implements reader.BaseSessionReader. Codex has no RenderEvent
-// adapter yet (planned for Phase 4), so this returns a clear error rather
-// than silently producing empty/wrong output.
+// RenderANSI implements reader.BaseSessionReader.
 func (r *CodexReader) RenderANSI(id string) (string, error) {
-	return "", fmt.Errorf("ANSI rendering is not yet implemented for codex sessions")
+	path := r.findSessionFile(id)
+	if path == "" {
+		return "", fmt.Errorf("codex session not found: %s", id)
+	}
+	events, err := codexToRenderEvents(path)
+	if err != nil {
+		return "", err
+	}
+	return render.FormatEvents(events), nil
 }
 
 // ---- JSONL shapes ----
@@ -73,6 +80,10 @@ type codexPayload struct {
 	DurationMs int64 `json:"duration_ms"`
 	// turn_aborted reason
 	Reason string `json:"reason"`
+	// function_call arguments (JSON string)
+	Arguments string `json:"arguments"`
+	// custom_tool_call input (raw string)
+	Input string `json:"input"`
 }
 
 type codexTokenCountInfo struct {
@@ -667,4 +678,234 @@ func filterEmptyTurns(turns []model.TurnVM) []model.TurnVM {
 		filtered = append(filtered, t)
 	}
 	return filtered
+}
+
+// ---- RenderEvent adapter ----
+
+// codexToRenderEvents parses a Codex JSONL session file into a flat
+// []model.RenderEvent stream suitable for render.FormatEvents.
+func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var (
+		events       []model.RenderEvent
+		fileTag      = strings.TrimSuffix(filepath.Base(path), ".jsonl")
+		eventCtr     int
+		turnIndex    int
+		pendingTools = make(map[string]string) // callID -> ToolInvocation EventID
+		completed    = make(map[string]bool)   // patch_apply_end already emitted the result
+	)
+
+	currentTurnIndex := func() int {
+		if turnIndex == 0 {
+			return 0
+		}
+		return turnIndex - 1
+	}
+
+	emit := func(evt model.RenderEvent) string {
+		if evt.EventID == "" {
+			evt.EventID = fmt.Sprintf("evt-%s-%04d", fileTag, eventCtr)
+			eventCtr++
+		}
+		if evt.AgentType == "" {
+			evt.AgentType = "codex"
+		}
+		events = append(events, evt)
+		return evt.EventID
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+
+	for scanner.Scan() {
+		var evt codexEvent
+		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			continue
+		}
+
+		ts := parseTimestamp(evt.Timestamp)
+
+		switch evt.Type {
+		case "event_msg":
+			var p codexPayload
+			if json.Unmarshal(evt.Payload, &p) != nil {
+				continue
+			}
+			switch p.Type {
+			case "task_started":
+				turnIndex++
+				emit(model.RenderEvent{
+					Type:      "TurnBoundary",
+					Timestamp: ts,
+					TurnIndex: turnIndex - 1,
+				})
+
+			case "user_message":
+				if p.Message != "" {
+					emit(model.RenderEvent{
+						Type:      "UserPrompt",
+						Timestamp: ts,
+						TurnIndex: currentTurnIndex(),
+						Text:      p.Message,
+					})
+				}
+
+			case "agent_message":
+				if p.Message != "" {
+					emit(model.RenderEvent{
+						Type:      "TextChunk",
+						Timestamp: ts,
+						TurnIndex: currentTurnIndex(),
+						Text:      p.Message,
+					})
+				}
+
+			case "patch_apply_end":
+				parentEventID := ""
+				if p.CallID != "" {
+					parentEventID = pendingTools[p.CallID]
+					delete(pendingTools, p.CallID)
+					completed[p.CallID] = true
+				}
+				exitCode := 0
+				if !p.Success {
+					exitCode = 1
+				}
+				emit(model.RenderEvent{
+					Type:          "ToolResult",
+					Timestamp:     ts,
+					TurnIndex:     currentTurnIndex(),
+					ToolCallID:    p.CallID,
+					Stdout:        p.Stdout,
+					Stderr:        p.Stderr,
+					ExitCode:      exitCode,
+					ParentEventID: parentEventID,
+				})
+			}
+
+		case "response_item":
+			var p codexPayload
+			if json.Unmarshal(evt.Payload, &p) != nil {
+				continue
+			}
+			switch p.Type {
+			case "message":
+				// Skip: agent_message already covers the assistant text;
+				// response_item message blocks would duplicate it.
+			case "function_call":
+				invID := emit(model.RenderEvent{
+					Type:       "ToolInvocation",
+					Timestamp:  ts,
+					TurnIndex:  currentTurnIndex(),
+					ToolName:   p.Name,
+					ToolCallID: p.CallID,
+					ToolInput:  parseArguments(p.Arguments),
+				})
+				if p.CallID != "" {
+					pendingTools[p.CallID] = invID
+				}
+
+			case "function_call_output":
+				parentEventID := ""
+				if p.CallID != "" {
+					parentEventID = pendingTools[p.CallID]
+					delete(pendingTools, p.CallID)
+				}
+				emit(model.RenderEvent{
+					Type:          "ToolResult",
+					Timestamp:     ts,
+					TurnIndex:     currentTurnIndex(),
+					ToolCallID:    p.CallID,
+					Stdout:        p.Output,
+					ExitCode:      extractExitCode(p.Output),
+					ParentEventID: parentEventID,
+				})
+
+			case "custom_tool_call":
+				name := p.Name
+				if name == "" {
+					name = p.CustomToolName
+				}
+				input := p.Input
+				if input == "" {
+					input = p.Arguments
+				}
+				invID := emit(model.RenderEvent{
+					Type:       "ToolInvocation",
+					Timestamp:  ts,
+					TurnIndex:  currentTurnIndex(),
+					ToolName:   name,
+					ToolCallID: p.CallID,
+					ToolInput:  parseArguments(input),
+				})
+				if p.CallID != "" {
+					pendingTools[p.CallID] = invID
+				}
+
+			case "custom_tool_call_output":
+				if p.CallID != "" && completed[p.CallID] {
+					delete(completed, p.CallID)
+					continue
+				}
+				parentEventID := ""
+				if p.CallID != "" {
+					parentEventID = pendingTools[p.CallID]
+					delete(pendingTools, p.CallID)
+				}
+				emit(model.RenderEvent{
+					Type:          "ToolResult",
+					Timestamp:     ts,
+					TurnIndex:     currentTurnIndex(),
+					ToolCallID:    p.CallID,
+					Stdout:        p.Output,
+					ExitCode:      extractExitCode(p.Output),
+					ParentEventID: parentEventID,
+				})
+			}
+		}
+	}
+
+	return dropEmptyCodexRenderTurns(events), scanner.Err()
+}
+
+func dropEmptyCodexRenderTurns(events []model.RenderEvent) []model.RenderEvent {
+	hasContent := make(map[int]bool)
+	for _, event := range events {
+		switch event.Type {
+		case "TurnBoundary":
+		case "UserPrompt":
+			if strings.TrimSpace(event.Text) != "" {
+				hasContent[event.TurnIndex] = true
+			}
+		default:
+			hasContent[event.TurnIndex] = true
+		}
+	}
+
+	filtered := make([]model.RenderEvent, 0, len(events))
+	for _, event := range events {
+		if (event.Type == "TurnBoundary" || event.Type == "UserPrompt") && !hasContent[event.TurnIndex] {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+	return filtered
+}
+
+// parseArguments attempts to unmarshal a JSON string into map[string]any.
+// On failure, it wraps the raw string as {"args": args}.
+func parseArguments(args string) map[string]any {
+	if args == "" {
+		return nil
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(args), &result); err != nil {
+		return map[string]any{"args": args}
+	}
+	return result
 }

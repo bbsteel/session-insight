@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"session-insight/internal/model"
+	"session-insight/internal/render"
 )
 
 type CopilotReader struct {
@@ -40,11 +41,24 @@ func New(sessionDir string) *CopilotReader {
 func (r *CopilotReader) AgentType() string  { return "copilot" }
 func (r *CopilotReader) DisplayName() string { return "Copilot" }
 
-// RenderANSI implements reader.BaseSessionReader. Copilot has no
-// RenderEvent adapter yet (planned for Phase 4), so this returns a clear
-// error rather than silently producing empty/wrong output.
+func validSessionID(id string) bool {
+	return id != "" && filepath.Base(id) == id && id != "." && id != ".."
+}
+
+// RenderANSI implements reader.BaseSessionReader.
 func (r *CopilotReader) RenderANSI(id string) (string, error) {
-	return "", fmt.Errorf("ANSI rendering is not yet implemented for copilot sessions")
+	if !validSessionID(id) {
+		return "", fmt.Errorf("invalid copilot session id: %q", id)
+	}
+	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
+	if _, err := os.Stat(eventsPath); err != nil {
+		return "", fmt.Errorf("copilot session not found %q: %w", id, err)
+	}
+	events, err := parseCopilotRenderEvents(eventsPath)
+	if err != nil {
+		return "", err
+	}
+	return render.FormatEvents(events), nil
 }
 
 func scanPreviewText(eventsPath string) string {
@@ -179,6 +193,9 @@ type jsonlEvent struct {
 }
 
 func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
+	if !validSessionID(id) {
+		return nil, fmt.Errorf("invalid copilot session id: %q", id)
+	}
 	wsPath := filepath.Join(r.sessionDir, id, "workspace.yaml")
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
@@ -458,4 +475,223 @@ func readTodos(sessionDir, sessionID string) []model.Todo {
 	}
 
 	return todos
+}
+
+// ---- RenderEvent adapter ----
+
+// parseCopilotRenderEvents parses a Copilot events.jsonl file into a flat
+// []model.RenderEvent stream suitable for render.FormatEvents.
+func parseCopilotRenderEvents(path string) ([]model.RenderEvent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var (
+		events       []model.RenderEvent
+		eventCtr     int
+		turnIndex    int
+		pendingTools = make(map[string]string) // toolCallId -> ToolInvocation EventID
+	)
+
+	currentTurnIndex := func() int {
+		if turnIndex == 0 {
+			return 0
+		}
+		return turnIndex - 1
+	}
+
+	emit := func(evt model.RenderEvent) string {
+		if evt.EventID == "" {
+			evt.EventID = fmt.Sprintf("cop-%04d-%s", eventCtr, evt.Type)
+			eventCtr++
+		}
+		if evt.AgentType == "" {
+			evt.AgentType = "copilot"
+		}
+		events = append(events, evt)
+		return evt.EventID
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+
+	for scanner.Scan() {
+		var jev jsonlEvent
+		if err := json.Unmarshal(scanner.Bytes(), &jev); err != nil {
+			continue
+		}
+
+		ts := parseCopilotTimestamp(jev.Timestamp)
+
+		switch jev.Type {
+		case "user.message":
+			content, _ := extractString(jev.Data, "content")
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			turnIndex++
+			emit(model.RenderEvent{
+				EventID:   fmt.Sprintf("cop-%04d-boundary", eventCtr),
+				Type:      "TurnBoundary",
+				Timestamp: ts,
+				TurnIndex: turnIndex - 1,
+			})
+			eventCtr++
+
+			emit(model.RenderEvent{
+				Type:      "UserPrompt",
+				Timestamp: ts,
+				TurnIndex: turnIndex - 1,
+				Text:      content,
+			})
+
+		case "assistant.message":
+			// encryptedContent is opaque ciphertext, not displayable text.
+			content, _ := extractString(jev.Data, "content")
+			if content != "" {
+				emit(model.RenderEvent{
+					Type:      "TextChunk",
+					Timestamp: ts,
+					TurnIndex: currentTurnIndex(),
+					Text:      content,
+				})
+			}
+
+		case "tool.execution_start":
+			toolName, _ := extractString(jev.Data, "toolName")
+			toolCallID, _ := extractString(jev.Data, "toolCallId")
+
+			var toolInput map[string]any
+			if raw, ok := jev.Data["arguments"]; ok {
+				if m, ok := raw.(map[string]any); ok {
+					toolInput = m
+				}
+			} else if raw, ok := jev.Data["parameters"]; ok {
+				// Retain compatibility with older event producers.
+				toolInput, _ = raw.(map[string]any)
+			}
+
+			invID := emit(model.RenderEvent{
+				Type:       "ToolInvocation",
+				Timestamp:  ts,
+				TurnIndex:  currentTurnIndex(),
+				ToolName:   toolName,
+				ToolCallID: toolCallID,
+				ToolInput:  toolInput,
+			})
+			if toolCallID != "" {
+				pendingTools[toolCallID] = invID
+			}
+
+		case "tool.execution_complete":
+			toolCallID, _ := extractString(jev.Data, "toolCallId")
+			exitCode, stdout, stderr, durationMs := copilotToolResult(jev.Data)
+
+			parentEventID := ""
+			if toolCallID != "" {
+				parentEventID = pendingTools[toolCallID]
+				delete(pendingTools, toolCallID)
+			}
+
+			emit(model.RenderEvent{
+				Type:          "ToolResult",
+				Timestamp:     ts,
+				TurnIndex:     currentTurnIndex(),
+				ToolCallID:    toolCallID,
+				Stdout:        stdout,
+				Stderr:        stderr,
+				ExitCode:      exitCode,
+				DurationMs:    durationMs,
+				ParentEventID: parentEventID,
+			})
+
+		case "skill.invoked":
+			name, _ := extractString(jev.Data, "skill_name")
+			if name == "" {
+				name, _ = extractString(jev.Data, "name")
+			}
+			if name != "" {
+				emit(model.RenderEvent{
+					Type:      "AgentSpecific",
+					Subtype:   "skill_invoked",
+					Timestamp: ts,
+					TurnIndex: currentTurnIndex(),
+					Text:      name,
+				})
+			}
+
+		case "subagent.started":
+			name, _ := extractString(jev.Data, "agentDisplayName")
+			if name == "" {
+				name, _ = extractString(jev.Data, "subagent_id")
+			}
+			if name != "" {
+				emit(model.RenderEvent{
+					Type:      "AgentSpecific",
+					Subtype:   "subagent_started",
+					Timestamp: ts,
+					TurnIndex: currentTurnIndex(),
+					Text:      name,
+				})
+			}
+
+		case "session.model_change":
+			if newModel, ok := extractString(jev.Data, "newModel"); ok && newModel != "" {
+				emit(model.RenderEvent{
+					Type:      "AgentSpecific",
+					Subtype:   "model_change",
+					Timestamp: ts,
+					TurnIndex: currentTurnIndex(),
+					Text:      newModel,
+				})
+			}
+		}
+	}
+
+	return events, scanner.Err()
+}
+
+func copilotToolResult(data map[string]any) (exitCode int, stdout, stderr string, durationMs int64) {
+	exitCode = int(extractFloat(data, "exit_code"))
+	if exitCode == 0 {
+		exitCode = int(extractFloat(data, "exitCode"))
+	}
+	stdout, _ = extractString(data, "stdout")
+	stderr, _ = extractString(data, "stderr")
+	durationMs = int64(extractFloat(data, "duration_ms"))
+	if durationMs == 0 {
+		durationMs = int64(extractFloat(data, "durationMs"))
+	}
+
+	if result, ok := data["result"].(map[string]any); ok {
+		if stdout == "" {
+			stdout, _ = extractString(result, "content")
+		}
+		if stdout == "" {
+			stdout, _ = extractString(result, "detailedContent")
+		}
+	}
+	if failure, ok := data["error"].(map[string]any); ok && stderr == "" {
+		stderr, _ = extractString(failure, "message")
+	}
+	if success, ok := data["success"].(bool); ok && !success && exitCode == 0 {
+		exitCode = 1
+	}
+	return exitCode, stdout, stderr, durationMs
+}
+
+// parseCopilotTimestamp tries RFC3339Nano first, falls back to RFC3339.
+func parseCopilotTimestamp(ts string) time.Time {
+	if ts == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		return t
+	}
+	return time.Time{}
 }

@@ -22,6 +22,7 @@ const (
 	HexSubagent  = "#ff9e64"
 	HexSeparator = "#565f89"
 	HexWarning   = "#e0af68"
+	HexSkill     = "#bb9af7"
 )
 
 const (

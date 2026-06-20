@@ -376,6 +376,18 @@ func writeAgentSpecific(sb *strings.Builder, evt model.RenderEvent, prefix strin
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 子agent转录加载失败: %s", reason), HexWarning))
 		sb.WriteString("\n")
+	case "skill_invoked":
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(fmt.Sprintf("⚙ %s", sanitizeControlChars(evt.Text)), HexSkill))
+		sb.WriteString("\n")
+	case "subagent_started":
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), HexSubagent))
+		sb.WriteString("\n")
+	case "model_change":
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(fmt.Sprintf("↪ model: %s", sanitizeControlChars(evt.Text)), HexWarning))
+		sb.WriteString("\n")
 	default:
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap(fmt.Sprintf("[agent:%s]", evt.Subtype), HexWarning))
