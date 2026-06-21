@@ -1,10 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { Virtuoso } from 'react-virtuoso'
-import type { VirtuosoHandle } from 'react-virtuoso'
 import { fetchSession, fetchSearch } from '../api'
 import type { SearchResult, SessionDetail, TurnVM } from '../types'
 import type { ScrollMetrics } from '../minimapGeometry'
-import TurnCard from './TurnCard'
+import { TERMINAL_LINE_HEIGHT } from './TerminalPanel'
+import type { TerminalControl } from './TerminalPanel'
 import ThemeToggle from './ThemeToggle'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
@@ -12,6 +11,7 @@ const TerminalPanel = lazy(() => import('./TerminalPanel'))
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 type JumpTarget = 'turn' | 'user' | 'anomaly' | 'compaction'
+type ViewMode = 'terminal' | 'analytics'
 
 function hasCompaction(turn: TurnVM): boolean {
   return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false
@@ -44,90 +44,45 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
-  const [mode, setMode] = useState<'full' | 'digest'>('full')
-  const [density, setDensity] = useState<'standard' | 'tight'>('standard')
-  const [viewMode, setViewMode] = useState<'replay' | 'terminal' | 'analytics'>('replay')
+  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const [showHelp, setShowHelp] = useState(false)
-  const [userScrolled, setUserScrolled] = useState(false)
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
   const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
-  const virtuosoRef = useRef<VirtuosoHandle>(null)
-  const scrollerRef = useRef<HTMLElement | null>(null)
-  const [scrollerElement, setScrollerElement] = useState<HTMLElement | null>(null)
+  const termControlRef = useRef<TerminalControl | null>(null)
 
-  const captureScroller = useCallback((ref: HTMLElement | Window | null) => {
-    const element = ref instanceof HTMLElement ? ref : null
-    scrollerRef.current = element
-    setScrollerElement(element)
-  }, [])
+  const turns = session?.turns ?? []
 
+  // Wire scrollToIndexRef and scrollToTopRef to the terminal control.
+  // When analytics is shown the terminal is unmounted so these become no-ops.
   useEffect(() => {
-    if (scrollToIndexRef && virtuosoRef.current) {
-      scrollToIndexRef.current = (index: number, behavior: ReplayScrollBehavior = 'smooth') => {
-        virtuosoRef.current?.scrollToIndex({ index, align: 'start', behavior })
+    if (scrollToIndexRef) {
+      scrollToIndexRef.current = (index: number) => {
+        const ctrl = termControlRef.current
+        if (!ctrl) return
+        const metrics = ctrl.getMetrics()
+        const totalLines = Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT)
+        const visibleLines = Math.floor(metrics.clientHeight / TERMINAL_LINE_HEIGHT)
+        const barCount = turns.length
+        const ratio = barCount > 1 ? index / (barCount - 1) : 0
+        const line = Math.floor(ratio * Math.max(0, totalLines - visibleLines))
+        ctrl.scrollToLine(line)
       }
     }
     if (scrollToTopRef) {
-      scrollToTopRef.current = (top: number, behavior: ScrollBehavior = 'auto') => {
-        const scroller = scrollerRef.current
-        if (!scroller) {
-          virtuosoRef.current?.scrollTo({ top, behavior })
-          return
-        }
-        if (behavior === 'auto') {
-          scroller.scrollTop = top
-          return
-        }
-        scroller.scrollTo({ top, behavior })
+      scrollToTopRef.current = (top: number) => {
+        termControlRef.current?.scrollToLine(Math.floor(top / TERMINAL_LINE_HEIGHT))
       }
     }
-  }, [scrollToIndexRef, scrollToTopRef, scrollerElement, session])
-
-  useEffect(() => {
-    const scroller = scrollerElement
-    if (!scroller || !onScrollMetricsChange) return
-
-    let frame = 0
-    const emitMetrics = () => {
-      frame = 0
-      onScrollMetricsChange({
-        scrollTop: scroller.scrollTop,
-        scrollHeight: scroller.scrollHeight,
-        clientHeight: scroller.clientHeight,
-      })
-    }
-    const scheduleMetrics = () => {
-      if (frame) return
-      frame = window.requestAnimationFrame(emitMetrics)
-    }
-
-    emitMetrics()
-    scroller.addEventListener('scroll', scheduleMetrics, { passive: true })
-    const resizeObserver = new ResizeObserver(scheduleMetrics)
-    resizeObserver.observe(scroller)
-
-    return () => {
-      scroller.removeEventListener('scroll', scheduleMetrics)
-      resizeObserver.disconnect()
-      if (frame) window.cancelAnimationFrame(frame)
-    }
-  }, [onScrollMetricsChange, scrollerElement, session, viewMode, mode, density])
+  }, [scrollToIndexRef, scrollToTopRef, session, turns])
 
   // Keyboard navigation
   useEffect(() => {
     if (!sessionId || !session?.turns.length) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      if (e.key === 'j' || e.key === 'ArrowDown') {
-        e.preventDefault()
-        jump(1, 'turn')
-      } else if (e.key === 'k' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        jump(-1, 'turn')
-      } else if (e.key === '?' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault()
-        setShowHelp(h => !h)
-      }
+      if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); jump(1, 'turn') }
+      else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); jump(-1, 'turn') }
+      else if (e.key === '?' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setShowHelp(h => !h) }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -136,10 +91,30 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
   useEffect(() => {
     if (!sessionId) { setSession(null); onTurnsChange?.([]); return }
     setLoading(true)
-    fetchSession(sessionId).then(data => { setSession(data); onTurnsChange?.(data.turns) }).catch(console.error).finally(() => setLoading(false))
+    fetchSession(sessionId)
+      .then(data => { setSession(data); onTurnsChange?.(data.turns) })
+      .catch(console.error)
+      .finally(() => setLoading(false))
   }, [sessionId])
 
-  const turns = session?.turns ?? []
+  // Translate terminal scroll events into ScrollMetrics + visibleRange so that
+  // MiniMap stays in sync even though there's no DOM scroller to observe.
+  const handleTerminalScrollMetrics = useCallback((metrics: ScrollMetrics) => {
+    onScrollMetricsChange?.(metrics)
+    const barCount = turns.length
+    if (barCount > 0) {
+      const { scrollTop, scrollHeight, clientHeight } = metrics
+      const maxScroll = Math.max(0, scrollHeight - clientHeight)
+      const ratio = maxScroll > 0 ? scrollTop / maxScroll : 0
+      const centerTurn = Math.round(ratio * (barCount - 1))
+      const visibleTurns = Math.max(1, Math.round((clientHeight / Math.max(scrollHeight, 1)) * barCount))
+      const start = Math.max(0, centerTurn - Math.floor(visibleTurns / 2))
+      const end = Math.min(barCount - 1, start + visibleTurns - 1)
+      const range = { start, end }
+      setVisibleRange(range)
+      onVisibleRangeChange?.(range)
+    }
+  }, [turns, onScrollMetricsChange, onVisibleRangeChange])
 
   const jumpBaseRef = useRef(0)
   useEffect(() => {
@@ -166,29 +141,22 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
   function jump(direction: -1 | 1, target: JumpTarget) {
     const barCount = turns.length
     if (barCount === 0) return
-    const scroller = scrollerRef.current
     const base = jumpBaseRef.current
     let targetIndex = -1
 
     if (target === 'turn') {
       targetIndex = Math.max(0, Math.min(base + direction, barCount - 1))
     } else {
-      const indexes =
-        target === 'user' ? userIndexes :
-        target === 'anomaly' ? anomalyIndexes :
-        compactionIndexes
+      const indexes = target === 'user' ? userIndexes : target === 'anomaly' ? anomalyIndexes : compactionIndexes
       const found = direction > 0
-        ? indexes.find(index => index > base)
-        : [...indexes].reverse().find(index => index < base)
+        ? indexes.find(i => i > base)
+        : [...indexes].reverse().find(i => i < base)
       if (found === undefined) return
       targetIndex = found
     }
 
     jumpBaseRef.current = targetIndex
-    if (scroller && barCount > 0) {
-      const ratio = targetIndex / (barCount - 1)
-      scroller.scrollTop = ratio * (scroller.scrollHeight - scroller.clientHeight)
-    }
+    scrollToIndexRef?.current?.(targetIndex)
   }
 
   if (!sessionId) return (
@@ -198,11 +166,12 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
           <h3 className="text-body font-medium text-[var(--text-primary)]">还没有选中会话</h3>
-          <p className="text-helper text-[var(--text-muted)] mt-1">从左侧选择一个会话后，这里会显示对话回放。</p>
+          <p className="text-helper text-[var(--text-muted)] mt-1">从左侧选择一个会话后，这里会显示终端内容。</p>
         </div>
       </div>
     </main>
   )
+
   if (loading) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)]">
       <GlobalTopBar onSelect={onSelect} />
@@ -215,6 +184,7 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
       ))}</div>
     </main>
   )
+
   if (!session || !session.turns.length) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
       <GlobalTopBar onSelect={onSelect} />
@@ -237,20 +207,12 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
       <GlobalTopBar onSelect={onSelect} />
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
-          {viewMode === 'replay' && <>
-            <button onClick={() => setMode(m => m === 'full' ? 'digest' : 'full')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{mode === 'full' ? 'Full' : 'Digest'}</button>
-            <button onClick={() => setDensity(d => d === 'standard' ? 'tight' : 'standard')} className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{density === 'standard' ? 'Standard' : 'Tight'}</button>
-            <span className="text-[var(--border-default)]">|</span>
-          </>}
-          {(['replay', 'terminal', 'analytics'] as const).map(v => (
-            <button
-              key={v}
-              onClick={() => startTransition(() => setViewMode(v))}
-              className={`h-7 rounded-md px-2 text-nav ${viewMode === v ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            >
-              {v === 'replay' ? '回放' : v === 'terminal' ? '终端' : '分析'}
-            </button>
-          ))}
+          <button
+            onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
+            className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+          >
+            分析
+          </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
         </div>
@@ -310,7 +272,8 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tok · {session.turn_count} turns · {sessionDuration}
-          {session.repository && <span className="text-[var(--text-muted)]"> · {session.repository.split('/').pop()}</span>}{session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>}
+          {session.repository && <span className="text-[var(--text-muted)]"> · {session.repository.split('/').pop()}</span>}
+          {session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>}
           {session.created_at && (
             <span className="text-[var(--text-muted)] ml-1 text-meta">
               {new Date(session.created_at).toLocaleDateString()}
@@ -324,7 +287,8 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
           Turn {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '?'}/{session.turn_count}
         </span>
       </header>
-{showHelp && (
+
+      {showHelp && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(0,0,0,var(--opacity-overlay))]" onClick={() => setShowHelp(false)}>
           <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-lg p-6 max-w-sm" onClick={e => e.stopPropagation()}>
             <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-3">快捷键</h3>
@@ -333,7 +297,6 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
                 ['j / ↓', '下一轮'],
                 ['k / ↑', '上一轮'],
                 ['?', '打开/关闭帮助'],
-                ['Esc', '关闭面板'],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">
                   <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[60px] text-center">{key}</kbd>
@@ -350,66 +313,16 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
         <Suspense fallback={<AnalyticsSkeleton />}>
           <AnalyticsView sessionId={session.id} />
         </Suspense>
-      ) : viewMode === 'terminal' ? (
+      ) : (
         <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
           <div className="flex-1 overflow-hidden flex flex-col">
-            <TerminalPanel sessionId={session.id} />
+            <TerminalPanel
+              sessionId={session.id}
+              onScrollMetrics={handleTerminalScrollMetrics}
+              controlRef={termControlRef}
+            />
           </div>
         </Suspense>
-      ) : (
-        <div className="flex-1 relative">
-          <Virtuoso
-            ref={virtuosoRef}
-            scrollerRef={captureScroller}
-            style={{ height: '100%' }}
-            data={session.turns}
-            atBottomStateChange={(atBottom) => {
-              if (!atBottom && !userScrolled) {
-                setUserScrolled(true)
-              } else if (atBottom && userScrolled) {
-                setUserScrolled(false)
-              }
-            }}
-            rangeChanged={(range) => {
-              const newRange = { start: range.startIndex, end: range.endIndex }
-              setVisibleRange(newRange)
-              onVisibleRangeChange?.(newRange)
-            }}
-            totalListHeightChanged={() => {
-              const scroller = scrollerRef.current
-              if (!scroller) return
-              onScrollMetricsChange?.({
-                scrollTop: scroller.scrollTop,
-                scrollHeight: scroller.scrollHeight,
-                clientHeight: scroller.clientHeight,
-              })
-            }}
-            itemContent={(_: number, turn: TurnVM) => {
-              const currentIndex = session.turns.findIndex(t => t.turn_index === turn.turn_index)
-              const cumul = session.turns.slice(0, currentIndex + 1).reduce((s, t) => s + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
-              return <TurnCard turn={turn} mode={mode} density={density} cumulativeTokens={cumul} agentType={session.agent_type} />
-            }}
-          />
-          {visibleRange && visibleRange.start > 1 && (
-            <button
-              onClick={() => virtuosoRef.current?.scrollToIndex({ index: 0, behavior: 'smooth' })}
-              className="absolute top-3 right-3 bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-md px-2 py-1 text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] shadow-sm transition-colors duration-fast z-10"
-            >
-              &#9650; 顶部
-            </button>
-          )}
-          {userScrolled && (
-            <button
-              onClick={() => {
-                virtuosoRef.current?.scrollToIndex({ index: session.turns.length - 1, behavior: 'smooth' })
-                setUserScrolled(false)
-              }}
-              className="absolute bottom-3 right-3 bg-[var(--accent-blue)] text-[var(--text-inverse)] border border-[var(--accent-blue)] rounded-md px-2 py-1 text-meta hover:opacity-90 shadow-sm transition-colors duration-fast z-10"
-            >
-              &#9660; 回到底部
-            </button>
-          )}
-        </div>
       )}
     </main>
   )
@@ -437,66 +350,39 @@ function GlobalTopBar({ onSelect }: { onSelect?: (id: string) => void }) {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
-    if (!query.trim()) {
-      setResults([])
-      setOpen(false)
-      return
-    }
+    if (!query.trim()) { setResults([]); setOpen(false); return }
     setLoading(true)
     debounceRef.current = setTimeout(() => {
-      fetchSearch(query.trim()).then(data => {
-        setResults(data)
-        setOpen(true)
-        setActiveIndex(-1)
-      }).catch(() => {
-        setResults([])
-      }).finally(() => setLoading(false))
+      fetchSearch(query.trim())
+        .then(data => { setResults(data); setOpen(true); setActiveIndex(-1) })
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false))
     }, 250)
     return () => clearTimeout(debounceRef.current)
   }, [query])
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const selectResult = (id: string) => {
-    onSelect?.(id)
-    setOpen(false)
-    setQuery('')
-  }
+  const selectResult = (id: string) => { onSelect?.(id); setOpen(false); setQuery('') }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!open || results.length === 0) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setActiveIndex(i => Math.min(i + 1, results.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setActiveIndex(i => Math.max(i - 1, 0))
-    } else if (e.key === 'Enter' && activeIndex >= 0) {
-      e.preventDefault()
-      selectResult(results[activeIndex].session_id)
-    } else if (e.key === 'Escape') {
-      setOpen(false)
-      inputRef.current?.blur()
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(i => Math.min(i + 1, results.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(i => Math.max(i - 1, 0)) }
+    else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); selectResult(results[activeIndex].session_id) }
+    else if (e.key === 'Escape') { setOpen(false); inputRef.current?.blur() }
   }
 
-  // Global search shortcut: Cmd+K on Mac, Ctrl+K elsewhere
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const mod = isMac ? e.metaKey : e.ctrlKey
-      if (mod && e.key === 'k') {
-        e.preventDefault()
-        inputRef.current?.focus()
-      }
+      if ((isMac ? e.metaKey : e.ctrlKey) && e.key === 'k') { e.preventDefault(); inputRef.current?.focus() }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
@@ -518,21 +404,15 @@ function GlobalTopBar({ onSelect }: { onSelect?: (id: string) => void }) {
         />
         {open && (
           <div className="absolute top-full left-0 right-0 mt-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-30 max-h-[320px] overflow-y-auto">
-            {loading && results.length === 0 && (
-              <div className="px-3 py-2 text-helper text-[var(--text-muted)]">搜索中...</div>
-            )}
-            {!loading && results.length === 0 && query.trim() && (
-              <div className="px-3 py-2 text-helper text-[var(--text-muted)]">无匹配结果</div>
-            )}
+            {loading && results.length === 0 && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">搜索中...</div>}
+            {!loading && results.length === 0 && query.trim() && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">无匹配结果</div>}
             {results.map((r, i) => (
               <button
                 key={r.session_id}
                 onClick={() => selectResult(r.session_id)}
                 onMouseEnter={() => setActiveIndex(i)}
                 className={`w-full text-left px-3 py-2 text-helper border-b border-[var(--border-muted)] last:border-b-0 transition-colors duration-fast ${
-                  i === activeIndex
-                    ? 'bg-[var(--accent-blue)]/10 text-[var(--text-primary)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]'
+                  i === activeIndex ? 'bg-[var(--accent-blue)]/10 text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]'
                 }`}
               >
                 <div className="truncate text-[var(--text-primary)]">{r.match}</div>

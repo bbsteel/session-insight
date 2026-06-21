@@ -29,6 +29,7 @@ const (
 	resetCode  = "\x1b[0m"
 	boldCode   = "\x1b[1m"
 	italicCode = "\x1b[3m"
+	strikeCode = "\x1b[9m"
 )
 
 func fg(hex string) string {

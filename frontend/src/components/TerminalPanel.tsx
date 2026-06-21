@@ -2,13 +2,29 @@ import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { fetchRenderANSI } from '../api'
+import type { ScrollMetrics } from '../minimapGeometry'
+
+// Pixel height per terminal line, used to convert xterm's line-based scroll
+// position into the pixel-based ScrollMetrics that MiniMap expects.
+export const TERMINAL_LINE_HEIGHT = 16
+
+export interface TerminalControl {
+  scrollToLine: (line: number) => void
+  getMetrics: () => ScrollMetrics
+}
 
 interface Props {
   sessionId: string
+  onScrollMetrics?: (m: ScrollMetrics) => void
+  controlRef?: React.MutableRefObject<TerminalControl | null>
 }
 
-export default function TerminalPanel({ sessionId }: Props) {
+export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  // Keep a stable ref to the callback so the xterm onScroll handler never
+  // needs to be torn down and recreated when the parent re-renders.
+  const onScrollMetricsRef = useRef(onScrollMetrics)
+  onScrollMetricsRef.current = onScrollMetrics
 
   useEffect(() => {
     const container = containerRef.current
@@ -32,16 +48,43 @@ export default function TerminalPanel({ sessionId }: Props) {
     term.loadAddon(fitAddon)
     term.open(container)
     fitAddon.fit()
+    const termCols = term.cols
 
-    const observer = new ResizeObserver(() => fitAddon.fit())
+    const getMetrics = (): ScrollMetrics => ({
+      scrollTop: term.buffer.active.viewportY * TERMINAL_LINE_HEIGHT,
+      scrollHeight: term.buffer.active.length * TERMINAL_LINE_HEIGHT,
+      clientHeight: term.rows * TERMINAL_LINE_HEIGHT,
+    })
+
+    if (controlRef) {
+      controlRef.current = {
+        scrollToLine: (line) => term.scrollToLine(line),
+        getMetrics,
+      }
+    }
+
+    const disposeOnScroll = term.onScroll(() => {
+      onScrollMetricsRef.current?.(getMetrics())
+    })
+
+    const observer = new ResizeObserver(() => {
+      fitAddon.fit()
+      onScrollMetricsRef.current?.(getMetrics())
+    })
     observer.observe(container)
 
-    fetchRenderANSI(sessionId)
-      .then(ansi => { term.write(ansi) })
+    fetchRenderANSI(sessionId, termCols)
+      .then(ansi => {
+        term.write(ansi, () => {
+          onScrollMetricsRef.current?.(getMetrics())
+        })
+      })
       .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
 
     return () => {
       observer.disconnect()
+      disposeOnScroll.dispose()
+      if (controlRef) controlRef.current = null
       term.dispose()
     }
   }, [sessionId])

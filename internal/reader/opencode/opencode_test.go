@@ -308,16 +308,17 @@ func TestResolveDBPath(t *testing.T) {
 	}
 }
 
-func TestRenderANSIUnimplemented(t *testing.T) {
+func TestRenderANSIUnknownSession(t *testing.T) {
 	reader, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	_, err := reader.RenderANSI("any")
-	if err == nil {
-		t.Error("expected error for unimplemented rendering")
+	// Unknown session: no rows in DB → empty ANSI output, no error.
+	out, err := reader.RenderANSI("unknown-session", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("unexpected error: %v", err)
+	if out != "" {
+		t.Errorf("expected empty output for unknown session, got %q", out)
 	}
 }
 

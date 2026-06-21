@@ -15,5 +15,6 @@ type BaseSessionReader interface {
 	// layer can tell "session not found" apart from "rendering not
 	// supported for this agent type" and report it clearly instead of
 	// falling through to the next reader.
-	RenderANSI(id string) (string, error)
+	// cols is the terminal column count from the frontend (0 = use default).
+	RenderANSI(id string, cols int) (string, error)
 }

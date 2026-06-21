@@ -23,7 +23,7 @@ func hasBgColor(result, hex string) bool {
 }
 
 func TestFormatEventsEmpty(t *testing.T) {
-	result := FormatEvents(nil)
+	result := FormatEvents(nil, 0)
 	if result != "" {
 		t.Errorf("expected empty string, got %q", result)
 	}
@@ -33,7 +33,7 @@ func TestSeparator(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "─ Turn 0 ─") {
 		t.Errorf("expected separator, got:\n%s", result)
 	}
@@ -46,7 +46,7 @@ func TestUserPrompt(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "UserPrompt", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "hello world"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "> ") {
 		t.Errorf("expected prompt prefix, got:\n%s", result)
 	}
@@ -63,7 +63,7 @@ func TestThinking(t *testing.T) {
 		{Type: "ThinkingStart", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "let me think..."},
 		{Type: "ThinkingChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "more thinking"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "let me think...") {
 		t.Errorf("expected thinking text, got:\n%s", result)
 	}
@@ -79,7 +79,7 @@ func TestTextChunk(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "plain response"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "plain response") {
 		t.Errorf("expected text content, got:\n%s", result)
 	}
@@ -90,7 +90,7 @@ func TestTextChunkWithDiff(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: diffText},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 
 	if !hasBgColor(result, HexDiffAdd) {
 		t.Errorf("expected diff add bg color, got:\n%s", result)
@@ -107,7 +107,7 @@ func TestTextChunkNoFalsePositiveDiff(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "regular text\nwith no diff markers"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if hasBgColor(result, HexDiffAdd) || hasBgColor(result, HexDiffDel) {
 		t.Errorf("unexpected diff coloring for non-diff text:\n%s", result)
 	}
@@ -119,7 +119,7 @@ func TestToolInvocationBox(t *testing.T) {
 			ToolName: "Bash", ToolCallID: "tool_001",
 			ToolInput: map[string]any{"command": "ls -la", "timeout": float64(30)}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "╔") {
 		t.Errorf("expected box top border, got:\n%s", result)
 	}
@@ -143,7 +143,7 @@ func TestToolInvocationAgentBox(t *testing.T) {
 			ToolName: "Agent", ToolCallID: "tool_002",
 			ToolInput: map[string]any{"prompt": "do something"}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "Tool: Agent") {
 		t.Errorf("expected Agent tool name, got:\n%s", result)
 	}
@@ -157,7 +157,7 @@ func TestToolResultSuccess(t *testing.T) {
 		{Type: "ToolResult", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ExitCode: 0, Stdout: "output line 1\noutput line 2"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "✓") {
 		t.Errorf("expected success check, got:\n%s", result)
 	}
@@ -171,7 +171,7 @@ func TestToolResultError(t *testing.T) {
 		{Type: "ToolResult", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ExitCode: 1, Stderr: "command not found"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "✗") {
 		t.Errorf("expected error cross, got:\n%s", result)
 	}
@@ -189,7 +189,7 @@ func TestToolResultTruncation(t *testing.T) {
 		{Type: "ToolResult", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ExitCode: 0, Stdout: strings.Join(lines, "\n")},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "被截断") {
 		t.Errorf("expected truncation message, got:\n%s", result)
 	}
@@ -210,7 +210,7 @@ func TestToolResultNoTruncation(t *testing.T) {
 		{Type: "ToolResult", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ExitCode: 0, Stdout: strings.Join(lines, "\n")},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if strings.Contains(result, "被截断") {
 		t.Errorf("unexpected truncation for short output:\n%s", result)
 	}
@@ -220,7 +220,7 @@ func TestDepthIndentation(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "UserPrompt", TurnIndex: 0, Timestamp: time.Now(), Depth: 1, Text: "subagent task"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !hasFgColor(result, HexSubagent) {
 		t.Errorf("expected subagent color for depth prefix, got:\n%s", result)
 	}
@@ -234,7 +234,7 @@ func TestAgentSpecificSubagentError(t *testing.T) {
 		{Type: "AgentSpecific", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			Subtype: "subagent_load_error", Payload: map[string]any{"reason": "file not found"}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "子agent转录加载失败") {
 		t.Errorf("expected subagent error message, got:\n%s", result)
 	}
@@ -248,7 +248,7 @@ func TestAgentSpecificTurnDurationSkipped(t *testing.T) {
 		{Type: "AgentSpecific", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			Subtype: "turn_duration", DurationMs: 5000},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	// The separator is rendered (Turn 0 boundary), but no turn_duration-specific text
 	if strings.Contains(result, "turn_duration") || strings.Contains(result, "5000") {
 		t.Errorf("turn_duration should not emit duration text, got:\n%s", result)
@@ -260,7 +260,7 @@ func TestThinkingEndSkipped(t *testing.T) {
 		{Type: "ThinkingStart", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "thinking"},
 		{Type: "ThinkingEnd", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	count := strings.Count(result, "thinking")
 	if count != 1 {
 		t.Errorf("ThinkingEnd should not add extra 'thinking' text, got %d occurrences:\n%s", count, result)
@@ -273,7 +273,7 @@ func TestMultiTurnSeparators(t *testing.T) {
 		{Type: "UserPrompt", TurnIndex: 1, Timestamp: time.Now(), Depth: 0, Text: "second"},
 		{Type: "UserPrompt", TurnIndex: 2, Timestamp: time.Now(), Depth: 0, Text: "third"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if strings.Count(result, "─ Turn ") != 3 {
 		t.Errorf("expected 3 turn separators, got:\n%s", result)
 	}
@@ -285,7 +285,7 @@ func TestToolInputStringQuoting(t *testing.T) {
 			ToolName: "Bash", ToolCallID: "t1",
 			ToolInput: map[string]any{"command": "git commit -m 'fix'", "cwd": "/home"}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "\"git commit") {
 		t.Errorf("expected quoted command value with spaces, got:\n%s", result)
 	}
@@ -300,7 +300,7 @@ func TestToolInputNumberFormatting(t *testing.T) {
 			ToolName: "Bash", ToolCallID: "t1",
 			ToolInput: map[string]any{"timeout": float64(30), "retry": float64(3)}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "30") {
 		t.Errorf("expected integer number formatting, got:\n%s", result)
 	}
@@ -312,7 +312,7 @@ func TestEmptyToolInputBox(t *testing.T) {
 			ToolName: "Bash", ToolCallID: "t1",
 			ToolInput: map[string]any{}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "╔") {
 		t.Errorf("expected box even with empty input, got:\n%s", result)
 	}
@@ -333,7 +333,7 @@ func TestTextChunkMarkdownBulletsAreNotMisrenderedAsDiff(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: text},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if hasBgColor(result, HexDiffDel) || hasBgColor(result, HexDiffAdd) {
 		t.Errorf("markdown bullet list should not be colored as a diff:\n%s", result)
 	}
@@ -348,7 +348,7 @@ func TestToolInvocationLongToolNameDoesNotPanic(t *testing.T) {
 	// The original draft panicked here with "strings: negative Repeat
 	// count" because the box header computation didn't account for tool
 	// names long enough to exceed boxWidth.
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if !strings.Contains(result, "╔") || !strings.Contains(result, "╚") {
 		t.Errorf("expected a complete box even for an overlong tool name, got:\n%s", result)
 	}
@@ -365,7 +365,7 @@ func TestToolInputOrderIsDeterministic(t *testing.T) {
 		events := []model.RenderEvent{
 			{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, ToolName: "Bash", ToolInput: input},
 		}
-		out := FormatEvents(events)
+		out := FormatEvents(events, 0)
 		if i == 0 {
 			first = out
 		} else if out != first {
@@ -382,7 +382,7 @@ func TestToolInvocationCJKBoxBorderAligns(t *testing.T) {
 		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ToolName: "Bash", ToolInput: map[string]any{"command": "检查一下post-commit的rsync为什么这么慢了"}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	var topW, bodyW, bottomW int
 	for _, line := range strings.Split(result, "\n") {
 		stripped := stripANSIForTest(line)
@@ -420,7 +420,7 @@ func TestControlCharsAreSanitized(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: malicious},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	if strings.Contains(result, "\x1b]52") {
 		t.Errorf("OSC 52 clipboard-write sequence leaked into output:\n%q", result)
 	}
@@ -441,7 +441,7 @@ func TestToolInvocationLongCJKToolNameStaysAligned(t *testing.T) {
 		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ToolName: longCJKName, ToolInput: map[string]any{"x": "y"}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	var topW, bottomW int
 	for _, line := range strings.Split(result, "\n") {
 		stripped := stripANSIForTest(line)
@@ -465,7 +465,7 @@ func TestToolInputLongCJKValueDoesNotOverflowBox(t *testing.T) {
 		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ToolName: "Bash", ToolInput: map[string]any{"command": longCJKValue}},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	var topW, bodyW, bottomW int
 	for _, line := range strings.Split(result, "\n") {
 		stripped := stripANSIForTest(line)
@@ -499,7 +499,7 @@ func TestToolResultAtDepthDoesNotDuplicatePrefix(t *testing.T) {
 		{Type: "ToolResult", TurnIndex: 0, Timestamp: time.Now(), Depth: 1,
 			ExitCode: 0, Stdout: "output line"},
 	}
-	result := FormatEvents(events)
+	result := FormatEvents(events, 0)
 	for _, line := range strings.Split(result, "\n") {
 		stripped := stripANSIForTest(line)
 		if count := strings.Count(stripped, "│"); count > 1 {

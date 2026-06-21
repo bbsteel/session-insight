@@ -21,8 +21,9 @@ export async function fetchAgents(): Promise<AgentInfo[]> {
   return readJson<AgentInfo[]>(res, 'agents')
 }
 
-export async function fetchRenderANSI(id: string): Promise<string> {
-  const res = await fetch(`/api/sessions/${id}/render`)
+export async function fetchRenderANSI(id: string, cols?: number): Promise<string> {
+  const url = cols ? `/api/sessions/${id}/render?cols=${cols}` : `/api/sessions/${id}/render`
+  const res = await fetch(url)
   if (!res.ok) throw new Error(`Failed to fetch render: ${res.status}`)
   return res.text()
 }

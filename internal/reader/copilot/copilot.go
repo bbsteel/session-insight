@@ -46,7 +46,7 @@ func validSessionID(id string) bool {
 }
 
 // RenderANSI implements reader.BaseSessionReader.
-func (r *CopilotReader) RenderANSI(id string) (string, error) {
+func (r *CopilotReader) RenderANSI(id string, cols int) (string, error) {
 	if !validSessionID(id) {
 		return "", fmt.Errorf("invalid copilot session id: %q", id)
 	}
@@ -58,7 +58,7 @@ func (r *CopilotReader) RenderANSI(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return render.FormatEvents(events), nil
+	return render.FormatEvents(events, cols), nil
 }
 
 func scanPreviewText(eventsPath string) string {

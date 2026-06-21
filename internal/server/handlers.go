@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"session-insight/internal/model"
 	"strings"
 )
@@ -93,9 +94,11 @@ func (s *Server) handleRenderSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
+
 	var lastErr error
 	for _, rd := range s.Readers {
-		ansi, err := rd.RenderANSI(id)
+		ansi, err := rd.RenderANSI(id, cols)
 		if err != nil {
 			lastErr = err
 			continue
