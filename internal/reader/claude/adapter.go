@@ -12,6 +12,7 @@ import (
 
 	"session-insight/internal/model"
 	"session-insight/internal/render"
+	"session-insight/internal/reader/shared"
 )
 
 // RenderANSI implements reader.BaseSessionReader. It resolves the JSONL
@@ -459,51 +460,7 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 
 	flushStream()
 
-	return dropEmptyTurns(events), foundModel, scanner.Err()
-}
-
-// dropEmptyTurns removes TurnBoundary+UserPrompt pairs for turns that carry
-// no real content — e.g. a trailing empty user message at the end of a
-// transcript. Without this, real session data renders visible turns with
-// nothing but a bare "> " prompt and no response (confirmed via an
-// end-to-end request against real data during Phase 2 review).
-//
-// This mirrors the old EventVM-based parser's filterEmptyTurns (claude.go),
-// which the RenderEvent pipeline never had an equivalent for. Implemented
-// as a post-processing pass here, rather than inline during scanning,
-// because emission is streaming/eager and a turn's "is it empty" verdict
-// can only be known once all of its events have been seen.
-func dropEmptyTurns(events []model.RenderEvent) []model.RenderEvent {
-	hasContent := make(map[int]bool)
-	for _, e := range events {
-		switch e.Type {
-		case "TurnBoundary":
-			// never itself counts as content
-		case "UserPrompt":
-			if strings.TrimSpace(e.Text) != "" {
-				hasContent[e.TurnIndex] = true
-			}
-		case "AgentSpecific":
-			// A bare turn_duration marker (the only AgentSpecific subtype
-			// emitted unconditionally, regardless of whether the turn did
-			// anything) shouldn't by itself save an otherwise-empty turn —
-			// matches filterEmptyTurns' duration-agnostic semantics.
-			if e.Subtype != "turn_duration" {
-				hasContent[e.TurnIndex] = true
-			}
-		default:
-			hasContent[e.TurnIndex] = true
-		}
-	}
-
-	filtered := make([]model.RenderEvent, 0, len(events))
-	for _, e := range events {
-		if (e.Type == "TurnBoundary" || e.Type == "UserPrompt") && !hasContent[e.TurnIndex] {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-	return filtered
+	return shared.DropEmptyRenderTurns(events), foundModel, scanner.Err()
 }
 
 // ---- subagent stitching ----

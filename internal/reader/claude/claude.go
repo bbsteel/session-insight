@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"session-insight/internal/model"
+	"session-insight/internal/reader/shared"
 )
 
 type ClaudeReader struct {
@@ -219,7 +219,7 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 	}
 
 	// Estimate total lines from head scan average (avoids full-file read)
-	lineCount := estimateLineCount(headLines, headBytes, fileSize)
+	lineCount := shared.EstimateLineCount(headLines, headBytes, fileSize)
 
 	// Phase 3: seek to last 8 KB for tail metadata (ai-title, last-prompt, updatedAt)
 	const tailBytes = 8 * 1024
@@ -238,7 +238,7 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 	}
 
 	name := resolveSessionName(aiTitle, lastPrompt, firstUserMsg, createdAt)
-	previewText := buildPreviewText(userMessages)
+	previewText := shared.BuildPreviewText(userMessages)
 
 	return model.Session{
 		ID:           sessionID,
@@ -329,53 +329,20 @@ func parseTailEvent(line []byte, aiTitle, lastPrompt *string, updatedAt *time.Ti
 	}
 }
 
-func estimateLineCount(headLines int, headBytes int64, fileSize int64) int {
-	if headLines == 0 || headBytes == 0 {
-		// fallback: ~400 bytes per JSONL line
-		return int(fileSize / 400)
-	}
-	avgLineLen := float64(headBytes) / float64(headLines)
-	// +10% to compensate for typically longer lines later in sessions
-	return int(float64(fileSize)/avgLineLen * 1.1)
-}
-
 func resolveSessionName(aiTitle, lastPrompt, firstUserMsg string, createdAt time.Time) string {
 	if aiTitle != "" {
 		return aiTitle
 	}
 	if lastPrompt != "" {
-		return truncateRunes(lastPrompt, 50)
+		return shared.TruncateRunes(lastPrompt, 50)
 	}
 	if firstUserMsg != "" {
-		return truncateRunes(firstUserMsg, 50)
+		return shared.TruncateRunes(firstUserMsg, 50)
 	}
 	if !createdAt.IsZero() {
 		return "Session " + createdAt.Format("01-02 15:04")
 	}
 	return "Session"
-}
-
-func truncateRunes(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n]) + "..."
-}
-
-func buildPreviewText(messages []string) string {
-	// Truncate each message to 200 runes, join, cap total at ~1500 bytes
-	const maxPerMsg = 200
-	const maxTotal = 1500
-	var parts []string
-	for _, m := range messages {
-		parts = append(parts, truncateRunes(m, maxPerMsg))
-	}
-	joined := strings.Join(parts, " | ")
-	if len(joined) > maxTotal {
-		return joined[:maxTotal] + "..."
-	}
-	return joined
 }
 
 // ---- GetSession ----
@@ -403,43 +370,7 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 
-	// Anomaly detection
-	var durations []int64
-	for _, t := range turns {
-		if t.DurationMs > 0 {
-			durations = append(durations, t.DurationMs)
-		}
-	}
-
-	if len(durations) > 1 {
-		var sum int64
-		for _, d := range durations {
-			sum += d
-		}
-		mean := float64(sum) / float64(len(durations))
-		var variance float64
-		for _, d := range durations {
-			variance += (float64(d) - mean) * (float64(d) - mean)
-		}
-		stdDev := math.Sqrt(variance / float64(len(durations)))
-		threshold := mean + 3*stdDev
-
-		summary := model.AnomalySummary{}
-		for i := range turns {
-			if turns[i].ErrorCount > 0 {
-				turns[i].Anomalies = append(turns[i].Anomalies, "tool_failure")
-				summary.ToolFailures++
-			}
-			if float64(turns[i].DurationMs) > threshold && turns[i].DurationMs > 30000 {
-				turns[i].Anomalies = append(turns[i].Anomalies, "duration_spike")
-				summary.DurationSpikes++
-			}
-		}
-		summary.TotalAnomalies = summary.ToolFailures + summary.DurationSpikes
-		if len(turns) > 0 {
-			detail.AnomalySummary = summary
-		}
-	}
+	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
 
 	return detail, nil
 }
@@ -583,7 +514,7 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 	}
 
 	// Filter out noise turns (slash commands, hook events, etc.)
-	turns = filterEmptyTurns(turns)
+	turns = shared.FilterEmptyTurns(turns)
 
 	// Resolve tool exit codes from tool_result events in same turn
 	for i := range turns {
@@ -636,15 +567,4 @@ func stripTag(s, tag string) string {
 
 func newEventVM(typ, ts string, data map[string]any) model.EventVM {
 	return model.EventVM{Type: typ, Timestamp: ts, Data: data}
-}
-
-func filterEmptyTurns(turns []model.TurnVM) []model.TurnVM {
-	filtered := turns[:0]
-	for _, t := range turns {
-		if t.UserMessage == "" && t.AssistantMessage == "" && t.ToolCallCount == 0 {
-			continue
-		}
-		filtered = append(filtered, t)
-	}
-	return filtered
 }

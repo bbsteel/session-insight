@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"session-insight/internal/model"
+	"session-insight/internal/reader/shared"
 	"session-insight/internal/render"
 )
 
@@ -78,7 +78,7 @@ func scanPreviewText(eventsPath string) string {
 		}
 		if evt.Type == "user.message" {
 			if content, ok := extractString(evt.Data, "content"); ok && content != "" {
-				messages = append(messages, truncateRunes(content, 200))
+				messages = append(messages, shared.TruncateRunes(content, 200))
 				if len(messages) >= 5 {
 					break
 				}
@@ -90,14 +90,6 @@ func scanPreviewText(eventsPath string) string {
 		return joined[:1500] + "..."
 	}
 	return joined
-}
-
-func truncateRunes(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n]) + "..."
 }
 
 func (r *CopilotReader) ListSessions() ([]model.Session, error) {
@@ -236,51 +228,20 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail.Todos = readTodos(r.sessionDir, id)
 
 	// Anomaly detection
+	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+
+	// MissingShutdown check (copilot-specific: session.shutdown event)
 	hasShutdown := false
-	var durations []int64
 	for _, t := range turns {
 		for _, e := range t.Events {
 			if e.Type == "session.shutdown" {
 				hasShutdown = true
 			}
 		}
-		if t.DurationMs > 0 {
-			durations = append(durations, t.DurationMs)
-		}
 	}
-
-	if len(durations) > 1 {
-		var sum int64
-		for _, d := range durations {
-			sum += d
-		}
-		mean := float64(sum) / float64(len(durations))
-		var variance float64
-		for _, d := range durations {
-			variance += (float64(d) - mean) * (float64(d) - mean)
-		}
-		stdDev := math.Sqrt(variance / float64(len(durations)))
-		threshold := mean + 3*stdDev
-
-		summary := model.AnomalySummary{}
-		for i := range turns {
-			if turns[i].ErrorCount > 0 {
-				turns[i].Anomalies = append(turns[i].Anomalies, "tool_failure")
-				summary.ToolFailures++
-			}
-			if float64(turns[i].DurationMs) > threshold && turns[i].DurationMs > 30000 {
-				turns[i].Anomalies = append(turns[i].Anomalies, "duration_spike")
-				summary.DurationSpikes++
-			}
-		}
-		if !hasShutdown && len(turns) > 0 {
-			summary.MissingShutdown = true
-		}
-		summary.TotalAnomalies = summary.ToolFailures + summary.DurationSpikes
-		if summary.MissingShutdown {
-			summary.TotalAnomalies++
-		}
-		detail.AnomalySummary = summary
+	if !hasShutdown && len(turns) > 0 {
+		detail.AnomalySummary.MissingShutdown = true
+		detail.AnomalySummary.TotalAnomalies++
 	}
 
 	return detail, nil

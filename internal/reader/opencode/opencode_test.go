@@ -11,6 +11,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"session-insight/internal/model"
+	"session-insight/internal/reader/shared"
 )
 
 func setupTestDB(t *testing.T) (*OpenCodeReader, *sql.DB, func()) {
@@ -107,7 +109,7 @@ func TestListSessions(t *testing.T) {
 	}
 }
 
-func TestListSessionsPreviewTextSkipsSummary(t *testing.T) {
+func TestListSessionsPreviewTextIncludesMessageWithGeneratedSummary(t *testing.T) {
 	reader, db, cleanup := setupTestDB(t)
 	defer cleanup()
 
@@ -115,13 +117,9 @@ func TestListSessionsPreviewTextSkipsSummary(t *testing.T) {
 
 	now := time.Now().UnixMilli()
 
-	summaryData := `{"role":"user","summary":{"title":"Greeting","diffs":[]},"agent":"build"}`
-	seedMessage(t, db, "msg_sum", "ses_test002", now, summaryData)
-	seedPart(t, db, "prt_sum_text", "msg_sum", "ses_test002", `{"type":"text","text":"summary text"}`)
-
-	userData := `{"role":"user","agent":"build"}`
-	seedMessage(t, db, "msg_real", "ses_test002", now+1, userData)
-	seedPart(t, db, "prt_real_text", "msg_real", "ses_test002", `{"type":"text","text":"Fix the login bug"}`)
+	userData := `{"role":"user","summary":{"title":"Generated title","diffs":[]},"agent":"build"}`
+	seedMessage(t, db, "msg_user", "ses_test002", now, userData)
+	seedPart(t, db, "prt_user_text", "msg_user", "ses_test002", `{"type":"text","text":"Fix the login bug"}`)
 
 	sessions, err := reader.ListSessions()
 	if err != nil {
@@ -133,6 +131,9 @@ func TestListSessionsPreviewTextSkipsSummary(t *testing.T) {
 
 	if sessions[0].PreviewText != "Fix the login bug" {
 		t.Errorf("expected PreviewText='Fix the login bug', got '%s'", sessions[0].PreviewText)
+	}
+	if sessions[0].TurnCount != 1 {
+		t.Errorf("expected TurnCount=1, got %d", sessions[0].TurnCount)
 	}
 }
 
@@ -147,7 +148,7 @@ func TestGetSessionTurnParsing(t *testing.T) {
 	seedMessage(t, db, "msg_u1", "ses_test003", now, `{"role":"user","agent":"build"}`)
 	seedPart(t, db, "prt_u1_t", "msg_u1", "ses_test003", `{"type":"text","text":"Hello"}`)
 
-	asstData := fmt.Sprintf(`{"role":"assistant","parentID":"msg_u1","modelID":"claude-sonnet-4","providerID":"anthropic","agent":"build","tokens":{"input":100,"output":50,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":%d,"completed":%d}}`, now, now+5000)
+	asstData := fmt.Sprintf(`{"role":"assistant","parentID":"msg_u1","modelID":"claude-sonnet-4","providerID":"anthropic","agent":"build","tokens":{"input":100,"output":50,"reasoning":7,"cache":{"read":11,"write":3}},"time":{"created":%d,"completed":%d}}`, now, now+5000)
 	seedMessage(t, db, "msg_a1", "ses_test003", now+1, asstData)
 	seedPart(t, db, "prt_a1_t", "msg_a1", "ses_test003", `{"type":"text","text":"Hi there!"}`)
 	seedPart(t, db, "prt_a1_r", "msg_a1", "ses_test003", `{"type":"reasoning","text":"thinking..."}`)
@@ -182,11 +183,73 @@ func TestGetSessionTurnParsing(t *testing.T) {
 	if turn.ErrorCount != 1 {
 		t.Errorf("expected 1 error, got %d", turn.ErrorCount)
 	}
-	if turn.TokenUsage.PromptTokens != 100 || turn.TokenUsage.CompletionTokens != 50 {
+	if turn.TokenUsage.PromptTokens != 100 || turn.TokenUsage.CompletionTokens != 57 {
 		t.Errorf("token usage mismatch: prompt=%d completion=%d", turn.TokenUsage.PromptTokens, turn.TokenUsage.CompletionTokens)
+	}
+	if turn.TokenUsage.CacheReadTokens != 11 || turn.TokenUsage.CacheWriteTokens != 3 {
+		t.Errorf("cache token usage mismatch: read=%d write=%d", turn.TokenUsage.CacheReadTokens, turn.TokenUsage.CacheWriteTokens)
 	}
 	if turn.DurationMs != 5000 {
 		t.Errorf("expected duration=5000ms, got %d", turn.DurationMs)
+	}
+}
+
+func TestGetSessionKeepsUserTextWhenMessageHasGeneratedSummary(t *testing.T) {
+	reader, db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	seedSession(t, db, "ses_summary", "/test", "Test", "model")
+	now := time.Now().UnixMilli()
+	seedMessage(t, db, "msg_user", "ses_summary", now,
+		`{"role":"user","summary":{"title":"Generated title","diffs":[]},"agent":"build"}`)
+	seedPart(t, db, "prt_user", "msg_user", "ses_summary", `{"type":"text","text":"Keep this prompt"}`)
+	seedMessage(t, db, "msg_assistant", "ses_summary", now+1,
+		fmt.Sprintf(`{"role":"assistant","parentID":"msg_user","time":{"created":%d,"completed":%d}}`, now+1, now+2))
+	seedPart(t, db, "prt_assistant", "msg_assistant", "ses_summary", `{"type":"text","text":"Done"}`)
+
+	detail, err := reader.GetSession("ses_summary")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if len(detail.Turns) != 1 {
+		t.Fatalf("expected 1 turn, got %d", len(detail.Turns))
+	}
+	if detail.Turns[0].UserMessage != "Keep this prompt" {
+		t.Errorf("expected summarized message text to be retained, got %q", detail.Turns[0].UserMessage)
+	}
+}
+
+func TestGetSessionUsesFullTurnDurationAcrossAssistantSteps(t *testing.T) {
+	reader, db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	seedSession(t, db, "ses_duration", "/test", "Test", "model")
+	seedMessage(t, db, "msg_user", "ses_duration", 1000, `{"role":"user","agent":"build"}`)
+	seedPart(t, db, "prt_user", "msg_user", "ses_duration", `{"type":"text","text":"Run it"}`)
+	seedMessage(t, db, "msg_a1", "ses_duration", 1100,
+		`{"role":"assistant","parentID":"msg_user","time":{"created":1100,"completed":2100}}`)
+	seedMessage(t, db, "msg_a2", "ses_duration", 2200,
+		`{"role":"assistant","parentID":"msg_user","time":{"created":2200,"completed":5200}}`)
+
+	detail, err := reader.GetSession("ses_duration")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got := detail.Turns[0].DurationMs; got != 4100 {
+		t.Errorf("expected full turn duration 4100ms, got %d", got)
+	}
+}
+
+func TestSingleTurnToolFailureIsReportedAsAnomaly(t *testing.T) {
+	turns := []model.TurnVM{{ErrorCount: 1, DurationMs: 1000}}
+
+	summary := shared.RunAnomalyDetection(turns)
+
+	if summary.ToolFailures != 1 || summary.TotalAnomalies != 1 {
+		t.Fatalf("expected one tool failure anomaly, got %+v", summary)
+	}
+	if len(turns[0].Anomalies) != 1 || turns[0].Anomalies[0] != "tool_failure" {
+		t.Fatalf("expected turn tool_failure anomaly, got %+v", turns[0].Anomalies)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +14,7 @@ import (
 
 	"session-insight/internal/model"
 	"session-insight/internal/render"
+	"session-insight/internal/reader/shared"
 )
 
 type CodexReader struct {
@@ -150,14 +150,6 @@ func extractModelName(meta *codexSessionMeta) string {
 		return meta.ModelProvider
 	}
 	return ""
-}
-
-func truncateRunes(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n]) + "..."
 }
 
 func parseTimestamp(ts string) time.Time {
@@ -317,9 +309,9 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 	}
 
 	name := resolveName(firstUserMsg, createdAt)
-	previewText := buildPreviewText(userMessages)
+	previewText := shared.BuildPreviewText(userMessages)
 
-	msgCount := estimateLineCount(headLines, headBytes, fileSize)
+	msgCount := shared.EstimateLineCount(headLines, headBytes, fileSize)
 
 	// Tail scan for updatedAt from last event timestamp
 	const tailBytes = 8 * 1024
@@ -358,34 +350,12 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 
 func resolveName(firstUserMsg string, createdAt time.Time) string {
 	if firstUserMsg != "" {
-		return truncateRunes(firstUserMsg, 50)
+		return shared.TruncateRunes(firstUserMsg, 50)
 	}
 	if !createdAt.IsZero() {
 		return "Codex " + createdAt.Format("01-02 15:04")
 	}
 	return "Codex Session"
-}
-
-func buildPreviewText(messages []string) string {
-	const maxPerMsg = 200
-	const maxTotal = 1500
-	var parts []string
-	for _, m := range messages {
-		parts = append(parts, truncateRunes(m, maxPerMsg))
-	}
-	joined := strings.Join(parts, " | ")
-	if len(joined) > maxTotal {
-		return joined[:maxTotal] + "..."
-	}
-	return joined
-}
-
-func estimateLineCount(headLines int, headBytes int64, fileSize int64) int {
-	if headLines == 0 || headBytes == 0 {
-		return 0
-	}
-	avgLineLen := float64(headBytes) / float64(headLines)
-	return int(float64(fileSize)/avgLineLen * 1.1)
 }
 
 // ---- GetSession ----
@@ -409,43 +379,7 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 
-	// Anomaly detection
-	var durations []int64
-	for _, t := range turns {
-		if t.DurationMs > 0 {
-			durations = append(durations, t.DurationMs)
-		}
-	}
-
-	if len(durations) > 1 {
-		var sum int64
-		for _, d := range durations {
-			sum += d
-		}
-		mean := float64(sum) / float64(len(durations))
-		var variance float64
-		for _, d := range durations {
-			variance += (float64(d) - mean) * (float64(d) - mean)
-		}
-		stdDev := math.Sqrt(variance / float64(len(durations)))
-		threshold := mean + 3*stdDev
-
-		summary := model.AnomalySummary{}
-		for i := range turns {
-			if turns[i].ErrorCount > 0 {
-				turns[i].Anomalies = append(turns[i].Anomalies, "tool_failure")
-				summary.ToolFailures++
-			}
-			if float64(turns[i].DurationMs) > threshold && turns[i].DurationMs > 30000 {
-				turns[i].Anomalies = append(turns[i].Anomalies, "duration_spike")
-				summary.DurationSpikes++
-			}
-		}
-		summary.TotalAnomalies = summary.ToolFailures + summary.DurationSpikes
-		if len(turns) > 0 {
-			detail.AnomalySummary = summary
-		}
-	}
+	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
 
 	return detail, nil
 }
@@ -664,20 +598,9 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 	}
 
 	// Filter empty turns
-	turns = filterEmptyTurns(turns)
+	turns = shared.FilterEmptyTurns(turns)
 
 	return turns, foundModel
-}
-
-func filterEmptyTurns(turns []model.TurnVM) []model.TurnVM {
-	filtered := turns[:0]
-	for _, t := range turns {
-		if t.UserMessage == "" && t.AssistantMessage == "" && t.ToolCallCount == 0 {
-			continue
-		}
-		filtered = append(filtered, t)
-	}
-	return filtered
 }
 
 // ---- RenderEvent adapter ----
@@ -870,31 +793,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		}
 	}
 
-	return dropEmptyCodexRenderTurns(events), scanner.Err()
-}
-
-func dropEmptyCodexRenderTurns(events []model.RenderEvent) []model.RenderEvent {
-	hasContent := make(map[int]bool)
-	for _, event := range events {
-		switch event.Type {
-		case "TurnBoundary":
-		case "UserPrompt":
-			if strings.TrimSpace(event.Text) != "" {
-				hasContent[event.TurnIndex] = true
-			}
-		default:
-			hasContent[event.TurnIndex] = true
-		}
-	}
-
-	filtered := make([]model.RenderEvent, 0, len(events))
-	for _, event := range events {
-		if (event.Type == "TurnBoundary" || event.Type == "UserPrompt") && !hasContent[event.TurnIndex] {
-			continue
-		}
-		filtered = append(filtered, event)
-	}
-	return filtered
+	return shared.DropEmptyRenderTurns(events), scanner.Err()
 }
 
 // parseArguments attempts to unmarshal a JSON string into map[string]any.

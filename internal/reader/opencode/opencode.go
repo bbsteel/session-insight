@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"session-insight/internal/model"
+	"session-insight/internal/reader/shared"
 )
 
 type OpenCodeReader struct {
@@ -40,12 +40,9 @@ func newReader(dbPath, extraParams string) (*OpenCodeReader, error) {
 	return &OpenCodeReader{db: db}, nil
 }
 
-func (r *OpenCodeReader) AgentType() string  { return "opencode" }
+func (r *OpenCodeReader) AgentType() string   { return "opencode" }
 func (r *OpenCodeReader) DisplayName() string { return "OpenCode" }
 
-func (r *OpenCodeReader) RenderANSI(id string) (string, error) {
-	return "", fmt.Errorf("ANSI rendering is not yet implemented for opencode sessions")
-}
 
 // ---- data ----
 
@@ -53,21 +50,12 @@ type msgBase struct {
 	Role string `json:"role"`
 }
 
-type userMsgData struct {
-	Role    string `json:"role"`
-	Agent   string `json:"agent"`
-	Summary *struct {
-		Title string                   `json:"title"`
-		Diffs []map[string]interface{} `json:"diffs"`
-	} `json:"summary"`
-}
-
 type assistantMsgData struct {
-	Role       string `json:"role"`
-	ParentID   string `json:"parentID"`
-	ModelID    string `json:"modelID"`
-	ProviderID string `json:"providerID"`
-	Agent      string `json:"agent"`
+	Role       string  `json:"role"`
+	ParentID   string  `json:"parentID"`
+	ModelID    string  `json:"modelID"`
+	ProviderID string  `json:"providerID"`
+	Agent      string  `json:"agent"`
 	Cost       float64 `json:"cost"`
 	Tokens     *struct {
 		Input     int64 `json:"input"`
@@ -92,10 +80,10 @@ type partData struct {
 	CallID    string `json:"callID,omitempty"`
 	Tool      string `json:"tool,omitempty"`
 	State     *struct {
-		Status string          `json:"status"`
-		Output string          `json:"output,omitempty"`
-		Error  string          `json:"error,omitempty"`
-		Title  string          `json:"title,omitempty"`
+		Status string `json:"status"`
+		Output string `json:"output,omitempty"`
+		Error  string `json:"error,omitempty"`
+		Title  string `json:"title,omitempty"`
 		Time   *struct {
 			Start int64  `json:"start"`
 			End   *int64 `json:"end,omitempty"`
@@ -133,7 +121,6 @@ func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
 		        JOIN part p ON p.message_id = m.id
 		        WHERE m.session_id = s.id
 		          AND json_extract(m.data, '$.role') = 'user'
-		          AND json_extract(m.data, '$.summary') IS NULL
 		          AND json_extract(p.data, '$.type') = 'text'
 		        ORDER BY m.time_created ASC, p.id ASC
 		        LIMIT 1) as preview_text,
@@ -151,13 +138,13 @@ func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
 	var sessions []model.Session
 	for rows.Next() {
 		var (
-			id, directory, title string
+			id, directory, title     string
 			timeCreated, timeUpdated int64
-			timeArchived sql.NullInt64
-			modelJSON    sql.NullString
-			previewText  sql.NullString
-			messageCount int
-			turnCount    int
+			timeArchived             sql.NullInt64
+			modelJSON                sql.NullString
+			previewText              sql.NullString
+			messageCount             int
+			turnCount                int
 		)
 		if err := rows.Scan(&id, &directory, &title,
 			&timeCreated, &timeUpdated, &timeArchived,
@@ -211,16 +198,16 @@ func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 	todos := r.readTodos(id)
 
 	detail := &model.SessionDetail{Session: meta, Turns: turns, Todos: todos}
-	detail.AnomalySummary = runAnomalyDetection(turns)
+	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
 	return detail, nil
 }
 
 func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 	var (
-		directory, title string
+		directory, title         string
 		timeCreated, timeUpdated int64
-		timeArchived sql.NullInt64
-		modelJSON     sql.NullString
+		timeArchived             sql.NullInt64
+		modelJSON                sql.NullString
 	)
 	err := r.db.QueryRow(`
 		SELECT directory, title, time_created, time_updated, time_archived, model
@@ -323,17 +310,11 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 			Events:    []model.EventVM{},
 		}
 
-		var uData userMsgData
-		isSummary := false
-		if json.Unmarshal([]byte(uMsg.data), &uData) == nil {
-			isSummary = uData.Summary != nil
-		}
+		uParts := r.readParts(uMsg.id)
+		turn.UserMessage = strings.Join(uParts.Texts, "\n")
 
-		if !isSummary {
-			uParts := r.readParts(uMsg.id)
-			turn.UserMessage = strings.Join(uParts.Texts, "\n")
-		}
-
+		var turnStartedAt, turnCompletedAt int64
+		hasTurnTiming := false
 		for _, aMsg := range aMsgs {
 			var aData assistantMsgData
 			if json.Unmarshal([]byte(aMsg.data), &aData) == nil {
@@ -345,13 +326,17 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 						turn.TokenUsage.CacheWriteTokens += aData.Tokens.Cache.Write
 					}
 					turn.TokenUsage.PromptTokens += aData.Tokens.Input
-					turn.TokenUsage.CompletionTokens += aData.Tokens.Output
-					turn.TokenUsage.CacheReadTokens += aData.Tokens.Reasoning
+					turn.TokenUsage.CompletionTokens += aData.Tokens.Output + aData.Tokens.Reasoning
 				}
 
-				dur := computeDuration(aData)
-				if dur > turn.DurationMs {
-					turn.DurationMs = dur
+				if aData.Time != nil && aData.Time.Completed != nil && *aData.Time.Completed >= aData.Time.Created {
+					if !hasTurnTiming || aData.Time.Created < turnStartedAt {
+						turnStartedAt = aData.Time.Created
+					}
+					if !hasTurnTiming || *aData.Time.Completed > turnCompletedAt {
+						turnCompletedAt = *aData.Time.Completed
+					}
+					hasTurnTiming = true
 				}
 			}
 
@@ -385,6 +370,9 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 			}
 		}
 
+		if hasTurnTiming {
+			turn.DurationMs = turnCompletedAt - turnStartedAt
+		}
 		turn.AssistantMessage = strings.TrimSpace(turn.AssistantMessage)
 		turns = append(turns, turn)
 	}
@@ -472,47 +460,6 @@ func (r *OpenCodeReader) readTodos(sessionID string) []model.Todo {
 	return todos
 }
 
-// ---- Anomaly detection ----
-
-func runAnomalyDetection(turns []model.TurnVM) model.AnomalySummary {
-	var durations []int64
-	for _, t := range turns {
-		if t.DurationMs > 0 {
-			durations = append(durations, t.DurationMs)
-		}
-	}
-
-	summary := model.AnomalySummary{}
-	if len(durations) < 2 {
-		return summary
-	}
-
-	var sum int64
-	for _, d := range durations {
-		sum += d
-	}
-	mean := float64(sum) / float64(len(durations))
-	var variance float64
-	for _, d := range durations {
-		variance += (float64(d) - mean) * (float64(d) - mean)
-	}
-	stdDev := math.Sqrt(variance / float64(len(durations)))
-	threshold := mean + 3*stdDev
-
-	for i := range turns {
-		if turns[i].ErrorCount > 0 {
-			turns[i].Anomalies = append(turns[i].Anomalies, "tool_failure")
-			summary.ToolFailures++
-		}
-		if float64(turns[i].DurationMs) > threshold && turns[i].DurationMs > 30000 {
-			turns[i].Anomalies = append(turns[i].Anomalies, "duration_spike")
-			summary.DurationSpikes++
-		}
-	}
-	summary.TotalAnomalies = summary.ToolFailures + summary.DurationSpikes
-	return summary
-}
-
 // ---- helpers ----
 
 func extractModelID(modelJSON string) string {
@@ -527,7 +474,7 @@ func extractModelID(modelJSON string) string {
 
 func resolveName(title, previewText string, createdAt time.Time) string {
 	if previewText != "" {
-		return truncateRunes(previewText, 50)
+		return shared.TruncateRunes(previewText, 50)
 	}
 	if title != "" && !strings.HasPrefix(title, "New session") {
 		return title
@@ -538,26 +485,11 @@ func resolveName(title, previewText string, createdAt time.Time) string {
 	return "OpenCode Session"
 }
 
-func truncateRunes(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	return string(runes[:n]) + "..."
-}
-
 func buildAssistantText(a assistantMsgData) string {
 	if a.Error != nil {
 		return fmt.Sprintf("[错误: %s]", string(*a.Error))
 	}
 	return ""
-}
-
-func computeDuration(a assistantMsgData) int64 {
-	if a.Time != nil && a.Time.Completed != nil {
-		return *a.Time.Completed - a.Time.Created
-	}
-	return 0
 }
 
 // ---- Resolve DB path ----
@@ -586,5 +518,3 @@ func ResolveDBPath() (string, bool) {
 
 	return "", false
 }
-
-
