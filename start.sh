@@ -37,7 +37,7 @@ do_build() {
 
   echo "==> Building Go binary"
   export GOCACHE="${GOCACHE:-/tmp/session-insight-go-build}"
-  go build -o "$BIN_PATH" .
+  go build -tags sqlite_fts5 -o "$BIN_PATH" .
   echo "==> Build complete: $BIN_PATH"
 }
 

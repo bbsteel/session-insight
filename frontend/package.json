@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "go:build": "npm run build && cd .. && go build -o session-insight ."
+    "go:build": "npm run build && cd .. && go build -tags sqlite_fts5 -o session-insight ."
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

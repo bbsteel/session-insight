@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"session-insight/internal/db"
+	"session-insight/internal/indexer"
 	"session-insight/internal/reader"
 	"session-insight/internal/server"
 )
@@ -43,6 +46,18 @@ func main() {
 	for _, r := range readers {
 		log.Printf("  - %s", r.AgentType())
 	}
+
+	idx := indexer.New(database, readers)
+
+	// 首次索引同步完成（10s 超时），保证服务启动时已有基础索引
+	initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := idx.RunOnce(initCtx); err != nil {
+		log.Printf("initial indexing incomplete: %v", err)
+	}
+	cancel()
+
+	// 后台增量更新
+	go idx.RunBackground(context.Background())
 
 	srv := server.New(database, readers)
 	srv.Mux.Handle("/", http.FileServer(http.FS(frontendFS)))

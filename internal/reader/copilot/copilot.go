@@ -153,6 +153,12 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 					if time.Since(info.ModTime()) < 30*time.Second {
 						session.IsLive = true
 					}
+					// Use events.jsonl mtime for UpdatedAt (revision source).
+					// workspace.yaml UpdatedAt is unreliable for detecting content
+					// changes because events.jsonl is continuously appended to.
+					if info.ModTime().After(session.UpdatedAt) {
+						session.UpdatedAt = info.ModTime()
+					}
 				}
 			}
 		sessions = append(sessions, session)

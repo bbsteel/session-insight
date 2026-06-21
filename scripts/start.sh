@@ -17,7 +17,7 @@ fi
 
 echo "==> Building Go binary"
 export GOCACHE="${GOCACHE:-/tmp/session-insight-go-build}"
-go build -o "$BIN_PATH" .
+go build -tags sqlite_fts5 -o "$BIN_PATH" .
 
 echo "==> Starting SessionInsight"
 echo "    URL: http://127.0.0.1:$PORT/"
