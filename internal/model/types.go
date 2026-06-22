@@ -63,6 +63,14 @@ type TurnVM struct {
 		Skills           []string   `json:"skills,omitempty"`
 }
 
+type EditCall struct {
+	TurnIndex  int    `json:"turn_index"`
+	FilePath   string `json:"file_path"`
+	OldString  string `json:"old_string"`
+	NewString  string `json:"new_string"`
+	ReplaceAll bool   `json:"replace_all,omitempty"`
+}
+
 type AnomalySummary struct {
 	ToolFailures    int  `json:"tool_failures"`
 	DurationSpikes  int  `json:"duration_spikes"`

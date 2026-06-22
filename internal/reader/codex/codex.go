@@ -29,6 +29,14 @@ func (r *CodexReader) AgentType() string  { return "codex" }
 func (r *CodexReader) DisplayName() string { return "Codex" }
 
 // RenderANSI implements reader.BaseSessionReader.
+func (r *CodexReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	path := r.findSessionFile(id)
+	if path == "" {
+		return nil, fmt.Errorf("codex session not found: %s", id)
+	}
+	return codexToRenderEvents(path)
+}
+
 func (r *CodexReader) RenderANSI(id string, cols int) (string, error) {
 	path := r.findSessionFile(id)
 	if path == "" {

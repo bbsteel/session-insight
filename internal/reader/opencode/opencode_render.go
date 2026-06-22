@@ -11,6 +11,10 @@ import (
 )
 
 // RenderANSI implements reader.BaseSessionReader.
+func (r *OpenCodeReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	return r.toRenderEvents(id)
+}
+
 func (r *OpenCodeReader) RenderANSI(id string, cols int) (string, error) {
 	events, err := r.toRenderEvents(id)
 	if err != nil {

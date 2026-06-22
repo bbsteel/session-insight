@@ -101,11 +101,11 @@ func writeTextChunk(sb *strings.Builder, evt model.RenderEvent, prefix string, t
 		if hasDiff && isDiffAdd(line) {
 			padded := padRight(line, termWidth)
 			sb.WriteString(prefix)
-			sb.WriteString(bgWrap(fgWrap(padded, HexFg), HexDiffAdd))
+			sb.WriteString(bgWrap(fgWrap(padded, HexDiffAddText), HexDiffAddBg))
 		} else if hasDiff && isDiffDel(line) {
 			padded := padRight(line, termWidth)
 			sb.WriteString(prefix)
-			sb.WriteString(bgWrap(fgWrap(padded, HexFg), HexDiffDel))
+			sb.WriteString(bgWrap(fgWrap(padded, HexDiffDelText), HexDiffDelBg))
 		} else if strings.HasPrefix(trimmed, "```") {
 			inCodeBlock = !inCodeBlock
 			sb.WriteString(prefix)
@@ -149,6 +149,11 @@ func isDiffDel(line string) bool {
 }
 
 func writeToolInvocation(sb *strings.Builder, evt model.RenderEvent, prefix string, bWidth int) {
+	if evt.ToolName == "Edit" || evt.ToolName == "str_replace_editor" {
+		writeEditDiff(sb, evt, prefix, bWidth)
+		return
+	}
+
 	borderColor := HexTool
 	if evt.ToolName == "Agent" || evt.ToolName == "Task" {
 		borderColor = HexSubagent
@@ -221,8 +226,8 @@ func formatAny(v any) string {
 	switch val := v.(type) {
 	case string:
 		clean := sanitizeControlChars(val)
-		if shouldQuote(clean) {
-			return fmt.Sprintf("%q", clean)
+		if clean == "" {
+			return `""`
 		}
 		return clean
 	case float64:
@@ -467,33 +472,34 @@ func splitAtWidth(s string, maxWidth int) (string, string) {
 	return s, ""
 }
 
-// wrapInBox wraps a tool input field line (il) into one or more lines that
-// fit within contentWidth display columns. Every resulting line is prefixed
-// with "  " (two spaces) so key-value pairs are indented consistently inside
-// the box border.
+// wrapInBox wraps a tool input field (il) into display lines that fit within
+// contentWidth columns. Every output line is prefixed with "  " (two spaces).
+// Actual newlines in il are treated as hard line breaks; each resulting
+// segment is then soft-wrapped at contentWidth if it is still too wide.
 func wrapInBox(il string, contentWidth int) []string {
 	const indent = "  "
 	available := contentWidth - displayWidth(indent)
 	if available < 1 {
 		available = 1
 	}
-	full := indent + il
-	if displayWidth(full) <= contentWidth {
-		return []string{full}
-	}
 	var lines []string
-	remaining := il
-	for len(remaining) > 0 {
-		chunk, rest := splitAtWidth(remaining, available)
-		if chunk == "" {
-			// Single rune wider than available (extremely rare) — emit it anyway.
-			runes := []rune(remaining)
-			chunk = string(runes[0])
-			remaining = string(runes[1:])
-		} else {
-			remaining = rest
+	for _, seg := range strings.Split(il, "\n") {
+		if displayWidth(indent+seg) <= contentWidth {
+			lines = append(lines, indent+seg)
+			continue
 		}
-		lines = append(lines, indent+chunk)
+		remaining := seg
+		for len(remaining) > 0 {
+			chunk, rest := splitAtWidth(remaining, available)
+			if chunk == "" {
+				runes := []rune(remaining)
+				chunk = string(runes[0])
+				remaining = string(runes[1:])
+			} else {
+				remaining = rest
+			}
+			lines = append(lines, indent+chunk)
+		}
 	}
 	return lines
 }
@@ -755,4 +761,152 @@ func matchLink(runes []rune, start int) (text string, consumed int) {
 		return "", 0
 	}
 	return string(runes[start+1 : textEnd]), urlEnd - start + 1
+}
+
+// lcsLineDiff returns a line-level LCS diff between old and new.
+// Falls back to all-remove + all-add when the input is very large.
+func lcsLineDiff(old, new []string) []struct{ kind int; text string } {
+	type op = struct{ kind int; text string }
+	const opEqual, opRemove, opAdd = 0, 1, 2
+	m, n := len(old), len(new)
+	if m*n > 60000 {
+		ops := make([]op, 0, m+n)
+		for _, l := range old { ops = append(ops, op{opRemove, l}) }
+		for _, l := range new  { ops = append(ops, op{opAdd, l}) }
+		return ops
+	}
+	dp := make([][]int, m+1)
+	for i := range dp { dp[i] = make([]int, n+1) }
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if old[i-1] == new[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else if dp[i-1][j] >= dp[i][j-1] {
+				dp[i][j] = dp[i-1][j]
+			} else {
+				dp[i][j] = dp[i][j-1]
+			}
+		}
+	}
+	ops := make([]op, 0, m+n)
+	i, j := m, n
+	for i > 0 || j > 0 {
+		if i > 0 && j > 0 && old[i-1] == new[j-1] {
+			ops = append(ops, op{opEqual, old[i-1]}); i--; j--
+		} else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
+			ops = append(ops, op{opAdd, new[j-1]}); j--
+		} else {
+			ops = append(ops, op{opRemove, old[i-1]}); i--
+		}
+	}
+	for l, r := 0, len(ops)-1; l < r; l, r = l+1, r-1 { ops[l], ops[r] = ops[r], ops[l] }
+	return ops
+}
+
+// writeEditDiff renders an Edit (str_replace) tool invocation as a LCS-based
+// unified diff block. Equal lines are shown without background; only truly
+// changed lines are highlighted red (removed) or green (added).
+func writeEditDiff(sb *strings.Builder, evt model.RenderEvent, prefix string, bWidth int) {
+	const maxDiffLines = 40
+
+	borderColor := HexTool
+	contentWidth := bWidth - 2
+
+	str := func(key string) string {
+		if v, ok := evt.ToolInput[key].(string); ok {
+			return sanitizeControlChars(v)
+		}
+		return ""
+	}
+	filePath := str("file_path")
+	oldStr   := str("old_string")
+	newStr   := str("new_string")
+
+	oldLines := splitLines(oldStr)
+	newLines := splitLines(newStr)
+	ops      := lcsLineDiff(oldLines, newLines)
+
+	// Count actual changes for summary
+	nDel, nAdd := 0, 0
+	for _, op := range ops {
+		switch op.kind {
+		case 1: nDel++
+		case 2: nAdd++
+		}
+	}
+
+	// Header
+	dispPath := filePath
+	if dispPath == "" { dispPath = "unknown" }
+	headerText := fmt.Sprintf(" Edit: %s ", dispPath)
+	maxHW := bWidth - 6
+	if displayWidth(headerText) > maxHW {
+		headerText = truncateToWidth(headerText, maxHW)
+	}
+	fillLen := bWidth - 4 - displayWidth(headerText)
+	if fillLen < 1 { fillLen = 1 }
+	top := "╔══" + headerText + strings.Repeat("═", fillLen) + "╗"
+	sb.WriteString(prefix)
+	sb.WriteString(fgWrap(top, borderColor))
+	sb.WriteString("\n")
+
+	writeDiffLine := func(content, fgColor, bgColor string) {
+		body := padRight(content, contentWidth)
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap("║", borderColor))
+		if bgColor != "" {
+			sb.WriteString(bgWrap(fgWrap(body, fgColor), bgColor))
+		} else {
+			sb.WriteString(fgWrap(body, fgColor))
+		}
+		sb.WriteString(fgWrap("║", borderColor))
+		sb.WriteString("\n")
+	}
+
+	summary := fmt.Sprintf("  -%d lines, +%d lines", nDel, nAdd)
+	writeDiffLine(summary, HexThinking, "")
+
+	shown, truncated := 0, 0
+	for _, op := range ops {
+		if shown >= maxDiffLines {
+			truncated++
+			continue
+		}
+		var (sigil, fgColor, bgColor string)
+		switch op.kind {
+		case 0: // equal
+			sigil   = "  "
+			fgColor = HexFg
+			bgColor = ""
+		case 1: // remove
+			sigil   = "- "
+			fgColor = HexDiffDelText
+			bgColor = HexDiffDelBg
+		case 2: // add
+			sigil   = "+ "
+			fgColor = HexDiffAddText
+			bgColor = HexDiffAddBg
+		}
+		content := sigil + op.text
+		if displayWidth(content) > contentWidth {
+			content = truncateToWidth(content, contentWidth)
+		}
+		writeDiffLine(content, fgColor, bgColor)
+		shown++
+	}
+	if truncated > 0 {
+		writeDiffLine(fmt.Sprintf("  … 省略 %d 行", truncated), HexWarning, "")
+	}
+
+	bottom := prefix + fgWrap("╚"+strings.Repeat("═", bWidth-2)+"╝", borderColor)
+	sb.WriteString(bottom)
+	sb.WriteString("\n")
+}
+
+// splitLines splits s on "\n", returning an empty slice for an empty string.
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }

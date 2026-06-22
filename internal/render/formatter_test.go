@@ -279,18 +279,19 @@ func TestMultiTurnSeparators(t *testing.T) {
 	}
 }
 
-func TestToolInputStringQuoting(t *testing.T) {
+func TestToolInputStringDisplay(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
 			ToolName: "Bash", ToolCallID: "t1",
 			ToolInput: map[string]any{"command": "git commit -m 'fix'", "cwd": "/home"}},
 	}
 	result := FormatEvents(events, 0)
-	if !strings.Contains(result, "\"git commit") {
-		t.Errorf("expected quoted command value with spaces, got:\n%s", result)
+	// Values are displayed without quoting; the raw content should appear.
+	if !strings.Contains(result, "git commit -m 'fix'") {
+		t.Errorf("expected raw command value, got:\n%s", result)
 	}
 	if !strings.Contains(result, "/home") {
-		t.Errorf("expected unquoted path value, got:\n%s", result)
+		t.Errorf("expected path value, got:\n%s", result)
 	}
 }
 

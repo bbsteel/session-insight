@@ -23,6 +23,15 @@ import (
 // This is a thin convenience wrapper so the HTTP layer doesn't need to know
 // how to find a Claude session's file on disk — that stays encapsulated
 // here, same as GetSession already does for the JSON API.
+func (r *ClaudeReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	path := r.findSessionFile(id)
+	if path == "" {
+		return nil, fmt.Errorf("claude session not found: %s", id)
+	}
+	events, _, err := ParseClaudeRenderEventsWithSubagents(path)
+	return events, err
+}
+
 func (r *ClaudeReader) RenderANSI(id string, cols int) (string, error) {
 	path := r.findSessionFile(id)
 	if path == "" {

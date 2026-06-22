@@ -17,4 +17,8 @@ type BaseSessionReader interface {
 	// falling through to the next reader.
 	// cols is the terminal column count from the frontend (0 = use default).
 	RenderANSI(id string, cols int) (string, error)
+
+	// GetRenderEvents returns the raw render event stream for a session.
+	// Used by the server to extract structured data (e.g. Edit calls).
+	GetRenderEvents(id string) ([]model.RenderEvent, error)
 }

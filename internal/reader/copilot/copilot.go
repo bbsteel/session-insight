@@ -46,15 +46,23 @@ func validSessionID(id string) bool {
 }
 
 // RenderANSI implements reader.BaseSessionReader.
-func (r *CopilotReader) RenderANSI(id string, cols int) (string, error) {
+func (r *CopilotReader) copilotEvents(id string) ([]model.RenderEvent, error) {
 	if !validSessionID(id) {
-		return "", fmt.Errorf("invalid copilot session id: %q", id)
+		return nil, fmt.Errorf("invalid copilot session id: %q", id)
 	}
 	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
 	if _, err := os.Stat(eventsPath); err != nil {
-		return "", fmt.Errorf("copilot session not found %q: %w", id, err)
+		return nil, fmt.Errorf("copilot session not found %q: %w", id, err)
 	}
-	events, err := parseCopilotRenderEvents(eventsPath)
+	return parseCopilotRenderEvents(eventsPath)
+}
+
+func (r *CopilotReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	return r.copilotEvents(id)
+}
+
+func (r *CopilotReader) RenderANSI(id string, cols int) (string, error) {
+	events, err := r.copilotEvents(id)
 	if err != nil {
 		return "", err
 	}

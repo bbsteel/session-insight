@@ -5,6 +5,7 @@ import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT } from './TerminalPanel'
 import type { TerminalControl } from './TerminalPanel'
 import ThemeToggle from './ThemeToggle'
+import DiffModal from './DiffModal'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -46,6 +47,7 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
   const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const [showHelp, setShowHelp] = useState(false)
+  const [showDiffModal, setShowDiffModal] = useState(false)
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
   const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
   const termControlRef = useRef<TerminalControl | null>(null)
@@ -215,6 +217,10 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
           </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
+          <button
+            onClick={() => setShowDiffModal(true)}
+            className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          >查看明细</button>
         </div>
         <span className="text-[var(--border-default)] mx-1">|</span>
         <div className="flex items-center gap-1">
@@ -307,6 +313,10 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
             <button onClick={() => setShowHelp(false)} className="mt-4 text-meta text-[var(--accent-blue)] hover:underline">关闭</button>
           </div>
         </div>
+      )}
+
+      {showDiffModal && session && (
+        <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} />
       )}
 
       {viewMode === 'analytics' ? (

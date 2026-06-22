@@ -41,6 +41,14 @@ tool_names?: string[]
   anomalies?: string[]
 }
 
+export interface EditCall {
+  turn_index: number
+  file_path: string
+  old_string: string
+  new_string: string
+  replace_all?: boolean
+}
+
 export interface SearchResult {
   session_id: string
   match: string

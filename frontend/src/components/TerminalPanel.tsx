@@ -4,8 +4,6 @@ import { FitAddon } from '@xterm/addon-fit'
 import { fetchRenderANSI } from '../api'
 import type { ScrollMetrics } from '../minimapGeometry'
 
-// Pixel height per terminal line, used to convert xterm's line-based scroll
-// position into the pixel-based ScrollMetrics that MiniMap expects.
 export const TERMINAL_LINE_HEIGHT = 16
 
 export interface TerminalControl {
@@ -21,8 +19,6 @@ interface Props {
 
 export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
-  // Keep a stable ref to the callback so the xterm onScroll handler never
-  // needs to be torn down and recreated when the parent re-renders.
   const onScrollMetricsRef = useRef(onScrollMetrics)
   onScrollMetricsRef.current = onScrollMetrics
 
@@ -33,8 +29,8 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
     const term = new Terminal({
       theme: {
         background: '#1a1b26',
-        foreground: '#c0caf5',
-        cursor: '#c0caf5',
+        foreground: '#e2e2e2',
+        cursor: '#e2e2e2',
         selectionBackground: 'rgba(192,202,245,0.3)',
       },
       fontFamily: '"JetBrains Mono", "Menlo", monospace',
@@ -46,44 +42,57 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
-    term.open(container)
-    fitAddon.fit()
-    const termCols = term.cols
 
-    const getMetrics = (): ScrollMetrics => ({
-      scrollTop: term.buffer.active.viewportY * TERMINAL_LINE_HEIGHT,
-      scrollHeight: term.buffer.active.length * TERMINAL_LINE_HEIGHT,
-      clientHeight: term.rows * TERMINAL_LINE_HEIGHT,
-    })
+    let disposeOnScroll: { dispose(): void } | null = null
+    let observer: ResizeObserver | null = null
+    let disposed = false
 
-    if (controlRef) {
-      controlRef.current = {
-        scrollToLine: (line) => term.scrollToLine(line),
-        getMetrics,
-      }
-    }
+    // Wait for web fonts before opening xterm so character-cell metrics are
+    // measured with the correct font (JetBrains Mono), not a fallback.
+    document.fonts.ready.then(() => {
+      if (disposed) return
 
-    const disposeOnScroll = term.onScroll(() => {
-      onScrollMetricsRef.current?.(getMetrics())
-    })
-
-    const observer = new ResizeObserver(() => {
+      term.open(container)
       fitAddon.fit()
-      onScrollMetricsRef.current?.(getMetrics())
-    })
-    observer.observe(container)
+      const termCols = term.cols
 
-    fetchRenderANSI(sessionId, termCols)
-      .then(ansi => {
-        term.write(ansi, () => {
-          onScrollMetricsRef.current?.(getMetrics())
-        })
+      const getMetrics = (): ScrollMetrics => ({
+        scrollTop: term.buffer.active.viewportY * TERMINAL_LINE_HEIGHT,
+        scrollHeight: term.buffer.active.length * TERMINAL_LINE_HEIGHT,
+        clientHeight: term.rows * TERMINAL_LINE_HEIGHT,
       })
-      .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
+
+      if (controlRef) {
+        controlRef.current = {
+          scrollToLine: (line) => term.scrollToLine(line),
+          getMetrics,
+        }
+      }
+
+      disposeOnScroll = term.onScroll(() => {
+        onScrollMetricsRef.current?.(getMetrics())
+      })
+
+      observer = new ResizeObserver(() => {
+        fitAddon.fit()
+        onScrollMetricsRef.current?.(getMetrics())
+      })
+      observer.observe(container)
+
+      fetchRenderANSI(sessionId, termCols)
+        .then(ansi => {
+          if (disposed) return
+          term.write(ansi, () => {
+            onScrollMetricsRef.current?.(getMetrics())
+          })
+        })
+        .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
+    })
 
     return () => {
-      observer.disconnect()
-      disposeOnScroll.dispose()
+      disposed = true
+      observer?.disconnect()
+      disposeOnScroll?.dispose()
       if (controlRef) controlRef.current = null
       term.dispose()
     }

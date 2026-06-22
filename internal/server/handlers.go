@@ -115,6 +115,50 @@ func (s *Server) handleRenderSession(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, msg, http.StatusNotFound)
 }
 
+func (s *Server) handleSessionEdits(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+	for _, rd := range s.Readers {
+		events, err := rd.GetRenderEvents(id)
+		if err != nil {
+			continue
+		}
+		var edits []model.EditCall
+		for _, evt := range events {
+			if evt.Type != "ToolInvocation" {
+				continue
+			}
+			if evt.ToolName != "Edit" && evt.ToolName != "str_replace_editor" {
+				continue
+			}
+			call := model.EditCall{TurnIndex: evt.TurnIndex}
+			if v, ok := evt.ToolInput["file_path"].(string); ok {
+				call.FilePath = v
+			}
+			if v, ok := evt.ToolInput["old_string"].(string); ok {
+				call.OldString = v
+			}
+			if v, ok := evt.ToolInput["new_string"].(string); ok {
+				call.NewString = v
+			}
+			if v, ok := evt.ToolInput["replace_all"].(bool); ok {
+				call.ReplaceAll = v
+			}
+			edits = append(edits, call)
+		}
+		if edits == nil {
+			edits = []model.EditCall{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(edits)
+		return
+	}
+	http.Error(w, "session not found", http.StatusNotFound)
+}
+
 func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	for _, reader := range s.Readers {

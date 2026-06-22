@@ -11,14 +11,18 @@ const TermWidth = 80
 const (
 	// OneDark Terminal palette
 	HexBg        = "#1a1b26"
-	HexFg        = "#c0caf5"
+	HexFg        = "#e2e2e2"
 	HexUser      = "#9ece6a"
 	HexThinking  = "#565f89"
 	HexTool      = "#7aa2f7"
 	HexSuccess   = "#9ece6a"
 	HexError     = "#f7768e"
-	HexDiffAdd   = "#9ece6a"
-	HexDiffDel   = "#f7768e"
+	HexDiffAdd     = "#9ece6a" // fg for add (used in other contexts)
+	HexDiffDel     = "#f7768e" // fg for del (used in other contexts)
+	HexDiffAddBg   = "#0d3320" // dark green bg for added lines
+	HexDiffDelBg   = "#3d1020" // dark red bg for deleted lines
+	HexDiffAddText = "#86efac" // light green text on dark green bg — readable
+	HexDiffDelText = "#fca5a5" // light pink text on dark red bg — readable
 	HexSubagent  = "#ff9e64"
 	HexSeparator = "#565f89"
 	HexWarning   = "#e0af68"
