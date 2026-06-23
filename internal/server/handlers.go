@@ -131,23 +131,7 @@ func (s *Server) handleSessionEdits(w http.ResponseWriter, r *http.Request) {
 			if evt.Type != "ToolInvocation" {
 				continue
 			}
-			if evt.ToolName != "Edit" && evt.ToolName != "str_replace_editor" {
-				continue
-			}
-			call := model.EditCall{TurnIndex: evt.TurnIndex}
-			if v, ok := evt.ToolInput["file_path"].(string); ok {
-				call.FilePath = v
-			}
-			if v, ok := evt.ToolInput["old_string"].(string); ok {
-				call.OldString = v
-			}
-			if v, ok := evt.ToolInput["new_string"].(string); ok {
-				call.NewString = v
-			}
-			if v, ok := evt.ToolInput["replace_all"].(bool); ok {
-				call.ReplaceAll = v
-			}
-			edits = append(edits, call)
+			edits = append(edits, model.ExtractEditCalls(evt)...)
 		}
 		if edits == nil {
 			edits = []model.EditCall{}

@@ -139,6 +139,18 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 				if t.title != "" {
 					toolInput["title"] = t.title
 				}
+				// Normalise OpenCode camelCase edit inputs → snake_case
+				if t.input != nil {
+					if v, ok := t.input["filePath"].(string); ok {
+						toolInput["file_path"] = v
+					}
+					if v, ok := t.input["oldString"].(string); ok {
+						toolInput["old_string"] = v
+					}
+					if v, ok := t.input["newString"].(string); ok {
+						toolInput["new_string"] = v
+					}
+				}
 				invID := emit(model.RenderEvent{
 					Type:      "ToolInvocation",
 					Timestamp: aTs,
@@ -170,6 +182,7 @@ type renderPartTool struct {
 	output   string
 	errText  string
 	exitCode int
+	input    map[string]any
 }
 
 type renderParts struct {
@@ -215,6 +228,7 @@ func (r *OpenCodeReader) readRenderParts(messageID string) renderParts {
 				t.title = p.State.Title
 				t.output = p.State.Output
 				t.errText = p.State.Error
+				t.input = p.State.Input
 				if p.State.Status == "error" {
 					t.exitCode = 1
 				}

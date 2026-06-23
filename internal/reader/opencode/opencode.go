@@ -80,10 +80,11 @@ type partData struct {
 	CallID    string `json:"callID,omitempty"`
 	Tool      string `json:"tool,omitempty"`
 	State     *struct {
-		Status string `json:"status"`
-		Output string `json:"output,omitempty"`
-		Error  string `json:"error,omitempty"`
-		Title  string `json:"title,omitempty"`
+		Status string         `json:"status"`
+		Output string         `json:"output,omitempty"`
+		Error  string         `json:"error,omitempty"`
+		Title  string         `json:"title,omitempty"`
+		Input  map[string]any `json:"input,omitempty"`
 		Time   *struct {
 			Start int64  `json:"start"`
 			End   *int64 `json:"end,omitempty"`
@@ -104,9 +105,11 @@ type resolvedParts struct {
 
 type toolInfo struct {
 	Name     string
+	Title    string
 	Status   string
 	Duration int64
 	ExitCode int
+	Input    map[string]any
 }
 
 // ---- ListSessions ----
@@ -414,6 +417,8 @@ func (r *OpenCodeReader) readParts(messageID string) resolvedParts {
 			ti := toolInfo{Name: p.Tool, Status: "unknown"}
 			if p.State != nil {
 				ti.Status = p.State.Status
+				ti.Title = p.State.Title
+				ti.Input = p.State.Input
 				if p.State.Status == "error" {
 					ti.ExitCode = 1
 				}

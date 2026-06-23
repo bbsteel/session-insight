@@ -149,7 +149,7 @@ func isDiffDel(line string) bool {
 }
 
 func writeToolInvocation(sb *strings.Builder, evt model.RenderEvent, prefix string, bWidth int) {
-	if evt.ToolName == "Edit" || evt.ToolName == "str_replace_editor" {
+	if model.IsEditTool(evt.ToolName) {
 		writeEditDiff(sb, evt, prefix, bWidth)
 		return
 	}
