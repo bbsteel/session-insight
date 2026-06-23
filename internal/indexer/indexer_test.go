@@ -46,7 +46,9 @@ func (m *mockReader) GetSession(id string) (*model.SessionDetail, error) {
 	return m.details[id], nil
 }
 
-func (m *mockReader) RenderANSI(id string) (string, error) { return "", nil }
+func (m *mockReader) RenderANSI(id string, cols int) (string, error) { return "", nil }
+
+func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) { return nil, nil }
 
 func TestIndexer_FirstRun(t *testing.T) {
 	database, err := db.Open(t.TempDir())

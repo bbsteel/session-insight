@@ -92,10 +92,10 @@ func TestTextChunkWithDiff(t *testing.T) {
 	}
 	result := FormatEvents(events, 0)
 
-	if !hasBgColor(result, HexDiffAdd) {
+	if !hasBgColor(result, HexDiffAddBg) {
 		t.Errorf("expected diff add bg color, got:\n%s", result)
 	}
-	if !hasBgColor(result, HexDiffDel) {
+	if !hasBgColor(result, HexDiffDelBg) {
 		t.Errorf("expected diff del bg color, got:\n%s", result)
 	}
 	if !strings.Contains(result, "unchanged line") {
