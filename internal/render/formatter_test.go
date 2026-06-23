@@ -509,6 +509,69 @@ func TestToolResultAtDepthDoesNotDuplicatePrefix(t *testing.T) {
 	}
 }
 
+func TestToolInvocationApplyPatchShowsFilePathAndColors(t *testing.T) {
+	patch := "*** Begin Patch\n" +
+		"*** Update File: src/app.go\n" +
+		"@@ -1,2 +1,2 @@\n" +
+		"-old line\n" +
+		"+new line\n" +
+		" context\n" +
+		"*** End Patch"
+	events := []model.RenderEvent{
+		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
+			ToolName:  "apply_patch",
+			ToolInput: map[string]any{"args": patch}},
+	}
+	result := FormatEvents(events, 0)
+	if !strings.Contains(result, "src/app.go") {
+		t.Errorf("expected file path in apply_patch diff output, got:\n%s", result)
+	}
+	if !hasBgColor(result, HexDiffAddBg) {
+		t.Errorf("expected add background for apply_patch, got:\n%s", result)
+	}
+	if !hasBgColor(result, HexDiffDelBg) {
+		t.Errorf("expected del background for apply_patch, got:\n%s", result)
+	}
+}
+
+func TestToolInvocationApplyPatchEmptyFallsToGenericBox(t *testing.T) {
+	events := []model.RenderEvent{
+		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
+			ToolName:  "apply_patch",
+			ToolInput: map[string]any{"args": ""}},
+	}
+	result := FormatEvents(events, 0)
+	if !strings.Contains(result, "╔") {
+		t.Errorf("expected generic tool box for empty apply_patch, got:\n%s", result)
+	}
+	// Generic box must not show "Edit:" header (that belongs to writeEditDiff)
+	if strings.Contains(result, "Edit:") {
+		t.Errorf("empty apply_patch should not render an Edit diff header:\n%s", result)
+	}
+}
+
+func TestToolInvocationApplyPatchMultiFileProducesMultipleBlocks(t *testing.T) {
+	patch := "*** Begin Patch\n" +
+		"*** Update File: a.go\n" +
+		"@@ -1 +1 @@\n" +
+		"-aold\n" +
+		"+anew\n" +
+		"*** Update File: b.go\n" +
+		"@@ -1 +1 @@\n" +
+		"-bold\n" +
+		"+bnew\n" +
+		"*** End Patch"
+	events := []model.RenderEvent{
+		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,
+			ToolName:  "apply_patch",
+			ToolInput: map[string]any{"args": patch}},
+	}
+	result := FormatEvents(events, 0)
+	if !strings.Contains(result, "a.go") || !strings.Contains(result, "b.go") {
+		t.Errorf("expected both file paths in output, got:\n%s", result)
+	}
+}
+
 // stripANSIForTest removes the ANSI escape sequences this package emits so
 // tests can measure visible rune width instead of raw string length.
 func stripANSIForTest(s string) string {

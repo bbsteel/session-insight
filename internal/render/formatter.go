@@ -150,8 +150,28 @@ func isDiffDel(line string) bool {
 
 func writeToolInvocation(sb *strings.Builder, evt model.RenderEvent, prefix string, bWidth int) {
 	if model.IsEditTool(evt.ToolName) {
-		writeEditDiff(sb, evt, prefix, bWidth)
-		return
+		if evt.ToolName == "apply_patch" {
+			// apply_patch carries a raw patch string (under args/input/patch),
+			// not pre-normalised file_path/old_string/new_string.  Parse it
+			// into per-file EditCalls and render each as its own diff block.
+			calls := model.ExtractEditCalls(evt)
+			for _, call := range calls {
+				syn := evt
+				syn.ToolInput = map[string]any{
+					"file_path":  call.FilePath,
+					"old_string": call.OldString,
+					"new_string": call.NewString,
+				}
+				writeEditDiff(sb, syn, prefix, bWidth)
+			}
+			if len(calls) > 0 {
+				return
+			}
+			// Empty or malformed patch: fall through to generic tool box.
+		} else {
+			writeEditDiff(sb, evt, prefix, bWidth)
+			return
+		}
 	}
 
 	borderColor := HexTool

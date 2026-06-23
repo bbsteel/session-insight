@@ -113,12 +113,21 @@ func parseApplyPatch(turnIndex int, input map[string]any) []EditCall {
 		case strings.HasPrefix(line, "*** Update File: "):
 			flush()
 			curFile = strings.TrimPrefix(line, "*** Update File: ")
+			// Update File sections use @@ hunk markers; don't pre-init.
 		case strings.HasPrefix(line, "*** Add File: "):
 			flush()
 			curFile = strings.TrimPrefix(line, "*** Add File: ")
+			// Add File sections emit bare +lines with no @@ header.
+			h := hunk{}
+			hunks = append(hunks, h)
+			cur = &hunks[len(hunks)-1]
 		case strings.HasPrefix(line, "*** Delete File: "):
 			flush()
 			curFile = strings.TrimPrefix(line, "*** Delete File: ")
+			// Delete File sections emit bare context/-lines with no @@ header.
+			h := hunk{}
+			hunks = append(hunks, h)
+			cur = &hunks[len(hunks)-1]
 		case strings.HasPrefix(line, "@@"):
 			h := hunk{}
 			hunks = append(hunks, h)
