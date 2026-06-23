@@ -4,8 +4,10 @@ import type { SearchResult, SessionDetail, TurnVM } from '../types'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT } from './TerminalPanel'
 import type { TerminalControl } from './TerminalPanel'
+import type { MiniMapControl } from './MiniMap'
 import ThemeToggle from './ThemeToggle'
 import DiffModal from './DiffModal'
+import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -22,8 +24,7 @@ interface Props {
   sessionId: string | null
   onSelect?: (id: string) => void
   onTurnsChange?: (turns: TurnVM[]) => void
-  onVisibleRangeChange?: (range: { start: number; end: number }) => void
-  onScrollMetricsChange?: (metrics: ScrollMetrics) => void
+  miniMapControlRef?: React.MutableRefObject<MiniMapControl | null>
   scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
   scrollToTopRef?: React.MutableRefObject<((top: number, behavior?: ScrollBehavior) => void) | null>
 }
@@ -41,16 +42,17 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisibleRangeChange, onScrollMetricsChange, scrollToIndexRef, scrollToTopRef }: Props) {
+export default function ReplayView({ sessionId, onSelect, onTurnsChange, miniMapControlRef, scrollToIndexRef, scrollToTopRef }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
-  const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const [showHelp, setShowHelp] = useState(false)
   const [showDiffModal, setShowDiffModal] = useState(false)
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
   const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
   const termControlRef = useRef<TerminalControl | null>(null)
+  const visibleRangeRef = useRef<VisibleTurnRange>()
+  const visibleRangeLabelRef = useRef<HTMLSpanElement>(null)
 
   const turns = session?.turns ?? []
 
@@ -75,7 +77,7 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
         termControlRef.current?.scrollToLine(Math.floor(top / TERMINAL_LINE_HEIGHT))
       }
     }
-  }, [scrollToIndexRef, scrollToTopRef, session, turns])
+  }, [scrollToIndexRef, scrollToTopRef, turns])
 
   // Keyboard navigation
   useEffect(() => {
@@ -88,10 +90,12 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [sessionId, session, visibleRange])
+  }, [sessionId, session])
 
   useEffect(() => {
     if (!sessionId) { setSession(null); onTurnsChange?.([]); return }
+    visibleRangeRef.current = undefined
+    jumpBaseRef.current = 0
     setLoading(true)
     fetchSession(sessionId)
       .then(data => { setSession(data); onTurnsChange?.(data.turns) })
@@ -102,26 +106,18 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
   // Translate terminal scroll events into ScrollMetrics + visibleRange so that
   // MiniMap stays in sync even though there's no DOM scroller to observe.
   const handleTerminalScrollMetrics = useCallback((metrics: ScrollMetrics) => {
-    onScrollMetricsChange?.(metrics)
-    const barCount = turns.length
-    if (barCount > 0) {
-      const { scrollTop, scrollHeight, clientHeight } = metrics
-      const maxScroll = Math.max(0, scrollHeight - clientHeight)
-      const ratio = maxScroll > 0 ? scrollTop / maxScroll : 0
-      const centerTurn = Math.round(ratio * (barCount - 1))
-      const visibleTurns = Math.max(1, Math.round((clientHeight / Math.max(scrollHeight, 1)) * barCount))
-      const start = Math.max(0, centerTurn - Math.floor(visibleTurns / 2))
-      const end = Math.min(barCount - 1, start + visibleTurns - 1)
-      const range = { start, end }
-      setVisibleRange(range)
-      onVisibleRangeChange?.(range)
+    const range = getVisibleTurnRange(metrics, turns.length)
+    miniMapControlRef?.current?.updateViewport(metrics, range)
+    if (range && !isSameVisibleRange(visibleRangeRef.current, range)) {
+      visibleRangeRef.current = range
+      jumpBaseRef.current = range.start
+      if (visibleRangeLabelRef.current) {
+        visibleRangeLabelRef.current.textContent = `Turn ${range.start + 1}-${range.end + 1}/${turns.length}`
+      }
     }
-  }, [turns, onScrollMetricsChange, onVisibleRangeChange])
+  }, [turns, miniMapControlRef])
 
   const jumpBaseRef = useRef(0)
-  useEffect(() => {
-    if (visibleRange) jumpBaseRef.current = visibleRange.start
-  }, [visibleRange])
 
   const anomalyIndexes = useMemo(() => turns
     .map((turn, index) => ({ turn, index }))
@@ -289,8 +285,8 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, onVisib
             <span className="ml-1 text-[var(--accent-green)]">{session.todos.filter(t => t.status === 'done').length}/{session.todos.length} done</span>
           )}
         </span>
-        <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">
-          Turn {visibleRange ? `${visibleRange.start + 1}-${visibleRange.end + 1}` : '?'}/{session.turn_count}
+        <span ref={visibleRangeLabelRef} className="flex-shrink-0 text-meta text-[var(--text-muted)]">
+          Turn ?/{session.turn_count}
         </span>
       </header>
 

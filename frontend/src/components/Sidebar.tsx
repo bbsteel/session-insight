@@ -3,6 +3,8 @@ import { fetchAgents, fetchSessions } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import AgentFilter from './AgentFilter'
 import AgentIcon from './AgentIcon'
+import { Virtuoso } from 'react-virtuoso'
+import { buildSidebarRows, getAgentLabel } from '../sidebarRows'
 
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr)
@@ -40,16 +42,6 @@ function getSessionName(s: SessionSummary): string {
   if (s.repository) return s.repository
   return s.id.slice(0, 8)
 }
-
-function getAgentLabel(agent: string): string {
-  if (!agent) return 'Unknown'
-  if (agent.toLowerCase().includes('copilot')) return 'Copilot'
-  if (agent.toLowerCase().includes('claude')) return 'Claude Code'
-  if (agent.toLowerCase().includes('codex')) return 'Codex'
-  if (agent.toLowerCase().includes('opencode')) return 'OpenCode'
-  return agent
-}
-
 
 interface SidebarProps {
   selectedId: string | null
@@ -212,16 +204,10 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
   }, [agentFilter, agentsReady, effectiveAgents])
 
-  const agentGroups = useMemo(() => {
-    const grouped = new Map<string, SessionSummary[]>()
-    for (const s of filtered) {
-      const key = getAgentLabel(s.agent_type)
-      const list = grouped.get(key) || []
-      list.push(s)
-      grouped.set(key, list)
-    }
-    return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b))
-  }, [filtered])
+  const virtualRows = useMemo(
+    () => buildSidebarRows(filtered, !agentFilter && viewMode === 'grouped', collapsedGroups),
+    [filtered, agentFilter, viewMode, collapsedGroups],
+  )
 
   const toggleGroup = (agent: string) => {
     setCollapsedGroups(prev => {
@@ -399,7 +385,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       />
 
       {/* Session List */}
-      <div className="px-2 pb-4 flex-1 overflow-y-auto">
+      <div className="px-2 flex-1 min-h-0">
         {error ? (
           <div className="px-3 py-8 text-center">
             <div className="mx-auto mb-2 flex h-7 w-7 items-center justify-center rounded-md bg-[var(--bg-inset)] text-helper text-[var(--warning)]">!</div>
@@ -420,41 +406,37 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
               </button>
             )}
           </div>
-        ) : agentFilter ? (
-          <div className="space-y-1">
-            {filtered.map(s => <SessionRow key={s.id} session={s} />)}
-          </div>
-        ) : viewMode === 'flat' ? (
-          <div className="space-y-1">
-            {filtered.map(s => <SessionRow key={s.id} session={s} />)}
-          </div>
         ) : (
-          agentGroups.map(([agent, list]) => {
-            const collapsed = collapsedGroups.has(agent)
-            return (
-              <div key={agent} className="mb-3">
+          <Virtuoso
+            className="h-full"
+            data={virtualRows}
+            computeItemKey={(_, row) => row.type === 'group' ? `group:${row.label}` : row.session.id}
+            components={{ Footer: () => <div className="h-4" /> }}
+            itemContent={(_, row) => row.type === 'group' ? (() => {
+              const collapsed = collapsedGroups.has(row.label)
+              const firstSession = filtered.find(session => getAgentLabel(session.agent_type) === row.label)
+              return (
                 <button
-                  onClick={() => toggleGroup(agent)}
-                  className="sticky top-0 z-10 w-full px-2 py-1 text-section uppercase tracking-[0.04em] text-[var(--text-muted)] flex items-center justify-between bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast rounded-sm cursor-pointer"
+                  onClick={() => toggleGroup(row.label)}
+                  className="mt-2 w-full px-2 py-1 text-section uppercase tracking-[0.04em] text-[var(--text-muted)] flex items-center justify-between bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast rounded-sm cursor-pointer"
                   aria-expanded={!collapsed}
                 >
                   <span className="flex items-center gap-1">
                     <svg className={`w-2.5 h-2.5 transition-transform duration-fast ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="9 18 15 12 9 6" />
                     </svg>
-                    <AgentIcon agentType={list[0]?.agent_type} size={16} />
-                    <span>{agent}</span>
+                    <AgentIcon agentType={firstSession?.agent_type} size={16} />
+                    <span>{row.label}</span>
                   </span>
-                  <span>{list.length}</span>
+                  <span>{row.count}</span>
                 </button>
-                {!collapsed && (
-                  <div className="space-y-1">
-                    {list.map(s => <SessionRow key={s.id} session={s} />)}
-                  </div>
-                )}
+              )
+            })() : (
+              <div className="py-0.5">
+                <SessionRow session={row.session} />
               </div>
-            )
-          })
+            )}
+          />
         )}
       </div>
 

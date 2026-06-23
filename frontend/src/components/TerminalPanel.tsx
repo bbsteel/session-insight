@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { fetchRenderANSI } from '../api'
 import type { ScrollMetrics } from '../minimapGeometry'
+import { createFrameBatcher } from '../scrollSync'
 
 export const TERMINAL_LINE_HEIGHT = 16
 
@@ -45,6 +46,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
 
     let disposeOnScroll: { dispose(): void } | null = null
     let observer: ResizeObserver | null = null
+    let metricsBatcher: ReturnType<typeof createFrameBatcher<ScrollMetrics>> | null = null
     let disposed = false
 
     // Wait for web fonts before opening xterm so character-cell metrics are
@@ -61,6 +63,20 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
         scrollHeight: term.buffer.active.length * TERMINAL_LINE_HEIGHT,
         clientHeight: term.rows * TERMINAL_LINE_HEIGHT,
       })
+      let lastMetrics: ScrollMetrics | undefined
+      metricsBatcher = createFrameBatcher(metrics => {
+        if (
+          lastMetrics
+          && lastMetrics.scrollTop === metrics.scrollTop
+          && lastMetrics.scrollHeight === metrics.scrollHeight
+          && lastMetrics.clientHeight === metrics.clientHeight
+        ) {
+          return
+        }
+        lastMetrics = metrics
+        onScrollMetricsRef.current?.(metrics)
+      })
+      const queueMetrics = () => metricsBatcher?.push(getMetrics())
 
       if (controlRef) {
         controlRef.current = {
@@ -69,13 +85,11 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
         }
       }
 
-      disposeOnScroll = term.onScroll(() => {
-        onScrollMetricsRef.current?.(getMetrics())
-      })
+      disposeOnScroll = term.onScroll(queueMetrics)
 
       observer = new ResizeObserver(() => {
         fitAddon.fit()
-        onScrollMetricsRef.current?.(getMetrics())
+        queueMetrics()
       })
       observer.observe(container)
 
@@ -83,7 +97,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
         .then(ansi => {
           if (disposed) return
           term.write(ansi, () => {
-            onScrollMetricsRef.current?.(getMetrics())
+            queueMetrics()
           })
         })
         .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
@@ -93,6 +107,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
       disposed = true
       observer?.disconnect()
       disposeOnScroll?.dispose()
+      metricsBatcher?.cancel()
       if (controlRef) controlRef.current = null
       term.dispose()
     }

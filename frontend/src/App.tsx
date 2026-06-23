@@ -3,16 +3,15 @@ import Sidebar from './components/Sidebar'
 import MiniMap from './components/MiniMap'
 import ReplayView from './components/ReplayView'
 import type { TurnVM } from './types'
-import type { ScrollMetrics } from './minimapGeometry'
+import type { MiniMapControl } from './components/MiniMap'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 
 export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [turns, setTurns] = useState<TurnVM[]>([])
-  const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>()
-  const [scrollMetrics, setScrollMetrics] = useState<ScrollMetrics>()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const miniMapControlRef = useRef<MiniMapControl | null>(null)
   const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
   const scrollToTopRef = useRef<((top: number, behavior?: ScrollBehavior) => void) | null>(null)
 
@@ -41,8 +40,7 @@ export default function App() {
       </div>
       <MiniMap
         turns={turns}
-        visibleRange={visibleRange}
-        scrollMetrics={scrollMetrics}
+        controlRef={miniMapControlRef}
         scrollToIndexRef={scrollToIndexRef}
         scrollToTopRef={scrollToTopRef}
       />
@@ -50,8 +48,7 @@ export default function App() {
         sessionId={selectedId}
         onSelect={selectSession}
         onTurnsChange={setTurns}
-        onVisibleRangeChange={setVisibleRange}
-        onScrollMetricsChange={setScrollMetrics}
+        miniMapControlRef={miniMapControlRef}
         scrollToIndexRef={scrollToIndexRef}
         scrollToTopRef={scrollToTopRef}
       />
