@@ -6,10 +6,22 @@ import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
 
+const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "Menlo", monospace'
+const TERMINAL_FONT_SIZE = 13
+
 interface Props {
   sessionId: string
   onScrollMetrics?: (m: ScrollMetrics) => void
   controlRef?: React.MutableRefObject<TerminalControl | null>
+}
+
+async function waitForTerminalFont() {
+  if (!document.fonts?.load) return
+
+  // xterm measures cell width at open time. Force the webfont request before
+  // opening so the first session does not measure a fallback font.
+  await document.fonts.load(`400 ${TERMINAL_FONT_SIZE}px ${TERMINAL_FONT_FAMILY}`)
+  await document.fonts.ready
 }
 
 export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }: Props) {
@@ -28,8 +40,8 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
         cursor: '#e2e2e2',
         selectionBackground: 'rgba(192,202,245,0.3)',
       },
-      fontFamily: '"JetBrains Mono", "Menlo", monospace',
-      fontSize: 13,
+      fontFamily: TERMINAL_FONT_FAMILY,
+      fontSize: TERMINAL_FONT_SIZE,
       scrollback: 20000,
       convertEol: true,
       disableStdin: true,
@@ -43,9 +55,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, controlRef }
     let metricsBatcher: ReturnType<typeof createFrameBatcher<ScrollMetrics>> | null = null
     let disposed = false
 
-    // Wait for web fonts before opening xterm so character-cell metrics are
-    // measured with the correct font (JetBrains Mono), not a fallback.
-    document.fonts.ready.then(() => {
+    waitForTerminalFont().then(() => {
       if (disposed) return
 
       term.open(container)
