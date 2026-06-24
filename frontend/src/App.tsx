@@ -1,19 +1,10 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import Sidebar from './components/Sidebar'
-import MiniMap from './components/MiniMap'
 import ReplayView from './components/ReplayView'
-import type { TurnVM } from './types'
-import type { MiniMapControl } from './components/MiniMap'
-
-type ReplayScrollBehavior = 'auto' | 'smooth'
 
 export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [turns, setTurns] = useState<TurnVM[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const miniMapControlRef = useRef<MiniMapControl | null>(null)
-  const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
-  const scrollToTopRef = useRef<((top: number, behavior?: ScrollBehavior) => void) | null>(null)
 
   const selectSession = (id: string) => {
     setSelectedId(id)
@@ -38,20 +29,12 @@ export default function App() {
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-[260] transition-transform duration-normal md:block`}>
         <Sidebar selectedId={selectedId} onSelect={selectSession} drawer={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       </div>
-      <MiniMap
-        turns={turns}
-        controlRef={miniMapControlRef}
-        scrollToIndexRef={scrollToIndexRef}
-        scrollToTopRef={scrollToTopRef}
-      />
-      <ReplayView
-        sessionId={selectedId}
-        onSelect={selectSession}
-        onTurnsChange={setTurns}
-        miniMapControlRef={miniMapControlRef}
-        scrollToIndexRef={scrollToIndexRef}
-        scrollToTopRef={scrollToTopRef}
-      />
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <ReplayView
+          sessionId={selectedId}
+          onSelect={selectSession}
+        />
+      </div>
     </div>
   )
 }

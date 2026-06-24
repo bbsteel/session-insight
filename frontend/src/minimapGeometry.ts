@@ -13,7 +13,7 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
 
-export function getViewportFrame(metrics: ScrollMetrics, trackLength: number, minLength = 4): ViewportFrame {
+export function getViewportFrame(metrics: ScrollMetrics, trackLength: number, minLength = 28): ViewportFrame {
   if (trackLength <= 0 || metrics.scrollHeight <= 0 || metrics.clientHeight <= 0) {
     return { top: 0, height: Math.max(trackLength, 0) }
   }

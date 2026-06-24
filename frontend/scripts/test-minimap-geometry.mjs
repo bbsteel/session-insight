@@ -18,8 +18,12 @@ const metrics = {
 
 const frame = getViewportFrame(metrics, 100)
 
-approx(frame.top, 25)
-approx(frame.height, 20)
+const explicitSmallFrame = getViewportFrame(metrics, 100, 4)
+
+approx(explicitSmallFrame.top, 25)
+approx(explicitSmallFrame.height, 20)
+approx(frame.top, 22.5)
+approx(frame.height, 28)
 
 const scrollTop = getScrollTopFromTrackPosition({
   pointerPosition: 50,
@@ -31,4 +35,4 @@ const scrollTop = getScrollTopFromTrackPosition({
   dragOffset: 10,
 })
 
-approx(scrollTop, 400)
+approx(scrollTop, 444.44444444444446)

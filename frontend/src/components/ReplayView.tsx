@@ -3,7 +3,7 @@ import { fetchSession, fetchSearch } from '../api'
 import type { SearchResult, SessionDetail, TurnVM } from '../types'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
-import type { MiniMapControl } from './MiniMap'
+import MiniMap, { type MiniMapControl } from './MiniMap'
 import ThemeToggle from './ThemeToggle'
 import DiffModal from './DiffModal'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
@@ -22,10 +22,6 @@ function hasCompaction(turn: TurnVM): boolean {
 interface Props {
   sessionId: string | null
   onSelect?: (id: string) => void
-  onTurnsChange?: (turns: TurnVM[]) => void
-  miniMapControlRef?: React.MutableRefObject<MiniMapControl | null>
-  scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
-  scrollToTopRef?: React.MutableRefObject<((top: number, behavior?: ScrollBehavior) => void) | null>
 }
 
 function fmtTokens(n: number): string {
@@ -41,7 +37,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, onSelect, onTurnsChange, miniMapControlRef, scrollToIndexRef, scrollToTopRef }: Props) {
+export default function ReplayView({ sessionId, onSelect }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
@@ -50,6 +46,9 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, miniMap
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
   const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
   const termControlRef = useRef<TerminalControl | null>(null)
+  const miniMapControlRef = useRef<MiniMapControl | null>(null)
+  const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
+  const scrollToTopRef = useRef<((top: number, behavior?: ScrollBehavior) => void) | null>(null)
   const visibleRangeRef = useRef<VisibleTurnRange>()
   const visibleRangeLabelRef = useRef<HTMLSpanElement>(null)
 
@@ -92,12 +91,12 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, miniMap
   }, [sessionId, session])
 
   useEffect(() => {
-    if (!sessionId) { setSession(null); onTurnsChange?.([]); return }
+    if (!sessionId) { setSession(null); return }
     visibleRangeRef.current = undefined
     jumpBaseRef.current = 0
     setLoading(true)
     fetchSession(sessionId)
-      .then(data => { setSession(data); onTurnsChange?.(data.turns) })
+      .then(data => { setSession(data) })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [sessionId])
@@ -314,21 +313,31 @@ export default function ReplayView({ sessionId, onSelect, onTurnsChange, miniMap
         <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} />
       )}
 
-      {viewMode === 'analytics' ? (
-        <Suspense fallback={<AnalyticsSkeleton />}>
-          <AnalyticsView sessionId={session.id} />
-        </Suspense>
-      ) : (
-        <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <TerminalPanel
-              sessionId={session.id}
-              onScrollMetrics={handleTerminalScrollMetrics}
-              controlRef={termControlRef}
-            />
-          </div>
-        </Suspense>
-      )}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 flex-1 overflow-hidden">
+          {viewMode === 'analytics' ? (
+            <Suspense fallback={<AnalyticsSkeleton />}>
+              <AnalyticsView sessionId={session.id} />
+            </Suspense>
+          ) : (
+            <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
+              <div className="flex-1 overflow-hidden flex flex-col">
+                <TerminalPanel
+                  sessionId={session.id}
+                  onScrollMetrics={handleTerminalScrollMetrics}
+                  controlRef={termControlRef}
+                />
+              </div>
+            </Suspense>
+          )}
+        </div>
+        <MiniMap
+          turns={turns}
+          controlRef={miniMapControlRef}
+          scrollToIndexRef={scrollToIndexRef}
+          scrollToTopRef={scrollToTopRef}
+        />
+      </div>
     </main>
   )
 }

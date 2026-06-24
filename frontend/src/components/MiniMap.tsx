@@ -5,6 +5,7 @@ import {
   getViewportFrame,
   type ScrollMetrics,
 } from '../minimapGeometry'
+import { getMiniMapEventKind, getMiniMapTurnPositionPercent, getTokenPressureTone, type MiniMapEventKind, type TokenPressureTone } from '../minimapSemantics'
 import type { VisibleTurnRange } from '../scrollSync'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
@@ -28,14 +29,30 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
 
-function getPressureColor(ratio: number): string {
-  if (ratio > 0.95) return 'var(--error)'
-  if (ratio >= 0.8) return 'var(--warning)'
-  return 'var(--success)'
+const pressureColors: Record<TokenPressureTone, string> = {
+  empty: 'var(--border-muted)',
+  low: 'var(--accent-teal)',
+  medium: 'var(--accent-lime)',
+  high: 'var(--warning)',
+  critical: 'var(--error)',
 }
 
-function hasCompaction(turn: TurnVM): boolean {
-  return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false
+const eventLabels: Record<MiniMapEventKind, string> = {
+  anomaly: '异常',
+  compaction: '压缩',
+  user: '用户输入',
+}
+
+const eventShortLabels: Record<MiniMapEventKind, string> = {
+  anomaly: '!',
+  compaction: 'C',
+  user: 'U',
+}
+
+const eventClassNames: Record<MiniMapEventKind, string> = {
+  anomaly: 'border-[var(--error)] bg-[var(--error)] text-white',
+  compaction: 'border-[var(--accent-blue)] bg-[var(--accent-blue)] text-white',
+  user: 'border-[var(--success)] bg-[var(--success)] text-white',
 }
 
 export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToTopRef }: Props) {
@@ -51,6 +68,7 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
   const visibleRangeRef = useRef<VisibleTurnRange>()
   const trackLengthRef = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
 
   function updateViewport(metrics: ScrollMetrics, range?: VisibleTurnRange) {
@@ -95,11 +113,6 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
     resizeObserver.observe(container)
     return () => resizeObserver.disconnect()
   }, [barCount])
-
-  const anomalyMarkers = useMemo(() => new Set(turns
-    .map((turn, index) => ({ turn, index }))
-    .filter(({ turn }) => (turn.anomalies?.length ?? 0) > 0 || turn.error_count > 0)
-    .map(({ index }) => index)), [turns])
 
   function scrollTo(index: number, behavior: ReplayScrollBehavior = 'smooth') {
     if (barCount === 0) return
@@ -194,7 +207,7 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
 
   if (barCount === 0) {
     return (
-      <nav className="minimap-shell flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex items-center justify-center" aria-label="MiniMap">
+      <nav className="minimap-shell flex-shrink-0 border-l border-[var(--border-default)] bg-[var(--bg-inset)] flex items-center justify-center" aria-label="MiniMap">
         <span className="text-meta text-[var(--text-muted)]" style={{ writingMode: 'vertical-rl' }}>MiniMap</span>
       </nav>
     )
@@ -202,7 +215,7 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
 
   return (
     <nav
-      className="minimap-shell flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col select-none"
+      className="minimap-shell flex-shrink-0 border-l border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col select-none"
       aria-label="MiniMap"
     >
       <div
@@ -214,62 +227,66 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        <div className="absolute inset-y-2 left-[8px] w-px bg-[var(--border-muted)]" />
-        <div className="absolute inset-y-2 left-[20px] w-[56px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
-        <div className="absolute inset-y-2 right-[8px] w-px bg-[var(--border-muted)]" />
+        <div className="absolute inset-y-2 left-[36px] right-[10px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
 
         {turns.map((turn, index) => {
           const tokens = getTotalTokens(turn)
-          const rowTop = `${((index + 0.5) / barCount) * 100}%`
-          const tokenWidth = Math.max(5, (tokens / maxTokens) * 50)
+          const rowTop = `${getMiniMapTurnPositionPercent(index, barCount)}%`
+          const rowTransform = index === 0 ? 'translateY(0)' : index === barCount - 1 ? 'translateY(-100%)' : 'translateY(-50%)'
           const pressureRatio = tokens / maxTokens
-          const isAnomaly = anomalyMarkers.has(index)
-          const isUserTurn = !!turn.user_message
-          const isCompaction = hasCompaction(turn)
-          const color = isAnomaly ? 'var(--error)' : getPressureColor(pressureRatio)
+          const pressureTone = getTokenPressureTone(pressureRatio)
+          const eventKind = getMiniMapEventKind(turn)
+          const eventLabel = eventKind ? eventLabels[eventKind] : ''
+          const title = `Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${eventLabel ? ` · ${eventLabel}` : ''}`
 
           return (
             <div
               key={index}
-              className="pointer-events-none absolute left-0 right-0 h-3 -translate-y-1/2"
-              style={{ top: rowTop }}
-              title={`Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${isAnomaly ? ' · 异常' : ''}${isUserTurn ? ' · 用户输入' : ''}`}
+              className="pointer-events-none absolute left-0 right-0 h-3"
+              style={{ top: rowTop, transform: rowTransform }}
+              title={title}
             >
+              {eventKind && (
+                <button
+                  type="button"
+                  className={`pointer-events-auto absolute left-[7px] top-1/2 flex h-[16px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                    eventClassNames[eventKind]
+                  } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
+                  title={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
+                  aria-label={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation()
+                    setActiveIndex(index)
+                    scrollTo(index)
+                  }}
+                >
+                  {eventShortLabels[eventKind]}
+                </button>
+              )}
               <span
-                className="absolute left-[6px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full"
-                style={{ background: isAnomaly ? 'var(--error)' : isUserTurn ? 'var(--success)' : 'var(--text-muted)' }}
-              />
-              <span
-                className="absolute left-[23px] top-1/2 h-2 -translate-y-1/2 rounded-sm"
+                className="absolute left-[40px] right-[14px] top-1/2 h-[4px] -translate-y-1/2 rounded-[2px]"
                 style={{
-                  width: tokenWidth,
-                  background: color,
+                  background: pressureColors[pressureTone],
                 }}
               />
-              {isCompaction && (
-                <span className="absolute right-[15px] top-1/2 h-2.5 w-1 -translate-y-1/2 rounded-sm bg-[var(--accent-blue)]" />
-              )}
-              {isUserTurn && (
-                <span className="absolute right-[6px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-[var(--success)]" />
-              )}
             </div>
           )
         })}
 
         <div
           ref={viewportRef}
-          className="absolute left-0 right-0 top-0 pointer-events-none"
+          className="absolute left-[4px] right-[8px] top-0 pointer-events-none rounded-sm"
           style={{
             display: 'none',
-            background: 'rgba(37, 99, 235, 0.14)',
-            borderTop: '1px solid var(--accent-blue)',
-            borderBottom: '1px solid var(--accent-blue)',
-            boxShadow: isDragging ? 'inset 0 0 0 1px var(--accent-blue)' : undefined,
+            background: 'rgba(37, 99, 235, 0.12)',
+            border: '1px solid var(--accent-blue)',
+            boxShadow: isDragging ? 'inset 0 0 0 1px var(--accent-blue)' : '0 0 0 1px rgba(37, 99, 235, 0.08)',
             willChange: 'transform',
           }}
         >
-          <span className="absolute left-1/2 top-0 h-1 w-3 -translate-x-1/2 rounded-b-sm bg-[var(--accent-blue)]" />
-          <span className="absolute bottom-0 left-1/2 h-1 w-3 -translate-x-1/2 rounded-t-sm bg-[var(--accent-blue)]" />
+          <span className="absolute left-1/2 top-0 h-1 w-2.5 -translate-x-1/2 rounded-b-sm bg-[var(--accent-blue)]" />
+          <span className="absolute bottom-0 left-1/2 h-1 w-2.5 -translate-x-1/2 rounded-t-sm bg-[var(--accent-blue)]" />
         </div>
       </div>
 

@@ -7,8 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:scroll": "rm -rf /tmp/session-insight-scroll-sync && tsc src/scrollSync.ts --outDir /tmp/session-insight-scroll-sync --module ES2020 --target ES2020 --moduleResolution node --skipLibCheck && cp /tmp/session-insight-scroll-sync/scrollSync.js /tmp/session-insight-scrollSync.mjs && node scripts/test-scroll-sync.mjs",
+    "test:minimap": "rm -rf /tmp/session-insight-minimap-geometry /tmp/session-insight-minimap-semantics && tsc src/minimapGeometry.ts --outDir /tmp/session-insight-minimap-geometry --module ES2020 --target ES2020 --moduleResolution node --skipLibCheck && cp /tmp/session-insight-minimap-geometry/minimapGeometry.js /tmp/session-insight-minimapGeometry.mjs && node scripts/test-minimap-geometry.mjs && tsc src/minimapSemantics.ts src/types.ts --outDir /tmp/session-insight-minimap-semantics --module ES2020 --target ES2020 --moduleResolution node --skipLibCheck && node scripts/test-minimap-semantics.mjs",
     "test:sidebar": "rm -rf /tmp/session-insight-sidebar-rows && tsc src/sidebarRows.ts src/types.ts --outDir /tmp/session-insight-sidebar-rows --module ES2020 --target ES2020 --moduleResolution node --skipLibCheck && cp /tmp/session-insight-sidebar-rows/sidebarRows.js /tmp/session-insight-sidebarRows.mjs && node scripts/test-sidebar-rows.mjs",
-    "test": "npm run test:scroll && npm run test:sidebar",
+    "test": "npm run test:scroll && npm run test:minimap && npm run test:sidebar",
     "preview": "vite preview",
     "go:build": "npm run build && cd .. && go build -tags sqlite_fts5 -o session-insight ."
   },
