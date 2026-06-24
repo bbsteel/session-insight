@@ -128,6 +128,8 @@ func parseApplyPatch(turnIndex int, input map[string]any) []EditCall {
 			h := hunk{}
 			hunks = append(hunks, h)
 			cur = &hunks[len(hunks)-1]
+		case strings.HasPrefix(line, "*** Move to: "):
+			curFile = strings.TrimPrefix(line, "*** Move to: ")
 		case strings.HasPrefix(line, "@@"):
 			h := hunk{}
 			hunks = append(hunks, h)

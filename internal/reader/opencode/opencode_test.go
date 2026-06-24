@@ -322,6 +322,41 @@ func TestRenderANSIUnknownSession(t *testing.T) {
 	}
 }
 
+func TestGetRenderEventsNormalizesEditInput(t *testing.T) {
+	reader, db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	seedSession(t, db, "ses_edit", "/test", "Edit test", "model")
+	seedMessage(t, db, "msg_user", "ses_edit", 1000, `{"role":"user","agent":"build"}`)
+	seedPart(t, db, "prt_user", "msg_user", "ses_edit", `{"type":"text","text":"Edit it"}`)
+	seedMessage(t, db, "msg_assistant", "ses_edit", 1100,
+		`{"role":"assistant","parentID":"msg_user","time":{"created":1100,"completed":1200}}`)
+	seedPart(t, db, "prt_edit", "msg_assistant", "ses_edit",
+		`{"type":"tool","callID":"call-1","tool":"edit","state":{"status":"completed","input":{"filePath":"main.go","oldString":"old","newString":"new"},"output":"ok"}}`)
+
+	events, err := reader.GetRenderEvents("ses_edit")
+	if err != nil {
+		t.Fatalf("GetRenderEvents: %v", err)
+	}
+
+	for _, event := range events {
+		if event.Type != "ToolInvocation" {
+			continue
+		}
+		if event.ToolName != "edit" {
+			t.Fatalf("ToolName: got %q", event.ToolName)
+		}
+		if event.ToolInput["file_path"] != "main.go" {
+			t.Fatalf("file_path: got %#v", event.ToolInput["file_path"])
+		}
+		if event.ToolInput["old_string"] != "old" || event.ToolInput["new_string"] != "new" {
+			t.Fatalf("edit strings were not normalized: %#v", event.ToolInput)
+		}
+		return
+	}
+	t.Fatal("edit ToolInvocation not found")
+}
+
 func TestAgentTypeAndDisplayName(t *testing.T) {
 	reader, _, cleanup := setupTestDB(t)
 	defer cleanup()

@@ -4,13 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { fetchRenderANSI } from '../api'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
-
-export const TERMINAL_LINE_HEIGHT = 16
-
-export interface TerminalControl {
-  scrollToLine: (line: number) => void
-  getMetrics: () => ScrollMetrics
-}
+import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
 
 interface Props {
   sessionId: string

@@ -201,6 +201,28 @@ func TestParseApplyPatchMultiFile(t *testing.T) {
 	}
 }
 
+func TestParseApplyPatchMoveUsesDestinationPath(t *testing.T) {
+	patch := "*** Begin Patch\n" +
+		"*** Update File: old/name.go\n" +
+		"*** Move to: new/name.go\n" +
+		"@@ -1 +1 @@\n" +
+		"-old\n" +
+		"+new\n" +
+		"*** End Patch"
+	evt := RenderEvent{
+		ToolName:  "apply_patch",
+		ToolInput: map[string]any{"args": patch},
+	}
+
+	calls := ExtractEditCalls(evt)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].FilePath != "new/name.go" {
+		t.Fatalf("FilePath: got %q, want destination path", calls[0].FilePath)
+	}
+}
+
 // ── parseApplyPatch — input key variants ─────────────────────────────────────
 
 func TestParseApplyPatchInputKeys(t *testing.T) {
