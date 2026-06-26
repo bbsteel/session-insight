@@ -182,8 +182,18 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
 
   const liveCount = useMemo(() => sessions.filter(s => s.is_live).length, [sessions])
 
+  const liveCountByAgent = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const s of sessions) {
+      if (s.is_live && s.agent_type) map.set(s.agent_type, (map.get(s.agent_type) ?? 0) + 1)
+    }
+    return map
+  }, [sessions])
+
   const effectiveAgents = useMemo<AgentInfo[]>(() => {
-    if (agents && agents.length > 0) return agents
+    if (agents && agents.length > 0) {
+      return agents.map(a => ({ ...a, live_count: liveCountByAgent.get(a.type) ?? 0 }))
+    }
 
     const counts = new Map<string, number>()
     for (const session of sessions) {
@@ -194,8 +204,9 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       type,
       display_name: getAgentLabel(type),
       session_count,
+      live_count: liveCountByAgent.get(type) ?? 0,
     }))
-  }, [agents, sessions])
+  }, [agents, sessions, liveCountByAgent])
 
   useEffect(() => {
     if (!agentsReady || !agentFilter) return
@@ -230,7 +241,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
     if (branch) parts.push(branch)
     parts.push(`${session.message_count || session.turn_count} msgs`)
-    if (session.is_live) parts.push('进行中')
+    if (session.is_live) parts.push('活跃中')
     const metadata = parts.join(' · ')
     const dateTime = formatDateTime(session.updated_at)
 
@@ -250,7 +261,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
             <AgentIcon agentType={session.agent_type} size={20} className="mt-0.5" />
             <div className="min-w-0 flex-1">
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
-                {session.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="进行中" aria-label="进行中" />}
+                {session.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
                 <span className="truncate">{getSessionName(session)}</span>
               </div>
               <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
@@ -314,7 +325,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
           {liveCount > 0 && (
             <span className="text-helper text-[var(--success)] flex-shrink-0 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] animate-pulse" />
-              {liveCount} live
+              {liveCount} 活跃中
             </span>
           )}
         </div>

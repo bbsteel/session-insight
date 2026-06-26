@@ -2,6 +2,7 @@ export interface AgentInfo {
   type: string
   display_name: string
   session_count: number
+  live_count?: number
 }
 
 export interface SessionSummary {
@@ -52,6 +53,25 @@ export interface EditCall {
 export interface SearchResult {
   session_id: string
   match: string
+}
+
+export interface MiniMapPosition {
+  kind: 'turn' | 'user' | 'error' | 'compaction'
+  position_key: string
+  turn_index: number
+  line_start: number
+  line_end?: number
+  label: string
+  severity?: string
+}
+
+export interface PositionsResponse {
+  session_id: string
+  agent_type: string
+  revision: number
+  cols: number
+  total_lines: number
+  positions: MiniMapPosition[]
 }
 
 export interface SessionDetail {

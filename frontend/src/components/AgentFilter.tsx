@@ -20,9 +20,16 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
     () => agents.reduce((total, agent) => total + agent.session_count, 0),
     [agents],
   )
+  const totalLive = useMemo(
+    () => agents.reduce((total, agent) => total + (agent.live_count ?? 0), 0),
+    [agents],
+  )
   const selectedAgent = selected ? agentMap.get(selected) : undefined
   const selectedLabel = selectedAgent?.display_name ?? (selected || 'All')
   const selectedCount = selectedAgent?.session_count ?? totalSessions
+  const selectedLive = selectedAgent?.live_count ?? totalLive
+
+  const formatCount = (live: number, total: number) => `${live}/${total}`
 
   useEffect(() => {
     if (!dropdownOpen) return
@@ -71,7 +78,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
           )}
           <span className="truncate">{selectedLabel}</span>
           <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0">
-            {selectedCount}
+            {formatCount(selectedLive, selectedCount)}
           </span>
           <svg
             className={`w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0 transition-transform duration-fast ${dropdownOpen ? 'rotate-180' : ''}`}
@@ -110,7 +117,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
               </span>
               <span className="text-body text-[var(--text-primary)] truncate">All</span>
               <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0">
-                {totalSessions}
+                {formatCount(totalLive, totalSessions)}
               </span>
             </button>
 
@@ -132,7 +139,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
                     {agent.display_name}
                   </span>
                   <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0">
-                    {agent.session_count}
+                    {formatCount(agent.live_count ?? 0, agent.session_count)}
                   </span>
                 </button>
               )
