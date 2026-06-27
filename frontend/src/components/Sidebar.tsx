@@ -5,7 +5,7 @@ import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import AgentIcon from './AgentIcon'
 import { Virtuoso } from 'react-virtuoso'
-import { buildSidebarRows, getAgentLabel } from '../sidebarRows'
+import { getAgentLabel } from '../sidebarRows'
 
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr)
@@ -19,8 +19,6 @@ function formatDateTime(dateStr: string): string {
 }
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
-const SIDEBAR_VIEW_MODE_KEY = 'sidebar-view-mode'
-const SIDEBAR_COLLAPSED_GROUPS_KEY = 'sidebar-collapsed-groups'
 
 function readStorage(key: string): string | null {
   try {
@@ -56,19 +54,9 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [viewMode, setViewMode] = useState<'grouped' | 'flat'>(() => {
-    const stored = readStorage(SIDEBAR_VIEW_MODE_KEY)
-    return stored === 'flat' ? 'flat' : 'grouped'
-  })
   const [width, setWidth] = useState(() => {
     const stored = Number(readStorage(SIDEBAR_WIDTH_KEY))
     return Number.isFinite(stored) && stored >= 160 && stored <= 400 ? stored : 260
-  })
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
-    try {
-      const stored = readStorage(SIDEBAR_COLLAPSED_GROUPS_KEY)
-      return stored ? new Set(JSON.parse(stored)) : new Set()
-    } catch { return new Set() }
   })
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -125,14 +113,6 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       })
       .catch(() => setAgents([]))
   }, [])
-
-  useEffect(() => {
-    writeStorage(SIDEBAR_VIEW_MODE_KEY, viewMode)
-  }, [viewMode])
-
-  useEffect(() => {
-    writeStorage(SIDEBAR_COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsedGroups]))
-  }, [collapsedGroups])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -239,20 +219,6 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
   }, [projectFilter, projectEntries])
 
-  const virtualRows = useMemo(
-    () => buildSidebarRows(filtered, !agentFilter && viewMode === 'grouped', collapsedGroups),
-    [filtered, agentFilter, viewMode, collapsedGroups],
-  )
-
-  const toggleGroup = (agent: string) => {
-    setCollapsedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(agent)) next.delete(agent)
-      else next.add(agent)
-      return next
-    })
-  }
-
   const SessionRow = ({ session }: { session: SessionSummary }) => {
     const selected = session.id === selectedId
     const repo = session.repository || ''
@@ -354,22 +320,6 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {!agentFilter && (
-            <div className="flex rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5">
-              {(['grouped', 'flat'] as const).map(mode => (
-                <button
-                  key={mode}
-                  onClick={() => setViewMode(mode)}
-                  aria-pressed={viewMode === mode}
-                  className={`h-6 px-2 rounded-sm text-meta transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                    viewMode === mode ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  {mode === 'grouped' ? '分组' : '平铺'}
-                </button>
-              ))}
-            </div>
-          )}
           {isMobile && onClose && (
             <button
               onClick={onClose}
@@ -451,31 +401,12 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
         ) : (
           <Virtuoso
             className="h-full"
-            data={virtualRows}
-            computeItemKey={(_, row) => row.type === 'group' ? `group:${row.label}` : row.session.id}
+            data={filtered}
+            computeItemKey={(_, s) => s.id}
             components={{ Footer: () => <div className="h-4" /> }}
-            itemContent={(_, row) => row.type === 'group' ? (() => {
-              const collapsed = collapsedGroups.has(row.label)
-              const firstSession = filtered.find(session => getAgentLabel(session.agent_type) === row.label)
-              return (
-                <button
-                  onClick={() => toggleGroup(row.label)}
-                  className="mt-2 w-full px-2 py-1 text-section uppercase tracking-[0.04em] text-[var(--text-muted)] flex items-center justify-between bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast rounded-sm cursor-pointer"
-                  aria-expanded={!collapsed}
-                >
-                  <span className="flex items-center gap-1">
-                    <svg className={`w-2.5 h-2.5 transition-transform duration-fast ${collapsed ? '' : 'rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="9 18 15 12 9 6" />
-                    </svg>
-                    <AgentIcon agentType={firstSession?.agent_type} size={16} />
-                    <span>{row.label}</span>
-                  </span>
-                  <span>{row.count}</span>
-                </button>
-              )
-            })() : (
+            itemContent={(_, s) => (
               <div className="py-0.5">
-                <SessionRow session={row.session} />
+                <SessionRow session={s} />
               </div>
             )}
           />
