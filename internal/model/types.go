@@ -2,12 +2,33 @@ package model
 
 import "time"
 
+// SessionRevision returns a monotonic revision number for cache invalidation.
+// First version uses UpdatedAt.UnixNano(); all callers must use this helper
+// so the implementation can be swapped without touching API contracts.
+func SessionRevision(s Session) int64 {
+	return s.UpdatedAt.UnixNano()
+}
+
+// LiveWindow is how recently a session must have been active to count as
+// "live" (活跃中). This is a presence heuristic — "recently active", not a
+// literal "process is running now" — so a single uniform window is applied to
+// every agent regardless of how it records activity.
+const LiveWindow = 5 * time.Minute
+
+// IsSessionLive reports whether a session counts as live, based purely on how
+// long ago it was last active. Must be evaluated at serve time (relative to
+// now), never stored, so liveness decays correctly as a session goes idle.
+func IsSessionLive(updatedAt time.Time) bool {
+	return time.Since(updatedAt) < LiveWindow
+}
+
 type Session struct {
 	ID           string    `json:"id"`
 	AgentType    string    `json:"agent_type"`
 	CWD          string    `json:"cwd"`
 	Repository   string    `json:"repository"`
 	Branch       string    `json:"branch"`
+	Project      string    `json:"project"`
 	Name         string    `json:"name"`
 	ModelName    string    `json:"model_name"`
 	PreviewText  string    `json:"preview_text"`

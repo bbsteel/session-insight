@@ -19,6 +19,7 @@ type SessionSummary struct {
 	Name         string `json:"name"`
 	Repository   string `json:"repository"`
 	Branch       string `json:"branch"`
+	Project      string `json:"project"`
 	PreviewText  string `json:"preview_text"`
 	TurnCount    int    `json:"turn_count"`
 	MessageCount int    `json:"message_count"`
@@ -46,4 +47,5 @@ func (s *Server) registerRoutes() {
 		s.Mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExportSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/render", s.handleRenderSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/edits", s.handleSessionEdits)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/positions", s.handleSessionPositions)
 }

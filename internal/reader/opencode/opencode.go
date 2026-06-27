@@ -167,12 +167,12 @@ func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
 			ID:           id,
 			AgentType:    "opencode",
 			CWD:          directory,
+			Project:      shared.ResolveProject(directory, ""),
 			Name:         resolveName(title, previewText.String, createdAt),
 			ModelName:    modelName,
 			PreviewText:  strings.TrimSpace(previewText.String),
 			TurnCount:    turnCount,
 			MessageCount: messageCount,
-			IsLive:       !timeArchived.Valid,
 			CreatedAt:    createdAt,
 			UpdatedAt:    updatedAt,
 		})
@@ -239,7 +239,6 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 		ModelName:    modelName,
 		TurnCount:    0,
 		MessageCount: msgCount,
-		IsLive:       !timeArchived.Valid,
 		CreatedAt:    createdAt,
 		UpdatedAt:    updatedAt,
 	}, nil

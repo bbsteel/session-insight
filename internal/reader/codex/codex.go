@@ -347,6 +347,7 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 		ID:           sessionID,
 		AgentType:    "codex",
 		CWD:          cwd,
+		Project:      shared.ResolveProject(cwd, ""),
 		Name:         name,
 		ModelName:    modelName,
 		PreviewText:  previewText,

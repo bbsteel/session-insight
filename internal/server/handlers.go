@@ -6,7 +6,11 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"time"
+
+	"session-insight/internal/db"
 	"session-insight/internal/model"
+	"session-insight/internal/render"
 	"strings"
 )
 
@@ -32,10 +36,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 				Name:         s.Name,
 				Repository:   s.Repository,
 				Branch:       s.Branch,
+				Project:      s.Project,
 				PreviewText:  s.PreviewText,
 				TurnCount:    s.TurnCount,
 				MessageCount: s.MessageCount,
-				IsLive:       s.IsLive,
+				IsLive:       model.IsSessionLive(s.UpdatedAt),
 				CreatedAt:    s.CreatedAt.Format("2006-01-02T15:04:05Z"),
 				UpdatedAt:    s.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 			})
@@ -70,6 +75,10 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		if detail == nil {
 			continue
 		}
+
+		// Liveness is a serve-time presence heuristic; compute it here so all
+		// agents share one definition (see model.IsSessionLive).
+		detail.IsLive = model.IsSessionLive(detail.UpdatedAt)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(detail)
@@ -141,6 +150,162 @@ func (s *Server) handleSessionEdits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+type positionsResponse struct {
+	SessionID string              `json:"session_id"`
+	AgentType string              `json:"agent_type"`
+	Revision  int64               `json:"revision"`
+	Cols      int                 `json:"cols"`
+	TotalLines int                `json:"total_lines"`
+	Positions []positionEntryJSON `json:"positions"`
+}
+
+type positionEntryJSON struct {
+	PositionKey string         `json:"position_key"`
+	Kind        string         `json:"kind"`
+	TurnIndex   int            `json:"turn_index"`
+	LineStart   int            `json:"line_start"`
+	LineEnd     *int           `json:"line_end,omitempty"`
+	Label       string         `json:"label"`
+	Severity    string         `json:"severity,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
+}
+
+func positionCacheToResponse(c *db.PositionCache) positionsResponse {
+	entries := make([]positionEntryJSON, 0, len(c.Positions))
+	for _, p := range c.Positions {
+		entries = append(entries, positionEntryJSON{
+			PositionKey: p.PositionKey,
+			Kind:        p.Kind,
+			TurnIndex:   p.TurnIndex,
+			LineStart:   p.LineStart,
+			LineEnd:     p.LineEnd,
+			Label:       p.Label,
+			Severity:    p.Severity,
+			Payload:     p.Payload,
+		})
+	}
+	return positionsResponse{
+		SessionID:  c.SessionID,
+		AgentType:  c.AgentType,
+		Revision:   c.Revision,
+		Cols:       c.Cols,
+		TotalLines: c.TotalLines,
+		Positions:  entries,
+	}
+}
+
+func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
+	if cols <= 0 {
+		cols = render.TermWidth
+	}
+
+	// Find session and its reader.
+	var sess *model.Session
+	var foundReader interface {
+		GetRenderEvents(id string) ([]model.RenderEvent, error)
+	}
+	for _, rd := range s.Readers {
+		detail, err := rd.GetSession(id)
+		if err != nil || detail == nil {
+			continue
+		}
+		s := detail.Session
+		sess = &s
+		foundReader = rd
+		break
+	}
+	if sess == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	revision := model.SessionRevision(*sess)
+
+	// Cache hit: return immediately.
+	if cached, err := s.DB.GetPositionCache(sess.AgentType, id, revision, cols); err == nil && cached != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(positionCacheToResponse(cached))
+		return
+	}
+
+	// Cache miss: generate, timeout after 1500ms.
+	type buildResult struct {
+		cache *db.PositionCache
+		err   error
+	}
+	ch := make(chan buildResult, 1)
+
+	// Capture for goroutine (avoids closing over loop variable).
+	agentType := sess.AgentType
+	dbRef := s.DB
+
+	go func() {
+		events, err := foundReader.GetRenderEvents(id)
+		if err != nil {
+			ch <- buildResult{err: err}
+			return
+		}
+		_, rpositions := render.FormatEventsWithPositions(events, cols)
+
+		totalLines := 0
+		entries := make([]db.PositionEntry, 0, len(rpositions))
+		for _, rp := range rpositions {
+			entries = append(entries, db.PositionEntry{
+				PositionKey: rp.PositionKey,
+				Kind:        rp.Kind,
+				TurnIndex:   rp.TurnIndex,
+				LineStart:   rp.LineStart,
+				LineEnd:     rp.LineEnd,
+				Label:       rp.Label,
+				Severity:    rp.Severity,
+				Payload:     rp.Payload,
+			})
+			if rp.LineStart > totalLines {
+				totalLines = rp.LineStart
+			}
+		}
+		totalLines++ // convert max line_start to total count
+
+		if err := dbRef.SavePositionCache(agentType, id, revision, cols, totalLines, entries); err != nil {
+			ch <- buildResult{err: err}
+			return
+		}
+		cached := &db.PositionCache{
+			AgentType:  agentType,
+			SessionID:  id,
+			Revision:   revision,
+			Cols:       cols,
+			TotalLines: totalLines,
+			Positions:  entries,
+		}
+		ch <- buildResult{cache: cached}
+	}()
+
+	timer := time.NewTimer(1500 * time.Millisecond)
+	defer timer.Stop()
+
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			http.Error(w, res.err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(positionCacheToResponse(res.cache))
+	case <-timer.C:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{"status": "building"})
+	}
 }
 
 func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { fetchAgents, fetchSessions } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import AgentFilter from './AgentFilter'
+import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import AgentIcon from './AgentIcon'
 import { Virtuoso } from 'react-virtuoso'
 import { buildSidebarRows, getAgentLabel } from '../sidebarRows'
@@ -77,6 +78,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
   const [agents, setAgents] = useState<AgentInfo[] | null>(null)
   const [agentsReady, setAgentsReady] = useState(false)
   const [agentFilter, setAgentFilter] = useState<string>('')
+  const [projectFilter, setProjectFilter] = useState<string>('')
 
   const searchRef = useRef<HTMLInputElement>(null)
   const asideRef = useRef<HTMLElement>(null)
@@ -168,6 +170,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
 
   const filtered = useMemo(() => sessions.filter(s => {
     if (agentFilter && s.agent_type !== agentFilter) return false
+    if (projectFilter && s.project !== projectFilter) return false
     if (query.trim()) {
       const q = query.toLowerCase()
       const name = getSessionName(s).toLowerCase()
@@ -214,6 +217,27 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       setAgentFilter('')
     }
   }, [agentFilter, agentsReady, effectiveAgents])
+
+  const projectEntries = useMemo<ProjectEntry[]>(() => {
+    const counts = new Map<string, number>()
+    for (const s of sessions) {
+      if (!s.project) continue
+      // When agent filter is active, only count sessions of that agent.
+      if (agentFilter && s.agent_type !== agentFilter) continue
+      counts.set(s.project, (counts.get(s.project) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .map(([name, session_count]) => ({ name, session_count }))
+      .sort((a, b) => b.session_count - a.session_count || a.name.localeCompare(b.name))
+  }, [sessions, agentFilter])
+
+  // Reset project filter when the selected project disappears from the list
+  // (e.g. after switching agent filter).
+  useEffect(() => {
+    if (projectFilter && !projectEntries.some(p => p.name === projectFilter)) {
+      setProjectFilter('')
+    }
+  }, [projectFilter, projectEntries])
 
   const virtualRows = useMemo(
     () => buildSidebarRows(filtered, !agentFilter && viewMode === 'grouped', collapsedGroups),
@@ -393,6 +417,13 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
         agents={effectiveAgents}
         selected={agentFilter}
         onSelect={setAgentFilter}
+      />
+
+      {/* Project Filter */}
+      <ProjectFilter
+        projects={projectEntries}
+        selected={projectFilter}
+        onSelect={setProjectFilter}
       />
 
       {/* Session List */}

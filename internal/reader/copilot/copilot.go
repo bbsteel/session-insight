@@ -148,14 +148,13 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 				}
 				f.Close()
 				session.MessageCount = newlines
-				// Check if session is live (events.jsonl modified within 30s)
+				// Use events.jsonl mtime for UpdatedAt (revision source, and the
+				// activity timestamp the server-side liveness check reads).
+				// workspace.yaml UpdatedAt is unreliable for detecting content
+				// changes because events.jsonl is continuously appended to.
+				// Liveness itself is computed uniformly at serve time
+				// (model.IsSessionLive), not here.
 				if info, err := os.Stat(eventsPath); err == nil {
-					if time.Since(info.ModTime()) < 30*time.Second {
-						session.IsLive = true
-					}
-					// Use events.jsonl mtime for UpdatedAt (revision source).
-					// workspace.yaml UpdatedAt is unreliable for detecting content
-					// changes because events.jsonl is continuously appended to.
 					if info.ModTime().After(session.UpdatedAt) {
 						session.UpdatedAt = info.ModTime()
 					}
@@ -186,6 +185,7 @@ func toSession(ws workspaceYAML) model.Session {
 		CWD:        ws.CWD,
 		Repository: ws.Repository,
 		Branch:     ws.Branch,
+		Project:    shared.ResolveProject(ws.CWD, ws.Repository),
 		Name:       name,
 		CreatedAt:  createdAt,
 		UpdatedAt:  updatedAt,
