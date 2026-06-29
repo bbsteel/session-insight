@@ -11,10 +11,30 @@ import (
 
 const maxStdoutLines = 10
 
+// RenderPosition is one MiniMap marker emitted during ANSI formatting.
+type RenderPosition struct {
+	PositionKey string
+	Kind        string
+	TurnIndex   int
+	LineStart   int
+	LineEnd     *int
+	Label       string
+	Severity    string
+	Payload     map[string]any
+}
+
 // FormatEvents renders events as ANSI text. cols is the terminal column count
 // reported by the frontend (term.cols after fitAddon.fit()); pass 0 to use
 // the package default (TermWidth).
 func FormatEvents(events []model.RenderEvent, cols int) string {
+	ansi, _ := FormatEventsWithPositions(events, cols)
+	return ansi
+}
+
+// FormatEventsWithPositions renders events as ANSI text and simultaneously
+// records terminal line positions for each significant event kind.
+// Returns the ANSI string and a slice of positions ordered by line_start.
+func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []RenderPosition) {
 	if cols <= 0 {
 		cols = TermWidth
 	}
@@ -23,12 +43,29 @@ func FormatEvents(events []model.RenderEvent, cols int) string {
 		bWidth = 40
 	}
 
-	var sb strings.Builder
+	tb := newTrackingBuilder(cols)
+	var positions []RenderPosition
 	prevTurnIndex := -1
+	editSeqByTurn := make(map[int]int)
+
+	emit := func(kind, label, severity string, turnIndex int, payload map[string]any) {
+		lineStart := tb.CurrentLine()
+		key := fmt.Sprintf("%s:%d:%d", kind, turnIndex, lineStart)
+		positions = append(positions, RenderPosition{
+			PositionKey: key,
+			Kind:        kind,
+			TurnIndex:   turnIndex,
+			LineStart:   lineStart,
+			Label:       label,
+			Severity:    severity,
+			Payload:     payload,
+		})
+	}
 
 	for _, evt := range events {
 		if evt.TurnIndex != prevTurnIndex {
-			writeSeparator(&sb, evt.TurnIndex, cols)
+			emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
+			writeSeparator(tb, evt.TurnIndex, cols)
 			prevTurnIndex = evt.TurnIndex
 		}
 
@@ -37,27 +74,49 @@ func FormatEvents(events []model.RenderEvent, cols int) string {
 		switch evt.Type {
 		case "TurnBoundary":
 		case "UserPrompt":
-			writeUserPrompt(&sb, evt, prefix)
+			emit("user", "用户输入", "", evt.TurnIndex, nil)
+			writeUserPrompt(tb, evt, prefix)
 		case "ThinkingStart":
-			writeThinking(&sb, evt, prefix)
+			writeThinking(tb, evt, prefix)
 		case "ThinkingChunk":
-			writeThinking(&sb, evt, prefix)
+			writeThinking(tb, evt, prefix)
 		case "ThinkingEnd":
 		case "TextChunk":
-			writeTextChunk(&sb, evt, prefix, cols)
+			writeTextChunk(tb, evt, prefix, cols)
 		case "ToolInvocation":
-			writeToolInvocation(&sb, evt, prefix, bWidth)
+			writeToolInvocation(tb, evt, prefix, bWidth, func(filePath string) {
+				seq := editSeqByTurn[evt.TurnIndex]
+				editSeqByTurn[evt.TurnIndex]++
+				emit("edit", filePath, "", evt.TurnIndex, map[string]any{"edit_seq": float64(seq)})
+			})
 		case "ToolResult":
-			writeToolResult(&sb, evt, prefix)
+			if evt.ExitCode != 0 || evt.Stderr != "" {
+				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName})
+			}
+			writeToolResult(tb, evt, prefix)
 		case "AgentSpecific":
-			writeAgentSpecific(&sb, evt, prefix)
+			if evt.Subtype == "compaction" {
+				emit("compaction", "压缩", "", evt.TurnIndex, nil)
+			}
+			writeAgentSpecific(tb, evt, prefix)
 		}
 	}
 
-	return sb.String()
+	// Deduplicate: if two positions share the same position_key, keep first.
+	seen := make(map[string]struct{}, len(positions))
+	deduped := positions[:0]
+	for _, p := range positions {
+		if _, ok := seen[p.PositionKey]; ok {
+			continue
+		}
+		seen[p.PositionKey] = struct{}{}
+		deduped = append(deduped, p)
+	}
+
+	return tb.String(), deduped
 }
 
-func writeSeparator(sb *strings.Builder, turnIdx int, termWidth int) {
+func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	label := fmt.Sprintf(" Turn %d ", turnIdx)
 	half := (termWidth - len(label)) / 2
 	if half < 1 {
@@ -65,12 +124,12 @@ func writeSeparator(sb *strings.Builder, turnIdx int, termWidth int) {
 	}
 	line := strings.Repeat("─", half) + label + strings.Repeat("─", termWidth-half-len(label))
 	sb.WriteString("\n")
-	sb.WriteString(fgWrap(line, HexSeparator))
+	sb.WriteString(fgWrap(line, ColMuted))
 	sb.WriteString("\n")
 }
 
-func writeUserPrompt(sb *strings.Builder, evt model.RenderEvent, prefix string) {
-	prompt := fgWrap("> ", HexUser) + fgWrap(sanitizeControlChars(evt.Text), HexFg)
+func writeUserPrompt(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+	prompt := fgWrap("> ", ColUser) + fgWrap(sanitizeControlChars(evt.Text), ColFg)
 	for _, line := range strings.Split(prompt, "\n") {
 		sb.WriteString(prefix)
 		sb.WriteString(line)
@@ -78,8 +137,8 @@ func writeUserPrompt(sb *strings.Builder, evt model.RenderEvent, prefix string) 
 	}
 }
 
-func writeThinking(sb *strings.Builder, evt model.RenderEvent, prefix string) {
-	text := italicWrap(fgWrap(sanitizeControlChars(evt.Text), HexThinking))
+func writeThinking(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+	text := italicWrap(fgWrap(sanitizeControlChars(evt.Text), ColMuted))
 	for _, line := range strings.Split(text, "\n") {
 		if line == "" {
 			sb.WriteString("\n")
@@ -91,7 +150,7 @@ func writeThinking(sb *strings.Builder, evt model.RenderEvent, prefix string) {
 	}
 }
 
-func writeTextChunk(sb *strings.Builder, evt model.RenderEvent, prefix string, termWidth int) {
+func writeTextChunk(sb *trackingBuilder, evt model.RenderEvent, prefix string, termWidth int) {
 	lines := strings.Split(sanitizeControlChars(evt.Text), "\n")
 	hasDiff := scanForDiff(lines)
 	inCodeBlock := false
@@ -101,21 +160,21 @@ func writeTextChunk(sb *strings.Builder, evt model.RenderEvent, prefix string, t
 		if hasDiff && isDiffAdd(line) {
 			padded := padRight(line, termWidth)
 			sb.WriteString(prefix)
-			sb.WriteString(bgWrap(fgWrap(padded, HexDiffAddText), HexDiffAddBg))
+			sb.WriteString(bgWrap(fgWrap(padded, ColFg), ColDiffAdd))
 		} else if hasDiff && isDiffDel(line) {
 			padded := padRight(line, termWidth)
 			sb.WriteString(prefix)
-			sb.WriteString(bgWrap(fgWrap(padded, HexDiffDelText), HexDiffDelBg))
+			sb.WriteString(bgWrap(fgWrap(padded, ColFg), ColDiffDel))
 		} else if strings.HasPrefix(trimmed, "```") {
 			inCodeBlock = !inCodeBlock
 			sb.WriteString(prefix)
-			sb.WriteString(fgWrap(line, HexThinking))
+			sb.WriteString(fgWrap(line, ColMuted))
 		} else if inCodeBlock {
 			sb.WriteString(prefix)
-			sb.WriteString(fgWrap(line, HexWarning))
+			sb.WriteString(fgWrap(line, ColWarning))
 		} else {
 			sb.WriteString(prefix)
-			sb.WriteString(renderMarkdownLine(line, HexFg))
+			sb.WriteString(renderMarkdownLine(line, ColFg))
 		}
 		if i < len(lines)-1 {
 			sb.WriteString("\n")
@@ -148,7 +207,7 @@ func isDiffDel(line string) bool {
 	return strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---")
 }
 
-func writeToolInvocation(sb *strings.Builder, evt model.RenderEvent, prefix string, bWidth int) {
+func writeToolInvocation(sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string)) {
 	if model.IsEditTool(evt.ToolName) {
 		if evt.ToolName == "apply_patch" {
 			// apply_patch carries a raw patch string (under args/input/patch),
@@ -156,6 +215,9 @@ func writeToolInvocation(sb *strings.Builder, evt model.RenderEvent, prefix stri
 			// into per-file EditCalls and render each as its own diff block.
 			calls := model.ExtractEditCalls(evt)
 			for _, call := range calls {
+				if onEditStart != nil {
+					onEditStart(call.FilePath)
+				}
 				syn := evt
 				syn.ToolInput = map[string]any{
 					"file_path":  call.FilePath,
@@ -169,14 +231,18 @@ func writeToolInvocation(sb *strings.Builder, evt model.RenderEvent, prefix stri
 			}
 			// Empty or malformed patch: fall through to generic tool box.
 		} else {
+			filePath, _ := evt.ToolInput["file_path"].(string)
+			if onEditStart != nil {
+				onEditStart(filePath)
+			}
 			writeEditDiff(sb, evt, prefix, bWidth)
 			return
 		}
 	}
 
-	borderColor := HexTool
+	borderColor := ColTool
 	if evt.ToolName == "Agent" || evt.ToolName == "Task" {
-		borderColor = HexSubagent
+		borderColor = ColSubagent
 	}
 
 	header := fmt.Sprintf(" Tool: %s ", sanitizeControlChars(evt.ToolName))
@@ -210,7 +276,7 @@ func writeToolInvocation(sb *strings.Builder, evt model.RenderEvent, prefix stri
 				wl = padRight(wl, contentWidth)
 				sb.WriteString(prefix)
 				sb.WriteString(fgWrap("║", borderColor))
-				sb.WriteString(fgWrap(wl, HexFg))
+				sb.WriteString(fgWrap(wl, ColFg))
 				sb.WriteString(fgWrap("║", borderColor))
 				sb.WriteString("\n")
 			}
@@ -339,7 +405,7 @@ func shouldQuote(s string) bool {
 	return false
 }
 
-func writeToolResult(sb *strings.Builder, evt model.RenderEvent, prefix string) {
+func writeToolResult(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
 	// The checkmark/cross gets its own line, ending in "\n", rather than
 	// being followed directly by the first output line on the same line.
 	// The latter (the original draft's behavior) duplicated the depth
@@ -349,9 +415,9 @@ func writeToolResult(sb *strings.Builder, evt model.RenderEvent, prefix string) 
 	// visual line.
 	sb.WriteString(prefix)
 	if evt.ExitCode == 0 && evt.Stderr == "" {
-		sb.WriteString(fgWrap("✓", HexSuccess))
+		sb.WriteString(fgWrap("✓", ColSuccess))
 	} else {
-		sb.WriteString(fgWrap("✗", HexError))
+		sb.WriteString(fgWrap("✗", ColError))
 	}
 	sb.WriteString("\n")
 
@@ -360,7 +426,7 @@ func writeToolResult(sb *strings.Builder, evt model.RenderEvent, prefix string) 
 	}
 	if evt.Stderr != "" {
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap("stderr:\n", HexWarning))
+		sb.WriteString(fgWrap("stderr:\n", ColWarning))
 		sb.WriteString(formatToolOutput(evt.Stderr, prefix, true))
 	}
 	sb.WriteString("\n")
@@ -368,9 +434,9 @@ func writeToolResult(sb *strings.Builder, evt model.RenderEvent, prefix string) 
 
 func formatToolOutput(content string, prefix string, isError bool) string {
 	lines := strings.Split(sanitizeControlChars(content), "\n")
-	color := HexFg
+	color := ColFg
 	if isError {
-		color = HexError
+		color = ColError
 	}
 
 	if len(lines) > maxStdoutLines {
@@ -384,7 +450,7 @@ func formatToolOutput(content string, prefix string, isError bool) string {
 			sb.WriteString("\n")
 		}
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), HexWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), ColWarning))
 		sb.WriteString("\n")
 		return sb.String()
 	}
@@ -398,7 +464,7 @@ func formatToolOutput(content string, prefix string, isError bool) string {
 	return sb.String()
 }
 
-func writeAgentSpecific(sb *strings.Builder, evt model.RenderEvent, prefix string) {
+func writeAgentSpecific(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
 	switch evt.Subtype {
 	case "turn_duration":
 	case "subagent_load_error":
@@ -409,23 +475,23 @@ func writeAgentSpecific(sb *strings.Builder, evt model.RenderEvent, prefix strin
 			}
 		}
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 子agent转录加载失败: %s", reason), HexWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 子agent转录加载失败: %s", reason), ColWarning))
 		sb.WriteString("\n")
 	case "skill_invoked":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("⚙ %s", sanitizeControlChars(evt.Text)), HexSkill))
+		sb.WriteString(fgWrap(fmt.Sprintf("⚙ %s", sanitizeControlChars(evt.Text)), ColSkill))
 		sb.WriteString("\n")
 	case "subagent_started":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), HexSubagent))
+		sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), ColSubagent))
 		sb.WriteString("\n")
 	case "model_change":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("↪ model: %s", sanitizeControlChars(evt.Text)), HexWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("↪ model: %s", sanitizeControlChars(evt.Text)), ColWarning))
 		sb.WriteString("\n")
 	default:
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("[agent:%s]", evt.Subtype), HexWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("[agent:%s]", evt.Subtype), ColWarning))
 		sb.WriteString("\n")
 	}
 }
@@ -536,27 +602,27 @@ func wrapInBox(il string, contentWidth int) []string {
 //
 // Inline (within line content): **bold**, ***bold+italic***, *italic*,
 // `code`, ~~strikethrough~~, [text](url).
-func renderMarkdownLine(line string, defaultFg string) string {
+func renderMarkdownLine(line string, defaultFg Color) string {
 	trimmed := strings.TrimSpace(line)
 
 	if headingLevel(trimmed) > 0 {
-		return styled(line, HexSkill, "", true, false)
+		return styled(line, ColSkill, ColNone, true, false)
 	}
 	if isHorizontalRule(trimmed) {
-		return fgWrap(strings.Repeat("─", TermWidth), HexSeparator)
+		return fgWrap(strings.Repeat("─", TermWidth), ColMuted)
 	}
 	if strings.HasPrefix(trimmed, "> ") || trimmed == ">" {
 		leadSpaces := len(line) - len(strings.TrimLeft(line, " \t"))
 		content := strings.TrimPrefix(trimmed, "> ")
 		return strings.Repeat(" ", leadSpaces) +
-			fgWrap("│ ", HexThinking) +
-			styled(content, HexThinking, "", false, true)
+			fgWrap("│ ", ColMuted) +
+			styled(content, ColMuted, ColNone, false, true)
 	}
 	if m, ok := matchUnorderedList(line); ok {
-		return m.indent + fgWrap("•", HexUser) + " " + renderInlineMd(m.content, defaultFg)
+		return m.indent + fgWrap("•", ColUser) + " " + renderInlineMd(m.content, defaultFg)
 	}
 	if m, ok := matchOrderedList(line); ok {
-		return m.indent + fgWrap(m.marker, HexUser) + " " + renderInlineMd(m.content, defaultFg)
+		return m.indent + fgWrap(m.marker, ColUser) + " " + renderInlineMd(m.content, defaultFg)
 	}
 	return renderInlineMd(line, defaultFg)
 }
@@ -630,7 +696,7 @@ func matchOrderedList(line string) (listItem, bool) {
 // renderInlineMd applies inline Markdown spans to a single line using a
 // state machine. Supported: ***bold+italic***, **bold**, *italic*,
 // `code`, ~~strikethrough~~, [text](url).
-func renderInlineMd(line string, defaultFg string) string {
+func renderInlineMd(line string, defaultFg Color) string {
 	if !strings.ContainsAny(line, "*`~[") {
 		return fgWrap(line, defaultFg)
 	}
@@ -661,15 +727,15 @@ func renderInlineMd(line string, defaultFg string) string {
 		case spanNormal:
 			out.WriteString(fgWrap(text, defaultFg))
 		case spanBoldItalic:
-			out.WriteString(styled(text, defaultFg, "", true, true))
+			out.WriteString(styled(text, defaultFg, ColNone, true, true))
 		case spanBold:
-			out.WriteString(styled(text, defaultFg, "", true, false))
+			out.WriteString(styled(text, defaultFg, ColNone, true, false))
 		case spanItalic:
-			out.WriteString(styled(text, defaultFg, "", false, true))
+			out.WriteString(styled(text, defaultFg, ColNone, false, true))
 		case spanCode:
-			out.WriteString(fgWrap(text, HexWarning))
+			out.WriteString(fgWrap(text, ColWarning))
 		case spanStrike:
-			out.WriteString(strikeCode + fgWrap(text, HexThinking) + resetCode)
+			out.WriteString(strikeCode + fgWrap(text, ColMuted) + resetCode)
 		}
 	}
 
@@ -709,7 +775,7 @@ func renderInlineMd(line string, defaultFg string) string {
 			case r == '[':
 				if text, skip := matchLink(runes, i); skip > 0 {
 					flush(spanNormal)
-					out.WriteString(fgWrap(text, HexTool))
+					out.WriteString(fgWrap(text, ColTool))
 					i += skip
 				} else {
 					buf.WriteRune(r); i++
@@ -826,10 +892,10 @@ func lcsLineDiff(old, new []string) []struct{ kind int; text string } {
 // writeEditDiff renders an Edit (str_replace) tool invocation as a LCS-based
 // unified diff block. Equal lines are shown without background; only truly
 // changed lines are highlighted red (removed) or green (added).
-func writeEditDiff(sb *strings.Builder, evt model.RenderEvent, prefix string, bWidth int) {
+func writeEditDiff(sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int) {
 	const maxDiffLines = 40
 
-	borderColor := HexTool
+	borderColor := ColTool
 	contentWidth := bWidth - 2
 
 	str := func(key string) string {
@@ -858,7 +924,7 @@ func writeEditDiff(sb *strings.Builder, evt model.RenderEvent, prefix string, bW
 	// Header
 	dispPath := filePath
 	if dispPath == "" { dispPath = "unknown" }
-	headerText := fmt.Sprintf(" Edit: %s ", dispPath)
+	headerText := fmt.Sprintf(" ✏️ %s: %s ", evt.ToolName, dispPath)
 	maxHW := bWidth - 6
 	if displayWidth(headerText) > maxHW {
 		headerText = truncateToWidth(headerText, maxHW)
@@ -870,11 +936,11 @@ func writeEditDiff(sb *strings.Builder, evt model.RenderEvent, prefix string, bW
 	sb.WriteString(fgWrap(top, borderColor))
 	sb.WriteString("\n")
 
-	writeDiffLine := func(content, fgColor, bgColor string) {
+	writeDiffLine := func(content string, fgColor, bgColor Color) {
 		body := padRight(content, contentWidth)
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap("║", borderColor))
-		if bgColor != "" {
+		if bgColor != ColNone {
 			sb.WriteString(bgWrap(fgWrap(body, fgColor), bgColor))
 		} else {
 			sb.WriteString(fgWrap(body, fgColor))
@@ -884,7 +950,7 @@ func writeEditDiff(sb *strings.Builder, evt model.RenderEvent, prefix string, bW
 	}
 
 	summary := fmt.Sprintf("  -%d lines, +%d lines", nDel, nAdd)
-	writeDiffLine(summary, HexThinking, "")
+	writeDiffLine(summary, ColMuted, ColNone)
 
 	shown, truncated := 0, 0
 	for _, op := range ops {
@@ -892,20 +958,24 @@ func writeEditDiff(sb *strings.Builder, evt model.RenderEvent, prefix string, bW
 			truncated++
 			continue
 		}
-		var (sigil, fgColor, bgColor string)
+		var (
+			sigil   string
+			fgColor Color
+			bgColor Color
+		)
 		switch op.kind {
 		case 0: // equal
 			sigil   = "  "
-			fgColor = HexFg
-			bgColor = ""
+			fgColor = ColFg
+			bgColor = ColNone
 		case 1: // remove
 			sigil   = "- "
-			fgColor = HexDiffDelText
-			bgColor = HexDiffDelBg
+			fgColor = ColFg
+			bgColor = ColDiffDel
 		case 2: // add
 			sigil   = "+ "
-			fgColor = HexDiffAddText
-			bgColor = HexDiffAddBg
+			fgColor = ColFg
+			bgColor = ColDiffAdd
 		}
 		content := sigil + op.text
 		if displayWidth(content) > contentWidth {
@@ -915,7 +985,7 @@ func writeEditDiff(sb *strings.Builder, evt model.RenderEvent, prefix string, bW
 		shown++
 	}
 	if truncated > 0 {
-		writeDiffLine(fmt.Sprintf("  … 省略 %d 行", truncated), HexWarning, "")
+		writeDiffLine(fmt.Sprintf("  … 省略 %d 行", truncated), ColWarning, ColNone)
 	}
 
 	bottom := prefix + fgWrap("╚"+strings.Repeat("═", bWidth-2)+"╝", borderColor)

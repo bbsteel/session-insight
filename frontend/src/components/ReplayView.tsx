@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { fetchSession, fetchSearch } from '../api'
-import type { SearchResult, SessionDetail, TurnVM } from '../types'
+import { fetchPositions, fetchSession, fetchSearch, fetchSessionEdits } from '../api'
+import type { EditCall, PositionsResponse, SearchResult, SessionDetail, TurnVM } from '../types'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
@@ -43,14 +43,41 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const [showHelp, setShowHelp] = useState(false)
   const [showDiffModal, setShowDiffModal] = useState(false)
+  const [initialDiffIdx, setInitialDiffIdx] = useState(0)
   const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
   const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
+  const [terminalCols, setTerminalCols] = useState<number | null>(null)
+  const [positionsData, setPositionsData] = useState<PositionsResponse | null>(null)
+  const [positionsBuilding, setPositionsBuilding] = useState(false)
+  const [edits, setEdits] = useState<EditCall[]>([])
   const termControlRef = useRef<TerminalControl | null>(null)
   const miniMapControlRef = useRef<MiniMapControl | null>(null)
   const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
   const scrollToTopRef = useRef<((top: number, behavior?: ScrollBehavior) => void) | null>(null)
   const visibleRangeRef = useRef<VisibleTurnRange>()
   const visibleRangeLabelRef = useRef<HTMLSpanElement>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const lastMetricsRef = useRef<ScrollMetrics>()
+
+  const handleColsReady = useCallback((cols: number) => {
+    setTerminalCols(cols)
+    setPositionsData(null)
+    // Register edit line matcher once terminal is ready.
+    // Buffer scan (in TerminalPanel) finds ✏️ header lines in document order,
+    // matchIndex N → edits[N] since both are ordered by document position.
+    termControlRef.current?.setLineMatchers([{
+      match: (text) => {
+        if (!text.includes('✏')) return null
+        const m = text.match(/✏.{0,2}([^:]+): (.+?) ═/)
+        return m ? { toolName: m[1].trim(), filePath: m[2].trim() } : null
+      },
+      tooltip: '打开 Diff 明细',
+      onActivate: (_bufLine, _data, matchIndex) => {
+        setInitialDiffIdx(matchIndex)
+        setShowDiffModal(true)
+      },
+    }])
+  }, [])
 
   const turns = session?.turns ?? []
 
@@ -91,9 +118,13 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
   }, [sessionId, session])
 
   useEffect(() => {
-    if (!sessionId) { setSession(null); return }
+    if (!sessionId) { setSession(null); setEdits([]); return }
     visibleRangeRef.current = undefined
     jumpBaseRef.current = 0
+    setTerminalCols(null)
+    setPositionsData(null)
+    setPositionsBuilding(false)
+    clearTimeout(pollTimerRef.current)
     setLoading(true)
     fetchSession(sessionId)
       .then(data => { setSession(data) })
@@ -101,9 +132,49 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
       .finally(() => setLoading(false))
   }, [sessionId])
 
+  useEffect(() => {
+    if (!sessionId) return
+    fetchSessionEdits(sessionId)
+      .then(setEdits)
+      .catch(() => setEdits([]))
+  }, [sessionId])
+
+  // Fetch positions once terminal cols are stable. Polls on 202 until ready.
+  useEffect(() => {
+    if (!sessionId || terminalCols === null) return
+    let cancelled = false
+
+    const poll = () => {
+      fetchPositions(sessionId, terminalCols)
+        .then(result => {
+          if (cancelled) return
+          if (result.status === 'building') {
+            setPositionsBuilding(true)
+            pollTimerRef.current = setTimeout(poll, 1000)
+          } else {
+            setPositionsBuilding(false)
+            setPositionsData(result.data)
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setPositionsBuilding(false)
+            setPositionsData(null) // error → turn-index fallback
+          }
+        })
+    }
+
+    poll()
+    return () => {
+      cancelled = true
+      clearTimeout(pollTimerRef.current)
+    }
+  }, [sessionId, terminalCols])
+
   // Translate terminal scroll events into ScrollMetrics + visibleRange so that
   // MiniMap stays in sync even though there's no DOM scroller to observe.
   const handleTerminalScrollMetrics = useCallback((metrics: ScrollMetrics) => {
+    lastMetricsRef.current = metrics
     const range = getVisibleTurnRange(metrics, turns.length)
     miniMapControlRef?.current?.updateViewport(metrics, range)
     if (range && !isSameVisibleRange(visibleRangeRef.current, range)) {
@@ -114,6 +185,17 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
       }
     }
   }, [turns, miniMapControlRef])
+
+  useEffect(() => {
+    const metrics = lastMetricsRef.current ?? termControlRef.current?.getMetrics()
+    if (!metrics) return
+
+    const range = getVisibleTurnRange(metrics, turns.length)
+    const frame = window.requestAnimationFrame(() => {
+      miniMapControlRef.current?.updateViewport(metrics, range)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [turns.length, positionsData, positionsBuilding, viewMode])
 
   const jumpBaseRef = useRef(0)
 
@@ -211,10 +293,6 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
           </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
-          <button
-            onClick={() => setShowDiffModal(true)}
-            className="h-7 rounded-md px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          >查看明细</button>
         </div>
         <span className="text-[var(--border-default)] mx-1">|</span>
         <div className="flex items-center gap-1">
@@ -310,7 +388,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
       )}
 
       {showDiffModal && session && (
-        <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} />
+        <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} initialIdx={initialDiffIdx} />
       )}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -321,18 +399,18 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
             </Suspense>
           ) : (
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
-              <div className="flex-1 overflow-hidden flex flex-col">
-                <TerminalPanel
-                  sessionId={session.id}
-                  onScrollMetrics={handleTerminalScrollMetrics}
-                  controlRef={termControlRef}
-                />
-              </div>
+              <TerminalPanel
+                sessionId={session.id}
+                onScrollMetrics={handleTerminalScrollMetrics}
+                onColsReady={handleColsReady}
+                controlRef={termControlRef}
+              />
             </Suspense>
           )}
         </div>
         <MiniMap
           turns={turns}
+          positions={positionsBuilding ? null : positionsData}
           controlRef={miniMapControlRef}
           scrollToIndexRef={scrollToIndexRef}
           scrollToTopRef={scrollToTopRef}

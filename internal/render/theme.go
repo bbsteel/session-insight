@@ -2,31 +2,35 @@ package render
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
 const TermWidth = 80
 
+// Color is a semantic palette slot expressed as an ANSI color index (0-15).
+//
+// The backend deliberately emits indexed colors (\x1b[38;5;Nm / \x1b[48;5;Nm)
+// rather than 24-bit truecolor: the actual RGB for each slot is resolved by the
+// frontend xterm theme (see frontend/src/terminalTheme.ts), so switching theme
+// (dark/light/…) is a palette swap on the client — instant, no re-render of the
+// ANSI stream, and the position cache stays valid (visible layout is identical).
+//
+// Slot assignment mirrors terminalTheme.ts and must stay in sync with it.
+type Color int
+
 const (
-	// OneDark Terminal palette
-	HexBg        = "#1a1b26"
-	HexFg        = "#e2e2e2"
-	HexUser      = "#9ece6a"
-	HexThinking  = "#565f89"
-	HexTool      = "#7aa2f7"
-	HexSuccess   = "#9ece6a"
-	HexError     = "#f7768e"
-	HexDiffAdd     = "#9ece6a" // fg for add (used in other contexts)
-	HexDiffDel     = "#f7768e" // fg for del (used in other contexts)
-	HexDiffAddBg   = "#0d3320" // dark green bg for added lines
-	HexDiffDelBg   = "#3d1020" // dark red bg for deleted lines
-	HexDiffAddText = "#86efac" // light green text on dark green bg — readable
-	HexDiffDelText = "#fca5a5" // light pink text on dark red bg — readable
-	HexSubagent  = "#ff9e64"
-	HexSeparator = "#565f89"
-	HexWarning   = "#e0af68"
-	HexSkill     = "#bb9af7"
+	ColNone     Color = -1 // sentinel: no color (leave default)
+	ColError    Color = 1  // errors, ✗
+	ColSuccess  Color = 2  // ✓, success (shares the green slot)
+	ColUser     Color = 2  // user prompt, list markers (green)
+	ColWarning  Color = 3  // warnings, code fences, truncation notes
+	ColTool     Color = 4  // tool box borders, links
+	ColSkill    Color = 5  // skills, headings
+	ColSubagent Color = 6  // sub-agent / nested transcript (Claude terracotta)
+	ColFg       Color = 7  // default foreground text
+	ColMuted    Color = 8  // thinking, separators, blockquotes, dim text
+	ColDiffDel  Color = 9  // diff deleted line background
+	ColDiffAdd  Color = 10 // diff added line background
 )
 
 const (
@@ -36,22 +40,26 @@ const (
 	strikeCode = "\x1b[9m"
 )
 
-func fg(hex string) string {
-	r, g, b := parseHex(hex)
-	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+func fg(c Color) string {
+	if c == ColNone {
+		return ""
+	}
+	return fmt.Sprintf("\x1b[38;5;%dm", int(c))
 }
 
-func bg(hex string) string {
-	r, g, b := parseHex(hex)
-	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
+func bg(c Color) string {
+	if c == ColNone {
+		return ""
+	}
+	return fmt.Sprintf("\x1b[48;5;%dm", int(c))
 }
 
-func fgWrap(text, hex string) string {
-	return fg(hex) + text + resetCode
+func fgWrap(text string, c Color) string {
+	return fg(c) + text + resetCode
 }
 
-func bgWrap(text, bgHex string) string {
-	return bg(bgHex) + text + resetCode
+func bgWrap(text string, c Color) string {
+	return bg(c) + text + resetCode
 }
 
 func boldWrap(text string) string {
@@ -62,7 +70,7 @@ func italicWrap(text string) string {
 	return italicCode + text + resetCode
 }
 
-func styled(text string, fgHex string, bgHex string, bold bool, italic bool) string {
+func styled(text string, fgC Color, bgC Color, bold bool, italic bool) string {
 	var sb strings.Builder
 	sb.WriteString(resetCode)
 	if bold {
@@ -71,11 +79,11 @@ func styled(text string, fgHex string, bgHex string, bold bool, italic bool) str
 	if italic {
 		sb.WriteString(italicCode)
 	}
-	if fgHex != "" {
-		sb.WriteString(fg(fgHex))
+	if fgC != ColNone {
+		sb.WriteString(fg(fgC))
 	}
-	if bgHex != "" {
-		sb.WriteString(bg(bgHex))
+	if bgC != ColNone {
+		sb.WriteString(bg(bgC))
 	}
 	sb.WriteString(text)
 	sb.WriteString(resetCode)
@@ -87,18 +95,10 @@ func depthPrefix(depth int) string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(fg(HexSubagent))
+	sb.WriteString(fg(ColSubagent))
 	for i := 0; i < depth; i++ {
 		sb.WriteString("│ ")
 	}
 	sb.WriteString(resetCode)
 	return sb.String()
-}
-
-func parseHex(hex string) (int, int, int) {
-	h := strings.TrimPrefix(hex, "#")
-	r, _ := strconv.ParseInt(h[0:2], 16, 32)
-	g, _ := strconv.ParseInt(h[2:4], 16, 32)
-	b, _ := strconv.ParseInt(h[4:6], 16, 32)
-	return int(r), int(g), int(b)
 }

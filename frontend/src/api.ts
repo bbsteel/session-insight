@@ -1,4 +1,4 @@
-import type { AgentInfo, EditCall, SearchResult, SessionDetail, SessionSummary } from './types'
+import type { AgentInfo, EditCall, PositionsResponse, SearchResult, SessionDetail, SessionSummary } from './types'
 
 export async function fetchSessions(agent?: string): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
@@ -32,6 +32,17 @@ export async function fetchSessionEdits(id: string): Promise<EditCall[]> {
   const res = await fetch(`/api/sessions/${id}/edits`)
   if (!res.ok) throw new Error(`Failed to fetch edits: ${res.status}`)
   return res.json()
+}
+
+export async function fetchPositions(
+  id: string,
+  cols: number,
+): Promise<{ status: 'building' } | { status: 'ready'; data: PositionsResponse }> {
+  const res = await fetch(`/api/sessions/${id}/positions?cols=${cols}`)
+  if (res.status === 202) return { status: 'building' }
+  if (!res.ok) throw new Error(`Failed to fetch positions: ${res.status}`)
+  const data = await res.json() as PositionsResponse
+  return { status: 'ready', data }
 }
 
 export async function fetchSearch(q: string): Promise<SearchResult[]> {

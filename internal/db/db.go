@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 4
 
 type DB struct {
 	conn *sql.DB
@@ -126,10 +126,86 @@ func migrate(conn *sql.DB) error {
 	    indexed_at  TEXT    NOT NULL DEFAULT (datetime('now')),
 	    PRIMARY KEY (agent_type, session_id)
 	);
+
+	-- MiniMap 位点缓存 header（每个 agent_type+session+revision+cols 一条）
+	CREATE TABLE IF NOT EXISTS session_position_caches (
+	    agent_type   TEXT    NOT NULL,
+	    session_id   TEXT    NOT NULL,
+	    revision     INTEGER NOT NULL,
+	    cols         INTEGER NOT NULL,
+	    total_lines  INTEGER NOT NULL,
+	    generated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+	    PRIMARY KEY (agent_type, session_id, revision, cols)
+	);
+
+	-- MiniMap 关键位点（通过 FK 级联依赖 header）
+	CREATE TABLE IF NOT EXISTS session_positions (
+	    agent_type   TEXT    NOT NULL,
+	    session_id   TEXT    NOT NULL,
+	    revision     INTEGER NOT NULL,
+	    cols         INTEGER NOT NULL,
+	    position_key TEXT    NOT NULL,
+	    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'compaction', 'error', 'edit')),
+	    turn_index   INTEGER NOT NULL,
+	    line_start   INTEGER NOT NULL,
+	    line_end     INTEGER,
+	    label        TEXT    NOT NULL DEFAULT '',
+	    severity     TEXT    NOT NULL DEFAULT '',
+	    payload_json TEXT    NOT NULL DEFAULT '{}',
+	    PRIMARY KEY (agent_type, session_id, revision, cols, position_key),
+	    FOREIGN KEY (agent_type, session_id, revision, cols)
+	        REFERENCES session_position_caches(agent_type, session_id, revision, cols)
+	        ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_session_positions_lookup
+	    ON session_positions(agent_type, session_id, revision, cols, line_start);
 	`
 	_, err := conn.Exec(query)
 	if err != nil {
 		return err
+	}
+
+	// Version 4: 'edit' kind added to position constraint.
+	// Drop position cache tables so they're recreated with the new schema
+	// on next positions request (they're pure caches, safe to discard).
+	var maxVersion int
+	conn.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&maxVersion)
+	if maxVersion < 4 {
+		conn.Exec(`DROP TABLE IF EXISTS session_positions`)
+		conn.Exec(`DROP TABLE IF EXISTS session_position_caches`)
+		conn.Exec(`
+		CREATE TABLE IF NOT EXISTS session_position_caches (
+		    agent_type   TEXT    NOT NULL,
+		    session_id   TEXT    NOT NULL,
+		    revision     INTEGER NOT NULL,
+		    cols         INTEGER NOT NULL,
+		    total_lines  INTEGER NOT NULL,
+		    generated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+		    PRIMARY KEY (agent_type, session_id, revision, cols)
+		)`)
+		conn.Exec(`
+		CREATE TABLE IF NOT EXISTS session_positions (
+		    agent_type   TEXT    NOT NULL,
+		    session_id   TEXT    NOT NULL,
+		    revision     INTEGER NOT NULL,
+		    cols         INTEGER NOT NULL,
+		    position_key TEXT    NOT NULL,
+		    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'compaction', 'error', 'edit')),
+		    turn_index   INTEGER NOT NULL,
+		    line_start   INTEGER NOT NULL,
+		    line_end     INTEGER,
+		    label        TEXT    NOT NULL DEFAULT '',
+		    severity     TEXT    NOT NULL DEFAULT '',
+		    payload_json TEXT    NOT NULL DEFAULT '{}',
+		    PRIMARY KEY (agent_type, session_id, revision, cols, position_key),
+		    FOREIGN KEY (agent_type, session_id, revision, cols)
+		        REFERENCES session_position_caches(agent_type, session_id, revision, cols)
+		        ON DELETE CASCADE
+		)`)
+		conn.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_session_positions_lookup
+		    ON session_positions(agent_type, session_id, revision, cols, line_start)`)
 	}
 
 	_, err = conn.Exec(

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { TurnVM } from '../types'
+import type { MiniMapPosition, PositionsResponse, TurnVM } from '../types'
 import {
   getScrollTopFromTrackPosition,
   getViewportFrame,
@@ -12,6 +12,7 @@ type ReplayScrollBehavior = 'auto' | 'smooth'
 
 interface Props {
   turns: TurnVM[]
+  positions?: PositionsResponse | null
   controlRef?: React.MutableRefObject<MiniMapControl | null>
   scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
   scrollToTopRef?: React.MutableRefObject<((top: number, behavior?: ScrollBehavior) => void) | null>
@@ -55,7 +56,99 @@ const eventClassNames: Record<MiniMapEventKind, string> = {
   user: 'border-[var(--success)] bg-[var(--success)] text-white',
 }
 
-export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToTopRef }: Props) {
+const positionKindToEventKind: Record<MiniMapPosition['kind'], MiniMapEventKind | null> = {
+  turn: null,
+  user: 'user',
+  error: 'anomaly',
+  compaction: 'compaction',
+  edit: null,
+}
+
+// Compute minimapContentHeight: at least visibleTrackHeight, at most 4×, scaled
+// so each terminal line gets ≥0.6px. Returns visibleTrackHeight if no positions.
+function computeContentHeight(totalLines: number, visibleTrackHeight: number): number {
+  if (totalLines <= 0 || visibleTrackHeight <= 0) return visibleTrackHeight
+  return clamp(totalLines * 0.6, visibleTrackHeight, visibleTrackHeight * 4)
+}
+
+// ── Position-based rendering ──────────────────────────────────────────────────
+
+interface PositionModeProps {
+  positions: PositionsResponse
+  visibleTrackHeight: number
+  contentOffset: number
+  activeKey: string | null
+  onMarkerClick: (pos: MiniMapPosition) => void
+}
+
+function PositionModeContent({
+  positions,
+  visibleTrackHeight,
+  contentOffset,
+  activeKey,
+  onMarkerClick,
+}: PositionModeProps) {
+  const { total_lines: totalLines, positions: items } = positions
+  if (totalLines <= 0) return null
+
+  const contentHeight = computeContentHeight(totalLines, visibleTrackHeight)
+
+  // Filter to non-turn events with visible marker kinds.
+  const markerItems = items.filter(p => positionKindToEventKind[p.kind] !== null)
+
+  return (
+    <div
+      className="absolute inset-0 overflow-hidden"
+      style={{ pointerEvents: 'none' }}
+    >
+      {/* Background strip */}
+      <div className="absolute inset-y-2 left-[36px] right-[10px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
+
+      {/* Content layer — translated by contentOffset */}
+      <div
+        className="absolute left-0 right-0 top-0"
+        style={{
+          height: contentHeight,
+          transform: `translateY(${-contentOffset}px)`,
+          pointerEvents: 'none',
+        }}
+      >
+        {markerItems.map(pos => {
+          const eventKind = positionKindToEventKind[pos.kind]!
+          const markerY = (pos.line_start / totalLines) * contentHeight
+          const isActive = pos.position_key === activeKey
+
+          return (
+            <div
+              key={pos.position_key}
+              className="absolute left-0 right-0 h-3"
+              style={{ top: markerY, transform: 'translateY(-50%)' }}
+            >
+              <button
+                type="button"
+                className={`pointer-events-auto absolute left-[7px] top-1/2 flex h-[16px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                  eventClassNames[eventKind]
+                } ${isActive ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
+                style={{ minWidth: '16px', minHeight: '16px' }}
+                title={`${eventLabels[eventKind]} · Turn ${pos.turn_index} · line ${pos.line_start}`}
+                aria-label={`${eventLabels[eventKind]} · 跳转`}
+                onPointerDown={e => e.stopPropagation()}
+                onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}
+              >
+                {eventShortLabels[eventKind]}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+    </div>
+  )
+}
+
+// ── Main MiniMap component ────────────────────────────────────────────────────
+
+export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef, scrollToTopRef }: Props) {
   const barCount = turns.length
   const containerRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -69,23 +162,64 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
   const trackLengthRef = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const [activePositionKey, setActivePositionKey] = useState<string | null>(null)
+  // contentOffset drives the markers layer transform in position mode; stored
+  // as ref so PositionModeContent re-renders on scroll without extra state churn.
+  const contentOffsetRef = useRef(0)
+  const [contentOffsetVersion, setContentOffsetVersion] = useState(0)
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
+
+  const usePositions = positions != null && positions.positions.length > 0
+
+  // Compute position-mode viewport geometry from a raw scrollTop.
+  function posViewport(scrollTop: number, clientHeight: number): { top: number; height: number; offset: number } {
+    if (!positions || !usePositions) return { top: 0, height: 0, offset: 0 }
+    const totalLines = positions.total_lines
+    const trackLength = trackLengthRef.current
+    const contentHeight = computeContentHeight(totalLines, trackLength)
+    const lineHeight = 16
+    const viewportLine = scrollTop / lineHeight
+    const rows = Math.round(clientHeight / lineHeight)
+    const scrollRatio = clamp(viewportLine / Math.max(totalLines - rows, 1), 0, 1)
+    const offset = scrollRatio * Math.max(contentHeight - trackLength, 0)
+    const vpTopInContent = (viewportLine / totalLines) * contentHeight
+    const vpHeight = clamp((rows / totalLines) * contentHeight, 28, trackLength)
+    const vpTop = clamp(vpTopInContent - offset, 0, Math.max(0, trackLength - vpHeight))
+    return { top: vpTop, height: vpHeight, offset }
+  }
+
+  function applyPositionViewport(scrollTop: number, clientHeight: number) {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const { top, height, offset } = posViewport(scrollTop, clientHeight)
+    viewport.style.display = 'block'
+    viewport.style.transform = `translateY(${top}px)`
+    viewport.style.height = `${height}px`
+    if (offset !== contentOffsetRef.current) {
+      contentOffsetRef.current = offset
+      setContentOffsetVersion(v => v + 1)
+    }
+  }
 
   function updateViewport(metrics: ScrollMetrics, range?: VisibleTurnRange) {
     scrollMetricsRef.current = metrics
     visibleRangeRef.current = range
+
     const viewport = viewportRef.current
     const length = trackLengthRef.current
-    if (viewport && length > 0) {
+    if (usePositions) {
+      applyPositionViewport(metrics.scrollTop, metrics.clientHeight)
+    } else if (viewport && length > 0) {
       const frame = getViewportFrame(metrics, length)
       viewport.style.display = 'block'
       viewport.style.transform = `translateY(${frame.top}px)`
       viewport.style.height = `${frame.height}px`
     }
     if (rangeLabelRef.current) {
+      const displayCount = usePositions ? (positions?.total_lines ?? 0) : barCount
       rangeLabelRef.current.textContent = range
-        ? `${range.start + 1}-${range.end + 1} / ${barCount}`
-        : `1 / ${barCount}`
+        ? `${range.start + 1}-${range.end + 1} / ${displayCount}`
+        : `1 / ${displayCount}`
     }
   }
 
@@ -95,7 +229,7 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
     return () => {
       if (controlRef.current?.updateViewport === updateViewport) controlRef.current = null
     }
-  }, [controlRef, barCount])
+  }, [controlRef, barCount, usePositions, positions?.total_lines])
 
   useEffect(() => {
     const container = containerRef.current
@@ -112,15 +246,19 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
     const resizeObserver = new ResizeObserver(updateTrackLength)
     resizeObserver.observe(container)
     return () => resizeObserver.disconnect()
-  }, [barCount])
+  }, [barCount, usePositions, positions?.total_lines])
 
   function scrollTo(index: number, behavior: ReplayScrollBehavior = 'smooth') {
     if (barCount === 0) return
     scrollToIndexRef?.current?.(clamp(index, 0, barCount - 1), behavior)
   }
 
+  function scrollToLine(line: number) {
+    scrollToTopRef?.current?.(line * 16, 'auto')
+  }
+
   function scrollFromPointer(clientY: number) {
-    if (!containerRef.current || barCount === 0) return
+    if (!containerRef.current) return
     const rect = containerRef.current.getBoundingClientRect()
     const scrollMetrics = scrollMetricsRef.current
     if (scrollMetrics && scrollToTopRef?.current) {
@@ -135,7 +273,9 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
         dragOffset: dragOffsetRef.current,
       })
 
-      if (viewportRef.current) {
+      if (usePositions) {
+        applyPositionViewport(nextScrollTop, scrollMetrics.clientHeight)
+      } else if (viewportRef.current) {
         const displayHeight = viewportFrame.height
         const maxScroll = scrollMetrics.scrollHeight - scrollMetrics.clientHeight
         const maxTop = Math.max(0, rect.height - displayHeight)
@@ -159,6 +299,7 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
       return
     }
 
+    if (barCount === 0) return
     const ratio = clamp((clientY - rect.top) / rect.height, 0, 1)
     const visibleRange = visibleRangeRef.current
     const visibleCount = visibleRange ? visibleRange.end - visibleRange.start + 1 : 1
@@ -205,7 +346,7 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
     e.currentTarget.releasePointerCapture(e.pointerId)
   }
 
-  if (barCount === 0) {
+  if (barCount === 0 && !usePositions) {
     return (
       <nav className="minimap-shell flex-shrink-0 border-l border-[var(--border-default)] bg-[var(--bg-inset)] flex items-center justify-center" aria-label="MiniMap">
         <span className="text-meta text-[var(--text-muted)]" style={{ writingMode: 'vertical-rl' }}>MiniMap</span>
@@ -227,53 +368,69 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        <div className="absolute inset-y-2 left-[36px] right-[10px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
+        {usePositions ? (
+          <PositionModeContent
+            positions={positions!}
+            visibleTrackHeight={trackLengthRef.current}
+            contentOffset={contentOffsetRef.current}
+            activeKey={activePositionKey}
+            onMarkerClick={pos => {
+              setActivePositionKey(pos.position_key)
+              scrollToLine(pos.line_start)
+            }}
+          />
+        ) : (
+          <>
+            <div className="absolute inset-y-2 left-[36px] right-[10px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
 
-        {turns.map((turn, index) => {
-          const tokens = getTotalTokens(turn)
-          const rowTop = `${getMiniMapTurnPositionPercent(index, barCount)}%`
-          const rowTransform = index === 0 ? 'translateY(0)' : index === barCount - 1 ? 'translateY(-100%)' : 'translateY(-50%)'
-          const pressureRatio = tokens / maxTokens
-          const pressureTone = getTokenPressureTone(pressureRatio)
-          const eventKind = getMiniMapEventKind(turn)
-          const eventLabel = eventKind ? eventLabels[eventKind] : ''
-          const title = `Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${eventLabel ? ` · ${eventLabel}` : ''}`
+            {turns.map((turn, index) => {
+              const tokens = getTotalTokens(turn)
+              const rowTop = `${getMiniMapTurnPositionPercent(index, barCount)}%`
+              const rowTransform = index === 0 ? 'translateY(0)' : index === barCount - 1 ? 'translateY(-100%)' : 'translateY(-50%)'
+              const pressureRatio = tokens / maxTokens
+              const pressureTone = getTokenPressureTone(pressureRatio)
+              const eventKind = getMiniMapEventKind(turn)
+              const eventLabel = eventKind ? eventLabels[eventKind] : ''
+              const title = `Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${eventLabel ? ` · ${eventLabel}` : ''}`
 
-          return (
-            <div
-              key={index}
-              className="pointer-events-none absolute left-0 right-0 h-3"
-              style={{ top: rowTop, transform: rowTransform }}
-              title={title}
-            >
-              {eventKind && (
-                <button
-                  type="button"
-                  className={`pointer-events-auto absolute left-[7px] top-1/2 flex h-[16px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                    eventClassNames[eventKind]
-                  } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
-                  title={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
-                  aria-label={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
-                  onPointerDown={e => e.stopPropagation()}
-                  onClick={e => {
-                    e.stopPropagation()
-                    setActiveIndex(index)
-                    scrollTo(index)
-                  }}
+              return (
+                <div
+                  key={index}
+                  className="pointer-events-none absolute left-0 right-0 h-3"
+                  style={{ top: rowTop, transform: rowTransform }}
+                  title={title}
                 >
-                  {eventShortLabels[eventKind]}
-                </button>
-              )}
-              <span
-                className="absolute left-[40px] right-[14px] top-1/2 h-[4px] -translate-y-1/2 rounded-[2px]"
-                style={{
-                  background: pressureColors[pressureTone],
-                }}
-              />
-            </div>
-          )
-        })}
+                  {eventKind && (
+                    <button
+                      type="button"
+                      className={`pointer-events-auto absolute left-[7px] top-1/2 flex h-[16px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                        eventClassNames[eventKind]
+                      } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
+                      title={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
+                      aria-label={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
+                      onPointerDown={e => e.stopPropagation()}
+                      onClick={e => {
+                        e.stopPropagation()
+                        setActiveIndex(index)
+                        scrollTo(index)
+                      }}
+                    >
+                      {eventShortLabels[eventKind]}
+                    </button>
+                  )}
+                  <span
+                    className="absolute left-[40px] right-[14px] top-1/2 h-[4px] -translate-y-1/2 rounded-[2px]"
+                    style={{
+                      background: pressureColors[pressureTone],
+                    }}
+                  />
+                </div>
+              )
+            })}
+          </>
+        )}
 
+        {/* Shared viewport frame — controlled imperatively via viewportRef */}
         <div
           ref={viewportRef}
           className="absolute left-[4px] right-[8px] top-0 pointer-events-none rounded-sm"
@@ -292,7 +449,7 @@ export default function MiniMap({ turns, controlRef, scrollToIndexRef, scrollToT
 
       <div className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
         <span ref={rangeLabelRef} className="text-meta text-[var(--text-muted)]">
-          1 / {barCount}
+          {usePositions ? `0 / ${positions!.total_lines}` : `1 / ${barCount}`}
         </span>
       </div>
     </nav>

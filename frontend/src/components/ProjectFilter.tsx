@@ -31,7 +31,9 @@ function FolderIcon({ size = 16 }: { size?: number }) {
 
 export default function ProjectFilter({ projects, selected, onSelect }: ProjectFilterProps) {
   const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const total = projects.reduce((n, p) => n + p.session_count, 0)
   const selectedEntry = selected ? projects.find(p => p.name === selected) : undefined
@@ -39,7 +41,11 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
   const count = selectedEntry?.session_count ?? total
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setSearch('')
+      return
+    }
+    setTimeout(() => searchRef.current?.focus(), 0)
     const onClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false)
@@ -60,6 +66,10 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
     onSelect(name)
     setOpen(false)
   }
+
+  const visible = search.trim()
+    ? projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    : projects
 
   if (projects.length === 0) return null
 
@@ -98,38 +108,64 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
           <div
             role="listbox"
             aria-label="按项目筛选会话"
-            className="absolute top-full mt-1 left-0 right-0 z-[var(--z-dropdown)] max-h-72 overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1"
+            className="absolute top-full mt-1 left-0 right-0 z-[var(--z-dropdown)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg"
           >
-            <button
-              type="button"
-              role="option"
-              aria-selected={selected === ''}
-              onClick={() => pick('')}
-              className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                selected === '' ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
-              }`}
-            >
-              <span className="text-[var(--text-muted)] flex-shrink-0"><FolderIcon size={16} /></span>
-              <span className="text-body text-[var(--text-primary)] truncate">All Projects</span>
-              <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
-            </button>
+            {/* Search box */}
+            <div className="p-1.5 border-b border-[var(--border-default)]">
+              <div className="relative">
+                <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-[var(--text-muted)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  ref={searchRef}
+                  type="text"
+                  placeholder="搜索项目..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="w-full h-7 rounded border border-[var(--border-default)] bg-[var(--bg-inset)] pl-6 pr-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
+                />
+              </div>
+            </div>
 
-            {projects.map(p => (
-              <button
-                key={p.name}
-                type="button"
-                role="option"
-                aria-selected={selected === p.name}
-                onClick={() => pick(p.name)}
-                className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                  selected === p.name ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                }`}
-              >
-                <span className="text-[var(--accent-blue)] flex-shrink-0"><FolderIcon size={16} /></span>
-                <span className="text-body text-[var(--text-primary)] truncate" title={p.name}>{p.name}</span>
-                <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{p.session_count}</span>
-              </button>
-            ))}
+            {/* Options */}
+            <div className="max-h-60 overflow-y-auto py-1">
+              {!search.trim() && (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selected === ''}
+                  onClick={() => pick('')}
+                  className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
+                    selected === '' ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                  }`}
+                >
+                  <span className="text-[var(--text-muted)] flex-shrink-0"><FolderIcon size={16} /></span>
+                  <span className="text-body text-[var(--text-primary)] truncate">All Projects</span>
+                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
+                </button>
+              )}
+
+              {visible.map(p => (
+                <button
+                  key={p.name}
+                  type="button"
+                  role="option"
+                  aria-selected={selected === p.name}
+                  onClick={() => pick(p.name)}
+                  className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
+                    selected === p.name ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                  }`}
+                >
+                  <span className="text-[var(--accent-blue)] flex-shrink-0"><FolderIcon size={16} /></span>
+                  <span className="text-body text-[var(--text-primary)] truncate" title={p.name}>{p.name}</span>
+                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{p.session_count}</span>
+                </button>
+              ))}
+
+              {visible.length === 0 && (
+                <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">无匹配项目</div>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -104,9 +104,8 @@ func TestListSessions(t *testing.T) {
 	if s.ModelName != "claude-sonnet" {
 		t.Errorf("expected model claude-sonnet, got %s", s.ModelName)
 	}
-	if !s.IsLive {
-		t.Error("expected session to be live (time_archived IS NULL)")
-	}
+	// Liveness is no longer derived in the reader (it's a serve-time window on
+	// UpdatedAt, see model.IsSessionLive), so the reader does not set IsLive.
 }
 
 func TestListSessionsPreviewTextIncludesMessageWithGeneratedSummary(t *testing.T) {
@@ -250,24 +249,6 @@ func TestSingleTurnToolFailureIsReportedAsAnomaly(t *testing.T) {
 	}
 	if len(turns[0].Anomalies) != 1 || turns[0].Anomalies[0] != "tool_failure" {
 		t.Fatalf("expected turn tool_failure anomaly, got %+v", turns[0].Anomalies)
-	}
-}
-
-func TestGetSessionArchivedIsNotLive(t *testing.T) {
-	reader, db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	now := time.Now().UnixMilli()
-	archivedAt := now - 86400000
-	mustExec(t, db, `INSERT INTO session (id, directory, title, time_created, time_updated, time_archived) VALUES (?, ?, ?, 0, 0, ?)`,
-		"ses_archived", "/test", "Archived", archivedAt)
-
-	meta, err := reader.readSessionMeta("ses_archived")
-	if err != nil {
-		t.Fatalf("readSessionMeta: %v", err)
-	}
-	if meta.IsLive {
-		t.Error("archived session should not be live")
 	}
 }
 

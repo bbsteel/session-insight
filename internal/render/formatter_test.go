@@ -10,16 +10,16 @@ import (
 	"session-insight/internal/model"
 )
 
-// hasFgColor checks that the output contains a 24-bit foreground ANSI code for the given hex color.
-func hasFgColor(result, hex string) bool {
-	r, g, b := parseHex(hex)
-	return strings.Contains(result, fmt.Sprintf("38;2;%d;%d;%d", r, g, b))
+// hasFgColor checks that the output contains an indexed foreground ANSI code
+// for the given semantic palette slot.
+func hasFgColor(result string, c Color) bool {
+	return strings.Contains(result, fmt.Sprintf("\x1b[38;5;%dm", int(c)))
 }
 
-// hasBgColor checks that the output contains a 24-bit background ANSI code for the given hex color.
-func hasBgColor(result, hex string) bool {
-	r, g, b := parseHex(hex)
-	return strings.Contains(result, fmt.Sprintf("48;2;%d;%d;%d", r, g, b))
+// hasBgColor checks that the output contains an indexed background ANSI code
+// for the given semantic palette slot.
+func hasBgColor(result string, c Color) bool {
+	return strings.Contains(result, fmt.Sprintf("\x1b[48;5;%dm", int(c)))
 }
 
 func TestFormatEventsEmpty(t *testing.T) {
@@ -37,7 +37,7 @@ func TestSeparator(t *testing.T) {
 	if !strings.Contains(result, "─ Turn 0 ─") {
 		t.Errorf("expected separator, got:\n%s", result)
 	}
-	if !hasFgColor(result, HexSeparator) {
+	if !hasFgColor(result, ColMuted) {
 		t.Errorf("expected separator color in output:\n%s", result)
 	}
 }
@@ -53,7 +53,7 @@ func TestUserPrompt(t *testing.T) {
 	if !strings.Contains(result, "hello world") {
 		t.Errorf("expected prompt text, got:\n%s", result)
 	}
-	if !hasFgColor(result, HexUser) {
+	if !hasFgColor(result, ColUser) {
 		t.Errorf("expected user color, got:\n%s", result)
 	}
 }
@@ -92,10 +92,10 @@ func TestTextChunkWithDiff(t *testing.T) {
 	}
 	result := FormatEvents(events, 0)
 
-	if !hasBgColor(result, HexDiffAddBg) {
+	if !hasBgColor(result, ColDiffAdd) {
 		t.Errorf("expected diff add bg color, got:\n%s", result)
 	}
-	if !hasBgColor(result, HexDiffDelBg) {
+	if !hasBgColor(result, ColDiffDel) {
 		t.Errorf("expected diff del bg color, got:\n%s", result)
 	}
 	if !strings.Contains(result, "unchanged line") {
@@ -108,7 +108,7 @@ func TestTextChunkNoFalsePositiveDiff(t *testing.T) {
 		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "regular text\nwith no diff markers"},
 	}
 	result := FormatEvents(events, 0)
-	if hasBgColor(result, HexDiffAdd) || hasBgColor(result, HexDiffDel) {
+	if hasBgColor(result, ColDiffAdd) || hasBgColor(result, ColDiffDel) {
 		t.Errorf("unexpected diff coloring for non-diff text:\n%s", result)
 	}
 }
@@ -147,7 +147,7 @@ func TestToolInvocationAgentBox(t *testing.T) {
 	if !strings.Contains(result, "Tool: Agent") {
 		t.Errorf("expected Agent tool name, got:\n%s", result)
 	}
-	if !hasFgColor(result, HexSubagent) {
+	if !hasFgColor(result, ColSubagent) {
 		t.Errorf("expected subagent color for Agent tool, got:\n%s", result)
 	}
 }
@@ -161,7 +161,7 @@ func TestToolResultSuccess(t *testing.T) {
 	if !strings.Contains(result, "✓") {
 		t.Errorf("expected success check, got:\n%s", result)
 	}
-	if !hasFgColor(result, HexSuccess) {
+	if !hasFgColor(result, ColSuccess) {
 		t.Errorf("expected success color, got:\n%s", result)
 	}
 }
@@ -175,7 +175,7 @@ func TestToolResultError(t *testing.T) {
 	if !strings.Contains(result, "✗") {
 		t.Errorf("expected error cross, got:\n%s", result)
 	}
-	if !hasFgColor(result, HexError) {
+	if !hasFgColor(result, ColError) {
 		t.Errorf("expected error color, got:\n%s", result)
 	}
 }
@@ -196,7 +196,7 @@ func TestToolResultTruncation(t *testing.T) {
 	if !strings.Contains(result, "5") {
 		t.Errorf("expected remaining line count 5, got:\n%s", result)
 	}
-	if !hasFgColor(result, HexWarning) {
+	if !hasFgColor(result, ColWarning) {
 		t.Errorf("expected warning color for truncation, got:\n%s", result)
 	}
 }
@@ -221,7 +221,7 @@ func TestDepthIndentation(t *testing.T) {
 		{Type: "UserPrompt", TurnIndex: 0, Timestamp: time.Now(), Depth: 1, Text: "subagent task"},
 	}
 	result := FormatEvents(events, 0)
-	if !hasFgColor(result, HexSubagent) {
+	if !hasFgColor(result, ColSubagent) {
 		t.Errorf("expected subagent color for depth prefix, got:\n%s", result)
 	}
 	if !strings.Contains(result, "│") {
@@ -335,7 +335,7 @@ func TestTextChunkMarkdownBulletsAreNotMisrenderedAsDiff(t *testing.T) {
 		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: text},
 	}
 	result := FormatEvents(events, 0)
-	if hasBgColor(result, HexDiffDel) || hasBgColor(result, HexDiffAdd) {
+	if hasBgColor(result, ColDiffDel) || hasBgColor(result, ColDiffAdd) {
 		t.Errorf("markdown bullet list should not be colored as a diff:\n%s", result)
 	}
 }
@@ -526,10 +526,10 @@ func TestToolInvocationApplyPatchShowsFilePathAndColors(t *testing.T) {
 	if !strings.Contains(result, "src/app.go") {
 		t.Errorf("expected file path in apply_patch diff output, got:\n%s", result)
 	}
-	if !hasBgColor(result, HexDiffAddBg) {
+	if !hasBgColor(result, ColDiffAdd) {
 		t.Errorf("expected add background for apply_patch, got:\n%s", result)
 	}
-	if !hasBgColor(result, HexDiffDelBg) {
+	if !hasBgColor(result, ColDiffDel) {
 		t.Errorf("expected del background for apply_patch, got:\n%s", result)
 	}
 }

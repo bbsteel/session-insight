@@ -160,13 +160,14 @@ function SplitDiff({ diff }: { diff: DiffOp[] }) {
 interface Props {
   sessionId: string
   onClose: () => void
+  initialIdx?: number
 }
 
-export default function DiffModal({ sessionId, onClose }: Props) {
+export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props) {
   const [edits, setEdits] = useState<EditCall[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [idx, setIdx] = useState(0)
+  const [idx, setIdx] = useState(initialIdx)
   const [viewMode, setViewMode] = useState<'inline' | 'split'>('inline')
   const scrollRef = useRef<HTMLDivElement>(null)
 

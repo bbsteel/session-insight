@@ -161,7 +161,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !preview.includes(q)) return false
     }
     return true
-  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter])
+  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter])
 
   const liveCount = useMemo(() => sessions.filter(s => s.is_live).length, [sessions])
 
