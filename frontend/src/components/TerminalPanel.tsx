@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type IDecoration, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { fetchRenderANSI } from '../api'
+import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
@@ -24,6 +25,18 @@ async function waitForTerminalFont() {
 }
 
 type InteractionEntry = { matcher: TerminalLineMatcher<unknown>; data: unknown; matchIndex: number }
+type XtermCoreWithMouse = {
+  screenElement?: HTMLElement
+  _mouseService?: {
+    getCoords?: (
+      event: MouseEvent,
+      element: HTMLElement,
+      colCount: number,
+      rowCount: number,
+      isSelection?: boolean,
+    ) => [number, number] | undefined
+  }
+}
 
 export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -44,6 +57,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
       theme: terminalTheme(isDarkRef.current),
       fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: TERMINAL_FONT_SIZE,
+      allowProposedApi: true,
       scrollback: 20000,
       convertEol: true,
       disableStdin: true,
@@ -64,7 +78,9 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
     let lineMatchers: TerminalLineMatcher<unknown>[] = []
     const interactionMap = new Map<number, InteractionEntry>()
     let tooltipEl: HTMLDivElement | null = null
-    let hoverLine: HTMLDivElement | null = null
+    let hoverDecoration: IDecoration | null = null
+    let hoverMarker: IMarker | null = null
+    let activeHoverLine: number | null = null
 
     let onMouseMove: ((e: MouseEvent) => void) | null = null
     let onMouseLeave: (() => void) | null = null
@@ -85,16 +101,6 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
 
       container.style.position = 'relative'
 
-      hoverLine = document.createElement('div')
-      hoverLine.style.cssText = [
-        'position:absolute', 'left:0', 'right:0', 'pointer-events:none',
-        'border-bottom:1.5px solid rgba(124,58,237,0.65)',
-        'background:rgba(124,58,237,0.07)',
-        'display:none', 'z-index:100',
-        'height:' + Math.round(cellHeight) + 'px',
-      ].join(';')
-      container.appendChild(hoverLine)
-
       tooltipEl = document.createElement('div')
       tooltipEl.style.cssText = [
         'position:fixed', 'padding:3px 10px',
@@ -107,17 +113,87 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
       document.body.appendChild(tooltipEl)
 
       const xtermScreen = container.querySelector<HTMLElement>('.xterm-screen')
+      const eventTarget = xtermScreen ?? container
 
-      const getBufLine = (e: MouseEvent): number => {
-        const rect = container.getBoundingClientRect()
-        const row = Math.floor((e.clientY - rect.top) / cellHeight)
-        return row + term.buffer.active.viewportY
+      const getScreenRect = () => (xtermScreen ?? container).getBoundingClientRect()
+
+      const getBufLine = (e: MouseEvent): number | null => {
+        // Keep hit-testing in xterm's coordinate system. Hand-rolled
+        // rect/cellHeight math drifts by 1-2 rows because xterm accounts for
+        // screen padding, renderService cell dimensions, ceil/clamp behavior,
+        // and viewport state internally.
+        const core = (term as unknown as { _core?: XtermCoreWithMouse })._core
+        const screenElement = core?.screenElement ?? xtermScreen ?? container
+        const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
+        const xtermLine = getBufferLineFromXtermCoords(coords, term.buffer.active.viewportY)
+        if (xtermLine !== null) return xtermLine
+
+        const screenRect = screenElement.getBoundingClientRect?.() ?? getScreenRect()
+        return getBufferLineFromPointer({
+          clientY: e.clientY,
+          screenTop: screenRect.top,
+          cellHeight,
+          viewportY: term.buffer.active.viewportY,
+          rowCount: term.rows,
+        })
+      }
+
+      const clearHoverDecoration = () => {
+        hoverDecoration?.dispose()
+        hoverMarker?.dispose()
+        hoverDecoration = null
+        hoverMarker = null
+        activeHoverLine = null
       }
 
       const hideHover = () => {
-        if (hoverLine) hoverLine.style.display = 'none'
+        clearHoverDecoration()
         if (tooltipEl) tooltipEl.style.display = 'none'
         if (xtermScreen) xtermScreen.style.cursor = ''
+      }
+
+      const showHoverDecoration = (bufLine: number) => {
+        if (activeHoverLine === bufLine && hoverDecoration && !hoverDecoration.isDisposed) return
+        clearHoverDecoration()
+
+        const offset = getMarkerOffsetForBufferLine({
+          bufferLine: bufLine,
+          baseY: term.buffer.active.baseY,
+          cursorY: term.buffer.active.cursorY,
+        })
+        const marker = term.registerMarker(offset)
+        if (!marker) return
+
+        let decoration: IDecoration | undefined
+        try {
+          decoration = term.registerDecoration({
+            marker,
+            width: term.cols,
+            height: 1,
+            layer: 'top',
+          })
+        } catch {
+          marker.dispose()
+          return
+        }
+        if (!decoration) {
+          marker.dispose()
+          return
+        }
+
+        decoration.onRender(element => {
+          element.style.pointerEvents = 'none'
+          element.style.left = '0'
+          element.style.right = '0'
+          element.style.width = '100%'
+          element.style.boxSizing = 'border-box'
+          element.style.borderBottom = '1.5px solid rgba(124,58,237,0.65)'
+          element.style.background = 'rgba(124,58,237,0.07)'
+        })
+
+        hoverMarker = marker
+        hoverDecoration = decoration
+        activeHoverLine = bufLine
       }
 
       // Scan the xterm.js buffer for all registered matchers and populate interactionMap.
@@ -137,7 +213,6 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
               const idx = matchCounts.get(matcher) ?? 0
               matchCounts.set(matcher, idx + 1)
               interactionMap.set(i, { matcher, data, matchIndex: idx })
-              console.log(`[scan] bufLine=${i} viewportY=${buf.viewportY} text="${text.slice(0, 60)}"`)
               break
             }
           }
@@ -147,13 +222,10 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
       onMouseMove = (e: MouseEvent) => {
         if (!interactionMap.size) { hideHover(); return }
         const bl = getBufLine(e)
+        if (bl === null) { hideHover(); return }
         const entry = interactionMap.get(bl)
         if (entry) {
-          const row = bl - term.buffer.active.viewportY
-          if (hoverLine) {
-            hoverLine.style.top = (row * cellHeight) + 'px'
-            hoverLine.style.display = 'block'
-          }
+          showHoverDecoration(bl)
           if (tooltipEl) {
             const tip = entry.matcher.tooltip ?? ''
             tooltipEl.textContent = tip
@@ -171,6 +243,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
 
       onClick = (e: MouseEvent) => {
         const bl = getBufLine(e)
+        if (bl === null) return
         const entry = interactionMap.get(bl)
         if (entry) {
           e.preventDefault()
@@ -179,9 +252,9 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
         }
       }
 
-      container.addEventListener('mousemove', onMouseMove)
-      container.addEventListener('mouseleave', onMouseLeave)
-      container.addEventListener('click', onClick)
+      eventTarget.addEventListener('mousemove', onMouseMove)
+      eventTarget.addEventListener('mouseleave', onMouseLeave)
+      eventTarget.addEventListener('click', onClick)
 
       const getMetrics = (): ScrollMetrics => ({
         scrollTop: term.buffer.active.viewportY * TERMINAL_LINE_HEIGHT,
@@ -207,6 +280,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
         fetchRenderANSI(sessionId, cols)
           .then(ansi => {
             if (disposed) return
+            clearHoverDecoration()
             term.reset()
             term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
             term.write(ansi, () => {
@@ -229,7 +303,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
       }
 
       disposeOnScroll = term.onScroll(() => {
-        if (hoverLine) hoverLine.style.display = 'none'
+        clearHoverDecoration()
         if (tooltipEl) tooltipEl.style.display = 'none'
         if (xtermScreen) xtermScreen.style.cursor = ''
         queueMetrics()
@@ -261,10 +335,12 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
       observer?.disconnect()
       disposeOnScroll?.dispose()
       metricsBatcher?.cancel()
-      if (onMouseMove) container.removeEventListener('mousemove', onMouseMove)
-      if (onMouseLeave) container.removeEventListener('mouseleave', onMouseLeave)
-      if (onClick) container.removeEventListener('click', onClick)
-      hoverLine?.remove()
+      const eventTarget = container.querySelector<HTMLElement>('.xterm-screen') ?? container
+      if (onMouseMove) eventTarget.removeEventListener('mousemove', onMouseMove)
+      if (onMouseLeave) eventTarget.removeEventListener('mouseleave', onMouseLeave)
+      if (onClick) eventTarget.removeEventListener('click', onClick)
+      hoverDecoration?.dispose()
+      hoverMarker?.dispose()
       tooltipEl?.remove()
       if (controlRef) controlRef.current = null
       termRef.current = null

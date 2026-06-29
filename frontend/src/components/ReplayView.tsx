@@ -7,6 +7,7 @@ import MiniMap, { type MiniMapControl } from './MiniMap'
 import ThemeToggle from './ThemeToggle'
 import DiffModal from './DiffModal'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
+import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -67,9 +68,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
     // matchIndex N → edits[N] since both are ordered by document position.
     termControlRef.current?.setLineMatchers([{
       match: (text) => {
-        if (!text.includes('✏')) return null
-        const m = text.match(/✏.{0,2}([^:]+): (.+?) ═/)
-        return m ? { toolName: m[1].trim(), filePath: m[2].trim() } : null
+        return parseEditHeaderLine(text)
       },
       tooltip: '打开 Diff 明细',
       onActivate: (_bufLine, _data, matchIndex) => {
