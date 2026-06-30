@@ -113,6 +113,28 @@ func TestTextChunkNoFalsePositiveDiff(t *testing.T) {
 	}
 }
 
+func TestCompactionBoundaryEmitsPosition(t *testing.T) {
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
+		{Type: "UserPrompt", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "before compact"},
+		{Type: "CompactionBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
+	}
+	_, positions := FormatEventsWithPositions(events, 80)
+
+	var sawCompaction bool
+	for _, pos := range positions {
+		if pos.Kind == "compaction" && pos.TurnIndex == 0 {
+			sawCompaction = true
+		}
+		if pos.Kind == "compaction" && pos.Label != "压缩" {
+			t.Errorf("unexpected compaction label: %q", pos.Label)
+		}
+	}
+	if !sawCompaction {
+		t.Fatalf("expected CompactionBoundary to produce a compaction position, got %+v", positions)
+	}
+}
+
 func TestToolInvocationBox(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,

@@ -454,6 +454,13 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 		// ---- system events ----
 		case evt.Type == "system":
 			switch evt.Subtype {
+			case "compact_boundary":
+				emit(model.RenderEvent{
+					EventID:   fmt.Sprintf("%s-system", evtUUID),
+					Type:      "CompactionBoundary",
+					Timestamp: ts,
+					TurnIndex: turnIndex - 1,
+				})
 			case "turn_duration":
 				emit(model.RenderEvent{
 					EventID:    fmt.Sprintf("%s-system", evtUUID),

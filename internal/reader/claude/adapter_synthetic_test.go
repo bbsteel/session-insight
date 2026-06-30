@@ -180,6 +180,48 @@ func TestToolUseWithoutIDStillLinksResult(t *testing.T) {
 	}
 }
 
+func TestCompactBoundaryEmitsAbstractCompactionRenderEvent(t *testing.T) {
+	fixture := `{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"before compact"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","model":"claude-x","content":[{"type":"text","text":"ok"}]}}
+{"type":"system","subtype":"compact_boundary","uuid":"c1","timestamp":"2026-01-01T00:00:02Z"}
+{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:03Z","message":{"role":"user","content":"after compact"}}
+`
+	path := writeTempJSONL(t, "compact_boundary.jsonl", fixture)
+	events, _, err := ParseClaudeRenderEvents(path, 0, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var sawCompaction bool
+	for _, e := range events {
+		if e.Type == "CompactionBoundary" && e.TurnIndex == 0 {
+			sawCompaction = true
+		}
+	}
+	if !sawCompaction {
+		t.Error("expected system compact_boundary to emit an abstract CompactionBoundary event on the preceding turn")
+	}
+}
+
+func TestCompactBoundaryMarksTurnAnomaly(t *testing.T) {
+	fixture := `{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"before compact"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","model":"claude-x","content":[{"type":"text","text":"ok"}]}}
+{"type":"system","subtype":"compact_boundary","uuid":"c1","timestamp":"2026-01-01T00:00:02Z"}
+{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:03Z","message":{"role":"user","content":"after compact"}}
+`
+	path := writeTempJSONL(t, "compact_turn.jsonl", fixture)
+	turns, _, err := parseClaudeEvents(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("expected two turns, got %d", len(turns))
+	}
+	if len(turns[0].Anomalies) != 1 || turns[0].Anomalies[0] != "compaction" {
+		t.Fatalf("expected preceding turn to be marked with compaction, got %+v", turns[0].Anomalies)
+	}
+}
+
 func TestFallbackEventIDsDoNotCollideAcrossFiles(t *testing.T) {
 	// Two different files, each with a line missing "uuid", parsed
 	// independently (mirroring how ParseClaudeRenderEventsWithSubagents

@@ -94,10 +94,9 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName})
 			}
 			writeToolResult(tb, evt, prefix)
+		case "CompactionBoundary":
+			emit("compaction", "压缩", "", evt.TurnIndex, nil)
 		case "AgentSpecific":
-			if evt.Subtype == "compaction" {
-				emit("compaction", "压缩", "", evt.TurnIndex, nil)
-			}
 			writeAgentSpecific(tb, evt, prefix)
 		}
 	}

@@ -494,6 +494,11 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 			if currentTurn != nil {
 				currentTurn.DurationMs = evt.DurationMs
 			}
+
+		case evt.Type == "system" && evt.Subtype == "compact_boundary":
+			if currentTurn != nil {
+				currentTurn.Anomalies = append(currentTurn.Anomalies, "compaction")
+			}
 		}
 
 		// Track duration from turn start to latest event
