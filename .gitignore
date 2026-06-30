@@ -30,3 +30,5 @@ session-insight.pid
 .env.local
 
 .superpowers/
+opencode.json
+thoughts.md
