@@ -501,13 +501,53 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 反查会话元数据：命中结果只带 (agent_type, session_id)，
+	// project / 会话名 / 更新时间来自各 reader 的会话列表
+	type sessionMeta struct {
+		project   string
+		name      string
+		updatedAt time.Time
+	}
+	metas := make(map[string]sessionMeta)
+	if len(results) > 0 {
+		for _, reader := range s.Readers {
+			list, err := reader.ListSessions()
+			if err != nil {
+				continue
+			}
+			for _, sess := range list {
+				metas[sess.AgentType+"\x00"+sess.ID] = sessionMeta{
+					project:   sess.Project,
+					name:      sess.Name,
+					updatedAt: sess.UpdatedAt,
+				}
+			}
+		}
+	}
+
 	type result struct {
 		SessionID string `json:"session_id"`
+		AgentType string `json:"agent_type"`
+		Project   string `json:"project"`
+		Name      string `json:"name"`
+		UpdatedAt string `json:"updated_at"`
 		Match     string `json:"match"`
 	}
 	out := make([]result, 0, len(results))
 	for _, r := range results {
-		out = append(out, result{SessionID: r.SessionID, Match: r.Match})
+		meta := metas[r.AgentType+"\x00"+r.SessionID]
+		updatedAt := ""
+		if !meta.updatedAt.IsZero() {
+			updatedAt = meta.updatedAt.Format("2006-01-02T15:04:05Z")
+		}
+		out = append(out, result{
+			SessionID: r.SessionID,
+			AgentType: r.AgentType,
+			Project:   meta.project,
+			Name:      meta.name,
+			UpdatedAt: updatedAt,
+			Match:     r.Match,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

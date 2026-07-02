@@ -1,10 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { fetchPositions, fetchSession, fetchSearch, fetchSessionEdits } from '../api'
-import type { EditCall, PositionsResponse, SearchResult, SessionDetail, TurnVM } from '../types'
+import { fetchPositions, fetchSession, fetchSessionEdits } from '../api'
+import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
-import ThemeToggle from './ThemeToggle'
+import GlobalSearch from './GlobalSearch'
 import DiffModal from './DiffModal'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
@@ -238,7 +238,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
 
   if (!sessionId) return (
     <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalTopBar onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} />
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
@@ -251,7 +251,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
 
   if (loading) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalTopBar onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} />
       <div className="p-4 space-y-3">{Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-3">
           <div className="h-5 w-44 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
@@ -264,7 +264,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
 
   if (!session || !session.turns.length) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
-      <GlobalTopBar onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} />
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
@@ -281,7 +281,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
-      <GlobalTopBar onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} />
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
           <button
@@ -430,93 +430,3 @@ function AnalyticsSkeleton() {
   )
 }
 
-function GlobalTopBar({ onSelect }: { onSelect?: (id: string) => void }) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<SearchResult[]>([])
-  const [loading, setLoading] = useState(false)
-  const [open, setOpen] = useState(false)
-  const [activeIndex, setActiveIndex] = useState(-1)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
-
-  useEffect(() => {
-    if (!query.trim()) { setResults([]); setOpen(false); return }
-    setLoading(true)
-    debounceRef.current = setTimeout(() => {
-      fetchSearch(query.trim())
-        .then(data => { setResults(data); setOpen(true); setActiveIndex(-1) })
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false))
-    }, 250)
-    return () => clearTimeout(debounceRef.current)
-  }, [query])
-
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
-
-  const selectResult = (id: string) => { onSelect?.(id); setOpen(false); setQuery('') }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!open || results.length === 0) return
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(i => Math.min(i + 1, results.length - 1)) }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(i => Math.max(i - 1, 0)) }
-    else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); selectResult(results[activeIndex].session_id) }
-    else if (e.key === 'Escape') { setOpen(false); inputRef.current?.blur() }
-  }
-
-  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((isMac ? e.metaKey : e.ctrlKey) && e.key === 'k') { e.preventDefault(); inputRef.current?.focus() }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [isMac])
-
-  return (
-    <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }}>
-      <div ref={containerRef} className="relative w-full max-w-[360px]">
-        <input
-          ref={inputRef}
-          type="search"
-          placeholder={`全文搜索... (${isMac ? '⌘K' : 'Ctrl+K'})`}
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => { if (results.length > 0) setOpen(true) }}
-          className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
-          aria-label="全文搜索"
-        />
-        {open && (
-          <div className="absolute top-full left-0 right-0 mt-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-30 max-h-[320px] overflow-y-auto">
-            {loading && results.length === 0 && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">搜索中...</div>}
-            {!loading && results.length === 0 && query.trim() && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">无匹配结果</div>}
-            {results.map((r, i) => (
-              <button
-                key={r.session_id}
-                onClick={() => selectResult(r.session_id)}
-                onMouseEnter={() => setActiveIndex(i)}
-                className={`w-full text-left px-3 py-2 text-helper border-b border-[var(--border-muted)] last:border-b-0 transition-colors duration-fast ${
-                  i === activeIndex ? 'bg-[var(--accent-blue)]/10 text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]'
-                }`}
-              >
-                <div className="truncate text-[var(--text-primary)]">{r.match}</div>
-                <div className="text-meta text-[var(--text-muted)] mt-0.5 truncate">{r.session_id}</div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="ml-auto flex items-center gap-1">
-        <ThemeToggle />
-        <button className="h-7 w-7 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]" title="设置" aria-label="设置">⚙</button>
-      </div>
-    </header>
-  )
-}

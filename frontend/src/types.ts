@@ -53,6 +53,10 @@ export interface EditCall {
 
 export interface SearchResult {
   session_id: string
+  agent_type: string
+  project: string
+  name: string
+  updated_at: string
   match: string
 }
 
