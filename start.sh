@@ -61,6 +61,7 @@ do_start() {
   echo "    PID: $(cat "$PID_FILE")"
 }
 
+# 只按 pid 文件精确 kill，禁止 pkill 模糊匹配（会误杀命令行含关键字的无关进程）
 do_stop() {
   if [[ -f "$PID_FILE" ]]; then
     local pid
@@ -73,10 +74,13 @@ do_stop() {
     fi
     rm -f "$PID_FILE"
   fi
-  pkill -f "session-insight" 2>/dev/null || true
-  pkill -f "$FRONTEND_DIR/node_modules/.bin/vite" 2>/dev/null || true
-  pkill -f "session-insight-cdp" 2>/dev/null || true
-  pkill -f "session-insight-minimap-cdp" 2>/dev/null || true
+  # pid 文件丢失时的兜底：按端口精确找监听进程
+  local port_pid
+  port_pid=$(lsof -t -i ":$PORT" -s TCP:LISTEN 2>/dev/null || true)
+  if [[ -n "$port_pid" ]]; then
+    echo "==> Stopping process listening on :$PORT (PID: $port_pid)"
+    kill $port_pid 2>/dev/null || true
+  fi
 }
 
 do_status() {
