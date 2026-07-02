@@ -20,6 +20,8 @@ type SessionSummary struct {
 	Repository   string `json:"repository"`
 	Branch       string `json:"branch"`
 	Project      string `json:"project"`
+	CWD          string `json:"cwd"`
+	ResumeID     string `json:"resume_id,omitempty"`
 	PreviewText  string `json:"preview_text"`
 	TurnCount    int    `json:"turn_count"`
 	MessageCount int    `json:"message_count"`

@@ -12,6 +12,8 @@ export interface SessionSummary {
   repository: string
   branch: string
   project: string
+  cwd: string
+  resume_id?: string
   preview_text: string
   turn_count: number
   message_count: number

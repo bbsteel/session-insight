@@ -31,6 +31,7 @@ type Session struct {
 	Project      string    `json:"project"`
 	Name         string    `json:"name"`
 	ModelName    string    `json:"model_name"`
+	ResumeID     string    `json:"resume_id,omitempty"`
 	PreviewText  string    `json:"preview_text"`
 	TurnCount    int       `json:"turn_count"`
 	MessageCount int       `json:"message_count"`

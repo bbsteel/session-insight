@@ -59,6 +59,7 @@ type codexEvent struct {
 
 type codexSessionMeta struct {
 	ID               string `json:"id"`
+	SessionID        string `json:"session_id"`
 	Timestamp        string `json:"timestamp"`
 	CWD              string `json:"cwd"`
 	ModelProvider    string `json:"model_provider"`
@@ -238,6 +239,7 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 
 	var (
 		cwd          string
+		nativeID     string
 		modelName    string
 		firstUserMsg string
 		userMessages []string
@@ -280,6 +282,13 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 				}
 				if modelName == "" {
 					modelName = extractModelName(&m)
+				}
+				if nativeID == "" {
+					if m.SessionID != "" {
+						nativeID = m.SessionID
+					} else if m.ID != "" {
+						nativeID = m.ID
+					}
 				}
 			}
 
@@ -350,6 +359,7 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 		Project:      shared.ResolveProject(cwd, ""),
 		Name:         name,
 		ModelName:    modelName,
+		ResumeID:     nativeID,
 		PreviewText:  previewText,
 		MessageCount: msgCount,
 		CreatedAt:    createdAt,

@@ -37,6 +37,8 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 				Repository:   s.Repository,
 				Branch:       s.Branch,
 				Project:      s.Project,
+				CWD:          s.CWD,
+				ResumeID:     s.ResumeID,
 				PreviewText:  s.PreviewText,
 				TurnCount:    s.TurnCount,
 				MessageCount: s.MessageCount,

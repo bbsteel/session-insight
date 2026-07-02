@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { fetchAgents, fetchSessions } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import AgentFilter from './AgentFilter'
@@ -42,6 +43,28 @@ function getSessionName(s: SessionSummary): string {
   return s.id.slice(0, 8)
 }
 
+function getResumeCommand(session: SessionSummary): string | null {
+  const at = session.agent_type.toLowerCase()
+  const resumeId = session.resume_id || session.id
+  let agentCmd = ''
+  if (at.includes('claude')) agentCmd = `claude --resume ${resumeId}`
+  else if (at.includes('codex')) agentCmd = `codex resume ${resumeId}`
+  else if (at.includes('opencode')) agentCmd = `opencode -s ${resumeId}`
+  else return null
+
+  if (session.cwd) {
+    const dir = /\s/.test(session.cwd) ? `"${session.cwd}"` : session.cwd
+    return `cd ${dir} && ${agentCmd}`
+  }
+  return agentCmd
+}
+
+interface ContextMenuState {
+  x: number
+  y: number
+  session: SessionSummary
+}
+
 interface SidebarProps {
   selectedId: string | null
   onSelect: (id: string) => void
@@ -60,6 +83,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
   })
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   )
@@ -86,15 +110,20 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
   }, [isMobile, drawer])
 
-  // Esc to close drawer on mobile
+  // Esc to close drawer on mobile or context menu
   useEffect(() => {
-    if (!isMobile || !onClose) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        if (contextMenu) {
+          setContextMenu(null)
+        } else if (isMobile && onClose) {
+          onClose()
+        }
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isMobile, onClose])
+  }, [isMobile, onClose, contextMenu])
 
   // Load all sessions once on mount — agent/search filters are client-side
   useEffect(() => {
@@ -139,7 +168,8 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     window.addEventListener('pointerup', up)
   }
 
-  const copyId = useCallback(async (id: string) => {
+  const copyId = useCallback(async (session: SessionSummary) => {
+    const id = session.resume_id || session.id
     try {
       await navigator.clipboard.writeText(id)
       showToast('已复制会话 ID')
@@ -147,6 +177,23 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       showToast('复制失败')
     }
   }, [showToast])
+
+  const copyResumeCmd = useCallback(async (session: SessionSummary) => {
+    const cmd = getResumeCommand(session)
+    if (!cmd) return
+    try {
+      await navigator.clipboard.writeText(cmd)
+      showToast('已复制恢复命令')
+    } catch {
+      showToast('复制失败')
+    }
+  }, [showToast])
+
+  const openContextMenu = useCallback((e: React.MouseEvent, session: SessionSummary) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY, session })
+  }, [])
 
   const filtered = useMemo(() => sessions.filter(s => {
     if (agentFilter && s.agent_type !== agentFilter) return false
@@ -239,8 +286,8 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       <div className="group relative">
         <button
           onClick={() => onSelect(session.id)}
-          onContextMenu={(e) => { e.preventDefault(); copyId(session.id) }}
-          title="右键复制会话 ID"
+          onContextMenu={(e) => openContextMenu(e, session)}
+          title="右键打开菜单"
           className={`relative w-full text-left pl-2.5 pr-8 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
             selected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
@@ -264,7 +311,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
           </div>
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); copyId(session.id) }}
+          onClick={(e) => { e.stopPropagation(); copyId(session) }}
           tabIndex={-1}
           className="absolute right-1 top-1.5 w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
           aria-hidden="true"
@@ -420,6 +467,51 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
           className="absolute right-0 top-0 h-full w-1 cursor-grab hover:bg-[var(--accent-blue)]/30 active:cursor-grabbing"
           title="拖拽调整侧栏宽度"
         />
+      )}
+
+      {/* Context Menu — portaled to body so the backdrop covers the full viewport */}
+      {contextMenu && createPortal(
+        <>
+          <div
+            className="fixed inset-0 z-[calc(var(--z-toast,50)-1)]"
+            onClick={() => setContextMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setContextMenu(null) }}
+          />
+          <div
+            className="fixed z-[var(--z-toast,50)] min-w-[180px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1 text-body"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+              onClick={() => { copyId(contextMenu.session); setContextMenu(null) }}
+            >
+              复制会话 ID
+            </button>
+            {(() => {
+              const cmd = getResumeCommand(contextMenu.session)
+              const isLive = contextMenu.session.is_live
+              const disabled = isLive || !cmd
+              const tooltip = isLive ? '活跃中会话不可恢复' : !cmd ? '此 Agent 暂不支持命令行恢复' : undefined
+              return (
+                <button
+                  className={`w-full text-left px-3 py-1.5 transition-colors duration-fast ${
+                    disabled
+                      ? 'text-[var(--text-muted)] cursor-not-allowed'
+                      : 'text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
+                  }`}
+                  disabled={disabled}
+                  title={tooltip}
+                  onClick={() => {
+                    if (!disabled) { copyResumeCmd(contextMenu.session); setContextMenu(null) }
+                  }}
+                >
+                  复制会话恢复命令
+                </button>
+              )
+            })()}
+          </div>
+        </>,
+        document.body
       )}
 
       {/* Toast */}
