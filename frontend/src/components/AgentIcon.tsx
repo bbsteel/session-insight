@@ -1,7 +1,7 @@
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg'
 import githubCopilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg'
 import openAIIcon from '@lobehub/icons-static-svg/icons/openai.svg'
-import openCodeIcon from '../assets/opencode.svg'
+const openCodeIcon = '/icons/opencode-logo-light-square.png'
 import { resolveAgentStyle } from '../agentStyles'
 
 interface AgentIconProps {
