@@ -46,7 +46,7 @@ const DARK: ITheme = {
   brightRed: '#7a2936', // 9 diff deleted line bg
   brightGreen: '#225c2b', // 10 diff added line bg
   brightYellow: '#ffc107', // 11 spare
-  brightBlue: '#93a5ff', // 12 spare
+  brightBlue: '#93a5ff', // 12 turn banner accent (user-customizable, see below)
   brightMagenta: '#af87ff', // 13 spare
   brightCyan: '#d77757', // 14 spare
   brightWhite: '#93a5ff', // 15 bold fg — matches Claude Code bold blue
@@ -72,7 +72,7 @@ const LIGHT: ITheme = {
   brightRed: '#fdd2d8', // 9 diff deleted line bg (pale)
   brightGreen: '#c7e1cb', // 10 diff added line bg (pale)
   brightYellow: '#966c1e', // 11 spare
-  brightBlue: '#5769f7', // 12 spare
+  brightBlue: '#5769f7', // 12 turn banner accent (user-customizable, see below)
   brightMagenta: '#8700ff', // 13 spare
   brightCyan: '#d77757', // 14 spare
   brightWhite: '#5769f7', // 15 bold fg — matches Claude Code bold blue
@@ -80,8 +80,38 @@ const LIGHT: ITheme = {
 
 const THEMES: Record<TerminalThemeName, ITheme> = { dark: DARK, light: LIGHT }
 
+// ── Turn banner accent customization ─────────────────────────────────────────
+// The backend renders the turn banner with palette slot 12 (brightBlue), so a
+// custom color is a pure client-side palette override: no re-fetch, position
+// cache stays valid. Persisted in localStorage; null = follow theme default.
+
+const BANNER_COLOR_KEY = 'si-turn-banner-color'
+const BANNER_COLOR_EVENT = 'si-banner-color-change'
+
+export function defaultBannerColor(isDark: boolean): string {
+  return THEMES[isDark ? 'dark' : 'light'].brightBlue as string
+}
+
+export function getBannerColorOverride(): string | null {
+  const v = localStorage.getItem(BANNER_COLOR_KEY)
+  return v && /^#[0-9a-fA-F]{6}$/.test(v) ? v : null
+}
+
+export function setBannerColorOverride(color: string | null) {
+  if (color) localStorage.setItem(BANNER_COLOR_KEY, color)
+  else localStorage.removeItem(BANNER_COLOR_KEY)
+  window.dispatchEvent(new Event(BANNER_COLOR_EVENT))
+}
+
+export function onBannerColorChange(handler: () => void): () => void {
+  window.addEventListener(BANNER_COLOR_EVENT, handler)
+  return () => window.removeEventListener(BANNER_COLOR_EVENT, handler)
+}
+
 export function terminalTheme(isDark: boolean): ITheme {
-  return THEMES[isDark ? 'dark' : 'light']
+  const base = THEMES[isDark ? 'dark' : 'light']
+  const banner = getBannerColorOverride()
+  return banner ? { ...base, brightBlue: banner } : base
 }
 
 // useIsDark tracks the global theme by observing the `.dark` class that

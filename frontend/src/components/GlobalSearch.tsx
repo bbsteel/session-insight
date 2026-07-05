@@ -3,6 +3,12 @@ import { fetchSearch } from '../api'
 import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import ThemeToggle from './ThemeToggle'
+import {
+  defaultBannerColor,
+  getBannerColorOverride,
+  setBannerColorOverride,
+  useIsDark,
+} from '../terminalTheme'
 
 const HISTORY_KEY = 'search-history'
 const HISTORY_LIMIT_KEY = 'search-history-limit'
@@ -141,6 +147,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [historyLimit, setHistoryLimit] = useState(readHistoryLimit)
   const [showSettings, setShowSettings] = useState(false)
+  const isDark = useIsDark()
+  const [bannerColor, setBannerColor] = useState<string | null>(getBannerColorOverride)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -407,6 +415,35 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
               >
                 清空搜索历史
               </button>
+              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                终端外观
+              </div>
+              <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
+                Turn 横幅颜色
+                <span className="flex items-center gap-1.5">
+                  <input
+                    type="color"
+                    value={bannerColor ?? defaultBannerColor(isDark)}
+                    onChange={e => {
+                      setBannerColor(e.target.value)
+                      setBannerColorOverride(e.target.value)
+                    }}
+                    className="h-7 w-9 cursor-pointer rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5"
+                  />
+                  {bannerColor && (
+                    <button
+                      onClick={() => {
+                        setBannerColor(null)
+                        setBannerColorOverride(null)
+                      }}
+                      className="h-7 rounded-md border border-[var(--border-default)] px-2 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)]"
+                    >
+                      恢复默认
+                    </button>
+                  )}
+                </span>
+              </label>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">默认随深/浅主题，改动即时生效</div>
             </div>
           )}
         </div>

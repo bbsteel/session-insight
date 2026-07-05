@@ -37,10 +37,15 @@ func TestSeparator(t *testing.T) {
 	if !strings.Contains(result, " Turn 0 ") || !strings.Contains(result, "━") {
 		t.Errorf("expected turn banner, got:\n%s", result)
 	}
-	// The badge must be inverse video (background color) so a turn start is
-	// findable at a glance.
-	if !strings.Contains(result, "\x1b[48;5;4m") {
+	// The badge must carry the banner accent as background (slot 12, resolved
+	// by the client theme) so a turn start is findable at a glance, and the
+	// label must use the terminal background color (slot 0) as fg — plain
+	// white-on-accent once collided with the bold→bright palette remap.
+	if !strings.Contains(result, "\x1b[48;5;12m") {
 		t.Errorf("expected banner background color in output:\n%s", result)
+	}
+	if !strings.Contains(result, "\x1b[38;5;0m") {
+		t.Errorf("expected banner label fg to be terminal background color:\n%s", result)
 	}
 }
 

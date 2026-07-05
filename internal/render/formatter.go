@@ -129,8 +129,12 @@ func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 		rest = 1
 	}
 	sb.WriteString("\n")
-	sb.WriteString(styled(label, ColFg, ColTool, true, false))
-	sb.WriteString(fgWrap(strings.Repeat("━", rest), ColTool))
+	// No bold on the badge: xterm's drawBoldTextInBrightColors would remap the
+	// fg slot to its bright variant, which this palette repurposes (slot 7→15
+	// is the Claude-blue bold fg) — that once made the label invisible on its
+	// own background. ColBg as fg guarantees contrast on any accent color.
+	sb.WriteString(styled(label, ColBg, ColBanner, false, false))
+	sb.WriteString(fgWrap(strings.Repeat("━", rest), ColBanner))
 	sb.WriteString("\n")
 }
 

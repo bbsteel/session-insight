@@ -6,7 +6,7 @@ import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffset
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
-import { terminalTheme, useIsDark } from '../terminalTheme'
+import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 
 const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "Menlo", monospace'
 const TERMINAL_FONT_SIZE = 13
@@ -399,6 +399,14 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
     if (termRef.current) {
       termRef.current.options.theme = terminalTheme(isDark)
     }
+  }, [isDark])
+
+  useEffect(() => {
+    return onBannerColorChange(() => {
+      if (termRef.current) {
+        termRef.current.options.theme = terminalTheme(isDark)
+      }
+    })
   }, [isDark])
 
   return (

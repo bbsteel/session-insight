@@ -20,6 +20,7 @@ type Color int
 
 const (
 	ColNone     Color = -1 // sentinel: no color (leave default)
+	ColBg       Color = 0  // terminal background; as fg on an accent bg it contrasts in any theme
 	ColError    Color = 1  // errors, ✗
 	ColSuccess  Color = 2  // ✓, success (shares the green slot)
 	ColUser     Color = 2  // user prompt, list markers (green)
@@ -31,6 +32,7 @@ const (
 	ColMuted    Color = 8  // thinking, separators, blockquotes, dim text
 	ColDiffDel  Color = 9  // diff deleted line background
 	ColDiffAdd  Color = 10 // diff added line background
+	ColBanner   Color = 12 // turn banner accent; theme-resolved and user-customizable client-side
 )
 
 const (
