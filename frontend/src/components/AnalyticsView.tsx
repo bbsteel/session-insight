@@ -83,15 +83,16 @@ interface AgentReference {
   links: [string, string][]
 }
 
-// Billing/token concepts differ per agent; this reference panel spares the
-// user a search for what each unit on the bill actually means.
-const SHARED_CONCEPTS: [string, string][] = [
-  ['Input', '未命中缓存、按全价计费的输入 token（系统提示 + 对话历史 + 工具定义中新处理的部分）'],
-  ['Cache Read', '命中提供商 prompt cache 的输入，价格约为全价的 1/10。长会话中体量最大，因为每次调用都会重放整个上下文'],
-  ['Cache Write', '首次写入缓存的输入。Anthropic 系收溢价（5 分钟 TTL 1.25 倍 / 1 小时 2 倍）；OpenAI 系缓存自动且免费，因此显示「—」'],
-  ['Output', '模型生成的内容（回复正文 + 工具调用参数），单价约为 Input 的 3~5 倍'],
-  ['Reasoning', '推理模型的隐藏思考 token，是 Output 的子集（计费已含在 Output 内，单列仅供参考）'],
-]
+// Universal token-bucket meanings, shown as hover tooltips wherever the
+// buckets appear on the bill. Agent-specific billing concepts live in
+// AGENT_REFERENCES instead.
+const BUCKET_HINTS: Record<string, string> = {
+  input: '未命中缓存、按全价计费的输入 token（系统提示 + 对话历史 + 工具定义中新处理的部分）',
+  cache_read: '命中提供商 prompt cache 的输入，价格约为全价的 1/10。长会话中体量最大，因为每次调用都会重放整个上下文',
+  cache_write: '首次写入缓存的输入。Anthropic 系收溢价（5 分钟 TTL 1.25 倍 / 1 小时 2 倍）；OpenAI 系缓存自动且免费，因此显示「—」',
+  output: '模型生成的内容（回复正文 + 工具调用参数），单价约为 Input 的 3~5 倍',
+  reasoning: '推理模型的隐藏思考 token，是 Output 的子集（计费已含在 Output 内，单列仅供参考）',
+}
 
 const AGENT_REFERENCES: Record<string, AgentReference> = {
   copilot: {
@@ -260,10 +261,14 @@ export default function AnalyticsView({ sessionId, agentType }: Props) {
                   <span className="text-body text-[var(--text-secondary)]">{data.billing.totals.premium_requests} premium requests</span>
                 )}
                 <span className="text-body text-[var(--text-secondary)]">
-                  input {bucketText(data.billing.totals.prompt_tokens, present?.input)}
-                  {' · '}cache read {bucketText(data.billing.totals.cache_read_tokens, present?.cache_read)}
-                  {' · '}cache write {bucketText(data.billing.totals.cache_write_tokens, present?.cache_write)}
-                  {' · '}output {bucketText(data.billing.totals.completion_tokens, present?.output)}
+                  <span className="cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.input}>input</span>
+                  {' '}{bucketText(data.billing.totals.prompt_tokens, present?.input)}
+                  {' · '}<span className="cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.cache_read}>cache read</span>
+                  {' '}{bucketText(data.billing.totals.cache_read_tokens, present?.cache_read)}
+                  {' · '}<span className="cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.cache_write}>cache write</span>
+                  {' '}{bucketText(data.billing.totals.cache_write_tokens, present?.cache_write)}
+                  {' · '}<span className="cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.output}>output</span>
+                  {' '}{bucketText(data.billing.totals.completion_tokens, present?.output)}
                 </span>
               </div>
               {data.billing.by_model && data.billing.by_model.length > 0 && (
@@ -271,12 +276,12 @@ export default function AnalyticsView({ sessionId, agentType }: Props) {
                   <thead>
                     <tr className="text-[var(--text-secondary)] text-left">
                       <th className="font-normal py-1">Model</th>
-                      <th className="font-normal py-1 text-right">Requests</th>
-                      <th className="font-normal py-1 text-right">Cost</th>
-                      <th className="font-normal py-1 text-right">Input</th>
-                      <th className="font-normal py-1 text-right">Cache Read</th>
-                      <th className="font-normal py-1 text-right">Output</th>
-                      <th className="font-normal py-1 text-right">Reasoning</th>
+                      <th className="font-normal py-1 text-right cursor-help underline decoration-dotted underline-offset-2" title="该模型的 API 调用次数">Requests</th>
+                      <th className="font-normal py-1 text-right cursor-help underline decoration-dotted underline-offset-2" title={UNIT_HINTS[data.billing.billing_unit ?? ''] ?? '该模型消耗的费用'}>Cost</th>
+                      <th className="font-normal py-1 text-right cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.input}>Input</th>
+                      <th className="font-normal py-1 text-right cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.cache_read}>Cache Read</th>
+                      <th className="font-normal py-1 text-right cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.output}>Output</th>
+                      <th className="font-normal py-1 text-right cursor-help underline decoration-dotted underline-offset-2" title={BUCKET_HINTS.reasoning}>Reasoning</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -373,32 +378,34 @@ export default function AnalyticsView({ sessionId, agentType }: Props) {
         </div>
       </div>
 
-      {/* Concept reference */}
-      <div className="px-4 pb-6">
-        <details className="bg-[var(--bg-inset)] rounded-lg">
-          <summary className="cursor-pointer select-none px-3 py-2 text-body font-semibold text-[var(--text-primary)]">
-            概念参考{agentRef ? `（${agentType}）` : ''}
-            <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">AIU、缓存、token 分类都是什么意思</span>
-          </summary>
-          <div className="px-3 pb-3 space-y-1.5">
-            {(agentRef?.concepts ?? []).concat(SHARED_CONCEPTS).map(([term, desc]) => (
-              <div key={term} className="text-body">
-                <span className="text-[var(--text-primary)] font-medium">{term}</span>
-                <span className="text-[var(--text-secondary)] ml-2">{desc}</span>
-              </div>
-            ))}
-            {agentRef && agentRef.links.length > 0 && (
-              <div className="pt-1.5 flex flex-wrap gap-3">
-                {agentRef.links.map(([label, url]) => (
-                  <a key={url} href={url} target="_blank" rel="noreferrer" className="text-body text-[var(--accent-blue)] hover:underline">
-                    {label} ↗
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-        </details>
-      </div>
+      {/* Agent-specific billing reference */}
+      {agentRef && (
+        <div className="px-4 pb-6">
+          <details className="bg-[var(--bg-inset)] rounded-lg">
+            <summary className="cursor-pointer select-none px-3 py-2 text-body font-semibold text-[var(--text-primary)]">
+              计费参考（{agentType}）
+              <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">该 agent 的计费概念与官方文档</span>
+            </summary>
+            <div className="px-3 pb-3 space-y-1.5">
+              {agentRef.concepts.map(([term, desc]) => (
+                <div key={term} className="text-body">
+                  <span className="text-[var(--text-primary)] font-medium">{term}</span>
+                  <span className="text-[var(--text-secondary)] ml-2">{desc}</span>
+                </div>
+              ))}
+              {agentRef.links.length > 0 && (
+                <div className="pt-1.5 flex flex-wrap gap-3">
+                  {agentRef.links.map(([label, url]) => (
+                    <a key={url} href={url} target="_blank" rel="noreferrer" className="text-body text-[var(--accent-blue)] hover:underline">
+                      {label} ↗
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
+        </div>
+      )}
     </div>
   )
 }
