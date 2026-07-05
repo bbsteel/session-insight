@@ -161,25 +161,31 @@ function PositionModeContent({
           pointerEvents: 'none',
         }}
       >
-        {/* Cost profile bars anchored at each turn's real line position */}
-        {turnItems.map(pos => {
+        {/* Cost profile segments: each turn spans its real line range in the
+            document (tall block = long turn), width = its cost share. Fixed
+            thin bars became invisible slivers on long sessions. */}
+        {turnItems.map((pos, i) => {
           const tw = weights.get(pos.turn_index)
           if (!tw || tw.weight <= 0) return null
-          const barY = (pos.line_start / totalLines) * contentHeight
+          const segStart = (pos.line_start / totalLines) * contentHeight
+          const nextStart = i + 1 < turnItems.length
+            ? (turnItems[i + 1].line_start / totalLines) * contentHeight
+            : contentHeight
+          const segHeight = Math.max(nextStart - segStart - 2, 4)
           const rel = tw.share / maxShare
           const tone = getTokenPressureTone(rel)
           return (
             <div
               key={pos.position_key}
               // pointer-events-auto only for the hover tooltip; pointerdown is
-              // NOT stopped here so dragging through a bar still scrolls.
-              className="pointer-events-auto absolute left-[40px] right-[14px] h-[5px]"
-              style={{ top: barY + 3 }}
+              // NOT stopped here so dragging through a segment still scrolls.
+              className="pointer-events-auto absolute left-[40px] right-[14px]"
+              style={{ top: segStart + 1, height: segHeight }}
               title={turnTitle(turns[pos.turn_index], tw, billingUnit)}
             >
               <span
                 className="absolute left-0 top-0 h-full rounded-[2px]"
-                style={{ width: `${clamp(rel * 100, 6, 100)}%`, background: pressureColors[tone], opacity: 0.9 }}
+                style={{ width: `${clamp(rel * 100, 6, 100)}%`, background: pressureColors[tone], opacity: 0.65 }}
               />
             </div>
           )
