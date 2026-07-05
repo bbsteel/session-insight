@@ -61,7 +61,10 @@ interface AnalyticsData {
     duration_ms: number
     tool_count: number
     error_count: number
+    requests: number
+    est_cost?: number
   }[]
+  cost_precision?: string
   tool_freq: Record<string, number>
   context_window: number
   context_peak: number
@@ -76,6 +79,7 @@ interface AnalyticsData {
 interface Props {
   sessionId: string
   agentType?: string
+  onJumpToTurn?: (turnIndex: number) => void
 }
 
 interface AgentReference {
@@ -158,7 +162,7 @@ function bucketText(value: number, presence?: string): string {
   return presence === 'exact' ? fmtNumber(value) : '—'
 }
 
-export default function AnalyticsView({ sessionId, agentType }: Props) {
+export default function AnalyticsView({ sessionId, agentType, onJumpToTurn }: Props) {
   const [data, setData] = useState<AnalyticsData | null>(null)
 
   useEffect(() => {
@@ -187,11 +191,19 @@ export default function AnalyticsView({ sessionId, agentType }: Props) {
   const accentBlue = styles.getPropertyValue('--accent-blue').trim()
   const accentPurple = styles.getPropertyValue('--accent-purple').trim()
 
+  const hasCost = data.cost_precision === 'estimated'
+  const costUnit = data.billing?.billing_unit
+  const costName = `Cost(${costUnit ?? ''}·估算)`
+  const accentOrange = styles.getPropertyValue('--accent-orange').trim()
+
   const tokenTimeline = {
     tooltip: { trigger: 'axis' as const },
-    grid: { left: 40, right: 40, top: 8, bottom: 24 },
-    xAxis: { type: 'category' as const, data: data.timeline.map(t => `T${t.turn_index}`), axisLabel: { fontSize: 10, color: textColor } },
-    yAxis: { type: 'value' as const, axisLabel: { fontSize: 10, color: textColor, formatter: (v: number) => fmtNumber(v) }, splitLine: { lineStyle: { color: gridColor } } },
+    grid: { left: 40, right: 48, top: 24, bottom: 24 },
+    xAxis: { type: 'category' as const, data: data.timeline.map(t => `T${t.turn_index}`), axisLabel: { fontSize: 11, color: textColor } },
+    yAxis: [
+      { type: 'value' as const, axisLabel: { fontSize: 11, color: textColor, formatter: (v: number) => fmtNumber(v) }, splitLine: { lineStyle: { color: gridColor } } },
+      ...(hasCost ? [{ type: 'value' as const, axisLabel: { fontSize: 11, color: textColor }, splitLine: { show: false } }] : []),
+    ],
     series: [{
       name: 'Tokens',
       type: 'bar',
@@ -205,9 +217,34 @@ export default function AnalyticsView({ sessionId, agentType }: Props) {
       lineStyle: { color: accentPurple, width: 2 },
       itemStyle: { color: accentPurple },
       symbol: 'none',
-    }],
-    legend: { data: ['Tokens', 'Cumulative'], textStyle: { fontSize: 10, color: textColor }, top: 0 },
+    },
+    ...(hasCost ? [{
+      name: costName,
+      type: 'line' as const,
+      yAxisIndex: 1,
+      data: data.timeline.map(t => Number((t.est_cost ?? 0).toFixed(2))),
+      lineStyle: { color: accentOrange, width: 2 },
+      itemStyle: { color: accentOrange },
+      symbol: 'circle',
+      symbolSize: 5,
+    }] : [])],
+    legend: { data: ['Tokens', 'Cumulative', ...(hasCost ? [costName] : [])], textStyle: { fontSize: 11, color: textColor }, top: 0 },
   }
+
+  const chartEvents = onJumpToTurn ? {
+    click: (params: { dataIndex?: number }) => {
+      if (typeof params.dataIndex === 'number') {
+        onJumpToTurn(data.timeline[params.dataIndex]?.turn_index ?? params.dataIndex)
+      }
+    },
+  } : undefined
+
+  // Top expensive turns: by estimated cost when a bill was attributed,
+  // otherwise by per-turn tokens.
+  const topTurns = [...data.timeline]
+    .sort((a, b) => (hasCost ? (b.est_cost ?? 0) - (a.est_cost ?? 0) : b.tokens - a.tokens))
+    .filter(t => (hasCost ? (t.est_cost ?? 0) > 0 : t.tokens > 0))
+    .slice(0, 3)
 
   const present = data.billing?.totals?.present
   const cacheKnown = present?.input === 'exact' && present?.cache_read === 'exact'
@@ -370,11 +407,44 @@ export default function AnalyticsView({ sessionId, agentType }: Props) {
         </div>
       )}
 
+      {/* Top expensive turns */}
+      {topTurns.length > 0 && (
+        <div className="px-4 pb-4">
+          <h3 className="text-body font-semibold text-[var(--text-primary)] mb-2">
+            最贵的 Turns
+            {hasCost && <span className="text-nav font-normal px-1.5 py-0.5 ml-2 rounded-sm bg-[var(--warning)]/20 text-[var(--warning)]">估算</span>}
+            <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">
+              {hasCost ? '按请求数把会话账单摊到各 turn' : '按 token 消耗排序'} · 点击跳转到会话对应位置
+            </span>
+          </h3>
+          <div className="grid grid-cols-3 gap-3">
+            {topTurns.map(t => (
+              <button
+                key={t.turn_index}
+                onClick={() => onJumpToTurn?.(t.turn_index)}
+                className="bg-[var(--bg-inset)] rounded-md p-3 text-left hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              >
+                <div className="text-card text-[var(--text-primary)]">
+                  {hasCost ? fmtBillingAmount(t.est_cost ?? 0, costUnit) : `${fmtNumber(t.tokens)} tok`}
+                </div>
+                <div className="text-body text-[var(--text-secondary)] mt-1">
+                  Turn {t.turn_index} · {t.requests} requests · {t.tool_count} tools
+                  {t.error_count > 0 && <span className="text-[var(--error)]"> · {t.error_count} errors</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Token per turn chart */}
       <div className="px-4 pb-4">
-        <h3 className="text-body font-semibold text-[var(--text-primary)] mb-2">Token Per Turn</h3>
+        <h3 className="text-body font-semibold text-[var(--text-primary)] mb-2">
+          Token Per Turn
+          {onJumpToTurn && <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">点击柱子跳转到该 turn</span>}
+        </h3>
         <div className="bg-[var(--bg-inset)] rounded-lg p-2">
-          <ReactEChartsCore echarts={echarts} option={tokenTimeline} style={{ height: 200 }} />
+          <ReactEChartsCore echarts={echarts} option={tokenTimeline} style={{ height: 200 }} onEvents={chartEvents} />
         </div>
       </div>
 

@@ -403,6 +403,8 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 					currentTurn.TokenUsage.Present.Output = model.PresenceExact
 				}
 			}
+			// Each assistant.message is one API response.
+			currentTurn.RequestCount++
 
 		case evt.Type == "skill.invoked":
 			if currentTurn != nil {

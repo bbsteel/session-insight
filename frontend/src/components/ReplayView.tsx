@@ -103,6 +103,41 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
     }
   }, [scrollToIndexRef, scrollToTopRef, turns])
 
+  // Jump requested from AnalyticsView while the terminal was unmounted.
+  // The terminal re-renders its content asynchronously after remount, so wait
+  // until scrollHeight stabilizes before converting the turn index to a line.
+  const pendingJumpTurnRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (viewMode !== 'terminal' || pendingJumpTurnRef.current == null) return
+    let prevHeight = -1
+    let tries = 0
+    const timer = setInterval(() => {
+      tries++
+      const ctrl = termControlRef.current
+      if (ctrl) {
+        const h = ctrl.getMetrics().scrollHeight
+        if (h > 0 && h === prevHeight) {
+          const idx = pendingJumpTurnRef.current
+          pendingJumpTurnRef.current = null
+          clearInterval(timer)
+          if (idx != null) scrollToIndexRef.current?.(idx)
+          return
+        }
+        prevHeight = h
+      }
+      if (tries > 25) {
+        clearInterval(timer)
+        pendingJumpTurnRef.current = null
+      }
+    }, 200)
+    return () => clearInterval(timer)
+  }, [viewMode])
+
+  const handleJumpToTurn = useCallback((index: number) => {
+    pendingJumpTurnRef.current = index
+    setViewMode('terminal')
+  }, [])
+
   // Keyboard navigation
   useEffect(() => {
     if (!sessionId || !session?.turns.length) return
@@ -394,7 +429,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
         <div className="flex min-w-0 flex-1 overflow-hidden">
           {viewMode === 'analytics' ? (
             <Suspense fallback={<AnalyticsSkeleton />}>
-              <AnalyticsView sessionId={session.id} agentType={session.agent_type} />
+              <AnalyticsView sessionId={session.id} agentType={session.agent_type} onJumpToTurn={handleJumpToTurn} />
             </Suspense>
           ) : (
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>

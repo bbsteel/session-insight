@@ -17,6 +17,11 @@ type TurnToken struct {
 	Duration   int64 `json:"duration_ms"`
 	ToolCount  int   `json:"tool_count"`
 	ErrorCount int   `json:"error_count"`
+	Requests   int   `json:"requests"`
+	// EstCost is this turn's estimated share of the session bill, in the
+	// bill's billing_unit. Always an estimate (see attributeCostToTurns);
+	// zero when the session has no billed amount to attribute.
+	EstCost float64 `json:"est_cost,omitempty"`
 }
 
 // Result keeps the JSON contract previously served inline by the API layer,
@@ -46,6 +51,9 @@ type Result struct {
 	ContextPeak      int64                 `json:"context_peak"`
 	PressurePct      float64               `json:"pressure_pct"`
 	Billing          *model.SessionBilling `json:"billing,omitempty"`
+	// CostPrecision qualifies the per-turn EstCost values: "estimated" when
+	// a session bill was spread over turns, "" when no attribution happened.
+	CostPrecision string `json:"cost_precision,omitempty"`
 }
 
 // Compute derives all session analytics from a SessionDetail.
@@ -75,6 +83,7 @@ func Compute(detail *model.SessionDetail) Result {
 			Duration:   t.DurationMs,
 			ToolCount:  t.ToolCallCount,
 			ErrorCount: t.ErrorCount,
+			Requests:   t.RequestCount,
 		})
 
 		for _, name := range t.ToolNames {
@@ -92,6 +101,7 @@ func Compute(detail *model.SessionDetail) Result {
 	}
 
 	billing := resolveBilling(detail, turnTotals)
+	costPrecision := attributeCostToTurns(timeline, billing)
 
 	// Headline token numbers come from the bill when the agent reported one
 	// (session-level aggregates are authoritative for agents like Copilot
@@ -168,7 +178,37 @@ func Compute(detail *model.SessionDetail) Result {
 		ContextPeak:      maxCumulative,
 		PressurePct:      pressurePct,
 		Billing:          billing,
+		CostPrecision:    costPrecision,
 	}
+}
+
+// attributeCostToTurns spreads a session-level billed amount over turns,
+// weighted by request count (each request replays the whole context, so
+// request count dominates cost) with output tokens as fallback weight when
+// no agent recorded per-turn requests. The split is always an estimate —
+// no agent bills per turn — so callers must surface it as such.
+func attributeCostToTurns(timeline []TurnToken, billing *model.SessionBilling) string {
+	if billing == nil || billing.BillingAmount <= 0 || billing.BillingUnit == "" {
+		return ""
+	}
+	var totalReq, totalTok int64
+	for _, t := range timeline {
+		totalReq += int64(t.Requests)
+		totalTok += t.Tokens
+	}
+	weight := func(t TurnToken) int64 { return int64(t.Requests) }
+	total := totalReq
+	if totalReq == 0 {
+		weight = func(t TurnToken) int64 { return t.Tokens }
+		total = totalTok
+	}
+	if total == 0 {
+		return ""
+	}
+	for i := range timeline {
+		timeline[i].EstCost = billing.BillingAmount * float64(weight(timeline[i])) / float64(total)
+	}
+	return model.PrecisionEstimated
 }
 
 // resolveBilling prefers the reader-provided bill. When the reader gave none

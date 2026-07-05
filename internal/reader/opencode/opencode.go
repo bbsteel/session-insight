@@ -324,6 +324,7 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 		for _, aMsg := range aMsgs {
 			var aData assistantMsgData
 			if json.Unmarshal([]byte(aMsg.data), &aData) == nil {
+				turn.RequestCount++
 				turn.AssistantMessage += buildAssistantText(aData)
 
 				if aData.Tokens != nil {

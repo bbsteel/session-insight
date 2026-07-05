@@ -158,9 +158,14 @@ type TurnVM struct {
 	UserMessage      string     `json:"user_message"`
 	AssistantMessage string     `json:"assistant_message"`
 	TokenUsage       TokenUsage `json:"token_usage"`
-	ToolCallCount    int        `json:"tool_call_count"`
-	ErrorCount       int        `json:"error_count"`
-	DurationMs       int64      `json:"duration_ms"`
+	// RequestCount is the number of API responses observed in this turn.
+	// It is the attribution weight for spreading a session-level bill onto
+	// turns: each request replays the whole context, so request count is the
+	// dominant cost driver for agents without per-turn billing data.
+	RequestCount  int   `json:"request_count"`
+	ToolCallCount int   `json:"tool_call_count"`
+	ErrorCount    int   `json:"error_count"`
+	DurationMs    int64 `json:"duration_ms"`
 	Events           []EventVM  `json:"events,omitempty"`
 	Anomalies        []string   `json:"anomalies,omitempty"`
 	ToolNames        []string   `json:"tool_names,omitempty"`

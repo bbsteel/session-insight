@@ -457,6 +457,7 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 			}
 
 			if msg.Usage != nil {
+				currentTurn.RequestCount++
 				// Claude's usage is already in canonical exclusive semantics:
 				// input_tokens excludes both cache buckets.
 				u := &currentTurn.TokenUsage

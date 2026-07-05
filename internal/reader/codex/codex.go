@@ -483,6 +483,7 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 
 			case "token_count":
 				if currentTurn != nil && p.Info != nil {
+					currentTurn.RequestCount++
 					u := &currentTurn.TokenUsage
 					last := p.Info.LastTokenUsage
 					// Codex uses inclusive semantics: cached_input_tokens is a

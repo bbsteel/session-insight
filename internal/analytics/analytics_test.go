@@ -63,6 +63,53 @@ func TestComputeNoFakeCacheRateWhenInputMissing(t *testing.T) {
 	}
 }
 
+func TestComputeAttributesCostByRequests(t *testing.T) {
+	detail := &model.SessionDetail{
+		Turns: []model.TurnVM{
+			{TurnIndex: 0, RequestCount: 30, TokenUsage: model.TokenUsage{CompletionTokens: 10, Present: model.TokenPresence{Output: model.PresenceExact}}},
+			{TurnIndex: 1, RequestCount: 10, TokenUsage: model.TokenUsage{CompletionTokens: 999, Present: model.TokenPresence{Output: model.PresenceExact}}},
+		},
+		Billing: &model.SessionBilling{
+			Precision:     model.PrecisionExact,
+			BillingUnit:   "aiu",
+			BillingAmount: 100,
+			Totals: model.TokenUsage{
+				PromptTokens: 1, Present: model.TokenPresence{Input: model.PresenceExact},
+			},
+		},
+	}
+
+	res := Compute(detail)
+	if res.CostPrecision != model.PrecisionEstimated {
+		t.Fatalf("expected estimated cost precision, got %q", res.CostPrecision)
+	}
+	// Weighted by requests (30:10), not by tokens (10:999).
+	if res.Timeline[0].EstCost != 75 || res.Timeline[1].EstCost != 25 {
+		t.Errorf("cost attribution mismatch: %v / %v", res.Timeline[0].EstCost, res.Timeline[1].EstCost)
+	}
+	if res.Timeline[0].Requests != 30 {
+		t.Errorf("timeline requests missing: %+v", res.Timeline[0])
+	}
+}
+
+func TestComputeNoCostAttributionWithoutBilledAmount(t *testing.T) {
+	detail := &model.SessionDetail{
+		Turns: []model.TurnVM{
+			{TurnIndex: 0, RequestCount: 3, TokenUsage: model.TokenUsage{
+				PromptTokens: 10, CompletionTokens: 5,
+				Present: model.TokenPresence{Input: model.PresenceExact, Output: model.PresenceExact},
+			}},
+		},
+	}
+
+	res := Compute(detail)
+	// Claude-like sessions have exact tokens but no billed unit: nothing to
+	// spread, so no estimated costs may appear.
+	if res.CostPrecision != "" || res.Timeline[0].EstCost != 0 {
+		t.Errorf("unexpected cost attribution: precision=%q est=%v", res.CostPrecision, res.Timeline[0].EstCost)
+	}
+}
+
 func TestComputeBuildsBillingFromExactTurns(t *testing.T) {
 	exact := model.TokenPresence{
 		Input:     model.PresenceExact,
