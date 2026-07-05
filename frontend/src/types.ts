@@ -25,9 +25,16 @@ export interface SessionSummary {
 export interface TokenUsage {
   prompt_tokens: number
   completion_tokens: number
+  reasoning_tokens?: number
   cache_read_tokens: number
   cache_write_tokens: number
   premium_requests: number
+}
+
+export interface SessionBillingSummary {
+  precision: string
+  billing_unit?: string
+  billing_amount?: number
 }
 
 export interface TurnVM {
@@ -35,6 +42,7 @@ export interface TurnVM {
   user_message: string
   assistant_message: string
   token_usage: TokenUsage
+  request_count?: number
   tool_call_count: number
   error_count: number
   duration_ms: number
@@ -95,4 +103,5 @@ export interface SessionDetail {
   model_name: string
   turns: TurnVM[]
   todos?: { id: string; title: string; description: string; status: string; deps?: string[] }[]
+  billing?: SessionBillingSummary
 }

@@ -231,7 +231,9 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	revision := model.SessionRevision(*sess)
+	// Renderer layout changes shift line numbers, so the cache key must
+	// change with FormatVersion as well as with session content.
+	revision := model.SessionRevision(*sess) + render.FormatVersion
 
 	// Cache hit: return immediately.
 	if cached, err := s.DB.GetPositionCache(sess.AgentType, id, revision, cols); err == nil && cached != nil {

@@ -34,11 +34,13 @@ func TestSeparator(t *testing.T) {
 		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
 	}
 	result := FormatEvents(events, 0)
-	if !strings.Contains(result, "─ Turn 0 ─") {
-		t.Errorf("expected separator, got:\n%s", result)
+	if !strings.Contains(result, " Turn 0 ") || !strings.Contains(result, "━") {
+		t.Errorf("expected turn banner, got:\n%s", result)
 	}
-	if !hasFgColor(result, ColMuted) {
-		t.Errorf("expected separator color in output:\n%s", result)
+	// The badge must be inverse video (background color) so a turn start is
+	// findable at a glance.
+	if !strings.Contains(result, "\x1b[48;5;4m") {
+		t.Errorf("expected banner background color in output:\n%s", result)
 	}
 }
 
@@ -296,8 +298,8 @@ func TestMultiTurnSeparators(t *testing.T) {
 		{Type: "UserPrompt", TurnIndex: 2, Timestamp: time.Now(), Depth: 0, Text: "third"},
 	}
 	result := FormatEvents(events, 0)
-	if strings.Count(result, "─ Turn ") != 3 {
-		t.Errorf("expected 3 turn separators, got:\n%s", result)
+	if strings.Count(result, " Turn ") != 3 {
+		t.Errorf("expected 3 turn banners, got:\n%s", result)
 	}
 }
 

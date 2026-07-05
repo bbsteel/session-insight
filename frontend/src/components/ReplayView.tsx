@@ -42,6 +42,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
+  const [jumpTarget, setJumpTarget] = useState<JumpTarget>('user')
   const [showHelp, setShowHelp] = useState(false)
   const [showDiffModal, setShowDiffModal] = useState(false)
   const [initialDiffIdx, setInitialDiffIdx] = useState(0)
@@ -87,6 +88,14 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
       scrollToIndexRef.current = (index: number) => {
         const ctrl = termControlRef.current
         if (!ctrl) return
+        // Prefer the exact banner line from the positions cache; the ratio
+        // estimate below drifts badly on sessions with uneven turn lengths.
+        const turnPos = positionsData?.positions.find(p => p.kind === 'turn' && p.turn_index === index)
+        if (turnPos) {
+          ctrl.scrollToLine(Math.max(0, turnPos.line_start))
+          ctrl.flashLines(turnPos.line_start, 2)
+          return
+        }
         const metrics = ctrl.getMetrics()
         const totalLines = Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT)
         const visibleLines = Math.floor(metrics.clientHeight / TERMINAL_LINE_HEIGHT)
@@ -101,7 +110,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
         termControlRef.current?.scrollToLine(Math.floor(top / TERMINAL_LINE_HEIGHT))
       }
     }
-  }, [scrollToIndexRef, scrollToTopRef, turns])
+  }, [scrollToIndexRef, scrollToTopRef, turns, positionsData])
 
   // Jump requested from AnalyticsView while the terminal was unmounted.
   // The terminal re-renders its content asynchronously after remount, so wait
@@ -330,28 +339,30 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
         </div>
         <span className="text-[var(--border-default)] mx-1">|</span>
         <div className="flex items-center gap-1">
-          {([
-            ['turn', '轮次', '上一轮', '下一轮'],
-            ['user', '用户', '上个用户输入', '下个用户输入'],
-            ['anomaly', '异常', '上个异常', '下个异常'],
-            ['compaction', '压缩', '上个压缩点', '下个压缩点'],
-          ] as const).map(([target, label, prevTitle, nextTitle]) => (
-            <div key={target} className="flex items-center gap-px">
-              <button
-                onClick={() => jump(-1, target)}
-                className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                title={prevTitle}
-                aria-label={prevTitle}
-              >←</button>
-              <span className="text-meta text-[var(--text-muted)] select-none px-0.5">{label}</span>
-              <button
-                onClick={() => jump(1, target)}
-                className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                title={nextTitle}
-                aria-label={nextTitle}
-              >→</button>
-            </div>
-          ))}
+          <select
+            value={jumpTarget}
+            onChange={e => setJumpTarget(e.target.value as JumpTarget)}
+            className="h-7 rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-1.5 text-nav text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            title="跳转目标"
+            aria-label="跳转目标"
+          >
+            <option value="user">用户输入</option>
+            <option value="turn">轮次</option>
+            <option value="anomaly">异常</option>
+            <option value="compaction">压缩点</option>
+          </select>
+          <button
+            onClick={() => jump(-1, jumpTarget)}
+            className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            title="上一个"
+            aria-label="跳到上一个"
+          >←</button>
+          <button
+            onClick={() => jump(1, jumpTarget)}
+            className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            title="下一个"
+            aria-label="跳到下一个"
+          >→</button>
           <div className="relative">
             <button
               onClick={() => setShowAnomalyFilter(v => !v)}
@@ -445,6 +456,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
         <MiniMap
           turns={turns}
           positions={positionsBuilding ? null : positionsData}
+          billing={session?.billing}
           controlRef={miniMapControlRef}
           scrollToIndexRef={scrollToIndexRef}
           scrollToTopRef={scrollToTopRef}

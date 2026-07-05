@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { MiniMapPosition, PositionsResponse, TurnVM } from '../types'
-import {
-  getScrollTopFromTrackPosition,
-  getViewportFrame,
-  type ScrollMetrics,
-} from '../minimapGeometry'
+import type { MiniMapPosition, PositionsResponse, SessionBillingSummary, TurnVM } from '../types'
+import type { ScrollMetrics } from '../minimapGeometry'
 import { getMiniMapEventKind, getMiniMapTurnPositionPercent, getTokenPressureTone, type MiniMapEventKind, type TokenPressureTone } from '../minimapSemantics'
 import type { VisibleTurnRange } from '../scrollSync'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 
+// MiniMap is a cost profile of the session, not a scrollbar: each turn shows
+// a bar sized by its share of the session's spend (requests, falling back to
+// tokens), plus anomaly/compaction/user markers. Interaction is click-to-jump
+// only — drag-to-scroll competed with native scrolling and never felt right.
 interface Props {
   turns: TurnVM[]
   positions?: PositionsResponse | null
+  billing?: SessionBillingSummary | null
   controlRef?: React.MutableRefObject<MiniMapControl | null>
   scrollToIndexRef?: React.MutableRefObject<((index: number, behavior?: ReplayScrollBehavior) => void) | null>
   scrollToTopRef?: React.MutableRefObject<((top: number, behavior?: ScrollBehavior) => void) | null>
@@ -21,6 +22,8 @@ interface Props {
 export interface MiniMapControl {
   updateViewport: (metrics: ScrollMetrics, range?: VisibleTurnRange) => void
 }
+
+const TERMINAL_LINE_HEIGHT = 16
 
 function getTotalTokens(t: TurnVM): number {
   return t.token_usage.prompt_tokens + t.token_usage.completion_tokens
@@ -64,6 +67,47 @@ const positionKindToEventKind: Record<MiniMapPosition['kind'], MiniMapEventKind 
   edit: null,
 }
 
+// Per-turn attribution weight, mirroring the backend estimation rule:
+// requests dominate cost; tokens are the fallback.
+interface TurnWeight {
+  weight: number
+  share: number // 0..1 of session total
+  estCost: number | null
+}
+
+function computeTurnWeights(turns: TurnVM[], billing?: SessionBillingSummary | null): Map<number, TurnWeight> {
+  const byRequests = turns.some(t => (t.request_count ?? 0) > 0)
+  const weightOf = (t: TurnVM) => byRequests ? (t.request_count ?? 0) : getTotalTokens(t)
+  const total = turns.reduce((sum, t) => sum + weightOf(t), 0)
+  const billed = billing && billing.billing_unit && (billing.billing_amount ?? 0) > 0 ? billing.billing_amount! : null
+  const map = new Map<number, TurnWeight>()
+  for (const t of turns) {
+    const w = weightOf(t)
+    const share = total > 0 ? w / total : 0
+    map.set(t.turn_index, {
+      weight: w,
+      share,
+      estCost: billed !== null ? billed * share : null,
+    })
+  }
+  return map
+}
+
+function fmtCost(v: number, unit?: string): string {
+  if (unit === 'aiu') return `${v.toFixed(1)} AIU`
+  if (unit === 'usd') return `$${v.toFixed(4)}`
+  return v.toFixed(2)
+}
+
+function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit?: string): string {
+  if (!turn) return ''
+  const parts = [`Turn ${turn.turn_index}`]
+  if (tw?.estCost != null) parts.push(`~${fmtCost(tw.estCost, unit)}（估算）`)
+  parts.push(`${getTotalTokens(turn).toLocaleString()} tok`)
+  if ((turn.request_count ?? 0) > 0) parts.push(`${turn.request_count} req`)
+  return parts.join(' · ')
+}
+
 // Compute minimapContentHeight: at least visibleTrackHeight, at most 4×, scaled
 // so each terminal line gets ≥0.6px. Returns visibleTrackHeight if no positions.
 function computeContentHeight(totalLines: number, visibleTrackHeight: number): number {
@@ -75,6 +119,9 @@ function computeContentHeight(totalLines: number, visibleTrackHeight: number): n
 
 interface PositionModeProps {
   positions: PositionsResponse
+  turns: TurnVM[]
+  weights: Map<number, TurnWeight>
+  billingUnit?: string
   visibleTrackHeight: number
   contentOffset: number
   activeKey: string | null
@@ -83,6 +130,9 @@ interface PositionModeProps {
 
 function PositionModeContent({
   positions,
+  turns,
+  weights,
+  billingUnit,
   visibleTrackHeight,
   contentOffset,
   activeKey,
@@ -93,14 +143,12 @@ function PositionModeContent({
 
   const contentHeight = computeContentHeight(totalLines, visibleTrackHeight)
 
-  // Filter to non-turn events with visible marker kinds.
   const markerItems = items.filter(p => positionKindToEventKind[p.kind] !== null)
+  const turnItems = items.filter(p => p.kind === 'turn')
+  const maxShare = Math.max(...[...weights.values()].map(w => w.share), 0.0001)
 
   return (
-    <div
-      className="absolute inset-0 overflow-hidden"
-      style={{ pointerEvents: 'none' }}
-    >
+    <div className="absolute inset-0 overflow-hidden" style={{ pointerEvents: 'none' }}>
       {/* Background strip */}
       <div className="absolute inset-y-2 left-[36px] right-[10px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
 
@@ -113,6 +161,30 @@ function PositionModeContent({
           pointerEvents: 'none',
         }}
       >
+        {/* Cost profile bars anchored at each turn's real line position */}
+        {turnItems.map(pos => {
+          const tw = weights.get(pos.turn_index)
+          if (!tw || tw.weight <= 0) return null
+          const turn = turns[pos.turn_index]
+          const barY = (pos.line_start / totalLines) * contentHeight
+          const rel = tw.share / maxShare
+          const widthPct = clamp(rel * 100, 6, 100)
+          const tone = getTokenPressureTone(rel)
+          return (
+            <div
+              key={pos.position_key}
+              className="pointer-events-auto absolute left-[40px] right-[14px] h-[6px]"
+              style={{ top: barY, transform: 'translateY(2px)' }}
+              title={turnTitle(turn, tw, billingUnit)}
+            >
+              <span
+                className="absolute left-0 top-0 h-full rounded-[2px]"
+                style={{ width: `${widthPct}%`, background: pressureColors[tone], opacity: 0.9 }}
+              />
+            </div>
+          )
+        })}
+
         {markerItems.map(pos => {
           const eventKind = positionKindToEventKind[pos.kind]!
           const markerY = (pos.line_start / totalLines) * contentHeight
@@ -132,7 +204,6 @@ function PositionModeContent({
                 style={{ minWidth: '16px', minHeight: '16px' }}
                 title={`${eventLabels[eventKind]} · Turn ${pos.turn_index} · line ${pos.line_start}`}
                 aria-label={`${eventLabels[eventKind]} · 跳转`}
-                onPointerDown={e => e.stopPropagation()}
                 onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}
               >
                 {eventShortLabels[eventKind]}
@@ -141,33 +212,28 @@ function PositionModeContent({
           )
         })}
       </div>
-
     </div>
   )
 }
 
 // ── Main MiniMap component ────────────────────────────────────────────────────
 
-export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef, scrollToTopRef }: Props) {
+export default function MiniMap({ turns, positions, billing, controlRef, scrollToIndexRef, scrollToTopRef }: Props) {
   const barCount = turns.length
   const containerRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const rangeLabelRef = useRef<HTMLSpanElement>(null)
-  const draggingRef = useRef(false)
-  const dragOffsetRef = useRef(0)
-  const scrollFrameRef = useRef(0)
-  const pendingScrollTopRef = useRef<number | null>(null)
   const scrollMetricsRef = useRef<ScrollMetrics>()
   const visibleRangeRef = useRef<VisibleTurnRange>()
   const trackLengthRef = useRef(0)
-  const [isDragging, setIsDragging] = useState(false)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const [activePositionKey, setActivePositionKey] = useState<string | null>(null)
   // contentOffset drives the markers layer transform in position mode; stored
   // as ref so PositionModeContent re-renders on scroll without extra state churn.
   const contentOffsetRef = useRef(0)
-  const [contentOffsetVersion, setContentOffsetVersion] = useState(0)
+  const [, setContentOffsetVersion] = useState(0)
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
+  const weights = useMemo(() => computeTurnWeights(turns, billing), [turns, billing])
 
   const usePositions = positions != null && positions.positions.length > 0
 
@@ -177,9 +243,8 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
     const totalLines = positions.total_lines
     const trackLength = trackLengthRef.current
     const contentHeight = computeContentHeight(totalLines, trackLength)
-    const lineHeight = 16
-    const viewportLine = scrollTop / lineHeight
-    const rows = Math.round(clientHeight / lineHeight)
+    const viewportLine = scrollTop / TERMINAL_LINE_HEIGHT
+    const rows = Math.round(clientHeight / TERMINAL_LINE_HEIGHT)
     const scrollRatio = clamp(viewportLine / Math.max(totalLines - rows, 1), 0, 1)
     const offset = scrollRatio * Math.max(contentHeight - trackLength, 0)
     const vpTopInContent = (viewportLine / totalLines) * contentHeight
@@ -209,11 +274,13 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
     const length = trackLengthRef.current
     if (usePositions) {
       applyPositionViewport(metrics.scrollTop, metrics.clientHeight)
-    } else if (viewport && length > 0) {
-      const frame = getViewportFrame(metrics, length)
+    } else if (viewport && length > 0 && metrics.scrollHeight > 0) {
+      const ratio = metrics.scrollTop / Math.max(metrics.scrollHeight - metrics.clientHeight, 1)
+      const vpHeight = clamp((metrics.clientHeight / metrics.scrollHeight) * length, 28, length)
+      const top = clamp(ratio * (length - vpHeight), 0, Math.max(0, length - vpHeight))
       viewport.style.display = 'block'
-      viewport.style.transform = `translateY(${frame.top}px)`
-      viewport.style.height = `${frame.height}px`
+      viewport.style.transform = `translateY(${top}px)`
+      viewport.style.height = `${vpHeight}px`
     }
     if (rangeLabelRef.current) {
       const displayCount = usePositions ? (positions?.total_lines ?? 0) : barCount
@@ -248,102 +315,29 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
     return () => resizeObserver.disconnect()
   }, [barCount, usePositions, positions?.total_lines])
 
-  function scrollTo(index: number, behavior: ReplayScrollBehavior = 'smooth') {
-    if (barCount === 0) return
-    scrollToIndexRef?.current?.(clamp(index, 0, barCount - 1), behavior)
-  }
-
   function scrollToLine(line: number) {
-    scrollToTopRef?.current?.(line * 16, 'auto')
+    scrollToTopRef?.current?.(line * TERMINAL_LINE_HEIGHT, 'auto')
   }
 
-  function scrollFromPointer(clientY: number) {
-    if (!containerRef.current) return
-    const rect = containerRef.current.getBoundingClientRect()
-    const scrollMetrics = scrollMetricsRef.current
-    if (scrollMetrics && scrollToTopRef?.current) {
-      const viewportFrame = getViewportFrame(scrollMetrics, rect.height)
-      const nextScrollTop = getScrollTopFromTrackPosition({
-        pointerPosition: clientY,
-        trackStart: rect.top,
-        trackLength: rect.height,
-        viewportLength: viewportFrame.height,
-        scrollHeight: scrollMetrics.scrollHeight,
-        clientHeight: scrollMetrics.clientHeight,
-        dragOffset: dragOffsetRef.current,
-      })
+  // Click-to-jump: a single click moves the viewport to the clicked spot.
+  function handleTrackClick(e: React.MouseEvent<HTMLDivElement>) {
+    const container = containerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const y = clamp(e.clientY - rect.top, 0, rect.height)
 
-      if (usePositions) {
-        applyPositionViewport(nextScrollTop, scrollMetrics.clientHeight)
-      } else if (viewportRef.current) {
-        const displayHeight = viewportFrame.height
-        const maxScroll = scrollMetrics.scrollHeight - scrollMetrics.clientHeight
-        const maxTop = Math.max(0, rect.height - displayHeight)
-        const visualTop = maxScroll > 0
-          ? clamp((nextScrollTop / maxScroll) * maxTop, 0, maxTop)
-          : 0
-        viewportRef.current.style.transform = `translateY(${visualTop}px)`
-        viewportRef.current.style.height = `${displayHeight}px`
-      }
-
-      pendingScrollTopRef.current = nextScrollTop
-      if (!scrollFrameRef.current) {
-        scrollFrameRef.current = window.requestAnimationFrame(() => {
-          scrollFrameRef.current = 0
-          const pending = pendingScrollTopRef.current
-          if (pending === null) return
-          pendingScrollTopRef.current = null
-          scrollToTopRef.current?.(pending, 'auto')
-        })
-      }
+    if (usePositions && positions) {
+      const contentHeight = computeContentHeight(positions.total_lines, rect.height)
+      const line = ((y + contentOffsetRef.current) / contentHeight) * positions.total_lines
+      const metrics = scrollMetricsRef.current
+      const rows = metrics ? Math.round(metrics.clientHeight / TERMINAL_LINE_HEIGHT) : 0
+      scrollToLine(Math.max(0, Math.round(line - rows / 2)))
       return
     }
 
     if (barCount === 0) return
-    const ratio = clamp((clientY - rect.top) / rect.height, 0, 1)
-    const visibleRange = visibleRangeRef.current
-    const visibleCount = visibleRange ? visibleRange.end - visibleRange.start + 1 : 1
-    const maxStart = Math.max(0, barCount - visibleCount)
-    const targetIndex = Math.round(ratio * maxStart)
-    scrollTo(targetIndex, 'auto')
-  }
-
-  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    draggingRef.current = true
-    setIsDragging(true)
-    e.currentTarget.setPointerCapture(e.pointerId)
-    const scrollMetrics = scrollMetricsRef.current
-    const viewportFrame = containerRef.current && scrollMetrics
-      ? getViewportFrame(scrollMetrics, containerRef.current.getBoundingClientRect().height)
-      : undefined
-    if (containerRef.current && viewportFrame) {
-      const rect = containerRef.current.getBoundingClientRect()
-      const trackY = e.clientY - rect.top
-      const insideViewport = trackY >= viewportFrame.top && trackY <= viewportFrame.top + viewportFrame.height
-      dragOffsetRef.current = insideViewport ? trackY - viewportFrame.top : viewportFrame.height / 2
-    } else {
-      dragOffsetRef.current = 0
-    }
-    scrollFromPointer(e.clientY)
-  }
-
-  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (!draggingRef.current) return
-    scrollFromPointer(e.clientY)
-  }
-
-  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    draggingRef.current = false
-    setIsDragging(false)
-    if (scrollFrameRef.current) {
-      window.cancelAnimationFrame(scrollFrameRef.current)
-      scrollFrameRef.current = 0
-    }
-    if (pendingScrollTopRef.current !== null) {
-      scrollToTopRef?.current?.(pendingScrollTopRef.current, 'auto')
-      pendingScrollTopRef.current = null
-    }
-    e.currentTarget.releasePointerCapture(e.pointerId)
+    const targetIndex = Math.round((y / rect.height) * (barCount - 1))
+    scrollToIndexRef?.current?.(clamp(targetIndex, 0, barCount - 1), 'auto')
   }
 
   if (barCount === 0 && !usePositions) {
@@ -357,20 +351,21 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
   return (
     <nav
       className="minimap-shell flex-shrink-0 border-l border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col select-none"
-      aria-label="MiniMap"
+      aria-label="消耗剖面图"
     >
       <div
         ref={containerRef}
         className="flex-1 relative overflow-hidden bg-[var(--bg-inset)]"
-        style={{ cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
+        style={{ cursor: 'pointer' }}
+        onClick={handleTrackClick}
+        title="点击跳转到对应位置"
       >
         {usePositions ? (
           <PositionModeContent
             positions={positions!}
+            turns={turns}
+            weights={weights}
+            billingUnit={billing?.billing_unit}
             visibleTrackHeight={trackLengthRef.current}
             contentOffset={contentOffsetRef.current}
             activeKey={activePositionKey}
@@ -387,11 +382,12 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
               const tokens = getTotalTokens(turn)
               const rowTop = `${getMiniMapTurnPositionPercent(index, barCount)}%`
               const rowTransform = index === 0 ? 'translateY(0)' : index === barCount - 1 ? 'translateY(-100%)' : 'translateY(-50%)'
+              const tw = weights.get(turn.turn_index)
               const pressureRatio = tokens / maxTokens
               const pressureTone = getTokenPressureTone(pressureRatio)
               const eventKind = getMiniMapEventKind(turn)
               const eventLabel = eventKind ? eventLabels[eventKind] : ''
-              const title = `Turn ${turn.turn_index}: ${tokens.toLocaleString()} tokens${eventLabel ? ` · ${eventLabel}` : ''}`
+              const title = `${turnTitle(turn, tw, billing?.billing_unit)}${eventLabel ? ` · ${eventLabel}` : ''}`
 
               return (
                 <div
@@ -408,11 +404,10 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
                       } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
                       title={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
                       aria-label={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
-                      onPointerDown={e => e.stopPropagation()}
                       onClick={e => {
                         e.stopPropagation()
                         setActiveIndex(index)
-                        scrollTo(index)
+                        scrollToIndexRef?.current?.(clamp(index, 0, barCount - 1), 'smooth')
                       }}
                     >
                       {eventShortLabels[eventKind]}
@@ -430,7 +425,7 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
           </>
         )}
 
-        {/* Shared viewport frame — controlled imperatively via viewportRef */}
+        {/* Viewport frame — passive "you are here" indicator */}
         <div
           ref={viewportRef}
           className="absolute left-[4px] right-[8px] top-0 pointer-events-none rounded-sm"
@@ -438,7 +433,7 @@ export default function MiniMap({ turns, positions, controlRef, scrollToIndexRef
             display: 'none',
             background: 'rgba(37, 99, 235, 0.12)',
             border: '1px solid var(--accent-blue)',
-            boxShadow: isDragging ? 'inset 0 0 0 1px var(--accent-blue)' : '0 0 0 1px rgba(37, 99, 235, 0.08)',
+            boxShadow: '0 0 0 1px rgba(37, 99, 235, 0.08)',
             willChange: 'transform',
           }}
         >

@@ -115,15 +115,22 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 	return tb.String(), deduped
 }
 
+// FormatVersion increments whenever the ANSI layout changes in a way that
+// shifts line numbers, so cached line positions keyed on it are invalidated.
+const FormatVersion int64 = 2
+
 func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
+	// A turn start must be findable at a glance when scrolling or after a
+	// jump: solid inverse-video badge followed by a heavy rule, instead of
+	// the earlier single muted line that blended into the transcript.
 	label := fmt.Sprintf(" Turn %d ", turnIdx)
-	half := (termWidth - len(label)) / 2
-	if half < 1 {
-		half = 1
+	rest := termWidth - len(label)
+	if rest < 1 {
+		rest = 1
 	}
-	line := strings.Repeat("─", half) + label + strings.Repeat("─", termWidth-half-len(label))
 	sb.WriteString("\n")
-	sb.WriteString(fgWrap(line, ColMuted))
+	sb.WriteString(styled(label, ColFg, ColTool, true, false))
+	sb.WriteString(fgWrap(strings.Repeat("━", rest), ColTool))
 	sb.WriteString("\n")
 }
 

@@ -82,6 +82,18 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
     let hoverMarker: IMarker | null = null
     let activeHoverLine: number | null = null
 
+    // Jump-flash state (hoisted so the effect cleanup can dispose it)
+    let flashMarkers: IMarker[] = []
+    let flashDecorations: IDecoration[] = []
+    let flashTimer: ReturnType<typeof setTimeout> | null = null
+    const clearFlash = () => {
+      if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
+      flashDecorations.forEach(d => d.dispose())
+      flashMarkers.forEach(m => m.dispose())
+      flashDecorations = []
+      flashMarkers = []
+    }
+
     let onMouseMove: ((e: MouseEvent) => void) | null = null
     let onMouseLeave: (() => void) | null = null
     let onClick: ((e: MouseEvent) => void) | null = null
@@ -144,6 +156,39 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
         hoverDecoration = null
         hoverMarker = null
         activeHoverLine = null
+      }
+
+      const flashLines = (startLine: number, count = 2) => {
+        clearFlash()
+        for (let i = 0; i < count; i++) {
+          const offset = getMarkerOffsetForBufferLine({
+            bufferLine: startLine + i,
+            baseY: term.buffer.active.baseY,
+            cursorY: term.buffer.active.cursorY,
+          })
+          const marker = term.registerMarker(offset)
+          if (!marker) continue
+          let decoration: IDecoration | undefined
+          try {
+            decoration = term.registerDecoration({ marker, width: term.cols, height: 1, layer: 'top' })
+          } catch {
+            marker.dispose()
+            continue
+          }
+          if (!decoration) { marker.dispose(); continue }
+          decoration.onRender(element => {
+            element.style.pointerEvents = 'none'
+            element.style.left = '0'
+            element.style.width = '100%'
+            element.style.boxSizing = 'border-box'
+            element.style.background = 'rgba(37, 99, 235, 0.30)'
+            element.style.transition = 'background 1.2s ease-out 0.2s'
+            requestAnimationFrame(() => { element.style.background = 'rgba(37, 99, 235, 0)' })
+          })
+          flashMarkers.push(marker)
+          flashDecorations.push(decoration)
+        }
+        flashTimer = setTimeout(clearFlash, 1600)
       }
 
       const hideHover = () => {
@@ -299,6 +344,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
             lineMatchers = matchers
             if (term.buffer.active.length > 1) scanBuffer()
           },
+          flashLines,
         }
       }
 
@@ -341,6 +387,7 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
       if (onClick) eventTarget.removeEventListener('click', onClick)
       hoverDecoration?.dispose()
       hoverMarker?.dispose()
+      clearFlash()
       tooltipEl?.remove()
       if (controlRef) controlRef.current = null
       termRef.current = null
