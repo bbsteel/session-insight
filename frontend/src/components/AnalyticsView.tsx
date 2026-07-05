@@ -65,6 +65,12 @@ interface AnalyticsData {
     est_cost?: number
   }[]
   cost_precision?: string
+  findings?: {
+    severity: 'critical' | 'warn' | 'info'
+    title: string
+    detail: string
+    turn_index?: number
+  }[]
   tool_freq: Record<string, number>
   context_window: number
   context_peak: number
@@ -403,6 +409,34 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn }: Pr
                 <span className="text-meta text-[var(--text-muted)]">{todo.status}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Waste pattern findings */}
+      {data.findings && data.findings.length > 0 && (
+        <div className="px-4 pb-4">
+          <h3 className="text-body font-semibold text-[var(--text-primary)] mb-2">
+            浪费模式检测
+            <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">自动从消耗数据中提炼的结论</span>
+          </h3>
+          <div className="space-y-2">
+            {data.findings.map((f, i) => {
+              const color = f.severity === 'critical' ? 'var(--error)' : f.severity === 'warn' ? 'var(--warning)' : 'var(--accent-blue)'
+              const clickable = f.turn_index !== undefined && onJumpToTurn
+              const Tag = clickable ? 'button' : 'div'
+              return (
+                <Tag
+                  key={i}
+                  onClick={clickable ? () => onJumpToTurn!(f.turn_index!) : undefined}
+                  className={`w-full text-left bg-[var(--bg-inset)] rounded-md p-3 border-l-2 ${clickable ? 'hover:bg-[var(--bg-surface-hover)] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]' : ''}`}
+                  style={{ borderLeftColor: color }}
+                >
+                  <div className="text-body font-medium" style={{ color }}>{f.title}</div>
+                  <div className="text-body text-[var(--text-secondary)] mt-0.5">{f.detail}</div>
+                </Tag>
+              )
+            })}
           </div>
         </div>
       )}

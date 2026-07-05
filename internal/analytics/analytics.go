@@ -53,7 +53,8 @@ type Result struct {
 	Billing          *model.SessionBilling `json:"billing,omitempty"`
 	// CostPrecision qualifies the per-turn EstCost values: "estimated" when
 	// a session bill was spread over turns, "" when no attribution happened.
-	CostPrecision string `json:"cost_precision,omitempty"`
+	CostPrecision string    `json:"cost_precision,omitempty"`
+	Findings      []Finding `json:"findings,omitempty"`
 }
 
 // Compute derives all session analytics from a SessionDetail.
@@ -102,6 +103,7 @@ func Compute(detail *model.SessionDetail) Result {
 
 	billing := resolveBilling(detail, turnTotals)
 	costPrecision := attributeCostToTurns(timeline, billing)
+	findings := detectFindings(detail, timeline, billing, costPrecision == model.PrecisionEstimated)
 
 	// Headline token numbers come from the bill when the agent reported one
 	// (session-level aggregates are authoritative for agents like Copilot
@@ -179,6 +181,7 @@ func Compute(detail *model.SessionDetail) Result {
 		PressurePct:      pressurePct,
 		Billing:          billing,
 		CostPrecision:    costPrecision,
+		Findings:         findings,
 	}
 }
 
