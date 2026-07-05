@@ -394,7 +394,7 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
         <div className="flex min-w-0 flex-1 overflow-hidden">
           {viewMode === 'analytics' ? (
             <Suspense fallback={<AnalyticsSkeleton />}>
-              <AnalyticsView sessionId={session.id} />
+              <AnalyticsView sessionId={session.id} agentType={session.agent_type} />
             </Suspense>
           ) : (
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
