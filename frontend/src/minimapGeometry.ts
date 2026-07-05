@@ -13,7 +13,9 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
 
-export function getViewportFrame(metrics: ScrollMetrics, trackLength: number, minLength = 28): ViewportFrame {
+// minLength keeps the frame grabbable on long documents; must stay in sync
+// with the position-mode clamp in MiniMap.posViewport or drag mapping drifts.
+export function getViewportFrame(metrics: ScrollMetrics, trackLength: number, minLength = 48): ViewportFrame {
   if (trackLength <= 0 || metrics.scrollHeight <= 0 || metrics.clientHeight <= 0) {
     return { top: 0, height: Math.max(trackLength, 0) }
   }

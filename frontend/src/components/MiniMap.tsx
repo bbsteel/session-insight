@@ -262,7 +262,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
     const scrollRatio = clamp(viewportLine / Math.max(totalLines - rows, 1), 0, 1)
     const offset = scrollRatio * Math.max(contentHeight - trackLength, 0)
     const vpTopInContent = (viewportLine / totalLines) * contentHeight
-    const vpHeight = clamp((rows / totalLines) * contentHeight, 28, trackLength)
+    // Min height must match getViewportFrame's minLength (drag geometry).
+    const vpHeight = clamp((rows / totalLines) * contentHeight, 48, trackLength)
     const vpTop = clamp(vpTopInContent - offset, 0, Math.max(0, trackLength - vpHeight))
     return { top: vpTop, height: vpHeight, offset }
   }
