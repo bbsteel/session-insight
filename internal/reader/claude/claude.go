@@ -457,10 +457,20 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 			}
 
 			if msg.Usage != nil {
-				currentTurn.TokenUsage.PromptTokens += msg.Usage.InputTokens
-				currentTurn.TokenUsage.CompletionTokens += msg.Usage.OutputTokens
-				currentTurn.TokenUsage.CacheReadTokens += msg.Usage.CacheReadInputTokens
-				currentTurn.TokenUsage.CacheWriteTokens += msg.Usage.CacheCreationInputTokens
+				// Claude's usage is already in canonical exclusive semantics:
+				// input_tokens excludes both cache buckets.
+				u := &currentTurn.TokenUsage
+				u.PromptTokens += msg.Usage.InputTokens
+				u.CompletionTokens += msg.Usage.OutputTokens
+				u.CacheReadTokens += msg.Usage.CacheReadInputTokens
+				u.CacheWriteTokens += msg.Usage.CacheCreationInputTokens
+				u.Present.Input = model.PresenceExact
+				u.Present.Output = model.PresenceExact
+				u.Present.CacheRead = model.PresenceExact
+				u.Present.CacheWrite = model.PresenceExact
+				// Thinking tokens are billed inside output_tokens with no
+				// separate count: the reasoning bucket does not exist here.
+				u.Present.Reasoning = model.PresenceNA
 			}
 
 			var textParts []string

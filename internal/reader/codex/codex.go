@@ -484,9 +484,27 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 			case "token_count":
 				if currentTurn != nil && p.Info != nil {
 					u := &currentTurn.TokenUsage
-					u.PromptTokens += p.Info.LastTokenUsage.InputTokens
-					u.CompletionTokens += p.Info.LastTokenUsage.OutputTokens
-					u.CacheReadTokens += p.Info.LastTokenUsage.CachedInputTokens
+					last := p.Info.LastTokenUsage
+					// Codex uses inclusive semantics: cached_input_tokens is a
+					// subset of input_tokens, and reasoning_output_tokens a
+					// subset of output_tokens. Canonical buckets are mutually
+					// exclusive, so subtract cache from input; reasoning stays
+					// an annotation and is never added to output.
+					fresh := last.InputTokens - last.CachedInputTokens
+					if fresh < 0 {
+						fresh = 0
+					}
+					u.PromptTokens += fresh
+					u.CompletionTokens += last.OutputTokens
+					u.CacheReadTokens += last.CachedInputTokens
+					u.ReasoningTokens += last.ReasoningOutputTokens
+					u.Present.Input = model.PresenceExact
+					u.Present.Output = model.PresenceExact
+					u.Present.CacheRead = model.PresenceExact
+					u.Present.Reasoning = model.PresenceExact
+					// OpenAI prompt caching is automatic and free: the
+					// cache_write concept does not exist for this agent.
+					u.Present.CacheWrite = model.PresenceNA
 				}
 
 			case "patch_apply_end":

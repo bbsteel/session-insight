@@ -7,6 +7,39 @@ import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
+interface TokenPresence {
+  input?: string
+  output?: string
+  cache_read?: string
+  cache_write?: string
+  reasoning?: string
+}
+
+interface BillTokenUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  reasoning_tokens?: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  premium_requests: number
+  present: TokenPresence
+}
+
+interface ModelUsage {
+  model: string
+  requests: number
+  billing_amount?: number
+  usage: BillTokenUsage
+}
+
+interface SessionBilling {
+  precision: string
+  billing_unit?: string
+  billing_amount?: number
+  totals: BillTokenUsage
+  by_model?: ModelUsage[]
+}
+
 interface AnalyticsData {
   total_tokens: number
   todo_count: number
@@ -16,6 +49,7 @@ interface AnalyticsData {
   completion_tokens: number
   cache_read_tokens: number
   cache_hit_rate: number
+  billing?: SessionBilling
   total_tools: number
   total_errors: number
   anomaly_count: number
@@ -45,6 +79,22 @@ interface Props {
 
 function fmtNumber(n: number): string {
   return n.toLocaleString()
+}
+
+function fmtBillingAmount(amount: number, unit?: string): string {
+  switch (unit) {
+    case 'aiu': return `${amount.toFixed(2)} AIU`
+    case 'usd': return `$${amount.toFixed(4)}`
+    case 'premium_requests': return `${amount} premium`
+    default: return fmtNumber(Math.round(amount))
+  }
+}
+
+// A bucket value is only meaningful when the agent actually reported it
+// ("exact"); both "n/a" (concept doesn't exist for this agent) and missing
+// data render an em dash instead of a fake 0.
+function bucketText(value: number, presence?: string): string {
+  return presence === 'exact' ? fmtNumber(value) : '—'
 }
 
 export default function AnalyticsView({ sessionId }: Props) {
@@ -98,22 +148,25 @@ export default function AnalyticsView({ sessionId }: Props) {
     legend: { data: ['Tokens', 'Cumulative'], textStyle: { fontSize: 10, color: textColor }, top: 0 },
   }
 
+  const present = data.billing?.totals?.present
+  const cacheKnown = present?.input === 'exact' && present?.cache_read === 'exact'
+
   return (
     <div className="flex-1 overflow-auto bg-[var(--bg-surface)]">
       {/* Key metrics */}
       <div className="grid grid-cols-7 gap-3 p-4">
         {[
-          ['Total Tokens', fmtNumber(data.total_tokens)],
-          ['Cache Rate', `${data.cache_hit_rate.toFixed(1)}%`],
+          ['Total Tokens', present?.input === 'exact' ? fmtNumber(data.total_tokens) : '—'],
+          ['Cache Rate', cacheKnown ? `${data.cache_hit_rate.toFixed(1)}%` : '—'],
           ['Tools Used', String(data.total_tools)],
           ['Anomalies', String(data.anomaly_count)],
           ['Turn Count', String(data.turn_count)],
           ['Errors', String(data.total_errors)],
-          ['Avg Tok/Turn', fmtNumber(Math.round(data.token_efficiency))],
+          ['Avg Tok/Turn', present?.input === 'exact' ? fmtNumber(Math.round(data.token_efficiency)) : '—'],
           ['Context Peak', fmtNumber(data.context_peak)],
           ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
           ['Health', `${data.health_score} (${data.health_grade})`],
-          ['Prompt Tok', fmtNumber(data.prompt_tokens)],
+          ['Prompt Tok', bucketText(data.prompt_tokens, present?.input)],
 ['Todos', data.todo_count > 0 ? `${data.todo_done}/${data.todo_count}` : '-'],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2 text-center">
@@ -122,6 +175,68 @@ export default function AnalyticsView({ sessionId }: Props) {
           </div>
         ))}
       </div>
+
+      {/* Session bill */}
+      {data.billing && (
+        <div className="px-4 pb-4">
+          <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-2">Session Bill</h3>
+          {data.billing.precision === 'missing' ? (
+            <div className="bg-[var(--bg-inset)] rounded-lg p-3 text-body text-[var(--warning)]">
+              会话未正常退出（缺少 session.shutdown），该 agent 的账单数据不可得
+            </div>
+          ) : (
+            <div className="bg-[var(--bg-inset)] rounded-lg p-3 space-y-2">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                {data.billing.billing_unit && (
+                  <span className="text-lg font-semibold text-[var(--text-primary)]">
+                    {fmtBillingAmount(data.billing.billing_amount ?? 0, data.billing.billing_unit)}
+                  </span>
+                )}
+                {data.billing.precision === 'estimated' && (
+                  <span className="text-meta px-1.5 py-0.5 rounded-sm bg-[var(--warning)]/20 text-[var(--warning)]">估算</span>
+                )}
+                {data.billing.totals.premium_requests > 0 && (
+                  <span className="text-meta text-[var(--text-muted)]">{data.billing.totals.premium_requests} premium requests</span>
+                )}
+                <span className="text-meta text-[var(--text-muted)]">
+                  input {bucketText(data.billing.totals.prompt_tokens, present?.input)}
+                  {' · '}cache read {bucketText(data.billing.totals.cache_read_tokens, present?.cache_read)}
+                  {' · '}cache write {bucketText(data.billing.totals.cache_write_tokens, present?.cache_write)}
+                  {' · '}output {bucketText(data.billing.totals.completion_tokens, present?.output)}
+                </span>
+              </div>
+              {data.billing.by_model && data.billing.by_model.length > 0 && (
+                <table className="w-full text-meta">
+                  <thead>
+                    <tr className="text-[var(--text-muted)] text-left">
+                      <th className="font-normal py-1">Model</th>
+                      <th className="font-normal py-1 text-right">Requests</th>
+                      <th className="font-normal py-1 text-right">Cost</th>
+                      <th className="font-normal py-1 text-right">Input</th>
+                      <th className="font-normal py-1 text-right">Cache Read</th>
+                      <th className="font-normal py-1 text-right">Output</th>
+                      <th className="font-normal py-1 text-right">Reasoning</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.billing.by_model.map(m => (
+                      <tr key={m.model} className="border-t border-[var(--border-muted)] text-[var(--text-primary)]">
+                        <td className="py-1">{m.model}</td>
+                        <td className="py-1 text-right">{m.requests}</td>
+                        <td className="py-1 text-right">{fmtBillingAmount(m.billing_amount ?? 0, data.billing!.billing_unit)}</td>
+                        <td className="py-1 text-right">{bucketText(m.usage.prompt_tokens, m.usage.present?.input)}</td>
+                        <td className="py-1 text-right">{bucketText(m.usage.cache_read_tokens, m.usage.present?.cache_read)}</td>
+                        <td className="py-1 text-right">{bucketText(m.usage.completion_tokens, m.usage.present?.output)}</td>
+                        <td className="py-1 text-right">{bucketText(m.usage.reasoning_tokens ?? 0, m.usage.present?.reasoning)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tool frequency */}
       {Object.keys(data.tool_freq).length > 0 && (

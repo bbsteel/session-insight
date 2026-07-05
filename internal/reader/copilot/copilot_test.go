@@ -5,7 +5,110 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"session-insight/internal/model"
 )
+
+// Sanitized replica of a real session.shutdown payload. The usage.* blocks
+// deliberately carry inclusive input semantics (input includes cache reads)
+// while tokenDetails.* carries exclusive semantics — the parser must read
+// tokenDetails, so the totals below only pass when the right source is used.
+const shutdownEvent = `{"type":"session.shutdown","timestamp":"2026-01-01T00:00:02Z","data":{"shutdownType":"routine","totalPremiumRequests":3,"totalNanoAiu":1500000000,"tokenDetails":{"input":{"tokenCount":1000},"cache_read":{"tokenCount":9000},"output":{"tokenCount":500},"cache_write":{"tokenCount":200}},"modelMetrics":{"gpt-x":{"requests":{"count":10,"cost":3},"totalNanoAiu":1000000000,"usage":{"inputTokens":9600,"outputTokens":400,"cacheReadTokens":9000,"cacheWriteTokens":200,"reasoningTokens":50},"tokenDetails":{"input":{"tokenCount":600},"cache_read":{"tokenCount":9000},"output":{"tokenCount":400}}},"gpt-x-mini":{"requests":{"count":2,"cost":0},"totalNanoAiu":500000000,"usage":{"reasoningTokens":5},"tokenDetails":{"input":{"tokenCount":400},"cache_read":{"tokenCount":0},"output":{"tokenCount":100}}}}}}`
+
+func writeBillingSession(t *testing.T, dir, id string, events []string) {
+	t.Helper()
+	sessionDir := filepath.Join(dir, id)
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	wsYAML := "id: " + id + "\ncreated_at: 2026-06-12T10:00:00Z\nupdated_at: 2026-06-12T11:00:00Z\n"
+	os.WriteFile(filepath.Join(sessionDir, "workspace.yaml"), []byte(wsYAML), 0644)
+	os.WriteFile(filepath.Join(sessionDir, "events.jsonl"), []byte(strings.Join(events, "\n")), 0644)
+}
+
+func TestGetSessionBillingFromShutdown(t *testing.T) {
+	dir := t.TempDir()
+	writeBillingSession(t, dir, "sess-bill", []string{
+		`{"type":"user.message","timestamp":"2026-01-01T00:00:00Z","data":{"content":"hi"}}`,
+		`{"type":"assistant.message","timestamp":"2026-01-01T00:00:01Z","data":{"content":"hello","outputTokens":42}}`,
+		shutdownEvent,
+	})
+
+	detail, err := New(dir).GetSession("sess-bill")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+
+	b := detail.Billing
+	if b == nil {
+		t.Fatal("expected billing from session.shutdown")
+	}
+	if b.Precision != model.PrecisionExact || b.BillingUnit != "aiu" {
+		t.Errorf("precision/unit mismatch: %+v", b)
+	}
+	if b.BillingAmount != 1.5 {
+		t.Errorf("expected 1.5 AIU (1.5e9 nano), got %v", b.BillingAmount)
+	}
+	// prompt=1000 proves tokenDetails (exclusive) was used; the inclusive
+	// usage numbers would have produced 9600+.
+	tot := b.Totals
+	if tot.PromptTokens != 1000 || tot.CacheReadTokens != 9000 || tot.CompletionTokens != 500 || tot.CacheWriteTokens != 200 {
+		t.Errorf("totals mismatch (wrong semantics source?): %+v", tot)
+	}
+	if tot.PremiumRequests != 3 {
+		t.Errorf("expected premium=3 from totalPremiumRequests, got %d", tot.PremiumRequests)
+	}
+	if tot.ReasoningTokens != 55 || tot.Present.Reasoning != model.PresenceExact {
+		t.Errorf("expected reasoning=55 rolled up from models, got %d (%s)", tot.ReasoningTokens, tot.Present.Reasoning)
+	}
+
+	if len(b.ByModel) != 2 || b.ByModel[0].Model != "gpt-x" {
+		t.Fatalf("expected 2 models sorted by AIU desc, got %+v", b.ByModel)
+	}
+	top := b.ByModel[0]
+	if top.Requests != 10 || top.BillingAmount != 1.0 {
+		t.Errorf("gpt-x requests/amount mismatch: %+v", top)
+	}
+	if top.Usage.PromptTokens != 600 {
+		t.Errorf("per-model prompt must come from tokenDetails (600), got %d", top.Usage.PromptTokens)
+	}
+	// cache_write is absent from gpt-x tokenDetails and must fall back to
+	// usage.cacheWriteTokens.
+	if top.Usage.CacheWriteTokens != 200 || top.Usage.Present.CacheWrite != model.PresenceExact {
+		t.Errorf("cache_write fallback failed: %+v", top.Usage)
+	}
+	if top.Usage.ReasoningTokens != 50 {
+		t.Errorf("expected reasoning=50, got %d", top.Usage.ReasoningTokens)
+	}
+
+	// Turn-level: only output is known for Copilot.
+	u := detail.Turns[0].TokenUsage
+	if u.CompletionTokens != 42 || u.Present.Output != model.PresenceExact {
+		t.Errorf("turn output mismatch: %+v", u)
+	}
+	if u.Present.Input != model.PresenceMissing {
+		t.Errorf("turn input presence should be missing, got %s", u.Present.Input)
+	}
+}
+
+func TestGetSessionBillingMissingShutdown(t *testing.T) {
+	dir := t.TempDir()
+	writeBillingSession(t, dir, "sess-killed", []string{
+		`{"type":"user.message","timestamp":"2026-01-01T00:00:00Z","data":{"content":"hi"}}`,
+		`{"type":"assistant.message","timestamp":"2026-01-01T00:00:01Z","data":{"content":"hello","outputTokens":42}}`,
+	})
+
+	detail, err := New(dir).GetSession("sess-killed")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if detail.Billing == nil || detail.Billing.Precision != model.PrecisionMissing {
+		t.Errorf("killed session must report a missing bill, got %+v", detail.Billing)
+	}
+	if !detail.AnomalySummary.MissingShutdown {
+		t.Error("expected MissingShutdown anomaly")
+	}
+}
 
 func TestListSessions(t *testing.T) {
 	dir := t.TempDir()

@@ -40,12 +40,96 @@ type Session struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// Presence marks whether a token bucket was actually reported by the agent.
+// Zero value ("") means the data is unavailable from the source; "exact" means
+// the agent reported it; "n/a" means the concept does not exist for this agent
+// (e.g. cache_write where the provider's cache is automatic and free).
+// The distinction drives UI behavior: unavailable → estimation path with an
+// "estimated" badge, n/a → render "—" and exclude from derived metrics.
+type Presence string
+
+const (
+	PresenceMissing Presence = ""
+	PresenceExact   Presence = "exact"
+	PresenceNA      Presence = "n/a"
+)
+
+type TokenPresence struct {
+	Input      Presence `json:"input,omitempty"`
+	Output     Presence `json:"output,omitempty"`
+	CacheRead  Presence `json:"cache_read,omitempty"`
+	CacheWrite Presence `json:"cache_write,omitempty"`
+	Reasoning  Presence `json:"reasoning,omitempty"`
+}
+
+// TokenUsage holds the canonical token buckets defined in
+// docs/superpowers/specs/2026-07-05-usage-accounting-design.md.
+// PromptTokens, CacheReadTokens and CacheWriteTokens are mutually exclusive;
+// true total input = the sum of the three. ReasoningTokens is an
+// informational subset of CompletionTokens and must never be added to it.
+// Readers are responsible for converting each agent's native semantics
+// (inclusive vs exclusive) into these buckets.
 type TokenUsage struct {
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	CacheReadTokens  int64 `json:"cache_read_tokens"`
-	CacheWriteTokens int64 `json:"cache_write_tokens"`
-	PremiumRequests  int   `json:"premium_requests"`
+	PromptTokens     int64         `json:"prompt_tokens"`
+	CompletionTokens int64         `json:"completion_tokens"`
+	ReasoningTokens  int64         `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens  int64         `json:"cache_read_tokens"`
+	CacheWriteTokens int64         `json:"cache_write_tokens"`
+	PremiumRequests  int           `json:"premium_requests"`
+	Present          TokenPresence `json:"present"`
+}
+
+// ModelUsage is one model's share of a session bill.
+type ModelUsage struct {
+	Model         string     `json:"model"`
+	Requests      int        `json:"requests"`
+	BillingAmount float64    `json:"billing_amount,omitempty"`
+	Usage         TokenUsage `json:"usage"`
+}
+
+// SessionBilling is the session-level bill in the agent's native billing
+// unit ("aiu", "premium_requests", "usd"; empty when the agent has no billed
+// unit). Precision is "exact" when the agent reported the bill, "estimated"
+// when analytics derived it, "missing" when the source data is absent (e.g.
+// a killed Copilot session never wrote session.shutdown).
+type SessionBilling struct {
+	Precision     string       `json:"precision"`
+	BillingUnit   string       `json:"billing_unit,omitempty"`
+	BillingAmount float64      `json:"billing_amount,omitempty"`
+	Totals        TokenUsage   `json:"totals"`
+	ByModel       []ModelUsage `json:"by_model,omitempty"`
+}
+
+const (
+	PrecisionExact     = "exact"
+	PrecisionEstimated = "estimated"
+	PrecisionMissing   = "missing"
+)
+
+// AddUsage accumulates o into u, widening presence per bucket.
+func (u *TokenUsage) AddUsage(o TokenUsage) {
+	u.PromptTokens += o.PromptTokens
+	u.CompletionTokens += o.CompletionTokens
+	u.ReasoningTokens += o.ReasoningTokens
+	u.CacheReadTokens += o.CacheReadTokens
+	u.CacheWriteTokens += o.CacheWriteTokens
+	u.PremiumRequests += o.PremiumRequests
+	MergePresence(&u.Present, o.Present)
+}
+
+// MergePresence widens dst so a bucket counts as present when any
+// contributing source reported it; "n/a" only sticks when no source has data.
+func MergePresence(dst *TokenPresence, src TokenPresence) {
+	pick := func(d *Presence, s Presence) {
+		if s == PresenceExact || (*d == PresenceMissing && s != PresenceMissing) {
+			*d = s
+		}
+	}
+	pick(&dst.Input, src.Input)
+	pick(&dst.Output, src.Output)
+	pick(&dst.CacheRead, src.CacheRead)
+	pick(&dst.CacheWrite, src.CacheWrite)
+	pick(&dst.Reasoning, src.Reasoning)
 }
 
 type Turn struct {
@@ -102,9 +186,10 @@ type AnomalySummary struct {
 
 type SessionDetail struct {
 	Session
-	Turns          []TurnVM       `json:"turns"`
-	AnomalySummary AnomalySummary `json:"anomaly_summary"`
-	Todos          []Todo         `json:"todos,omitempty"`
+	Turns          []TurnVM        `json:"turns"`
+	AnomalySummary AnomalySummary  `json:"anomaly_summary"`
+	Todos          []Todo          `json:"todos,omitempty"`
+	Billing        *SessionBilling `json:"billing,omitempty"`
 }
 
 type Todo struct {

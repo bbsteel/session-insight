@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -192,7 +193,7 @@ func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 		return nil, err
 	}
 
-	turns, modelName := r.parseMessages(id)
+	turns, modelName, billing := r.parseMessages(id)
 	if modelName != "" && meta.ModelName == "" {
 		meta.ModelName = modelName
 	}
@@ -200,7 +201,7 @@ func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	todos := r.readTodos(id)
 
-	detail := &model.SessionDetail{Session: meta, Turns: turns, Todos: todos}
+	detail := &model.SessionDetail{Session: meta, Turns: turns, Todos: todos, Billing: billing}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
 	return detail, nil
 }
@@ -246,14 +247,14 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 
 // ---- Message/Turn parsing ----
 
-func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string) {
+func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string, *model.SessionBilling) {
 	rows, err := r.db.Query(`
 		SELECT id, time_created, data FROM message
 		WHERE session_id = ?
 		ORDER BY time_created ASC
 	`, sessionID)
 	if err != nil {
-		return nil, ""
+		return nil, "", nil
 	}
 	defer rows.Close()
 
@@ -276,6 +277,8 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 	assistantMsgs := make(map[string][]row)
 
 	var foundModel string
+	byModel := make(map[string]*model.ModelUsage)
+	var totalCost float64
 	for _, m := range msgs {
 		var base msgBase
 		if json.Unmarshal([]byte(m.data), &base) != nil {
@@ -295,6 +298,7 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 				if foundModel == "" && a.ProviderID != "" {
 					foundModel = a.ProviderID + "/" + a.ModelID
 				}
+				accumulateModelUsage(byModel, &totalCost, a)
 			}
 		}
 	}
@@ -323,12 +327,21 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 				turn.AssistantMessage += buildAssistantText(aData)
 
 				if aData.Tokens != nil {
+					u := &turn.TokenUsage
 					if aData.Tokens.Cache != nil {
-						turn.TokenUsage.CacheReadTokens += aData.Tokens.Cache.Read
-						turn.TokenUsage.CacheWriteTokens += aData.Tokens.Cache.Write
+						u.CacheReadTokens += aData.Tokens.Cache.Read
+						u.CacheWriteTokens += aData.Tokens.Cache.Write
+						u.Present.CacheRead = model.PresenceExact
+						u.Present.CacheWrite = model.PresenceExact
 					}
-					turn.TokenUsage.PromptTokens += aData.Tokens.Input
-					turn.TokenUsage.CompletionTokens += aData.Tokens.Output + aData.Tokens.Reasoning
+					u.PromptTokens += aData.Tokens.Input
+					// Reasoning is a subset of output in the canonical model;
+					// adding it to CompletionTokens would double-count it.
+					u.CompletionTokens += aData.Tokens.Output
+					u.ReasoningTokens += aData.Tokens.Reasoning
+					u.Present.Input = model.PresenceExact
+					u.Present.Output = model.PresenceExact
+					u.Present.Reasoning = model.PresenceExact
 				}
 
 				if aData.Time != nil && aData.Time.Completed != nil && *aData.Time.Completed >= aData.Time.Created {
@@ -379,7 +392,60 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 		turns = append(turns, turn)
 	}
 
-	return turns, foundModel
+	return turns, foundModel, buildBilling(byModel, totalCost)
+}
+
+// accumulateModelUsage folds one assistant message into the per-model bill.
+// OpenCode records a per-message USD cost (0 for subscription providers) and
+// already-normalized token buckets, so both are exact.
+func accumulateModelUsage(byModel map[string]*model.ModelUsage, totalCost *float64, a assistantMsgData) {
+	name := a.ModelID
+	if name == "" {
+		name = "unknown"
+	}
+	mu := byModel[name]
+	if mu == nil {
+		mu = &model.ModelUsage{Model: name}
+		byModel[name] = mu
+	}
+	mu.Requests++
+	mu.BillingAmount += a.Cost
+	*totalCost += a.Cost
+	if a.Tokens == nil {
+		return
+	}
+	u := &mu.Usage
+	u.PromptTokens += a.Tokens.Input
+	u.CompletionTokens += a.Tokens.Output
+	u.ReasoningTokens += a.Tokens.Reasoning
+	u.Present.Input = model.PresenceExact
+	u.Present.Output = model.PresenceExact
+	u.Present.Reasoning = model.PresenceExact
+	if a.Tokens.Cache != nil {
+		u.CacheReadTokens += a.Tokens.Cache.Read
+		u.CacheWriteTokens += a.Tokens.Cache.Write
+		u.Present.CacheRead = model.PresenceExact
+		u.Present.CacheWrite = model.PresenceExact
+	}
+}
+
+func buildBilling(byModel map[string]*model.ModelUsage, totalCost float64) *model.SessionBilling {
+	if len(byModel) == 0 {
+		return nil
+	}
+	b := &model.SessionBilling{
+		Precision:     model.PrecisionExact,
+		BillingUnit:   "usd",
+		BillingAmount: totalCost,
+	}
+	for _, mu := range byModel {
+		b.ByModel = append(b.ByModel, *mu)
+		b.Totals.AddUsage(mu.Usage)
+	}
+	sort.Slice(b.ByModel, func(i, j int) bool {
+		return b.ByModel[i].BillingAmount > b.ByModel[j].BillingAmount
+	})
+	return b
 }
 
 func (r *OpenCodeReader) readParts(messageID string) resolvedParts {

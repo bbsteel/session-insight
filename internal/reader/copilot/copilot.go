@@ -238,21 +238,114 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	// Anomaly detection
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
 
-	// MissingShutdown check (copilot-specific: session.shutdown event)
-	hasShutdown := false
+	// MissingShutdown check (copilot-specific: session.shutdown event).
+	// The same event carries the session bill (tokenDetails / modelMetrics /
+	// totalNanoAiu), so capture it for billing in the same scan.
+	var shutdownData map[string]any
 	for _, t := range turns {
 		for _, e := range t.Events {
 			if e.Type == "session.shutdown" {
-				hasShutdown = true
+				shutdownData = e.Data
 			}
 		}
 	}
-	if !hasShutdown && len(turns) > 0 {
+	if shutdownData != nil {
+		detail.Billing = parseShutdownBilling(shutdownData)
+	} else if len(turns) > 0 {
 		detail.AnomalySummary.MissingShutdown = true
 		detail.AnomalySummary.TotalAnomalies++
+		detail.Billing = &model.SessionBilling{Precision: model.PrecisionMissing}
 	}
 
 	return detail, nil
+}
+
+// parseShutdownBilling converts a session.shutdown payload into the canonical
+// bill. Copilot ships two competing input semantics in the same event:
+// usage.inputTokens INCLUDES cache reads, while tokenDetails.input excludes
+// them. Only tokenDetails matches the canonical mutually-exclusive buckets,
+// so buckets are read from tokenDetails exclusively; usage.* is consulted
+// only for fields tokenDetails lacks (cacheWriteTokens, reasoningTokens).
+func parseShutdownBilling(data map[string]any) *model.SessionBilling {
+	b := &model.SessionBilling{
+		Precision:   model.PrecisionExact,
+		BillingUnit: "aiu",
+		// Copilot bills in nano-AIU (1e-9 AIU).
+		BillingAmount: extractFloat(data, "totalNanoAiu") / 1e9,
+	}
+	b.Totals.PremiumRequests = int(extractFloat(data, "totalPremiumRequests"))
+	fillBucketsFromTokenDetails(&b.Totals, nestedMap(data, "tokenDetails"))
+
+	for name, v := range nestedMap(data, "modelMetrics") {
+		m, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		mu := model.ModelUsage{
+			Model:         name,
+			BillingAmount: extractFloat(m, "totalNanoAiu") / 1e9,
+		}
+		if req := nestedMap(m, "requests"); req != nil {
+			mu.Requests = int(extractFloat(req, "count"))
+		}
+		fillBucketsFromTokenDetails(&mu.Usage, nestedMap(m, "tokenDetails"))
+		if usage := nestedMap(m, "usage"); usage != nil {
+			if mu.Usage.Present.CacheWrite == model.PresenceMissing {
+				if v, ok := usage["cacheWriteTokens"].(float64); ok {
+					mu.Usage.CacheWriteTokens = int64(v)
+					mu.Usage.Present.CacheWrite = model.PresenceExact
+				}
+			}
+			if v, ok := usage["reasoningTokens"].(float64); ok {
+				mu.Usage.ReasoningTokens = int64(v)
+				mu.Usage.Present.Reasoning = model.PresenceExact
+			}
+		}
+		b.ByModel = append(b.ByModel, mu)
+	}
+	sort.Slice(b.ByModel, func(i, j int) bool {
+		return b.ByModel[i].BillingAmount > b.ByModel[j].BillingAmount
+	})
+
+	// Session-level tokenDetails has no reasoning bucket; roll it up from the
+	// per-model metrics when any model reported it.
+	for _, mu := range b.ByModel {
+		if mu.Usage.Present.Reasoning == model.PresenceExact {
+			b.Totals.ReasoningTokens += mu.Usage.ReasoningTokens
+			b.Totals.Present.Reasoning = model.PresenceExact
+		}
+	}
+	return b
+}
+
+// fillBucketsFromTokenDetails reads Copilot's exclusive-semantics token
+// buckets ({bucket: {tokenCount: N}}). Presence is set only for keys that
+// actually exist — absent keys stay PresenceMissing rather than becoming 0.
+func fillBucketsFromTokenDetails(u *model.TokenUsage, details map[string]any) {
+	set := func(bucket string, dst *int64, p *model.Presence) {
+		entry := nestedMap(details, bucket)
+		if entry == nil {
+			return
+		}
+		if v, ok := entry["tokenCount"].(float64); ok {
+			*dst = int64(v)
+			*p = model.PresenceExact
+		}
+	}
+	set("input", &u.PromptTokens, &u.Present.Input)
+	set("output", &u.CompletionTokens, &u.Present.Output)
+	set("cache_read", &u.CacheReadTokens, &u.Present.CacheRead)
+	set("cache_write", &u.CacheWriteTokens, &u.Present.CacheWrite)
+}
+
+func nestedMap(data map[string]any, key string) map[string]any {
+	if data == nil {
+		return nil
+	}
+	if m, ok := data[key].(map[string]any); ok {
+		return m
+	}
+	return nil
 }
 
 func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
@@ -301,7 +394,15 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 			if hasContent {
 				currentTurn.AssistantMessage += content
 			}
-			currentTurn.TokenUsage.CompletionTokens += extractInt64(evt.Data, "outputTokens")
+			// Copilot only reports output at message level; input/cache live
+			// solely in the session.shutdown aggregate, so those buckets stay
+			// PresenceMissing here and analytics takes the estimation path.
+			if v, ok := evt.Data["outputTokens"]; ok {
+				if f, ok := v.(float64); ok {
+					currentTurn.TokenUsage.CompletionTokens += int64(f)
+					currentTurn.TokenUsage.Present.Output = model.PresenceExact
+				}
+			}
 
 		case evt.Type == "skill.invoked":
 			if currentTurn != nil {
@@ -352,10 +453,6 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 				if name, ok := extractString(evt.Data, "newModel"); ok && name != "" {
 					foundModel = name
 				}
-			}
-		case evt.Type == "session.shutdown":
-			if currentTurn != nil {
-				currentTurn.TokenUsage.PremiumRequests = int(extractFloat(evt.Data, "premium_requests"))
 			}
 		}
 

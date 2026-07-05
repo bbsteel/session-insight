@@ -182,14 +182,35 @@ func TestGetSessionTurnParsing(t *testing.T) {
 	if turn.ErrorCount != 1 {
 		t.Errorf("expected 1 error, got %d", turn.ErrorCount)
 	}
-	if turn.TokenUsage.PromptTokens != 100 || turn.TokenUsage.CompletionTokens != 57 {
+	// Canonical semantics: reasoning is a subset annotation, never added to
+	// completion, so completion stays 50 and reasoning is reported alongside.
+	if turn.TokenUsage.PromptTokens != 100 || turn.TokenUsage.CompletionTokens != 50 {
 		t.Errorf("token usage mismatch: prompt=%d completion=%d", turn.TokenUsage.PromptTokens, turn.TokenUsage.CompletionTokens)
+	}
+	if turn.TokenUsage.ReasoningTokens != 7 {
+		t.Errorf("expected reasoning=7, got %d", turn.TokenUsage.ReasoningTokens)
 	}
 	if turn.TokenUsage.CacheReadTokens != 11 || turn.TokenUsage.CacheWriteTokens != 3 {
 		t.Errorf("cache token usage mismatch: read=%d write=%d", turn.TokenUsage.CacheReadTokens, turn.TokenUsage.CacheWriteTokens)
 	}
+	if turn.TokenUsage.Present.Input != model.PresenceExact || turn.TokenUsage.Present.CacheWrite != model.PresenceExact {
+		t.Errorf("expected exact presence for input/cache_write, got %+v", turn.TokenUsage.Present)
+	}
 	if turn.DurationMs != 5000 {
 		t.Errorf("expected duration=5000ms, got %d", turn.DurationMs)
+	}
+
+	if detail.Billing == nil {
+		t.Fatal("expected session billing from assistant messages")
+	}
+	if detail.Billing.Precision != model.PrecisionExact || detail.Billing.BillingUnit != "usd" {
+		t.Errorf("billing precision/unit mismatch: %+v", detail.Billing)
+	}
+	if len(detail.Billing.ByModel) != 1 || detail.Billing.ByModel[0].Model != "claude-sonnet-4" {
+		t.Fatalf("expected one model entry claude-sonnet-4, got %+v", detail.Billing.ByModel)
+	}
+	if detail.Billing.ByModel[0].Requests != 1 || detail.Billing.Totals.PromptTokens != 100 {
+		t.Errorf("billing totals mismatch: %+v", detail.Billing)
 	}
 }
 
