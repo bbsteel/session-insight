@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { fetchPositions, fetchSession, fetchSessionEdits } from '../api'
+import { addBookmark, fetchPositions, fetchSession, fetchSessionEdits, removeBookmark } from '../api'
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
+import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
@@ -23,6 +24,8 @@ function hasCompaction(turn: TurnVM): boolean {
 interface Props {
   sessionId: string | null
   onSelect?: (id: string) => void
+  bookmarkChange?: BookmarkChange | null
+  onBookmarkChange?: (change: BookmarkChange) => void
 }
 
 function fmtTokens(n: number): string {
@@ -38,7 +41,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, onSelect }: Props) {
+export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBookmarkChange }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
@@ -52,6 +55,8 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
   const [positionsData, setPositionsData] = useState<PositionsResponse | null>(null)
   const [positionsBuilding, setPositionsBuilding] = useState(false)
   const [edits, setEdits] = useState<EditCall[]>([])
+  const [bookmarkBusy, setBookmarkBusy] = useState(false)
+  const [bookmarkError, setBookmarkError] = useState<string | null>(null)
   const termControlRef = useRef<TerminalControl | null>(null)
   const miniMapControlRef = useRef<MiniMapControl | null>(null)
   const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
@@ -78,6 +83,35 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
       },
     }])
   }, [])
+
+  useEffect(() => {
+    if (!bookmarkChange) return
+    setSession(prev => {
+      if (!prev || prev.id !== bookmarkChange.sessionId || prev.agent_type !== bookmarkChange.agentType) return prev
+      return { ...prev, bookmarked: bookmarkChange.bookmarked }
+    })
+  }, [bookmarkChange])
+
+  const toggleBookmark = useCallback(async () => {
+    if (!session || bookmarkBusy) return
+    const nextBookmarked = !session.bookmarked
+    setBookmarkBusy(true)
+    setBookmarkError(null)
+    try {
+      if (nextBookmarked) await addBookmark(session)
+      else await removeBookmark(session)
+      setSession(prev => prev ? { ...prev, bookmarked: nextBookmarked } : prev)
+      onBookmarkChange?.({
+        agentType: session.agent_type,
+        sessionId: session.id,
+        bookmarked: nextBookmarked,
+      })
+    } catch {
+      setBookmarkError(nextBookmarked ? '添加收藏失败' : '取消收藏失败')
+    } finally {
+      setBookmarkBusy(false)
+    }
+  }, [bookmarkBusy, onBookmarkChange, session])
 
   const turns = session?.turns ?? []
 
@@ -329,6 +363,23 @@ export default function ReplayView({ sessionId, onSelect }: Props) {
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
           <button
+            onClick={toggleBookmark}
+            disabled={bookmarkBusy}
+            className={`h-7 rounded-md px-2 inline-flex items-center justify-center text-nav ${
+              session.bookmarked ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'
+            } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title={session.bookmarked ? '取消收藏' : '收藏'}
+            aria-label={session.bookmarked ? '取消收藏' : '收藏'}
+          >
+            {session.bookmarked ? '取消收藏' : '收藏'}
+          </button>
+          {bookmarkError && (
+            <span className="text-meta text-[var(--error)]" role="status">
+              {bookmarkError}
+            </span>
+          )}
+          <span className="text-[var(--border-default)]">|</span>
+          <button
             onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
@@ -476,4 +527,3 @@ function AnalyticsSkeleton() {
     </div>
   )
 }
-

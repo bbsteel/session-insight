@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
+import type { BookmarkChange } from './bookmarkState'
 
 export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
 
   const selectSession = (id: string) => {
     setSelectedId(id)
@@ -27,12 +29,21 @@ export default function App() {
         />
       )}
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-[260] transition-transform duration-normal md:block`}>
-        <Sidebar selectedId={selectedId} onSelect={selectSession} drawer={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+        <Sidebar
+          selectedId={selectedId}
+          onSelect={selectSession}
+          drawer={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          bookmarkChange={bookmarkChange}
+          onBookmarkChange={setBookmarkChange}
+        />
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ReplayView
           sessionId={selectedId}
           onSelect={selectSession}
+          bookmarkChange={bookmarkChange}
+          onBookmarkChange={setBookmarkChange}
         />
       </div>
     </div>

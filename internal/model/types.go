@@ -35,7 +35,8 @@ type Session struct {
 	PreviewText  string    `json:"preview_text"`
 	TurnCount    int       `json:"turn_count"`
 	MessageCount int       `json:"message_count"`
-	IsLive    bool   `json:"is_live"`
+	IsLive       bool      `json:"is_live"`
+	Bookmarked   bool      `json:"bookmarked"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -162,16 +163,16 @@ type TurnVM struct {
 	// It is the attribution weight for spreading a session-level bill onto
 	// turns: each request replays the whole context, so request count is the
 	// dominant cost driver for agents without per-turn billing data.
-	RequestCount  int   `json:"request_count"`
-	ToolCallCount int   `json:"tool_call_count"`
-	ErrorCount    int   `json:"error_count"`
-	DurationMs    int64 `json:"duration_ms"`
-	Events           []EventVM  `json:"events,omitempty"`
-	Anomalies        []string   `json:"anomalies,omitempty"`
-	ToolNames        []string   `json:"tool_names,omitempty"`
-		Subagents        []string   `json:"subagents,omitempty"`
-		ToolDetails      []ToolCallVM `json:"tool_details,omitempty"`
-		Skills           []string   `json:"skills,omitempty"`
+	RequestCount  int          `json:"request_count"`
+	ToolCallCount int          `json:"tool_call_count"`
+	ErrorCount    int          `json:"error_count"`
+	DurationMs    int64        `json:"duration_ms"`
+	Events        []EventVM    `json:"events,omitempty"`
+	Anomalies     []string     `json:"anomalies,omitempty"`
+	ToolNames     []string     `json:"tool_names,omitempty"`
+	Subagents     []string     `json:"subagents,omitempty"`
+	ToolDetails   []ToolCallVM `json:"tool_details,omitempty"`
+	Skills        []string     `json:"skills,omitempty"`
 }
 
 type EditCall struct {

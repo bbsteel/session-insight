@@ -6,17 +6,22 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"session-insight/internal/analytics"
 	"session-insight/internal/db"
 	"session-insight/internal/model"
 	"session-insight/internal/render"
-	"strings"
 )
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	agentFilter := r.URL.Query().Get("agent")
+	bookmarkSet, err := s.bookmarkSet()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	var sessions []SessionSummary
 	for _, reader := range s.Readers {
@@ -31,22 +36,8 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for _, s := range list {
-			sessions = append(sessions, SessionSummary{
-				ID:           s.ID,
-				AgentType:    s.AgentType,
-				Name:         s.Name,
-				Repository:   s.Repository,
-				Branch:       s.Branch,
-				Project:      s.Project,
-				CWD:          s.CWD,
-				ResumeID:     s.ResumeID,
-				PreviewText:  s.PreviewText,
-				TurnCount:    s.TurnCount,
-				MessageCount: s.MessageCount,
-				IsLive:       model.IsSessionLive(s.UpdatedAt),
-				CreatedAt:    s.CreatedAt.Format("2006-01-02T15:04:05Z"),
-				UpdatedAt:    s.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-			})
+			s.Bookmarked = bookmarkSet[db.BookmarkKey(s.AgentType, s.ID)]
+			sessions = append(sessions, sessionToSummary(s))
 		}
 	}
 
@@ -82,6 +73,14 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		// Liveness is a serve-time presence heuristic; compute it here so all
 		// agents share one definition (see model.IsSessionLive).
 		detail.IsLive = model.IsSessionLive(detail.UpdatedAt)
+		if s.DB != nil {
+			bookmarked, err := s.DB.IsBookmarked(detail.AgentType, detail.ID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			detail.Bookmarked = bookmarked
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(detail)
@@ -89,6 +88,106 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+func sessionToSummary(s model.Session) SessionSummary {
+	return SessionSummary{
+		ID:           s.ID,
+		AgentType:    s.AgentType,
+		Name:         s.Name,
+		ModelName:    s.ModelName,
+		Repository:   s.Repository,
+		Branch:       s.Branch,
+		Project:      s.Project,
+		CWD:          s.CWD,
+		ResumeID:     s.ResumeID,
+		PreviewText:  s.PreviewText,
+		TurnCount:    s.TurnCount,
+		MessageCount: s.MessageCount,
+		IsLive:       model.IsSessionLive(s.UpdatedAt),
+		Bookmarked:   s.Bookmarked,
+		CreatedAt:    s.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:    s.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+func (s *Server) bookmarkSet() (map[string]bool, error) {
+	if s.DB == nil {
+		return map[string]bool{}, nil
+	}
+	return s.DB.BookmarkSet()
+}
+
+func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
+	if s.DB == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]SessionSummary{})
+		return
+	}
+	bookmarks, err := s.DB.ListBookmarks()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var summaries []SessionSummary
+	for _, b := range bookmarks {
+		for _, rd := range s.Readers {
+			if rd.AgentType() != b.AgentType {
+				continue
+			}
+			detail, err := rd.GetSession(b.SessionID)
+			if err != nil || detail == nil {
+				continue
+			}
+			sess := detail.Session
+			sess.Bookmarked = true
+			summaries = append(summaries, sessionToSummary(sess))
+			break
+		}
+	}
+	if summaries == nil {
+		summaries = []SessionSummary{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summaries)
+}
+
+func (s *Server) handleAddBookmark(w http.ResponseWriter, r *http.Request) {
+	s.handleBookmarkWrite(w, r, true)
+}
+
+func (s *Server) handleRemoveBookmark(w http.ResponseWriter, r *http.Request) {
+	s.handleBookmarkWrite(w, r, false)
+}
+
+func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add bool) {
+	if s.DB == nil {
+		http.Error(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	agentType := r.URL.Query().Get("agent")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+	if agentType == "" {
+		http.Error(w, "missing agent", http.StatusBadRequest)
+		return
+	}
+
+	var err error
+	if add {
+		err = s.DB.AddBookmark(agentType, id)
+	} else {
+		err = s.DB.RemoveBookmark(agentType, id)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleRenderSession returns the Phase 2 ANSI terminal text for a session,
@@ -156,12 +255,12 @@ func (s *Server) handleSessionEdits(w http.ResponseWriter, r *http.Request) {
 }
 
 type positionsResponse struct {
-	SessionID string              `json:"session_id"`
-	AgentType string              `json:"agent_type"`
-	Revision  int64               `json:"revision"`
-	Cols      int                 `json:"cols"`
-	TotalLines int                `json:"total_lines"`
-	Positions []positionEntryJSON `json:"positions"`
+	SessionID  string              `json:"session_id"`
+	AgentType  string              `json:"agent_type"`
+	Revision   int64               `json:"revision"`
+	Cols       int                 `json:"cols"`
+	TotalLines int                 `json:"total_lines"`
+	Positions  []positionEntryJSON `json:"positions"`
 }
 
 type positionEntryJSON struct {
@@ -330,9 +429,9 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	type AgentInfo struct {
-		Type        string `json:"type"`
-		DisplayName string `json:"display_name"`
-		SessionCount int   `json:"session_count"`
+		Type         string `json:"type"`
+		DisplayName  string `json:"display_name"`
+		SessionCount int    `json:"session_count"`
 	}
 
 	var agents []AgentInfo
@@ -482,7 +581,11 @@ func (s *Server) handleExportSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func formatDur(ms int64) string {
-	if ms < 1000 { return fmt.Sprintf("%dms", ms) }
-	if ms < 60000 { return fmt.Sprintf("%.1fs", float64(ms)/1000) }
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	if ms < 60000 {
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	}
 	return fmt.Sprintf("%dm%ds", ms/60000, (ms%60000)/1000)
 }

@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 type DB struct {
 	conn *sql.DB
@@ -160,6 +160,13 @@ func migrate(conn *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_session_positions_lookup
 	    ON session_positions(agent_type, session_id, revision, cols, line_start);
+
+	CREATE TABLE IF NOT EXISTS bookmarked_sessions (
+	    agent_type TEXT NOT NULL,
+	    session_id TEXT NOT NULL,
+	    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	    PRIMARY KEY (agent_type, session_id)
+	);
 	`
 	_, err := conn.Exec(query)
 	if err != nil {
@@ -214,6 +221,3 @@ func migrate(conn *sql.DB) error {
 	)
 	return err
 }
-
-
-

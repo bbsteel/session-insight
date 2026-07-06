@@ -44,7 +44,6 @@ func newReader(dbPath, extraParams string) (*OpenCodeReader, error) {
 func (r *OpenCodeReader) AgentType() string   { return "opencode" }
 func (r *OpenCodeReader) DisplayName() string { return "OpenCode" }
 
-
 // ---- data ----
 
 type msgBase struct {
@@ -236,6 +235,7 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 		ID:           id,
 		AgentType:    "opencode",
 		CWD:          directory,
+		Project:      shared.ResolveProject(directory, ""),
 		Name:         title,
 		ModelName:    modelName,
 		TurnCount:    0,

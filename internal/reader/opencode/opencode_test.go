@@ -108,6 +108,21 @@ func TestListSessions(t *testing.T) {
 	// UpdatedAt, see model.IsSessionLive), so the reader does not set IsLive.
 }
 
+func TestGetSessionResolvesProject(t *testing.T) {
+	reader, db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	seedSession(t, db, "ses_project", "/tmp/nonexistent/.openclaw/workspace/projects/collab/lego-lookup", "Project test", "deepseek-v4-pro")
+
+	detail, err := reader.GetSession("ses_project")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if detail.Project != "lego-lookup" {
+		t.Fatalf("expected project lego-lookup, got %q", detail.Project)
+	}
+}
+
 func TestListSessionsPreviewTextIncludesMessageWithGeneratedSummary(t *testing.T) {
 	reader, db, cleanup := setupTestDB(t)
 	defer cleanup()

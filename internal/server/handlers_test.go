@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"session-insight/internal/db"
 	"session-insight/internal/model"
 	"session-insight/internal/reader"
 )
@@ -41,16 +43,33 @@ func TestHandleListSessionsEmpty(t *testing.T) {
 
 // stubReader is a minimal BaseSessionReader for handler tests.
 type stubReader struct {
-	id     string
-	events []model.RenderEvent
+	agentType string
+	id        string
+	sessions  []model.Session
+	events    []model.RenderEvent
 }
 
-func (s *stubReader) AgentType() string                               { return "stub" }
-func (s *stubReader) DisplayName() string                             { return "stub" }
-func (s *stubReader) ListSessions() ([]model.Session, error)          { return nil, nil }
+func (s *stubReader) AgentType() string {
+	if s.agentType != "" {
+		return s.agentType
+	}
+	return "stub"
+}
+func (s *stubReader) DisplayName() string { return s.AgentType() }
+func (s *stubReader) ListSessions() ([]model.Session, error) {
+	if s.sessions != nil {
+		return s.sessions, nil
+	}
+	return nil, nil
+}
 func (s *stubReader) GetSession(id string) (*model.SessionDetail, error) {
+	for _, sess := range s.sessions {
+		if sess.ID == id {
+			return &model.SessionDetail{Session: sess}, nil
+		}
+	}
 	if id == s.id {
-		return &model.SessionDetail{Session: model.Session{ID: id}}, nil
+		return &model.SessionDetail{Session: model.Session{ID: id, AgentType: s.AgentType()}}, nil
 	}
 	return nil, nil
 }
@@ -105,5 +124,102 @@ func TestHandleSessionEditsMultiFile(t *testing.T) {
 	}
 	if edits[0].FilePath != "a.go" || edits[1].FilePath != "b.go" {
 		t.Errorf("unexpected file paths: %q %q", edits[0].FilePath, edits[1].FilePath)
+	}
+}
+
+func TestBookmarkHandlersAnnotateSessionsAndListBookmarks(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open db: %v", err)
+	}
+	defer database.Close()
+
+	updated := time.Date(2026, 7, 6, 8, 0, 0, 0, time.UTC)
+	rd := &stubReader{
+		agentType: "claude",
+		sessions: []model.Session{
+			{
+				ID:           "sess-1",
+				AgentType:    "claude",
+				Name:         "Fix bookmark UI",
+				Project:      "session-insight",
+				TurnCount:    2,
+				MessageCount: 4,
+				CreatedAt:    updated.Add(-time.Hour),
+				UpdatedAt:    updated,
+			},
+			{
+				ID:           "sess-2",
+				AgentType:    "claude",
+				Name:         "Other session",
+				TurnCount:    1,
+				MessageCount: 2,
+				CreatedAt:    updated.Add(-2 * time.Hour),
+				UpdatedAt:    updated.Add(-time.Minute),
+			},
+		},
+	}
+	srv := New(database, []reader.BaseSessionReader{rd})
+
+	req := httptest.NewRequest("PUT", "/api/sessions/sess-1/bookmark?agent=claude", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("PUT bookmark expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/api/sessions", nil)
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET sessions expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var sessions []SessionSummary
+	if err := json.NewDecoder(w.Body).Decode(&sessions); err != nil {
+		t.Fatalf("decode sessions: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(sessions))
+	}
+	if !sessions[0].Bookmarked {
+		t.Fatalf("expected sess-1 to be bookmarked in list: %+v", sessions[0])
+	}
+	if sessions[1].Bookmarked {
+		t.Fatalf("expected sess-2 not to be bookmarked in list: %+v", sessions[1])
+	}
+
+	req = httptest.NewRequest("GET", "/api/sessions/sess-1", nil)
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET session expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var detail model.SessionDetail
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if !detail.Bookmarked {
+		t.Fatal("expected detail to be bookmarked")
+	}
+
+	req = httptest.NewRequest("GET", "/api/bookmarks", nil)
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET bookmarks expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var bookmarks []SessionSummary
+	if err := json.NewDecoder(w.Body).Decode(&bookmarks); err != nil {
+		t.Fatalf("decode bookmarks: %v", err)
+	}
+	if len(bookmarks) != 1 || bookmarks[0].ID != "sess-1" || !bookmarks[0].Bookmarked {
+		t.Fatalf("unexpected bookmarks response: %+v", bookmarks)
+	}
+
+	req = httptest.NewRequest("DELETE", "/api/sessions/sess-1/bookmark?agent=claude", nil)
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE bookmark expected 204, got %d: %s", w.Code, w.Body.String())
 	}
 }

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { fetchAgents, fetchSessions } from '../api'
+import { fetchAgents, fetchBookmarks, fetchSessions, removeBookmark } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
+import { applyBookmarkChange, filterBookmarks, removeBookmarkFromList, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import AgentIcon from './AgentIcon'
@@ -70,10 +71,18 @@ interface SidebarProps {
   onSelect: (id: string) => void
   drawer?: boolean
   onClose?: () => void
+  bookmarkChange?: BookmarkChange | null
+  onBookmarkChange?: (change: BookmarkChange) => void
 }
 
-export default function Sidebar({ selectedId, onSelect, drawer, onClose }: SidebarProps) {
+export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange }: SidebarProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [bookmarks, setBookmarks] = useState<SessionSummary[]>([])
+  const [bookmarksOpen, setBookmarksOpen] = useState(false)
+  const [bookmarksLoading, setBookmarksLoading] = useState(false)
+  const [bookmarksError, setBookmarksError] = useState<string | null>(null)
+  const [bookmarkAgentFilter, setBookmarkAgentFilter] = useState('')
+  const [bookmarkProjectFilter, setBookmarkProjectFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -94,6 +103,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
 
   const searchRef = useRef<HTMLInputElement>(null)
   const asideRef = useRef<HTMLElement>(null)
+  const bookmarksDropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)')
@@ -110,11 +120,13 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
   }, [isMobile, drawer])
 
-  // Esc to close drawer on mobile or context menu
+  // Esc to close drawer on mobile, context menu, or bookmarks dropdown.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (contextMenu) {
+        if (bookmarksOpen) {
+          setBookmarksOpen(false)
+        } else if (contextMenu) {
           setContextMenu(null)
         } else if (isMobile && onClose) {
           onClose()
@@ -123,7 +135,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isMobile, onClose, contextMenu])
+  }, [isMobile, onClose, contextMenu, bookmarksOpen])
 
   // Load all sessions once on mount — agent/search filters are client-side
   useEffect(() => {
@@ -142,6 +154,25 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
       })
       .catch(() => setAgents([]))
   }, [])
+
+  useEffect(() => {
+    if (!bookmarkChange) return
+    setSessions(prev => applyBookmarkChange(prev, bookmarkChange))
+    setBookmarks(prev => {
+      const updated = applyBookmarkChange(prev, bookmarkChange)
+      return removeBookmarkFromList(updated, bookmarkChange)
+    })
+  }, [bookmarkChange])
+
+  useEffect(() => {
+    if (!bookmarksOpen) return
+    const handler = (e: MouseEvent) => {
+      if (bookmarksDropdownRef.current?.contains(e.target as Node)) return
+      setBookmarksOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [bookmarksOpen])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -195,6 +226,30 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     setContextMenu({ x: e.clientX, y: e.clientY, session })
   }, [])
 
+  const openBookmarks = useCallback(() => {
+    setBookmarksOpen(v => !v)
+    if (bookmarksOpen) return
+    setBookmarksLoading(true)
+    setBookmarksError(null)
+    fetchBookmarks()
+      .then(data => setBookmarks(data))
+      .catch(err => setBookmarksError(err instanceof Error ? err.message : '收藏加载失败'))
+      .finally(() => setBookmarksLoading(false))
+  }, [bookmarksOpen])
+
+  const removeSessionBookmark = useCallback(async (session: SessionSummary) => {
+    try {
+      await removeBookmark(session)
+      const change = { agentType: session.agent_type, sessionId: session.id, bookmarked: false }
+      setSessions(prev => applyBookmarkChange(prev, change))
+      setBookmarks(prev => removeBookmarkFromList(prev, change))
+      onBookmarkChange?.(change)
+      showToast('已取消收藏')
+    } catch {
+      showToast('取消收藏失败')
+    }
+  }, [onBookmarkChange, showToast])
+
   const filtered = useMemo(() => sessions.filter(s => {
     if (agentFilter && s.agent_type !== agentFilter) return false
     if (projectFilter && s.project !== projectFilter) return false
@@ -209,6 +264,29 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
     }
     return true
   }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter])
+
+  const bookmarkAgentOptions = useMemo(() => {
+    return [...new Set(bookmarks.map(s => s.agent_type).filter(Boolean))].sort()
+  }, [bookmarks])
+
+  const bookmarkProjectOptions = useMemo(() => {
+    return [...new Set(bookmarks
+      .filter(s => !bookmarkAgentFilter || s.agent_type === bookmarkAgentFilter)
+      .map(s => s.project)
+      .filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b))
+  }, [bookmarks, bookmarkAgentFilter])
+
+  useEffect(() => {
+    if (bookmarkProjectFilter && !bookmarkProjectOptions.includes(bookmarkProjectFilter)) {
+      setBookmarkProjectFilter('')
+    }
+  }, [bookmarkProjectFilter, bookmarkProjectOptions])
+
+  const visibleBookmarks = useMemo(
+    () => filterBookmarks(bookmarks, { agentType: bookmarkAgentFilter, project: bookmarkProjectFilter }),
+    [bookmarks, bookmarkAgentFilter, bookmarkProjectFilter],
+  )
 
   const liveCount = useMemo(() => sessions.filter(s => s.is_live).length, [sessions])
 
@@ -299,6 +377,11 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
             <div className="min-w-0 flex-1">
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
                 {session.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
+                {session.bookmarked && (
+                  <span className="text-meta text-[var(--accent-blue)] flex-shrink-0" title="已收藏" aria-label="已收藏">
+                    已收藏
+                  </span>
+                )}
                 <span className="truncate">{getSessionName(session)}</span>
               </div>
               <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
@@ -366,7 +449,100 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose }: Sideb
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div ref={bookmarksDropdownRef} className="relative flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={openBookmarks}
+            aria-label="收藏列表"
+            title="收藏列表"
+            className="h-6 px-2 flex items-center justify-center rounded-md text-nav text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          >
+            收藏列表
+          </button>
+          {bookmarksOpen && (
+            <div className="absolute left-full top-0 ml-2 z-[var(--z-dropdown)] w-[520px] max-h-[70vh] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg flex flex-col">
+              <div className="h-10 flex items-center justify-between border-b border-[var(--border-default)] px-3">
+                <h3 className="text-nav font-semibold text-[var(--text-primary)]">收藏列表</h3>
+                <button
+                  onClick={() => setBookmarksOpen(false)}
+                  aria-label="关闭收藏列表"
+                  className="h-7 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 border-b border-[var(--border-default)] p-2">
+                <label className="min-w-0 text-meta text-[var(--text-secondary)]">
+                  <span className="mb-1 block">Agent</span>
+                  <select
+                    value={bookmarkAgentFilter}
+                    onChange={e => setBookmarkAgentFilter(e.target.value)}
+                    className="h-7 w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-1.5 text-nav text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                  >
+                    <option value="">全部</option>
+                    {bookmarkAgentOptions.map(agent => (
+                      <option key={agent} value={agent}>{getAgentLabel(agent)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="min-w-0 text-meta text-[var(--text-secondary)]">
+                  <span className="mb-1 block">项目</span>
+                  <select
+                    value={bookmarkProjectFilter}
+                    onChange={e => setBookmarkProjectFilter(e.target.value)}
+                    className="h-7 w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-1.5 text-nav text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                  >
+                    <option value="">全部</option>
+                    {bookmarkProjectOptions.map(project => (
+                      <option key={project} value={project}>{project}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                {bookmarksLoading ? (
+                  <div className="px-3 py-8 text-center text-helper text-[var(--text-muted)]">加载中...</div>
+                ) : bookmarksError ? (
+                  <div className="px-3 py-8 text-center text-helper text-[var(--error)]">{bookmarksError}</div>
+                ) : visibleBookmarks.length === 0 ? (
+                  <div className="px-3 py-8 text-center text-helper text-[var(--text-muted)]">暂无收藏</div>
+                ) : (
+                  <div className="space-y-1">
+                    {visibleBookmarks.map(session => {
+                      const repo = session.repository ? session.repository.split('/').slice(-2).join('/') : ''
+                      const project = session.project || repo || '未知项目'
+                      const model = session.model_name || 'unknown model'
+                      return (
+                        <div key={`${session.agent_type}-${session.id}`} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--bg-surface-hover)]">
+                          <button
+                            onClick={() => { onSelect(session.id); setBookmarksOpen(false) }}
+                            className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] rounded-sm"
+                          >
+                            <span className="block truncate text-body text-[var(--text-primary)]">{getSessionName(session)}</span>
+                            <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta text-[var(--text-secondary)]">
+                              <span className="rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{getAgentLabel(session.agent_type)}</span>
+                              <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{model}</span>
+                              <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{project}</span>
+                            </span>
+                            <span className="mt-0.5 block truncate text-helper text-[var(--text-muted)]">
+                              {formatDateTime(session.updated_at)}
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => removeSessionBookmark(session)}
+                            className="h-7 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                            title="取消收藏"
+                            aria-label="取消收藏"
+                          >
+                            取消收藏
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {isMobile && onClose && (
             <button
               onClick={onClose}

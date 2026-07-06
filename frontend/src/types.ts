@@ -9,6 +9,7 @@ export interface SessionSummary {
   id: string
   agent_type: string
   name: string
+  model_name: string
   repository: string
   branch: string
   project: string
@@ -18,6 +19,7 @@ export interface SessionSummary {
   turn_count: number
   message_count: number
   is_live: boolean
+  bookmarked: boolean
   created_at: string
   updated_at: string
 }
@@ -98,6 +100,7 @@ export interface SessionDetail {
   turn_count: number
   message_count: number
   is_live: boolean
+  bookmarked: boolean
   created_at: string
   updated_at: string
   model_name: string

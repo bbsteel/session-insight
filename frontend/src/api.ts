@@ -15,6 +15,24 @@ export async function fetchSession(id: string): Promise<SessionDetail> {
   return readJson<SessionDetail>(res, 'session')
 }
 
+export async function fetchBookmarks(): Promise<SessionSummary[]> {
+  const res = await fetch('/api/bookmarks')
+  if (!res.ok) throw new Error(`Failed to fetch bookmarks: ${res.status}`)
+  return readJson<SessionSummary[]>(res, 'bookmarks')
+}
+
+export async function addBookmark(session: Pick<SessionSummary, 'id' | 'agent_type'>): Promise<void> {
+  const params = new URLSearchParams({ agent: session.agent_type })
+  const res = await fetch(`/api/sessions/${session.id}/bookmark?${params}`, { method: 'PUT' })
+  if (!res.ok) throw new Error(`Failed to add bookmark: ${res.status}`)
+}
+
+export async function removeBookmark(session: Pick<SessionSummary, 'id' | 'agent_type'>): Promise<void> {
+  const params = new URLSearchParams({ agent: session.agent_type })
+  const res = await fetch(`/api/sessions/${session.id}/bookmark?${params}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to remove bookmark: ${res.status}`)
+}
+
 export async function fetchAgents(): Promise<AgentInfo[]> {
   const res = await fetch('/api/agents')
   if (!res.ok) throw new Error(`Failed to fetch agents: ${res.status}`)
