@@ -497,6 +497,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
               <TerminalPanel
                 sessionId={session.id}
+                agentType={session.agent_type}
                 onScrollMetrics={handleTerminalScrollMetrics}
                 onColsReady={handleColsReady}
                 controlRef={termControlRef}

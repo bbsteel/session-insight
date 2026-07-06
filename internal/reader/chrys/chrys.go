@@ -120,6 +120,22 @@ func (m *chrysMessage) createdAt() time.Time {
 	return parseTS(s)
 }
 
+// groupTokenCount returns the message's _group.token_count, chrys's
+// per-message token accounting (0 when absent).
+func (m *chrysMessage) groupTokenCount() int64 {
+	if m.Props == nil {
+		return 0
+	}
+	g, _ := m.Props["_group"].(map[string]any)
+	if g == nil {
+		return 0
+	}
+	if v, ok := g["token_count"].(float64); ok {
+		return int64(v)
+	}
+	return 0
+}
+
 // intermediateText is assistant text chrys displays before the message's tool
 // calls but stores outside contents (additional_properties._intermediate_text).
 func (m *chrysMessage) intermediateText() string {

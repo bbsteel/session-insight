@@ -13,6 +13,7 @@ const TERMINAL_FONT_SIZE = 13
 
 interface Props {
   sessionId: string
+  agentType?: string
   onScrollMetrics?: (m: ScrollMetrics) => void
   onColsReady?: (cols: number) => void
   controlRef?: React.MutableRefObject<TerminalControl | null>
@@ -38,7 +39,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady, controlRef }: Props) {
+export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, onColsReady, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -48,13 +49,15 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
   const isDark = useIsDark()
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
+  const agentTypeRef = useRef(agentType)
+  agentTypeRef.current = agentType
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
     const term = new Terminal({
-      theme: terminalTheme(isDarkRef.current),
+      theme: terminalTheme(isDarkRef.current, agentTypeRef.current),
       fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: TERMINAL_FONT_SIZE,
       allowProposedApi: true,
@@ -397,17 +400,17 @@ export default function TerminalPanel({ sessionId, onScrollMetrics, onColsReady,
 
   useEffect(() => {
     if (termRef.current) {
-      termRef.current.options.theme = terminalTheme(isDark)
+      termRef.current.options.theme = terminalTheme(isDark, agentType)
     }
-  }, [isDark])
+  }, [isDark, agentType])
 
   useEffect(() => {
     return onBannerColorChange(() => {
       if (termRef.current) {
-        termRef.current.options.theme = terminalTheme(isDark)
+        termRef.current.options.theme = terminalTheme(isDark, agentType)
       }
     })
-  }, [isDark])
+  }, [isDark, agentType])
 
   return (
     <div style={{ flex: 1, overflow: 'hidden', background: terminalTheme(isDark).background, display: 'flex', flexDirection: 'column' }}>

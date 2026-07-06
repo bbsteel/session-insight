@@ -43,10 +43,18 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		bWidth = 40
 	}
 
+	p := profileFor(events)
+	groupStarts := computeToolRuns(p, events)
+
 	tb := newTrackingBuilder(cols)
 	var positions []RenderPosition
 	prevTurnIndex := -1
 	editSeqByTurn := make(map[int]int)
+	agentLabel := ""
+	// prevDepth0Type tracks the previous depth-0 event kind so the assistant
+	// header ("◇ <label>") is emitted once per contiguous text block, not
+	// once per TextChunk.
+	prevDepth0Type := ""
 
 	emit := func(kind, label, severity string, turnIndex int, payload map[string]any) {
 		lineStart := tb.CurrentLine()
@@ -62,29 +70,42 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		})
 	}
 
-	for _, evt := range events {
+	for i, evt := range events {
 		if evt.TurnIndex != prevTurnIndex {
 			emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
 			writeSeparator(tb, evt.TurnIndex, cols)
 			prevTurnIndex = evt.TurnIndex
+			prevDepth0Type = ""
+		}
+
+		if g, ok := groupStarts[i]; ok {
+			writeToolGroupHeader(tb, g)
 		}
 
 		prefix := depthPrefix(evt.Depth)
 
 		switch evt.Type {
 		case "TurnBoundary":
+			if evt.Metadata != nil {
+				if l, ok := evt.Metadata["agent_label"].(string); ok && l != "" {
+					agentLabel = l
+				}
+			}
 		case "UserPrompt":
 			emit("user", "用户输入", "", evt.TurnIndex, nil)
-			writeUserPrompt(tb, evt, prefix)
+			writeUserPrompt(p, tb, evt, prefix)
 		case "ThinkingStart":
 			writeThinking(tb, evt, prefix)
 		case "ThinkingChunk":
 			writeThinking(tb, evt, prefix)
 		case "ThinkingEnd":
 		case "TextChunk":
+			if p.AssistantHeader && evt.Depth == 0 && prevDepth0Type != "TextChunk" {
+				writeAssistantHeader(tb, agentLabel)
+			}
 			writeTextChunk(tb, evt, prefix, cols)
 		case "ToolInvocation":
-			writeToolInvocation(tb, evt, prefix, bWidth, func(filePath string) {
+			writeToolInvocation(p, tb, evt, prefix, bWidth, func(filePath string) {
 				seq := editSeqByTurn[evt.TurnIndex]
 				editSeqByTurn[evt.TurnIndex]++
 				emit("edit", filePath, "", evt.TurnIndex, map[string]any{"edit_seq": float64(seq)})
@@ -93,11 +114,15 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			if evt.ExitCode != 0 || evt.Stderr != "" {
 				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName})
 			}
-			writeToolResult(tb, evt, prefix)
+			writeToolResult(p, tb, evt, prefix, bWidth)
 		case "CompactionBoundary":
 			emit("compaction", "压缩", "", evt.TurnIndex, nil)
 		case "AgentSpecific":
-			writeAgentSpecific(tb, evt, prefix)
+			writeAgentSpecific(p, tb, evt, prefix)
+		}
+
+		if evt.Depth == 0 && evt.Type != "TurnBoundary" && evt.Type != "ThinkingEnd" {
+			prevDepth0Type = evt.Type
 		}
 	}
 
@@ -117,7 +142,83 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 2
+const FormatVersion int64 = 3
+
+// toolRun summarizes one contiguous run of tool events for the group header.
+type toolRun struct {
+	total     int
+	succeeded int
+}
+
+// isToolRunMember reports whether an event belongs to a tool run: tool
+// invocations/results, anything nested (spliced sub-agent transcripts sit
+// between their invocation and summary result), and sub-agent bookkeeping.
+func isToolRunMember(e model.RenderEvent) bool {
+	if e.Depth > 0 {
+		return true
+	}
+	switch e.Type {
+	case "ToolInvocation", "ToolResult":
+		return true
+	case "AgentSpecific":
+		switch e.Subtype {
+		case "subagent_started", "subagent_summary", "subagent_load_error":
+			return true
+		}
+	}
+	return false
+}
+
+// computeToolRuns pre-scans the event stream and returns, for each index that
+// starts a maximal contiguous tool run (within one turn), that run's summary.
+func computeToolRuns(p *Profile, events []model.RenderEvent) map[int]toolRun {
+	if !p.GroupToolRuns {
+		return nil
+	}
+	starts := make(map[int]toolRun)
+	i := 0
+	for i < len(events) {
+		if !isToolRunMember(events[i]) {
+			i++
+			continue
+		}
+		start := i
+		turn := events[i].TurnIndex
+		var run toolRun
+		for i < len(events) && isToolRunMember(events[i]) && events[i].TurnIndex == turn {
+			e := events[i]
+			if e.Depth == 0 {
+				switch e.Type {
+				case "ToolInvocation":
+					run.total++
+				case "ToolResult":
+					if e.ExitCode == 0 && e.Stderr == "" {
+						run.succeeded++
+					}
+				}
+			}
+			i++
+		}
+		if run.total > 0 {
+			starts[start] = run
+		}
+	}
+	return starts
+}
+
+func writeToolGroupHeader(sb *trackingBuilder, g toolRun) {
+	label := fmt.Sprintf("▼ Tools (%d/%d)", g.succeeded, g.total)
+	sb.WriteString(styled(label, ColTool, ColNone, true, false))
+	sb.WriteString("\n")
+}
+
+func writeAssistantHeader(sb *trackingBuilder, label string) {
+	if label == "" {
+		label = "Agent"
+	}
+	sb.WriteString(styled("◇ "+sanitizeControlChars(label), ColSuccess, ColNone, true, false))
+	sb.WriteString("\n")
+}
 
 func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	// A turn start must be findable at a glance when scrolling or after a
@@ -138,7 +239,18 @@ func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	sb.WriteString("\n")
 }
 
-func writeUserPrompt(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+func writeUserPrompt(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+	if p.UserHeader != "" {
+		sb.WriteString(prefix)
+		sb.WriteString(styled(p.UserHeader, ColUser, ColNone, true, false))
+		sb.WriteString("\n")
+		for _, line := range strings.Split(sanitizeControlChars(evt.Text), "\n") {
+			sb.WriteString(prefix)
+			sb.WriteString(fgWrap(line, ColFg))
+			sb.WriteString("\n")
+		}
+		return
+	}
 	prompt := fgWrap("> ", ColUser) + fgWrap(sanitizeControlChars(evt.Text), ColFg)
 	for _, line := range strings.Split(prompt, "\n") {
 		sb.WriteString(prefix)
@@ -217,7 +329,84 @@ func isDiffDel(line string) bool {
 	return strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---")
 }
 
-func writeToolInvocation(sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string)) {
+// writeBoxTop draws the box top border with an optional embedded header.
+// Guard against headers long enough to overflow the box width: a naive
+// bWidth-4-len(header) goes negative and strings.Repeat panics. Truncate
+// the header itself rather than crash the whole render. Must truncate and
+// measure by display width, not rune count: CJK-heavy headers have a small
+// rune count while already exceeding the box width in terminal columns.
+func writeBoxTop(p *Profile, sb *trackingBuilder, prefix, header string, bWidth int, borderColor Color) {
+	if header != "" {
+		maxHeaderWidth := bWidth - 6 // room for corner+2 fill chars each side
+		if displayWidth(header) > maxHeaderWidth {
+			header = truncateToWidth(header, maxHeaderWidth)
+		}
+	}
+	fillLen := bWidth - 4 - displayWidth(header)
+	if fillLen < 1 {
+		fillLen = 1
+	}
+	top := p.BoxTL + p.BoxH + p.BoxH + header + strings.Repeat(p.BoxH, fillLen) + p.BoxTR
+	sb.WriteString(prefix)
+	sb.WriteString(fgWrap(top, borderColor))
+	sb.WriteString("\n")
+}
+
+// writeBoxBottom draws the box bottom border with an optional right-aligned
+// footer label (e.g. " Completed ").
+func writeBoxBottom(p *Profile, sb *trackingBuilder, prefix, footer string, bWidth int, borderColor Color) {
+	inner := bWidth - 2
+	var body string
+	if footer != "" {
+		maxFooterWidth := inner - 4
+		if displayWidth(footer) > maxFooterWidth {
+			footer = truncateToWidth(footer, maxFooterWidth)
+		}
+		fillLen := inner - 2 - displayWidth(footer)
+		if fillLen < 0 {
+			fillLen = 0
+		}
+		body = strings.Repeat(p.BoxH, fillLen) + footer + strings.Repeat(p.BoxH, 2)
+	} else {
+		body = strings.Repeat(p.BoxH, inner)
+	}
+	sb.WriteString(prefix)
+	sb.WriteString(fgWrap(p.BoxBL+body+p.BoxBR, borderColor))
+	sb.WriteString("\n")
+}
+
+// writeBoxRow draws one wrapped content row inside the box borders.
+func writeBoxRow(p *Profile, sb *trackingBuilder, prefix, content string, bWidth int, borderColor, contentColor Color) {
+	contentWidth := bWidth - 2
+	for _, wl := range wrapInBox(content, contentWidth) {
+		wl = padRight(wl, contentWidth)
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(p.BoxV, borderColor))
+		sb.WriteString(fgWrap(wl, contentColor))
+		sb.WriteString(fgWrap(p.BoxV, borderColor))
+		sb.WriteString("\n")
+	}
+}
+
+// promoteBoxHeader extracts a human-readable purpose argument (reason /
+// description / title) from the tool input to embed in the box header,
+// returning the header text and the input with that key removed.
+func promoteBoxHeader(input map[string]any) (string, map[string]any) {
+	for _, key := range []string{"reason", "description", "title"} {
+		if v, ok := input[key].(string); ok && strings.TrimSpace(v) != "" {
+			rest := make(map[string]any, len(input)-1)
+			for k, val := range input {
+				if k != key {
+					rest[k] = val
+				}
+			}
+			return v, rest
+		}
+	}
+	return "", input
+}
+
+func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string)) {
 	if model.IsEditTool(evt.ToolName) {
 		if evt.ToolName == "apply_patch" {
 			// apply_patch carries a raw patch string (under args/input/patch),
@@ -234,7 +423,7 @@ func writeToolInvocation(sb *trackingBuilder, evt model.RenderEvent, prefix stri
 					"old_string": call.OldString,
 					"new_string": call.NewString,
 				}
-				writeEditDiff(sb, syn, prefix, bWidth)
+				writeEditDiff(p, sb, syn, prefix, bWidth)
 			}
 			if len(calls) > 0 {
 				return
@@ -245,7 +434,7 @@ func writeToolInvocation(sb *trackingBuilder, evt model.RenderEvent, prefix stri
 			if onEditStart != nil {
 				onEditStart(filePath)
 			}
-			writeEditDiff(sb, evt, prefix, bWidth)
+			writeEditDiff(p, sb, evt, prefix, bWidth)
 			return
 		}
 	}
@@ -255,46 +444,29 @@ func writeToolInvocation(sb *trackingBuilder, evt model.RenderEvent, prefix stri
 		borderColor = ColSubagent
 	}
 
-	header := fmt.Sprintf(" Tool: %s ", sanitizeControlChars(evt.ToolName))
-	// Guard against tool names long enough to overflow the box width: a
-	// naive bWidth-4-len(header) goes negative and strings.Repeat panics.
-	// Truncate the header itself rather than crash the whole render.
-	//
-	// Must truncate/measure by display width, not rune count: a tool name
-	// full of CJK characters can have a small rune count while already
-	// exceeding the box width in actual terminal columns, which let the
-	// header silently overflow the box (rune-count check never tripped).
-	maxHeaderWidth := bWidth - 6 // leave room for "╔══" + at least "═" + "╗"
-	if displayWidth(header) > maxHeaderWidth {
-		header = truncateToWidth(header, maxHeaderWidth)
-	}
-	fillLen := bWidth - 4 - displayWidth(header)
-	if fillLen < 1 {
-		fillLen = 1
-	}
-	top := "╔══" + header + strings.Repeat("═", fillLen) + "╗"
+	toolName := sanitizeControlChars(evt.ToolName)
+	header := fmt.Sprintf(" Tool: %s ", toolName)
+	input := evt.ToolInput
 
-	inputLines := formatToolInput(evt.ToolInput)
-
-	sb.WriteString(prefix)
-	sb.WriteString(fgWrap(top, borderColor))
-	sb.WriteString("\n")
-	if len(inputLines) > 0 {
-		contentWidth := bWidth - 2
-		for _, il := range inputLines {
-			for _, wl := range wrapInBox(il, contentWidth) {
-				wl = padRight(wl, contentWidth)
-				sb.WriteString(prefix)
-				sb.WriteString(fgWrap("║", borderColor))
-				sb.WriteString(fgWrap(wl, ColFg))
-				sb.WriteString(fgWrap("║", borderColor))
-				sb.WriteString("\n")
-			}
+	if p.ToolBullet {
+		sb.WriteString(prefix)
+		sb.WriteString(styled("• "+toolName, ColFg, ColNone, true, false))
+		sb.WriteString("\n")
+		var purpose string
+		if purpose, input = promoteBoxHeader(evt.ToolInput); purpose != "" {
+			header = " " + sanitizeControlChars(purpose) + " "
+		} else {
+			header = ""
 		}
 	}
-	bottom := prefix + fgWrap("╚"+strings.Repeat("═", bWidth-2)+"╝", borderColor)
-	sb.WriteString(bottom)
-	sb.WriteString("\n")
+
+	inputLines := formatToolInput(input)
+
+	writeBoxTop(p, sb, prefix, header, bWidth, borderColor)
+	for _, il := range inputLines {
+		writeBoxRow(p, sb, prefix, il, bWidth, borderColor, ColFg)
+	}
+	writeBoxBottom(p, sb, prefix, "", bWidth, borderColor)
 }
 
 func formatToolInput(input map[string]any) []string {
@@ -415,7 +587,14 @@ func shouldQuote(s string) bool {
 	return false
 }
 
-func writeToolResult(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int) {
+	ok := evt.ExitCode == 0 && evt.Stderr == ""
+
+	if p.ResultBox {
+		writeToolResultBox(p, sb, evt, prefix, bWidth, ok)
+		return
+	}
+
 	// The checkmark/cross gets its own line, ending in "\n", rather than
 	// being followed directly by the first output line on the same line.
 	// The latter (the original draft's behavior) duplicated the depth
@@ -424,7 +603,7 @@ func writeToolResult(sb *trackingBuilder, evt model.RenderEvent, prefix string) 
 	// "│ ✓ │ first output line" — the branch marker appearing twice on one
 	// visual line.
 	sb.WriteString(prefix)
-	if evt.ExitCode == 0 && evt.Stderr == "" {
+	if ok {
 		sb.WriteString(fgWrap("✓", ColSuccess))
 	} else {
 		sb.WriteString(fgWrap("✗", ColError))
@@ -439,6 +618,59 @@ func writeToolResult(sb *trackingBuilder, evt model.RenderEvent, prefix string) 
 		sb.WriteString(fgWrap("stderr:\n", ColWarning))
 		sb.WriteString(formatToolOutput(evt.Stderr, prefix, true))
 	}
+	sb.WriteString("\n")
+}
+
+// writeToolResultBox renders a tool result as a bordered "Output" box with a
+// Completed/Failed footer (chrys-native layout). Output-less results collapse
+// to a single status line so the transcript doesn't fill with empty boxes.
+func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, ok bool) {
+	borderColor := ColSuccess
+	footer := " Completed "
+	if !ok {
+		borderColor = ColError
+		footer = " Failed "
+	}
+
+	if evt.Stdout == "" && evt.Stderr == "" {
+		sb.WriteString(prefix)
+		if ok {
+			sb.WriteString(fgWrap("✓ Completed", ColSuccess))
+		} else {
+			sb.WriteString(fgWrap("✗ Failed", ColError))
+		}
+		sb.WriteString("\n\n")
+		return
+	}
+
+	writeBoxTop(p, sb, prefix, " Output ", bWidth, borderColor)
+
+	writeLines := func(content string, contentColor Color) {
+		lines := strings.Split(sanitizeControlChars(content), "\n")
+		if len(lines) > maxStdoutLines {
+			remaining := len(lines) - maxStdoutLines
+			lines = lines[:maxStdoutLines]
+			for _, l := range lines {
+				writeBoxRow(p, sb, prefix, l, bWidth, borderColor, contentColor)
+			}
+			// Same truncation copy as the flat layout: the phase-2 expand
+			// affordance matches on this exact text.
+			writeBoxRow(p, sb, prefix, fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), bWidth, borderColor, ColWarning)
+			return
+		}
+		for _, l := range lines {
+			writeBoxRow(p, sb, prefix, l, bWidth, borderColor, contentColor)
+		}
+	}
+
+	if evt.Stdout != "" {
+		writeLines(evt.Stdout, ColFg)
+	}
+	if evt.Stderr != "" {
+		writeLines(evt.Stderr, ColError)
+	}
+
+	writeBoxBottom(p, sb, prefix, footer, bWidth, borderColor)
 	sb.WriteString("\n")
 }
 
@@ -474,7 +706,7 @@ func formatToolOutput(content string, prefix string, isError bool) string {
 	return sb.String()
 }
 
-func writeAgentSpecific(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+func writeAgentSpecific(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string) {
 	switch evt.Subtype {
 	case "turn_duration":
 	case "subagent_load_error":
@@ -493,7 +725,15 @@ func writeAgentSpecific(sb *trackingBuilder, evt model.RenderEvent, prefix strin
 		sb.WriteString("\n")
 	case "subagent_started":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), ColSubagent))
+		if p.SubagentBadge {
+			sb.WriteString(styled(fmt.Sprintf("◉ %s", sanitizeControlChars(evt.Text)), ColSubagent, ColNone, true, false))
+		} else {
+			sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), ColSubagent))
+		}
+		sb.WriteString("\n")
+	case "subagent_summary":
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(sanitizeControlChars(evt.Text), ColMuted))
 		sb.WriteString("\n")
 	case "model_change":
 		sb.WriteString(prefix)
@@ -906,7 +1146,7 @@ func lcsLineDiff(old, new []string) []struct{ kind int; text string } {
 // writeEditDiff renders an Edit (str_replace) tool invocation as a LCS-based
 // unified diff block. Equal lines are shown without background; only truly
 // changed lines are highlighted red (removed) or green (added).
-func writeEditDiff(sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int) {
+func writeEditDiff(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int) {
 	const maxDiffLines = 40
 
 	borderColor := ColTool
@@ -935,31 +1175,23 @@ func writeEditDiff(sb *trackingBuilder, evt model.RenderEvent, prefix string, bW
 		}
 	}
 
-	// Header
+	// Header. The "✏️ <tool>: <path>" shape is load-bearing: the frontend's
+	// clickable diff affordance (parseEditHeaderLine) matches on it.
 	dispPath := filePath
 	if dispPath == "" { dispPath = "unknown" }
 	headerText := fmt.Sprintf(" ✏️ %s: %s ", evt.ToolName, dispPath)
-	maxHW := bWidth - 6
-	if displayWidth(headerText) > maxHW {
-		headerText = truncateToWidth(headerText, maxHW)
-	}
-	fillLen := bWidth - 4 - displayWidth(headerText)
-	if fillLen < 1 { fillLen = 1 }
-	top := "╔══" + headerText + strings.Repeat("═", fillLen) + "╗"
-	sb.WriteString(prefix)
-	sb.WriteString(fgWrap(top, borderColor))
-	sb.WriteString("\n")
+	writeBoxTop(p, sb, prefix, headerText, bWidth, borderColor)
 
 	writeDiffLine := func(content string, fgColor, bgColor Color) {
 		body := padRight(content, contentWidth)
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap("║", borderColor))
+		sb.WriteString(fgWrap(p.BoxV, borderColor))
 		if bgColor != ColNone {
 			sb.WriteString(bgWrap(fgWrap(body, fgColor), bgColor))
 		} else {
 			sb.WriteString(fgWrap(body, fgColor))
 		}
-		sb.WriteString(fgWrap("║", borderColor))
+		sb.WriteString(fgWrap(p.BoxV, borderColor))
 		sb.WriteString("\n")
 	}
 
@@ -1002,9 +1234,7 @@ func writeEditDiff(sb *trackingBuilder, evt model.RenderEvent, prefix string, bW
 		writeDiffLine(fmt.Sprintf("  … 省略 %d 行", truncated), ColWarning, ColNone)
 	}
 
-	bottom := prefix + fgWrap("╚"+strings.Repeat("═", bWidth-2)+"╝", borderColor)
-	sb.WriteString(bottom)
-	sb.WriteString("\n")
+	writeBoxBottom(p, sb, prefix, "", bWidth, borderColor)
 }
 
 // splitLines splits s on "\n", returning an empty slice for an empty string.

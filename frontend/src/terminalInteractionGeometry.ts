@@ -46,7 +46,8 @@ export function getMarkerOffsetForBufferLine({
 }
 
 export function parseEditHeaderLine(text: string): EditHeaderMatch | null {
-  const match = text.match(/✏(?:\uFE0F)?\s*([^:]+):\s*(.+?)(?:\s+═+.*)?$/u)
+  // Fill chars cover both box charsets: 双线 ═（默认档案）与圆角 ─（chrys 档案）。
+  const match = text.match(/✏(?:\uFE0F)?\s*([^:]+):\s*(.+?)(?:\s+[═─]+.*)?$/u)
   if (!match) return null
 
   return {

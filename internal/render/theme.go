@@ -21,9 +21,14 @@ type Color int
 const (
 	ColNone     Color = -1 // sentinel: no color (leave default)
 	ColBg       Color = 0  // terminal background; as fg on an accent bg it contrasts in any theme
-	ColError    Color = 1  // errors, ✗
-	ColSuccess  Color = 2  // ✓, success (shares the green slot)
-	ColUser     Color = 2  // user prompt, list markers (green)
+	ColError   Color = 1 // errors, ✗
+	ColSuccess Color = 2 // ✓, success
+	// ColUser gets its own slot (13, previously spare) instead of sharing
+	// slot 2 with ColSuccess: per-agent terminal skins must be able to color
+	// the user prompt independently of the ✓ marker (chrys uses pink user /
+	// green success). Default themes map slot 13 to the same green as slot 2,
+	// so agents without a skin render identically to before.
+	ColUser Color = 13 // user prompt, list markers
 	ColWarning  Color = 3  // warnings, code fences, truncation notes
 	ColTool     Color = 4  // tool box borders, links
 	ColSkill    Color = 5  // skills, headings

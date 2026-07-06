@@ -47,7 +47,7 @@ const DARK: ITheme = {
   brightGreen: '#225c2b', // 10 diff added line bg
   brightYellow: '#ffc107', // 11 spare
   brightBlue: '#93a5ff', // 12 turn banner accent (user-customizable, see below)
-  brightMagenta: '#af87ff', // 13 spare
+  brightMagenta: '#4eba65', // 13 user prompt — same green as slot 2 by default; agent skins may recolor independently of ✓
   brightCyan: '#d77757', // 14 spare
   brightWhite: '#93a5ff', // 15 bold fg — matches Claude Code bold blue
 }
@@ -73,12 +73,41 @@ const LIGHT: ITheme = {
   brightGreen: '#c7e1cb', // 10 diff added line bg (pale)
   brightYellow: '#966c1e', // 11 spare
   brightBlue: '#5769f7', // 12 turn banner accent (user-customizable, see below)
-  brightMagenta: '#8700ff', // 13 spare
+  brightMagenta: '#2c7a39', // 13 user prompt — same green as slot 2 by default; agent skins may recolor independently of ✓
   brightCyan: '#d77757', // 14 spare
   brightWhite: '#5769f7', // 15 bold fg — matches Claude Code bold blue
 }
 
 const THEMES: Record<TerminalThemeName, ITheme> = { dark: DARK, light: LIGHT }
+
+// ── Per-agent skins ───────────────────────────────────────────────────────────
+// A skin is a partial palette overlaid on the base theme when the replayed
+// session belongs to that agent — the layout profile (backend) provides the
+// native structure, the skin provides the native colors. Chrys palette is
+// sampled from its TUI: orange tool frames, pink user, purple headings/banner.
+
+const CHRYS_DARK: Partial<ITheme> = {
+  blue: '#ff9e64', // tool box borders → orange
+  magenta: '#bb9af7', // skills/headings → violet
+  cyan: '#e0af68', // sub-agent branch → gold
+  brightBlue: '#9d7cd8', // turn banner → violet
+  brightMagenta: '#f7768e', // user prompt → pink
+  brightWhite: '#bb9af7', // bold fg → violet tint
+}
+
+const CHRYS_LIGHT: Partial<ITheme> = {
+  blue: '#c05f10', // tool box borders → orange
+  magenta: '#7c3aed', // skills/headings → violet
+  cyan: '#a06a00', // sub-agent branch → gold
+  brightBlue: '#6d4fc2', // turn banner → violet
+  brightMagenta: '#d63384', // user prompt → pink
+  brightWhite: '#7c3aed', // bold fg → violet tint
+}
+
+function agentSkin(isDark: boolean, agentType?: string): Partial<ITheme> | null {
+  if (agentType?.toLowerCase().includes('chrys')) return isDark ? CHRYS_DARK : CHRYS_LIGHT
+  return null
+}
 
 // ── Turn banner accent customization ─────────────────────────────────────────
 // The backend renders the turn banner with palette slot 12 (brightBlue), so a
@@ -108,10 +137,13 @@ export function onBannerColorChange(handler: () => void): () => void {
   return () => window.removeEventListener(BANNER_COLOR_EVENT, handler)
 }
 
-export function terminalTheme(isDark: boolean): ITheme {
+export function terminalTheme(isDark: boolean, agentType?: string): ITheme {
   const base = THEMES[isDark ? 'dark' : 'light']
+  const skin = agentSkin(isDark, agentType)
+  const themed = skin ? { ...base, ...skin } : base
+  // The user's explicit banner color choice wins over any skin default.
   const banner = getBannerColorOverride()
-  return banner ? { ...base, brightBlue: banner } : base
+  return banner ? { ...themed, brightBlue: banner } : themed
 }
 
 // useIsDark tracks the global theme by observing the `.dark` class that

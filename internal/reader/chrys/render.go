@@ -112,11 +112,16 @@ func (r *ChrysReader) toRenderEvents(id string) ([]model.RenderEvent, error) {
 
 		case m.Role == "user":
 			turnIdx++
+			var meta map[string]any
+			if sf.Meta.AgentDisplayName != "" {
+				meta = map[string]any{"agent_label": sf.Meta.AgentDisplayName}
+			}
 			boundaryID := rs.emit(model.RenderEvent{
 				Type:      "TurnBoundary",
 				Timestamp: ts,
 				TurnIndex: turnIdx,
 				Model:     sf.Meta.ModelID,
+				Metadata:  meta,
 			})
 			rs.emit(model.RenderEvent{
 				ParentEventID: boundaryID,
@@ -276,7 +281,15 @@ func (rs *renderState) spliceSubagent(path string, turnIdx, depth int) {
 		Text:      label,
 	})
 
+	toolCalls := 0
+	var tokens int64
 	for _, m := range sf.State.Messages {
+		for _, c := range m.Contents {
+			if c.Type == "function_call" {
+				toolCalls++
+			}
+		}
+		tokens += m.groupTokenCount()
 		if m.markerKind() != "" || m.Role == "user" {
 			continue
 		}
@@ -287,6 +300,26 @@ func (rs *renderState) spliceSubagent(path string, turnIdx, depth int) {
 			rs.appendToolMessage(m, turnIdx, depth, false)
 		}
 	}
+
+	summary := fmt.Sprintf("Tool calls: %d", toolCalls)
+	if tokens > 0 {
+		summary += fmt.Sprintf(" · Total: %s tokens", formatTokens(tokens))
+	}
+	rs.emit(model.RenderEvent{
+		Type:      "AgentSpecific",
+		Subtype:   "subagent_summary",
+		TurnIndex: turnIdx,
+		Depth:     depth,
+		Text:      summary,
+	})
+}
+
+// formatTokens renders a token count the way chrys's own TUI does (106.9k).
+func formatTokens(n int64) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // normalizeToolInput adapts chrys-specific argument key names so shared
