@@ -63,6 +63,8 @@ const positionKindToEventKind: Record<MiniMapPosition['kind'], MiniMapEventKind 
   error: 'anomaly',
   compaction: 'compaction',
   edit: null,
+  fold: null,  // fold/trunc entries drive terminal interactions, not minimap markers
+  trunc: null,
 }
 
 // Compute minimapContentHeight: at least visibleTrackHeight, at most 4×, scaled

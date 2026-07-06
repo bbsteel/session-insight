@@ -56,6 +56,64 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 	// once per TextChunk.
 	prevDepth0Type := ""
 
+	// openFold tracks the tool run currently being rendered so its body's
+	// line extent (display rows AND logical lines, both needed by the
+	// client-side fold composition) can be recorded when the run ends.
+	type openFoldState struct {
+		run            toolRun
+		turnIndex      int
+		headerDisplay  int
+		headerLogical  int
+		bodyDisplay    int
+		bodyLogical    int
+	}
+	var openFold *openFoldState
+	closeFold := func() {
+		if openFold == nil {
+			return
+		}
+		f := openFold
+		openFold = nil
+		if tb.CurrentLine() <= f.bodyDisplay {
+			return // empty body — nothing to fold
+		}
+		endIncl := tb.CurrentLine() - 1
+		positions = append(positions, RenderPosition{
+			PositionKey: fmt.Sprintf("fold:%d:%d", f.turnIndex, f.headerDisplay),
+			Kind:        "fold",
+			TurnIndex:   f.turnIndex,
+			LineStart:   f.headerDisplay,
+			LineEnd:     &endIncl,
+			Label:       fmt.Sprintf("Tools (%d/%d)", f.run.succeeded, f.run.total),
+			Payload: map[string]any{
+				"display_start": float64(f.bodyDisplay),
+				"display_end":   float64(tb.CurrentLine()), // exclusive
+				"logical_start": float64(f.bodyLogical),
+				"logical_end":   float64(tb.CurrentLogicalLine()), // exclusive
+				"header_logical": float64(f.headerLogical),
+			},
+		})
+	}
+
+	// truncSeq numbers truncated output segments in document order; the
+	// /tool-outputs endpoint (render.CollectTruncatedOutputs) enumerates the
+	// same segments in the same order, so payload.output_index is a direct
+	// index into its response.
+	truncSeq := 0
+	makeOnTrunc := func(turnIndex int) func() {
+		return func() {
+			positions = append(positions, RenderPosition{
+				PositionKey: fmt.Sprintf("trunc:%d:%d", turnIndex, tb.CurrentLine()),
+				Kind:        "trunc",
+				TurnIndex:   turnIndex,
+				LineStart:   tb.CurrentLine(),
+				Label:       "输出截断",
+				Payload:     map[string]any{"output_index": float64(truncSeq)},
+			})
+			truncSeq++
+		}
+	}
+
 	emit := func(kind, label, severity string, turnIndex int, payload map[string]any) {
 		lineStart := tb.CurrentLine()
 		key := fmt.Sprintf("%s:%d:%d", kind, turnIndex, lineStart)
@@ -71,6 +129,10 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 	}
 
 	for i, evt := range events {
+		if openFold != nil && i >= openFold.run.endIdx {
+			closeFold()
+		}
+
 		if evt.TurnIndex != prevTurnIndex {
 			emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
 			writeSeparator(tb, evt.TurnIndex, cols)
@@ -79,7 +141,17 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		}
 
 		if g, ok := groupStarts[i]; ok {
+			headerDisplay := tb.CurrentLine()
+			headerLogical := tb.CurrentLogicalLine()
 			writeToolGroupHeader(tb, g)
+			openFold = &openFoldState{
+				run:           g,
+				turnIndex:     evt.TurnIndex,
+				headerDisplay: headerDisplay,
+				headerLogical: headerLogical,
+				bodyDisplay:   tb.CurrentLine(),
+				bodyLogical:   tb.CurrentLogicalLine(),
+			}
 		}
 
 		prefix := depthPrefix(evt.Depth)
@@ -114,7 +186,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			if evt.ExitCode != 0 || evt.Stderr != "" {
 				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName})
 			}
-			writeToolResult(p, tb, evt, prefix, bWidth)
+			writeToolResult(p, tb, evt, prefix, bWidth, makeOnTrunc(evt.TurnIndex))
 		case "CompactionBoundary":
 			emit("compaction", "压缩", "", evt.TurnIndex, nil)
 		case "AgentSpecific":
@@ -125,6 +197,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			prevDepth0Type = evt.Type
 		}
 	}
+	closeFold()
 
 	// Deduplicate: if two positions share the same position_key, keep first.
 	seen := make(map[string]struct{}, len(positions))
@@ -142,12 +215,14 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 3
+const FormatVersion int64 = 4
 
 // toolRun summarizes one contiguous run of tool events for the group header.
+// endIdx is the index just past the run's last event.
 type toolRun struct {
 	total     int
 	succeeded int
+	endIdx    int
 }
 
 // isToolRunMember reports whether an event belongs to a tool run: tool
@@ -200,15 +275,21 @@ func computeToolRuns(p *Profile, events []model.RenderEvent) map[int]toolRun {
 			i++
 		}
 		if run.total > 0 {
+			run.endIdx = i
 			starts[start] = run
 		}
 	}
 	return starts
 }
 
+// Bold on slots 0-7 gets remapped by xterm's drawBoldTextInBrightColors to
+// slots 8-15, which this palette repurposes (12 = banner, 10 = diff bg…).
+// Headers therefore either use a slot whose bright counterpart mirrors it in
+// every theme (3→11 for the group header) or skip bold (assistant header:
+// slot 2's bright pair is the diff-add background tint).
 func writeToolGroupHeader(sb *trackingBuilder, g toolRun) {
 	label := fmt.Sprintf("▼ Tools (%d/%d)", g.succeeded, g.total)
-	sb.WriteString(styled(label, ColTool, ColNone, true, false))
+	sb.WriteString(styled(label, ColWarning, ColNone, true, false))
 	sb.WriteString("\n")
 }
 
@@ -216,7 +297,7 @@ func writeAssistantHeader(sb *trackingBuilder, label string) {
 	if label == "" {
 		label = "Agent"
 	}
-	sb.WriteString(styled("◇ "+sanitizeControlChars(label), ColSuccess, ColNone, true, false))
+	sb.WriteString(styled("◇ "+sanitizeControlChars(label), ColSuccess, ColNone, false, false))
 	sb.WriteString("\n")
 }
 
@@ -587,11 +668,11 @@ func shouldQuote(s string) bool {
 	return false
 }
 
-func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int) {
+func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onTrunc func()) {
 	ok := evt.ExitCode == 0 && evt.Stderr == ""
 
 	if p.ResultBox {
-		writeToolResultBox(p, sb, evt, prefix, bWidth, ok)
+		writeToolResultBox(p, sb, evt, prefix, bWidth, ok, onTrunc)
 		return
 	}
 
@@ -611,12 +692,12 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 	sb.WriteString("\n")
 
 	if evt.Stdout != "" {
-		sb.WriteString(formatToolOutput(evt.Stdout, prefix, false))
+		writeToolOutputFlat(sb, evt.Stdout, prefix, false, onTrunc)
 	}
 	if evt.Stderr != "" {
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap("stderr:\n", ColWarning))
-		sb.WriteString(formatToolOutput(evt.Stderr, prefix, true))
+		writeToolOutputFlat(sb, evt.Stderr, prefix, true, onTrunc)
 	}
 	sb.WriteString("\n")
 }
@@ -624,7 +705,7 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 // writeToolResultBox renders a tool result as a bordered "Output" box with a
 // Completed/Failed footer (chrys-native layout). Output-less results collapse
 // to a single status line so the transcript doesn't fill with empty boxes.
-func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, ok bool) {
+func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, ok bool, onTrunc func()) {
 	borderColor := ColSuccess
 	footer := " Completed "
 	if !ok {
@@ -653,8 +734,11 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 			for _, l := range lines {
 				writeBoxRow(p, sb, prefix, l, bWidth, borderColor, contentColor)
 			}
-			// Same truncation copy as the flat layout: the phase-2 expand
-			// affordance matches on this exact text.
+			if onTrunc != nil {
+				onTrunc()
+			}
+			// Same truncation copy as the flat layout: the expand affordance
+			// matches on this exact text.
 			writeBoxRow(p, sb, prefix, fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), bWidth, borderColor, ColWarning)
 			return
 		}
@@ -674,7 +758,10 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 	sb.WriteString("\n")
 }
 
-func formatToolOutput(content string, prefix string, isError bool) string {
+// writeToolOutputFlat writes tool output through the tracking builder
+// (byte-identical to the old string-building formatToolOutput) so the
+// truncation note's display row can be recorded via onTrunc at write time.
+func writeToolOutputFlat(sb *trackingBuilder, content string, prefix string, isError bool, onTrunc func()) {
 	lines := strings.Split(sanitizeControlChars(content), "\n")
 	color := ColFg
 	if isError {
@@ -685,25 +772,64 @@ func formatToolOutput(content string, prefix string, isError bool) string {
 		shown := lines[:maxStdoutLines]
 		remaining := len(lines) - maxStdoutLines
 
-		var sb strings.Builder
 		for _, line := range shown {
 			sb.WriteString(prefix)
 			sb.WriteString(fgWrap(line, color))
 			sb.WriteString("\n")
 		}
+		if onTrunc != nil {
+			onTrunc()
+		}
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap(fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), ColWarning))
 		sb.WriteString("\n")
-		return sb.String()
+		return
 	}
 
-	var sb strings.Builder
 	for _, line := range lines {
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap(line, color))
 		sb.WriteString("\n")
 	}
-	return sb.String()
+}
+
+// CollectTruncatedOutputs enumerates, in document order, every tool output
+// segment the formatter truncates ("[+] N 行被截断" lines). The order matches
+// the "trunc" positions' payload.output_index exactly: per ToolResult event,
+// stdout first, then stderr, each truncated independently when it exceeds
+// maxStdoutLines.
+type TruncatedOutput struct {
+	ToolName  string `json:"tool_name"`
+	Kind      string `json:"kind"` // "stdout" | "stderr"
+	TurnIndex int    `json:"turn_index"`
+	Content   string `json:"content"`
+}
+
+func CollectTruncatedOutputs(events []model.RenderEvent) []TruncatedOutput {
+	names := make(map[string]string)
+	var out []TruncatedOutput
+	overflow := func(content string) bool {
+		return content != "" && len(strings.Split(sanitizeControlChars(content), "\n")) > maxStdoutLines
+	}
+	for _, e := range events {
+		if e.Type == "ToolInvocation" && e.ToolCallID != "" {
+			names[e.ToolCallID] = e.ToolName
+		}
+		if e.Type != "ToolResult" {
+			continue
+		}
+		name := e.ToolName
+		if name == "" {
+			name = names[e.ToolCallID]
+		}
+		if overflow(e.Stdout) {
+			out = append(out, TruncatedOutput{ToolName: name, Kind: "stdout", TurnIndex: e.TurnIndex, Content: e.Stdout})
+		}
+		if overflow(e.Stderr) {
+			out = append(out, TruncatedOutput{ToolName: name, Kind: "stderr", TurnIndex: e.TurnIndex, Content: e.Stderr})
+		}
+	}
+	return out
 }
 
 func writeAgentSpecific(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string) {
@@ -726,6 +852,8 @@ func writeAgentSpecific(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 	case "subagent_started":
 		sb.WriteString(prefix)
 		if p.SubagentBadge {
+			// Bold is safe here: slot 6's bright pair (14) mirrors it in the
+			// default themes, and agent skins must keep 6/14 in sync.
 			sb.WriteString(styled(fmt.Sprintf("◉ %s", sanitizeControlChars(evt.Text)), ColSubagent, ColNone, true, false))
 		} else {
 			sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), ColSubagent))

@@ -9,6 +9,19 @@ export async function fetchSessions(agent?: string): Promise<SessionSummary[]> {
   return readJson<SessionSummary[]>(res, 'sessions')
 }
 
+export interface TruncatedOutput {
+  tool_name: string
+  kind: 'stdout' | 'stderr'
+  turn_index: number
+  content: string
+}
+
+export async function fetchToolOutputs(id: string): Promise<TruncatedOutput[]> {
+  const res = await fetch(`/api/sessions/${id}/tool-outputs`)
+  if (!res.ok) throw new Error(`Failed to fetch tool outputs: ${res.status}`)
+  return res.json()
+}
+
 export async function fetchSession(id: string): Promise<SessionDetail> {
   const res = await fetch(`/api/sessions/${id}`)
   if (!res.ok) throw new Error(`Failed to fetch session: ${res.status}`)

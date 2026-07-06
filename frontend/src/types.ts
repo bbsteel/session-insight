@@ -73,13 +73,14 @@ export interface SearchResult {
 }
 
 export interface MiniMapPosition {
-  kind: 'turn' | 'user' | 'error' | 'compaction' | 'edit'
+  kind: 'turn' | 'user' | 'error' | 'compaction' | 'edit' | 'fold' | 'trunc'
   position_key: string
   turn_index: number
   line_start: number
   line_end?: number
   label: string
   severity?: string
+  payload?: Record<string, unknown>
 }
 
 export interface PositionsResponse {

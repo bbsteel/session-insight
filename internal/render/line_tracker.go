@@ -11,9 +11,10 @@ import "strings"
 //   - When the current column + rune width exceeds cols, a soft wrap occurs
 //     first (line++, col=0), then the rune is written.
 type terminalLineTracker struct {
-	cols int // terminal column count (from fitAddon.fit())
-	line int // 0-based current terminal line
-	col  int // 0-based current column
+	cols    int // terminal column count (from fitAddon.fit())
+	line    int // 0-based current terminal line (display row, soft wraps included)
+	col     int // 0-based current column
+	logical int // 0-based current logical line ('\n' count only, no soft wraps)
 }
 
 func newLineTracker(cols int) *terminalLineTracker {
@@ -26,6 +27,15 @@ func newLineTracker(cols int) *terminalLineTracker {
 // CurrentLine returns the current 0-based terminal line number.
 func (t *terminalLineTracker) CurrentLine() int {
 	return t.line
+}
+
+// CurrentLogicalLine returns the current 0-based logical line index — the
+// position in the '\n'-split source text, unaffected by soft wrapping. Fold
+// composition on the client slices the raw ANSI by logical lines while
+// shifting display rows by the tracker's display counts, so it never has to
+// re-implement wrap simulation.
+func (t *terminalLineTracker) CurrentLogicalLine() int {
+	return t.logical
 }
 
 // Feed updates the tracker state for the text s. s must be the exact bytes
@@ -53,6 +63,7 @@ func (t *terminalLineTracker) Feed(s string) {
 		// Hard line break.
 		if b == '\n' {
 			t.line++
+			t.logical++
 			t.col = 0
 			i++
 			continue
@@ -124,4 +135,8 @@ func (tb *trackingBuilder) String() string {
 
 func (tb *trackingBuilder) CurrentLine() int {
 	return tb.tracker.CurrentLine()
+}
+
+func (tb *trackingBuilder) CurrentLogicalLine() int {
+	return tb.tracker.CurrentLogicalLine()
 }

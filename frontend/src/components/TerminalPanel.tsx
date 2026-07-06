@@ -6,6 +6,7 @@ import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffset
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
+import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 
 const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "Menlo", monospace'
@@ -14,6 +15,8 @@ const TERMINAL_FONT_SIZE = 13
 interface Props {
   sessionId: string
   agentType?: string
+  folds?: FoldRange[]
+  onFoldChange?: () => void
   onScrollMetrics?: (m: ScrollMetrics) => void
   onColsReady?: (cols: number) => void
   controlRef?: React.MutableRefObject<TerminalControl | null>
@@ -39,7 +42,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, onColsReady, controlRef }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, onFoldChange, onScrollMetrics, onColsReady, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -51,6 +54,13 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
   isDarkRef.current = isDark
   const agentTypeRef = useRef(agentType)
   agentTypeRef.current = agentType
+  const foldsRef = useRef<FoldRange[]>(folds ?? [])
+  foldsRef.current = folds ?? []
+  const onFoldChangeRef = useRef(onFoldChange)
+  onFoldChangeRef.current = onFoldChange
+  // Assigned inside the mount effect once the terminal is live; the folds
+  // prop effect below routes updated fold ranges into that closure.
+  const applyFoldsRef = useRef<((folds: FoldRange[]) => void) | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -80,6 +90,16 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
     // Line interaction state
     let lineMatchers: TerminalLineMatcher<unknown>[] = []
     const interactionMap = new Map<number, InteractionEntry>()
+
+    // Fold state: raw ANSI is kept so collapsed tool-group bodies can be
+    // recomposed out of the buffer (xterm has no hide-rows primitive; a fold
+    // toggle is a full reset+rewrite, same as the initial load path).
+    let rawAnsi = ''
+    let foldRanges: FoldRange[] = foldsRef.current
+    const collapsedKeys = new Set<string>()
+    let foldView: FoldView | null = null
+    const toDisplayLine = (n: number) => (foldView ? foldView.toDisplay(n) : n)
+    const toOriginalLine = (n: number) => (foldView ? foldView.toOriginal(n) : n)
     let tooltipEl: HTMLDivElement | null = null
     let hoverDecoration: IDecoration | null = null
     let hoverMarker: IMarker | null = null
@@ -267,6 +287,66 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
         }
       }
 
+      // Register collapsed/expanded tool-group headers as clickable rows.
+      // Injected after every scanBuffer so a rewrite can't leave stale rows.
+      const foldToggleMatcher: TerminalLineMatcher<FoldRange> = {
+        match: () => null, // rows come from fold geometry, not text scanning
+        tooltip: '收起/展开 Tools',
+        onActivate: (_bufLine, fold) => toggleFold(fold),
+      }
+      const injectFoldRows = () => {
+        if (!foldRanges.length) return
+        for (const f of foldRanges) {
+          const row = toDisplayLine(f.headerDisplay)
+          interactionMap.set(row, { matcher: foldToggleMatcher as TerminalLineMatcher<unknown>, data: f, matchIndex: 0 })
+        }
+      }
+
+      const writeComposed = (afterWrite?: () => void) => {
+        clearHoverDecoration()
+        term.reset()
+        term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
+        term.write(foldView?.text ?? rawAnsi, () => {
+          scanBuffer()
+          injectFoldRows()
+          queueMetrics()
+          afterWrite?.()
+        })
+      }
+
+      const recompose = (afterWrite?: () => void) => {
+        foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys)
+        writeComposed(() => {
+          afterWrite?.()
+          onFoldChangeRef.current?.()
+        })
+      }
+
+      const toggleFold = (fold: FoldRange) => {
+        if (!rawAnsi) return
+        // Keep the toggled header at the same on-screen row across the rewrite.
+        const beforeRow = toDisplayLine(fold.headerDisplay)
+        const viewportOffset = beforeRow - term.buffer.active.viewportY
+        if (collapsedKeys.has(fold.key)) collapsedKeys.delete(fold.key)
+        else collapsedKeys.add(fold.key)
+        recompose(() => {
+          const afterRow = toDisplayLine(fold.headerDisplay)
+          term.scrollToLine(Math.max(0, afterRow - viewportOffset))
+        })
+      }
+
+      applyFoldsRef.current = (next: FoldRange[]) => {
+        foldRanges = next
+        // Drop collapsed state for folds that no longer exist (session grew).
+        const valid = new Set(next.map(f => f.key))
+        let dropped = false
+        for (const k of [...collapsedKeys]) {
+          if (!valid.has(k)) { collapsedKeys.delete(k); dropped = true }
+        }
+        if (collapsedKeys.size > 0 || dropped || foldView) recompose()
+        else injectFoldRows()
+      }
+
       onMouseMove = (e: MouseEvent) => {
         if (!interactionMap.size) { hideHover(); return }
         const bl = getBufLine(e)
@@ -328,13 +408,9 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
         fetchRenderANSI(sessionId, cols)
           .then(ansi => {
             if (disposed) return
-            clearHoverDecoration()
-            term.reset()
-            term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
-            term.write(ansi, () => {
-              scanBuffer()
-              queueMetrics()
-            })
+            rawAnsi = ansi
+            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys) : null
+            writeComposed(() => { if (foldView) onFoldChangeRef.current?.() })
           })
           .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
       }
@@ -345,9 +421,15 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
           getMetrics,
           setLineMatchers: (matchers) => {
             lineMatchers = matchers
-            if (term.buffer.active.length > 1) scanBuffer()
+            if (term.buffer.active.length > 1) {
+              scanBuffer()
+              injectFoldRows()
+            }
           },
           flashLines,
+          toDisplayLine,
+          toOriginalLine,
+          hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
         }
       }
 
@@ -376,6 +458,7 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
 
       loadRender(currentCols)
       onColsReadyRef.current?.(currentCols)
+      if (foldsRef.current.length) applyFoldsRef.current?.(foldsRef.current)
     })
 
     return () => {
@@ -393,6 +476,7 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
       clearFlash()
       tooltipEl?.remove()
       if (controlRef) controlRef.current = null
+      applyFoldsRef.current = null
       termRef.current = null
       term.dispose()
     }
@@ -411,6 +495,10 @@ export default function TerminalPanel({ sessionId, agentType, onScrollMetrics, o
       }
     })
   }, [isDark, agentType])
+
+  useEffect(() => {
+    applyFoldsRef.current?.(folds ?? [])
+  }, [folds])
 
   return (
     <div style={{ flex: 1, overflow: 'hidden', background: terminalTheme(isDark).background, display: 'flex', flexDirection: 'column' }}>

@@ -130,22 +130,40 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var summaries []SessionSummary
+	bookmarkKeys := make(map[string]bool, len(bookmarks))
+	bookmarkAgents := make(map[string]bool)
 	for _, b := range bookmarks {
-		for _, rd := range s.Readers {
-			if rd.AgentType() != b.AgentType {
+		bookmarkKeys[db.BookmarkKey(b.AgentType, b.SessionID)] = true
+		bookmarkAgents[b.AgentType] = true
+	}
+
+	summaryByKey := make(map[string]SessionSummary, len(bookmarks))
+	for _, rd := range s.Readers {
+		if !bookmarkAgents[rd.AgentType()] {
+			continue
+		}
+		list, err := rd.ListSessions()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, sess := range list {
+			key := db.BookmarkKey(sess.AgentType, sess.ID)
+			if !bookmarkKeys[key] {
 				continue
 			}
-			detail, err := rd.GetSession(b.SessionID)
-			if err != nil || detail == nil {
-				continue
-			}
-			sess := detail.Session
 			sess.Bookmarked = true
-			summaries = append(summaries, sessionToSummary(sess))
-			break
+			summaryByKey[key] = sessionToSummary(sess)
 		}
 	}
+
+	var summaries []SessionSummary
+	for _, b := range bookmarks {
+		if summary, ok := summaryByKey[db.BookmarkKey(b.AgentType, b.SessionID)]; ok {
+			summaries = append(summaries, summary)
+		}
+	}
+
 	if summaries == nil {
 		summaries = []SessionSummary{}
 	}
@@ -249,6 +267,32 @@ func (s *Server) handleSessionEdits(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(edits)
+		return
+	}
+	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+// handleSessionToolOutputs returns the full content of every tool output
+// segment the terminal render truncates, in document order. The frontend's
+// "点击展开" affordance indexes into this array via the "trunc" positions'
+// payload.output_index (both sides enumerate segments identically).
+func (s *Server) handleSessionToolOutputs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+	for _, rd := range s.Readers {
+		events, err := rd.GetRenderEvents(id)
+		if err != nil {
+			continue
+		}
+		outputs := render.CollectTruncatedOutputs(events)
+		if outputs == nil {
+			outputs = []render.TruncatedOutput{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(outputs)
 		return
 	}
 	http.Error(w, "session not found", http.StatusNotFound)

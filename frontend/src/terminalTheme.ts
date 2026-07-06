@@ -86,19 +86,28 @@ const THEMES: Record<TerminalThemeName, ITheme> = { dark: DARK, light: LIGHT }
 // native structure, the skin provides the native colors. Chrys palette is
 // sampled from its TUI: orange tool frames, pink user, purple headings/banner.
 
+// Bold text on slots 0-7 renders from slots 8-15 (xterm's
+// drawBoldTextInBrightColors), so a skin recoloring a base slot must mirror
+// it onto the bright pair it can legitimately shadow (3→11, 6→14).
 const CHRYS_DARK: Partial<ITheme> = {
+  yellow: '#ff9e64', // warnings + Tools group header → orange
   blue: '#ff9e64', // tool box borders → orange
   magenta: '#bb9af7', // skills/headings → violet
   cyan: '#e0af68', // sub-agent branch → gold
+  brightYellow: '#ff9e64', // bold pair of yellow
+  brightCyan: '#e0af68', // bold pair of cyan
   brightBlue: '#9d7cd8', // turn banner → violet
   brightMagenta: '#f7768e', // user prompt → pink
   brightWhite: '#bb9af7', // bold fg → violet tint
 }
 
 const CHRYS_LIGHT: Partial<ITheme> = {
+  yellow: '#c05f10', // warnings + Tools group header → orange
   blue: '#c05f10', // tool box borders → orange
   magenta: '#7c3aed', // skills/headings → violet
   cyan: '#a06a00', // sub-agent branch → gold
+  brightYellow: '#c05f10', // bold pair of yellow
+  brightCyan: '#a06a00', // bold pair of cyan
   brightBlue: '#6d4fc2', // turn banner → violet
   brightMagenta: '#d63384', // user prompt → pink
   brightWhite: '#7c3aed', // bold fg → violet tint

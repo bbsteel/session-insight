@@ -16,4 +16,10 @@ export interface TerminalControl {
   // see where they landed. Rendered via xterm marker/decoration (AGENTS.md:
   // no hand-rolled DOM coordinate math for terminal rows).
   flashLines: (startLine: number, count?: number) => void
+  // Fold mapping between original render rows (what the positions API uses)
+  // and current buffer rows (after collapsed tool groups are hidden).
+  // Identity when nothing is collapsed.
+  toDisplayLine: (origLine: number) => number
+  toOriginalLine: (displayLine: number) => number
+  hiddenLineCount: () => number
 }

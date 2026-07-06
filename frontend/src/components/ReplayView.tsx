@@ -7,8 +7,10 @@ import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import DiffModal from './DiffModal'
+import OutputModal from './OutputModal'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
+import { foldsFromPositions } from '../terminalFolds'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -54,6 +56,8 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const [terminalCols, setTerminalCols] = useState<number | null>(null)
   const [positionsData, setPositionsData] = useState<PositionsResponse | null>(null)
   const [positionsBuilding, setPositionsBuilding] = useState(false)
+  const [foldVersion, setFoldVersion] = useState(0)
+  const [outputModalIdx, setOutputModalIdx] = useState<number | null>(null)
   const [edits, setEdits] = useState<EditCall[]>([])
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [bookmarkError, setBookmarkError] = useState<string | null>(null)
@@ -66,23 +70,77 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const pollTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const lastMetricsRef = useRef<ScrollMetrics>()
 
+  // Matcher callbacks read positions through a ref: matchers are registered
+  // once (on cols-ready) but must see the latest positions and fold mapping.
+  const positionsRef = useRef<PositionsResponse | null>(null)
+  useEffect(() => { positionsRef.current = positionsData }, [positionsData])
+
+  const registerMatchers = useCallback(() => {
+    termControlRef.current?.setLineMatchers([
+      {
+        // ✏️ diff headers. matchIndex over the visible buffer breaks once a
+        // fold hides some headers, so the click is resolved back to the
+        // original row and looked up among the "edit" positions; matchIndex
+        // stays as fallback when positions are unavailable.
+        match: (text: string) => parseEditHeaderLine(text),
+        tooltip: '打开 Diff 明细',
+        onActivate: (bufLine: number, _data: unknown, matchIndex: number) => {
+          const ctrl = termControlRef.current
+          const orig = ctrl ? ctrl.toOriginalLine(bufLine) : bufLine
+          const editPositions = (positionsRef.current?.positions ?? [])
+            .filter(p => p.kind === 'edit')
+            .sort((a, b) => a.line_start - b.line_start)
+          const idx = editPositions.findIndex(p => p.line_start === orig)
+          setInitialDiffIdx(idx >= 0 ? idx : matchIndex)
+          setShowDiffModal(true)
+        },
+      },
+      {
+        // "[+] N 行被截断（点击展开）" lines → full output modal via the
+        // "trunc" position at the same original row.
+        match: (text: string) => (/\[\+\] \d+ 行被截断/.test(text) ? {} : null),
+        tooltip: '展开完整输出',
+        onActivate: (bufLine: number, _data: unknown, matchIndex: number) => {
+          const ctrl = termControlRef.current
+          const orig = ctrl ? ctrl.toOriginalLine(bufLine) : bufLine
+          const pos = (positionsRef.current?.positions ?? [])
+            .find(p => p.kind === 'trunc' && p.line_start === orig)
+          const idx = pos && typeof pos.payload?.output_index === 'number'
+            ? (pos.payload.output_index as number)
+            : matchIndex
+          setOutputModalIdx(idx)
+        },
+      },
+    ])
+  }, [])
+
   const handleColsReady = useCallback((cols: number) => {
     setTerminalCols(cols)
     setPositionsData(null)
-    // Register edit line matcher once terminal is ready.
-    // Buffer scan (in TerminalPanel) finds ✏️ header lines in document order,
-    // matchIndex N → edits[N] since both are ordered by document position.
-    termControlRef.current?.setLineMatchers([{
-      match: (text) => {
-        return parseEditHeaderLine(text)
-      },
-      tooltip: '打开 Diff 明细',
-      onActivate: (_bufLine, _data, matchIndex) => {
-        setInitialDiffIdx(matchIndex)
-        setShowDiffModal(true)
-      },
-    }])
-  }, [])
+    registerMatchers()
+  }, [registerMatchers])
+
+  // Fold ranges extracted from positions; TerminalPanel owns collapse state.
+  const folds = useMemo(() => foldsFromPositions(positionsData?.positions), [positionsData])
+  const handleFoldChange = useCallback(() => setFoldVersion(v => v + 1), [])
+
+  // Positions remapped into the current (post-fold) buffer rows for the
+  // minimap and scroll math. Identity while nothing is collapsed.
+  const displayPositions = useMemo(() => {
+    void foldVersion
+    if (!positionsData) return positionsData
+    const ctrl = termControlRef.current
+    if (!ctrl || ctrl.hiddenLineCount() === 0) return positionsData
+    return {
+      ...positionsData,
+      total_lines: Math.max(1, positionsData.total_lines - ctrl.hiddenLineCount()),
+      positions: positionsData.positions.map(p => ({
+        ...p,
+        line_start: ctrl.toDisplayLine(p.line_start),
+        line_end: p.line_end != null ? ctrl.toDisplayLine(p.line_end) : p.line_end,
+      })),
+    }
+  }, [positionsData, foldVersion])
 
   useEffect(() => {
     if (!bookmarkChange) return
@@ -126,8 +184,9 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
         // estimate below drifts badly on sessions with uneven turn lengths.
         const turnPos = positionsData?.positions.find(p => p.kind === 'turn' && p.turn_index === index)
         if (turnPos) {
-          ctrl.scrollToLine(Math.max(0, turnPos.line_start))
-          ctrl.flashLines(turnPos.line_start, 2)
+          const line = ctrl.toDisplayLine(turnPos.line_start)
+          ctrl.scrollToLine(Math.max(0, line))
+          ctrl.flashLines(line, 2)
           return
         }
         const metrics = ctrl.getMetrics()
@@ -487,6 +546,10 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
         <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} initialIdx={initialDiffIdx} />
       )}
 
+      {outputModalIdx !== null && session && (
+        <OutputModal sessionId={session.id} outputIndex={outputModalIdx} onClose={() => setOutputModalIdx(null)} />
+      )}
+
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-w-0 flex-1 overflow-hidden">
           {viewMode === 'analytics' ? (
@@ -498,6 +561,8 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
               <TerminalPanel
                 sessionId={session.id}
                 agentType={session.agent_type}
+                folds={folds}
+                onFoldChange={handleFoldChange}
                 onScrollMetrics={handleTerminalScrollMetrics}
                 onColsReady={handleColsReady}
                 controlRef={termControlRef}
@@ -507,7 +572,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
         </div>
         <MiniMap
           turns={turns}
-          positions={positionsBuilding ? null : positionsData}
+          positions={positionsBuilding ? null : displayPositions}
           billing={session?.billing}
           controlRef={miniMapControlRef}
           scrollToIndexRef={scrollToIndexRef}

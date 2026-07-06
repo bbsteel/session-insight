@@ -96,6 +96,103 @@ func TestChrysEmptyResultCollapses(t *testing.T) {
 	}
 }
 
+func TestFoldAndTruncPositions(t *testing.T) {
+	ts := time.Now()
+	long := strings.Repeat("line\n", 30) // 31 lines → truncated
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "chrys"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "chrys",
+			ToolName: "bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "x"}},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", ToolCallID: "c1", Stdout: long},
+		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", Text: "done"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 100)
+	lines := strings.Split(ansi, "\n")
+
+	var fold, trunc *RenderPosition
+	for i := range positions {
+		switch positions[i].Kind {
+		case "fold":
+			fold = &positions[i]
+		case "trunc":
+			trunc = &positions[i]
+		}
+	}
+	if fold == nil || trunc == nil {
+		t.Fatalf("missing fold/trunc positions: fold=%v trunc=%v", fold, trunc)
+	}
+
+	// No soft wraps in this fixture (cols=100, short rows), so display rows
+	// equal logical lines and both can be verified against the split ANSI.
+	if !strings.Contains(lines[fold.LineStart], "▼ Tools (1/1)") {
+		t.Errorf("fold header line mismatch: %q", lines[fold.LineStart])
+	}
+	pl := fold.Payload
+	ls, le := int(pl["logical_start"].(float64)), int(pl["logical_end"].(float64))
+	if ls != fold.LineStart+1 {
+		t.Errorf("fold body should start right after header: %d vs %d", ls, fold.LineStart)
+	}
+	// Everything in the body must be tool content; the line after the body
+	// is the "done" text block (with its ◇ header).
+	if !strings.Contains(lines[le], "◇") {
+		t.Errorf("line after fold body should be the assistant header, got %q", lines[le])
+	}
+	if trunc.LineStart <= fold.LineStart || trunc.LineStart >= le {
+		t.Errorf("trunc line %d should sit inside fold body (%d, %d)", trunc.LineStart, fold.LineStart, le)
+	}
+	if !strings.Contains(lines[trunc.LineStart], "行被截断") {
+		t.Errorf("trunc line mismatch: %q", lines[trunc.LineStart])
+	}
+	if idx := int(trunc.Payload["output_index"].(float64)); idx != 0 {
+		t.Errorf("output_index = %d", idx)
+	}
+
+	outputs := CollectTruncatedOutputs(events)
+	if len(outputs) != 1 || outputs[0].ToolName != "bash" || outputs[0].Kind != "stdout" {
+		t.Errorf("collected outputs = %+v", outputs)
+	}
+}
+
+func TestTruncPositionsFlatLayoutOrder(t *testing.T) {
+	ts := time.Now()
+	long := strings.Repeat("l\n", 30)
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "claude"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "claude", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "x"}},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+			ToolCallID: "c1", Stdout: long, Stderr: long, ExitCode: 1},
+	}
+	_, positions := FormatEventsWithPositions(events, 100)
+	var truncs []RenderPosition
+	for _, p := range positions {
+		if p.Kind == "trunc" {
+			truncs = append(truncs, p)
+		}
+	}
+	// stdout + stderr each truncated → two entries, indexes 0 and 1, and no
+	// fold positions for agents without grouping.
+	if len(truncs) != 2 {
+		t.Fatalf("want 2 trunc positions, got %d", len(truncs))
+	}
+	for i, tr := range truncs {
+		if int(tr.Payload["output_index"].(float64)) != i {
+			t.Errorf("trunc %d has output_index %v", i, tr.Payload["output_index"])
+		}
+	}
+	outputs := CollectTruncatedOutputs(events)
+	if len(outputs) != 2 || outputs[0].Kind != "stdout" || outputs[1].Kind != "stderr" {
+		t.Errorf("outputs order mismatch: %+v", outputs)
+	}
+	for _, p := range positions {
+		if p.Kind == "fold" {
+			t.Errorf("default profile must not emit fold positions")
+		}
+	}
+}
+
 func TestChrysGroupHeaderCoversSubagentRun(t *testing.T) {
 	ts := time.Now()
 	events := []model.RenderEvent{
