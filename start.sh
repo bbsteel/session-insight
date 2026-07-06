@@ -28,6 +28,18 @@ EOF
 do_build() {
   cd "$ROOT_DIR"
 
+  # Go toolchain 未在系统 PATH 时，自动查找 module cache 中的版本
+  if ! command -v go &>/dev/null; then
+    local go_toolchain
+    go_toolchain=$(find /home/user/go/pkg/mod/golang.org -maxdepth 3 -name "go" -path "*/bin/go" 2>/dev/null | sort -V | tail -1)
+    if [[ -n "$go_toolchain" ]]; then
+      export PATH="$(dirname "$go_toolchain"):$PATH"
+    else
+      echo "ERROR: go not found in PATH or ~/go/pkg/mod/golang.org toolchain cache"
+      exit 1
+    fi
+  fi
+
   echo "==> Building frontend"
   if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
     echo "==> Installing frontend dependencies"
