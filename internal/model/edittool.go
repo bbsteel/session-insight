@@ -8,6 +8,7 @@ func IsEditTool(name string) bool {
 	switch name {
 	case "Edit", "str_replace_editor", // Claude
 		"edit",        // OpenCode
+		"edit_file",   // Chrys
 		"apply_patch": // Codex, Copilot
 		return true
 	}

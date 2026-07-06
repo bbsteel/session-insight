@@ -2,6 +2,7 @@ import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg'
 import githubCopilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg'
 import openAIIcon from '@lobehub/icons-static-svg/icons/openai.svg'
 const openCodeIcon = '/icons/opencode-logo-light-square.png'
+const chrysIcon = '/icons/chrys-c.png'
 import { resolveAgentStyle } from '../agentStyles'
 
 interface AgentIconProps {
@@ -16,6 +17,7 @@ function resolveIcon(agentType?: string): { src: string; colored: boolean } | nu
   if (normalized.includes('codex')) return { src: openAIIcon, colored: false }
   if (normalized.includes('copilot')) return { src: githubCopilotIcon, colored: false }
   if (normalized.includes('opencode')) return { src: openCodeIcon, colored: true }
+  if (normalized.includes('chrys')) return { src: chrysIcon, colored: false }
   return null
 }
 

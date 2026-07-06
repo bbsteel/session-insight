@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"session-insight/internal/reader/chrys"
 	"session-insight/internal/reader/claude"
 	"session-insight/internal/reader/codex"
 	"session-insight/internal/reader/copilot"
@@ -32,6 +33,11 @@ func Discover() []BaseSessionReader {
 	claudeDir := filepath.Join(homeDir, ".claude", "projects")
 	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
 		readers = append(readers, claude.New(claudeDir))
+	}
+
+	chrysDir := filepath.Join(homeDir, ".chrys", "sessions")
+	if info, err := os.Stat(chrysDir); err == nil && info.IsDir() {
+		readers = append(readers, chrys.New(chrysDir))
 	}
 
 	dbPath, ok := opencode.ResolveDBPath()

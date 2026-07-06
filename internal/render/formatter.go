@@ -499,6 +499,10 @@ func writeAgentSpecific(sb *trackingBuilder, evt model.RenderEvent, prefix strin
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap(fmt.Sprintf("↪ model: %s", sanitizeControlChars(evt.Text)), ColWarning))
 		sb.WriteString("\n")
+	case "interrupted":
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 中断: %s", sanitizeControlChars(evt.Text)), ColError))
+		sb.WriteString("\n")
 	default:
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap(fmt.Sprintf("[agent:%s]", evt.Subtype), ColWarning))
