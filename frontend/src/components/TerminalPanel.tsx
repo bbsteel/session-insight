@@ -504,18 +504,35 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
       }
 
-      // Search: shared options give every match a highlight; the listener is
-      // owned by the search bar (registered through the control).
-      const searchOptions = {
-        caseSensitive: false,
-        decorations: {
-          matchBackground: '#7c3aed55',
-          matchBorder: '#7c3aed00',
-          matchOverviewRuler: '#7c3aed',
-          activeMatchBackground: '#f59e0baa',
-          activeMatchBorder: '#f59e0b',
-          activeMatchColorOverviewRuler: '#f59e0b',
-        },
+      // Search: decorations are always enabled (they drive the n/m counter);
+      // visual styling lives in app.css on the addon's decoration classes
+      // (the DOM renderer ignores decoration background options). "Highlight
+      // all" off = container class that blanks the all-match layer via CSS.
+      const buildSearchOptions = (o: { caseSensitive: boolean; wholeWord: boolean; highlightAll: boolean }) => {
+        container.classList.toggle('si-search-active-only', !o.highlightAll)
+        return {
+          caseSensitive: o.caseSensitive,
+          wholeWord: o.wholeWord,
+          decorations: {
+            matchOverviewRuler: o.highlightAll ? '#facc15' : '#00000000',
+            // The inline outline this sets is the only DOM marker of the
+            // active match in addon-search 0.16 (see app.css); the visible
+            // outline itself is suppressed there in favor of a background.
+            activeMatchBorder: '#f59e0b',
+            activeMatchColorOverviewRuler: '#f59e0b',
+          },
+        }
+      }
+      // addon-search 0.16 overwrites lastSearchOptions before diffing them,
+      // so an option change alone never refreshes the all-match highlight;
+      // clearing the cached term forces the next find to re-highlight.
+      let lastSearchOptsKey = ''
+      const invalidateSearchOnOptionChange = (o: { caseSensitive: boolean; wholeWord: boolean; highlightAll: boolean }) => {
+        const key = `${o.caseSensitive}|${o.wholeWord}|${o.highlightAll}`
+        if (key !== lastSearchOptsKey) {
+          lastSearchOptsKey = key
+          searchAddon.clearDecorations()
+        }
       }
       let searchResultsCb: ((index: number, count: number) => void) | null = null
       const disposeSearchResults = searchAddon.onDidChangeResults(r => {
@@ -540,9 +557,18 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
           setFoldsCollapsed,
           getCollapsedFoldKeys: () => [...collapsedKeys],
-          searchNext: (query) => searchAddon.findNext(query, searchOptions),
-          searchPrev: (query) => searchAddon.findPrevious(query, searchOptions),
-          searchClear: () => searchAddon.clearDecorations(),
+          searchNext: (query, opts) => {
+            invalidateSearchOnOptionChange(opts)
+            return searchAddon.findNext(query, buildSearchOptions(opts))
+          },
+          searchPrev: (query, opts) => {
+            invalidateSearchOnOptionChange(opts)
+            return searchAddon.findPrevious(query, buildSearchOptions(opts))
+          },
+          searchClear: () => {
+            searchAddon.clearDecorations()
+            term.clearSelection() // the active match is selection-backed
+          },
           setSearchResultsListener: (cb) => { searchResultsCb = cb },
         }
       }

@@ -29,10 +29,18 @@ export interface TerminalControl {
   getCollapsedFoldKeys: () => string[]
   // In-terminal search (xterm addon-search). Searches the composed buffer,
   // so content inside collapsed tool groups is not matched until expanded.
-  searchNext: (query: string) => boolean
-  searchPrev: (query: string) => boolean
+  searchNext: (query: string, opts: TerminalSearchOptions) => boolean
+  searchPrev: (query: string, opts: TerminalSearchOptions) => boolean
   searchClear: () => void
   setSearchResultsListener: (cb: ((index: number, count: number) => void) | null) => void
+}
+
+export interface TerminalSearchOptions {
+  caseSensitive: boolean
+  wholeWord: boolean
+  // Off = only the active match is highlighted; decorations stay enabled
+  // underneath (transparent) so the n/m counter keeps working.
+  highlightAll: boolean
 }
 
 // Payload for the terminal context menu: where the right-click landed, in

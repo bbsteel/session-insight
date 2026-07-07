@@ -255,3 +255,22 @@ body {
   height: 0 !important;
   background: transparent !important;
 }
+
+/* Terminal search highlights (addon-search decorations). The DOM renderer
+   doesn't paint decoration cell backgrounds, so style the decoration
+   elements directly — their geometry still comes from xterm markers.
+   addon-search 0.16 never applies its "active" class; the only DOM marker
+   of the active match is the inline outline from activeMatchBorder, so the
+   [style*="outline"] attribute selector is the active-match hook. */
+.xterm-find-result-decoration {
+  background: rgba(250, 204, 21, 0.32);
+  pointer-events: none;
+}
+.xterm-find-result-decoration[style*="outline"] {
+  background: rgba(245, 158, 11, 0.55);
+  outline: none !important;
+}
+/* "Highlight all" off: hide the all-match layer, keep the active match. */
+.si-search-active-only .xterm-find-result-decoration:not([style*="outline"]) {
+  background: transparent;
+}
