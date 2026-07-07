@@ -1,6 +1,8 @@
 package render
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +64,7 @@ func TestChrysProfileLayout(t *testing.T) {
 func TestDefaultProfileUnchangedShapes(t *testing.T) {
 	events := chrysEvents()
 	for i := range events {
-		events[i].AgentType = "claude" // any agent without a profile
+		events[i].AgentType = "codex" // any agent without a profile
 	}
 	out := FormatEvents(events, 100)
 
@@ -158,11 +160,11 @@ func TestTruncPositionsFlatLayoutOrder(t *testing.T) {
 	ts := time.Now()
 	long := strings.Repeat("l\n", 30)
 	events := []model.RenderEvent{
-		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "claude"},
-		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "claude", Text: "hi"},
-		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "codex"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "codex", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
 			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "x"}},
-		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
 			ToolCallID: "c1", Stdout: long, Stderr: long, ExitCode: 1},
 	}
 	_, positions := FormatEventsWithPositions(events, 100)
@@ -222,5 +224,95 @@ func TestChrysGroupHeaderCoversSubagentRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "Tool calls: 1") {
 		t.Errorf("subagent summary missing")
+	}
+}
+
+func TestClaudeGroupHeaderStatsAndFolds(t *testing.T) {
+	ts := time.Now()
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "claude"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "claude", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+			ToolName: "Grep", ToolCallID: "c1", ToolInput: map[string]any{"pattern": "x"}},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "claude", ToolCallID: "c1", Stdout: "hit"},
+		{EventID: "i1", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+			ToolName: "Bash", ToolCallID: "c2", ToolInput: map[string]any{"command": "ls"}},
+		{EventID: "r1", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "claude", ToolCallID: "c2", Stdout: "ok"},
+		{EventID: "i2", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+			ToolName: "Edit", ToolCallID: "c3", ToolInput: map[string]any{"file_path": "/tmp/a.go", "old_string": "a", "new_string": "b"}},
+		{EventID: "r2", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "claude", ToolCallID: "c3"},
+		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: ts, AgentType: "claude", Text: "done"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 120)
+
+	if !strings.Contains(ansi, "▼ Tools (3/3) · 1 search · 1 edit · 1 shell") {
+		t.Errorf("claude group header with stats missing:\n%s", ansi[:min(len(ansi), 600)])
+	}
+	// Default box charset must be untouched for claude.
+	if !strings.Contains(ansi, "╔") || strings.Contains(ansi, "╭") {
+		t.Errorf("claude must keep the default box charset")
+	}
+	var folds int
+	for _, p := range positions {
+		if p.Kind == "fold" {
+			folds++
+		}
+	}
+	if folds != 1 {
+		t.Errorf("claude should emit 1 fold position, got %d", folds)
+	}
+}
+
+func TestFencedCodeBlockHighlight(t *testing.T) {
+	text := "before\n```go\npackage main\n\nfunc main() {}\n```\nafter"
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), AgentType: "codex"},
+		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), AgentType: "codex", Text: text},
+	}
+	out := FormatEvents(events, 120)
+	lines := strings.Split(out, "\n")
+
+	var pkgLine, emptyIdx string
+	for i, l := range lines {
+		if strings.Contains(l, "package") {
+			pkgLine = l
+		}
+		if strings.Contains(l, "func main") {
+			emptyIdx = lines[i] // keep the compiler happy about usage
+		}
+	}
+	// Theme slots are 0-15; chroma emits 256-cube indexes (≥16).
+	if !regexp.MustCompile(`\x1b\[38;5;(1[6-9]|[2-9][0-9]|1[0-9][0-9]|2[0-5][0-9])m`).MatchString(pkgLine) {
+		t.Errorf("go code line should carry a 256-cube color, got %q", pkgLine)
+	}
+	if !strings.HasSuffix(strings.TrimRight(pkgLine, "\r"), "\x1b[0m") {
+		t.Errorf("highlighted line must end with a reset, got %q", pkgLine)
+	}
+	_ = emptyIdx
+
+	// Unknown language falls back to the flat code color and never 256-color.
+	events[1].Text = "```notalanguage\nsome code\n```"
+	out = FormatEvents(events, 120)
+	re := regexp.MustCompile(`\x1b\[38;5;(\d+)m`)
+	for _, l := range strings.Split(out, "\n") {
+		if !strings.Contains(l, "some code") {
+			continue
+		}
+		for _, m := range re.FindAllStringSubmatch(l, -1) {
+			if n, _ := strconv.Atoi(m[1]); n >= 16 {
+				t.Errorf("unknown lang must stay on theme slots (<16), got slot %d in %q", n, l)
+			}
+		}
+	}
+
+	// Line-count invariant: highlighting adds zero lines.
+	events[1].Text = text
+	plain := len(strings.Split(FormatEvents([]model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), AgentType: "codex"},
+		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), AgentType: "codex", Text: strings.ReplaceAll(text, "go", "notalang")},
+	}, 120), "\n"))
+	highlightedCount := len(strings.Split(FormatEvents(events, 120), "\n"))
+	if plain != highlightedCount {
+		t.Errorf("line count drift: plain %d vs highlighted %d", plain, highlightedCount)
 	}
 }

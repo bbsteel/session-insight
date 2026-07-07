@@ -143,7 +143,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		if g, ok := groupStarts[i]; ok {
 			headerDisplay := tb.CurrentLine()
 			headerLogical := tb.CurrentLogicalLine()
-			writeToolGroupHeader(tb, g)
+			writeToolGroupHeader(p, tb, g)
 			openFold = &openFoldState{
 				run:           g,
 				turnIndex:     evt.TurnIndex,
@@ -215,7 +215,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 4
+const FormatVersion int64 = 5
 
 // toolRun summarizes one contiguous run of tool events for the group header.
 // endIdx is the index just past the run's last event.
@@ -223,6 +223,39 @@ type toolRun struct {
 	total     int
 	succeeded int
 	endIdx    int
+	// stats counts invocations per category (search/read/edit/shell/agent/
+	// tool) for GroupHeaderStats profiles; nil otherwise.
+	stats map[string]int
+}
+
+// statOrder fixes the header's category ordering.
+var statOrder = []string{"search", "read", "edit", "shell", "agent", "tool"}
+
+func toolCategory(name string) string {
+	switch name {
+	case "Grep", "Glob", "WebSearch", "grep", "glob", "search":
+		return "search"
+	case "Read", "read_file", "ReadFile", "read":
+		return "read"
+	case "Bash", "bash", "shell", "run_shell_command", "BashOutput":
+		return "shell"
+	case "Task", "Agent":
+		return "agent"
+	}
+	if model.IsEditTool(name) || name == "Write" || name == "write_file" || name == "NotebookEdit" {
+		return "edit"
+	}
+	return "tool"
+}
+
+func formatRunStats(stats map[string]int) string {
+	parts := make([]string, 0, len(stats))
+	for _, cat := range statOrder {
+		if n := stats[cat]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, cat))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // isToolRunMember reports whether an event belongs to a tool run: tool
@@ -266,6 +299,12 @@ func computeToolRuns(p *Profile, events []model.RenderEvent) map[int]toolRun {
 				switch e.Type {
 				case "ToolInvocation":
 					run.total++
+					if p.GroupHeaderStats {
+						if run.stats == nil {
+							run.stats = make(map[string]int)
+						}
+						run.stats[toolCategory(e.ToolName)]++
+					}
 				case "ToolResult":
 					if e.ExitCode == 0 && e.Stderr == "" {
 						run.succeeded++
@@ -287,8 +326,11 @@ func computeToolRuns(p *Profile, events []model.RenderEvent) map[int]toolRun {
 // Headers therefore either use a slot whose bright counterpart mirrors it in
 // every theme (3→11 for the group header) or skip bold (assistant header:
 // slot 2's bright pair is the diff-add background tint).
-func writeToolGroupHeader(sb *trackingBuilder, g toolRun) {
+func writeToolGroupHeader(p *Profile, sb *trackingBuilder, g toolRun) {
 	label := fmt.Sprintf("▼ Tools (%d/%d)", g.succeeded, g.total)
+	if p.GroupHeaderStats && len(g.stats) > 0 {
+		label += " · " + formatRunStats(g.stats)
+	}
 	sb.WriteString(styled(label, ColWarning, ColNone, true, false))
 	sb.WriteString("\n")
 }
@@ -356,6 +398,7 @@ func writeThinking(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
 func writeTextChunk(sb *trackingBuilder, evt model.RenderEvent, prefix string, termWidth int) {
 	lines := strings.Split(sanitizeControlChars(evt.Text), "\n")
 	hasDiff := scanForDiff(lines)
+	highlighted := highlightFencedBlocks(lines)
 	inCodeBlock := false
 
 	for i, line := range lines {
@@ -374,7 +417,11 @@ func writeTextChunk(sb *trackingBuilder, evt model.RenderEvent, prefix string, t
 			sb.WriteString(fgWrap(line, ColMuted))
 		} else if inCodeBlock {
 			sb.WriteString(prefix)
-			sb.WriteString(fgWrap(line, ColWarning))
+			if h := highlighted[i]; h != "" {
+				sb.WriteString(h)
+			} else {
+				sb.WriteString(fgWrap(line, ColWarning))
+			}
 		} else {
 			sb.WriteString(prefix)
 			sb.WriteString(renderMarkdownLine(line, ColFg))

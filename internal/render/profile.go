@@ -28,6 +28,12 @@ type Profile struct {
 	// with a "▼ Tools (succeeded/total)" group header.
 	GroupToolRuns bool
 
+	// GroupHeaderStats, when true, appends a per-category tool count summary
+	// to the group header ("· 4 search · 1 read · 5 shell"), mirroring Claude
+	// Code's own collapsed-tools summary line (which is TUI-generated and not
+	// present in the session data, so it is recomputed here).
+	GroupHeaderStats bool
+
 	// ToolBullet, when true, renders a "• <name>" line above each tool box
 	// and promotes a reason/description/title argument into the box header.
 	ToolBullet bool
@@ -59,8 +65,20 @@ var chrysProfile = Profile{
 	SubagentBadge:   true,
 }
 
+// Claude keeps the default box layout untouched; it only gains collapsible
+// tool-run groups with a stats header (fold positions then flow to the
+// frontend exactly like chrys).
+var claudeProfile = Profile{
+	Name:  "claude",
+	BoxTL: "╔", BoxTR: "╗", BoxBL: "╚", BoxBR: "╝",
+	BoxH: "═", BoxV: "║",
+	GroupToolRuns:    true,
+	GroupHeaderStats: true,
+}
+
 var profiles = map[string]*Profile{
-	"chrys": &chrysProfile,
+	"chrys":  &chrysProfile,
+	"claude": &claudeProfile,
 }
 
 // profileFor resolves the layout profile from the event stream's agent type

@@ -7,7 +7,7 @@
 1. [x] 收藏列表加载慢（2d7ffee：逐条 GetSession，1.19s → 0.22s）
 2. [x] 右键打开文件 + 编辑器设置（927222f；后续 51a2b85 安全加固：改绑 127.0.0.1 + 写接口 Content-Type/Origin 校验）
 3. [x] Ctrl+F 终端页内搜索（addon-search + 浮动搜索条；折叠重写后自动重跑；折叠体内内容不参与搜索——展开后才可搜，与"隐藏即不可见"语义一致）
-4. [ ] claude 开折叠 + 终端代码块 ANSI 高亮：claude 档案开 GroupToolRuns，组头统计式文案（对齐 Claude Code TUI 折叠摘要风格，该摘要不在 JSONL 中、需渲染 pre-pass 自行统计）；chroma 高亮 assistant 消息 fenced 代码块；两者合并一次 FormatVersion bump
+4. [x] claude 开折叠 + 终端代码块 ANSI 高亮（组头统计式文案 "▼ Tools (n/m) · 2 shell"；chroma terminal256+monokai 高亮 fenced 块；FormatVersion 4→5）
 5. [ ] DiffModal 逐行语法高亮：按文件扩展名 Prism tokenize，注意大 diff 性能；必须排在 A 包合入之后（同文件）
 
 ### 交办普通 agent（三包可并行）
