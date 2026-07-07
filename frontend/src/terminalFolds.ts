@@ -48,6 +48,27 @@ export function foldsFromPositions(positions: MiniMapPosition[] | undefined | nu
   return folds.sort((a, b) => a.displayStart - b.displayStart)
 }
 
+// Folds whose header falls inside the turn containing originalRow. Turn
+// extents are [banner, next banner); rows before the first banner (session
+// header) belong to no turn. All rows are original display rows.
+export function foldKeysInTurn(
+  folds: FoldRange[],
+  turnStarts: number[],
+  originalRow: number,
+): string[] {
+  const starts = [...turnStarts].sort((a, b) => a - b)
+  let turnStart = -1
+  let turnEnd = Infinity
+  for (let i = 0; i < starts.length; i++) {
+    if (starts[i] > originalRow) { turnEnd = starts[i]; break }
+    turnStart = starts[i]
+  }
+  if (turnStart < 0) return []
+  return folds
+    .filter(f => f.headerDisplay >= turnStart && f.headerDisplay < turnEnd)
+    .map(f => f.key)
+}
+
 export interface FoldView {
   text: string
   hiddenTotal: number

@@ -1,4 +1,4 @@
-import { foldsFromPositions, composeFoldView } from '/tmp/session-insight-terminal-folds/terminalFolds.js'
+import { foldsFromPositions, composeFoldView, foldKeysInTurn } from '/tmp/session-insight-terminal-folds/terminalFolds.js'
 
 let failures = 0
 function assertEq(actual, expected, label) {
@@ -65,6 +65,19 @@ assertEq(ab.toDisplay(9), 4, 'tail row after both folds')
 assertEq(ab.toDisplay(8), 3, 'hidden B body maps to B header display row')
 assertEq(ab.toOriginal(4), 9, 'toOriginal tail both')
 assertEq(ab.toOriginal(3), 6, 'toOriginal B header')
+
+// foldKeysInTurn: turn banners at original display rows 0 and 6 → turn 0
+// spans [0,6) holding fold A, turn 1 spans [6,∞) holding fold B.
+const turnStarts = [0, 6]
+assertEq(foldKeysInTurn(folds, turnStarts, 3), ['fold:0:1'], 'row in turn 0 → fold A')
+assertEq(foldKeysInTurn(folds, turnStarts, 0), ['fold:0:1'], 'turn banner row itself → fold A')
+assertEq(foldKeysInTurn(folds, turnStarts, 5), ['fold:0:1'], 'last row of turn 0 → fold A')
+assertEq(foldKeysInTurn(folds, turnStarts, 6), ['fold:0:6'], 'turn 1 banner row → fold B')
+assertEq(foldKeysInTurn(folds, turnStarts, 9), ['fold:0:6'], 'tail row in last turn → fold B')
+assertEq(foldKeysInTurn(folds, [2, 6], 1), [], 'row before first banner → no turn, no folds')
+assertEq(foldKeysInTurn(folds, [], 3), [], 'no turn banners → no folds')
+assertEq(foldKeysInTurn([], turnStarts, 3), [], 'no folds → empty')
+assertEq(foldKeysInTurn(folds, [0], 9), ['fold:0:1', 'fold:0:6'], 'single turn spans everything → both folds')
 
 if (failures > 0) {
   console.error(`${failures} failure(s)`)

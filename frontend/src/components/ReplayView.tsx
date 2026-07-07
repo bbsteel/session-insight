@@ -3,14 +3,15 @@ import { addBookmark, fetchPositions, fetchSession, fetchSessionEdits, removeBoo
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
-import { TERMINAL_LINE_HEIGHT, type TerminalControl } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalContextMenuEvent, type TerminalControl } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import DiffModal from './DiffModal'
 import OutputModal from './OutputModal'
+import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContextMenu'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
-import { foldsFromPositions } from '../terminalFolds'
+import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -123,6 +124,58 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   // Fold ranges extracted from positions; TerminalPanel owns collapse state.
   const folds = useMemo(() => foldsFromPositions(positionsData?.positions), [positionsData])
   const handleFoldChange = useCallback(() => setFoldVersion(v => v + 1), [])
+
+  // Terminal context menu: opened by right-click with a snapshot of the
+  // collapse state so item enablement is stable while the menu is up.
+  const [ctxMenu, setCtxMenu] = useState<TerminalContextMenuEvent | null>(null)
+  const handleTerminalContextMenu = useCallback((e: TerminalContextMenuEvent) => setCtxMenu(e), [])
+  useEffect(() => { setCtxMenu(null) }, [sessionId, viewMode])
+
+  const ctxMenuSections = useMemo((): TerminalMenuSection[] => {
+    const sections: TerminalMenuSection[] = [
+      { title: 'Common', items: [], emptyText: '暂无操作' },
+    ]
+    if (!ctxMenu || folds.length === 0) return sections
+
+    const collapsed = new Set(ctxMenu.collapsedFoldKeys)
+    const turnStarts = (positionsData?.positions ?? [])
+      .filter(p => p.kind === 'turn')
+      .map(p => p.line_start)
+    const turnKeys = ctxMenu.originalRow !== null
+      ? foldKeysInTurn(folds, turnStarts, ctxMenu.originalRow)
+      : []
+    const apply = (keys: string[], collapse: boolean) => {
+      termControlRef.current?.setFoldsCollapsed(keys, collapse, ctxMenu.originalRow)
+      setCtxMenu(null)
+    }
+    const agent = session?.agent_type ?? 'agent'
+    sections.push({
+      title: agent.charAt(0).toUpperCase() + agent.slice(1),
+      items: [
+        {
+          label: '全部折叠',
+          disabled: folds.every(f => collapsed.has(f.key)),
+          onClick: () => apply(folds.map(f => f.key), true),
+        },
+        {
+          label: '全部展开',
+          disabled: collapsed.size === 0,
+          onClick: () => apply(folds.map(f => f.key), false),
+        },
+        {
+          label: '折叠当前 Turn',
+          disabled: turnKeys.length === 0 || turnKeys.every(k => collapsed.has(k)),
+          onClick: () => apply(turnKeys, true),
+        },
+        {
+          label: '展开当前 Turn',
+          disabled: turnKeys.length === 0 || !turnKeys.some(k => collapsed.has(k)),
+          onClick: () => apply(turnKeys, false),
+        },
+      ],
+    })
+    return sections
+  }, [ctxMenu, folds, positionsData, session])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -550,6 +603,15 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
         <OutputModal sessionId={session.id} outputIndex={outputModalIdx} onClose={() => setOutputModalIdx(null)} />
       )}
 
+      {ctxMenu && (
+        <TerminalContextMenu
+          x={ctxMenu.clientX}
+          y={ctxMenu.clientY}
+          sections={ctxMenuSections}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-w-0 flex-1 overflow-hidden">
           {viewMode === 'analytics' ? (
@@ -563,6 +625,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
                 agentType={session.agent_type}
                 folds={folds}
                 onFoldChange={handleFoldChange}
+                onContextMenu={handleTerminalContextMenu}
                 onScrollMetrics={handleTerminalScrollMetrics}
                 onColsReady={handleColsReady}
                 controlRef={termControlRef}

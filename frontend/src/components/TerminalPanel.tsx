@@ -5,7 +5,7 @@ import { fetchRenderANSI } from '../api'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
-import { TERMINAL_LINE_HEIGHT, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
 import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 
@@ -17,6 +17,7 @@ interface Props {
   agentType?: string
   folds?: FoldRange[]
   onFoldChange?: () => void
+  onContextMenu?: (e: TerminalContextMenuEvent) => void
   onScrollMetrics?: (m: ScrollMetrics) => void
   onColsReady?: (cols: number) => void
   controlRef?: React.MutableRefObject<TerminalControl | null>
@@ -42,7 +43,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, onFoldChange, onScrollMetrics, onColsReady, controlRef }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, onFoldChange, onContextMenu, onScrollMetrics, onColsReady, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -58,6 +59,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
   foldsRef.current = folds ?? []
   const onFoldChangeRef = useRef(onFoldChange)
   onFoldChangeRef.current = onFoldChange
+  const onContextMenuRef = useRef(onContextMenu)
+  onContextMenuRef.current = onContextMenu
   // Assigned inside the mount effect once the terminal is live; the folds
   // prop effect below routes updated fold ranges into that closure.
   const applyFoldsRef = useRef<((folds: FoldRange[]) => void) | null>(null)
@@ -120,6 +123,13 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
     let onMouseMove: ((e: MouseEvent) => void) | null = null
     let onMouseLeave: (() => void) | null = null
     let onClick: ((e: MouseEvent) => void) | null = null
+    let onCtxMenu: ((e: MouseEvent) => void) | null = null
+
+    // Anti-flicker for fold rewrites: reset+write repaints over several frames,
+    // so a static snapshot of the current screen covers the terminal until the
+    // rewrite (and its anchor scroll) has painted.
+    let removeSnapshot: (() => void) | null = null
+    let hasWrittenOnce = false
 
     waitForTerminalFont().then(() => {
       if (disposed) return
@@ -302,15 +312,52 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         }
       }
 
+      const snapshotTerminal = () => {
+        removeSnapshot?.()
+        removeSnapshot = null
+        const screen = container.querySelector<HTMLElement>('.xterm')
+        if (!screen) return
+        let snap: HTMLElement
+        try {
+          snap = screen.cloneNode(true) as HTMLElement
+          // Canvas pixels (canvas/webgl renderers) don't survive cloneNode;
+          // copy them explicitly. No-op under the DOM renderer.
+          const srcCanvases = screen.querySelectorAll('canvas')
+          const dstCanvases = snap.querySelectorAll('canvas')
+          srcCanvases.forEach((src, i) => {
+            const dst = dstCanvases[i]
+            if (!dst) return
+            dst.width = src.width
+            dst.height = src.height
+            dst.getContext('2d')?.drawImage(src, 0, 0)
+          })
+        } catch {
+          return
+        }
+        const wrapper = document.createElement('div')
+        const bg = term.options.theme?.background ?? '#1a1b26'
+        wrapper.style.cssText = `position:absolute;inset:0;overflow:hidden;z-index:5;pointer-events:none;background:${bg}`
+        wrapper.appendChild(snap)
+        container.appendChild(wrapper)
+        removeSnapshot = () => {
+          wrapper.remove()
+          removeSnapshot = null
+        }
+      }
+
       const writeComposed = (afterWrite?: () => void) => {
+        if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
         term.reset()
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
         term.write(foldView?.text ?? rawAnsi, () => {
+          hasWrittenOnce = true
           scanBuffer()
           injectFoldRows()
           queueMetrics()
           afterWrite?.()
+          // Two frames: one for xterm's render, one to be past the paint.
+          requestAnimationFrame(() => requestAnimationFrame(() => removeSnapshot?.()))
         })
       }
 
@@ -332,6 +379,23 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         recompose(() => {
           const afterRow = toDisplayLine(fold.headerDisplay)
           term.scrollToLine(Math.max(0, afterRow - viewportOffset))
+        })
+      }
+
+      const setFoldsCollapsed = (keys: string[], collapsed: boolean, anchorOriginalRow?: number | null) => {
+        if (!rawAnsi || !foldRanges.length) return
+        const valid = new Set(foldRanges.map(f => f.key))
+        let changed = false
+        for (const k of keys) {
+          if (!valid.has(k)) continue
+          if (collapsed && !collapsedKeys.has(k)) { collapsedKeys.add(k); changed = true }
+          if (!collapsed && collapsedKeys.has(k)) { collapsedKeys.delete(k); changed = true }
+        }
+        if (!changed) return
+        const anchor = anchorOriginalRow ?? toOriginalLine(term.buffer.active.viewportY)
+        const viewportOffset = toDisplayLine(anchor) - term.buffer.active.viewportY
+        recompose(() => {
+          term.scrollToLine(Math.max(0, toDisplayLine(anchor) - viewportOffset))
         })
       }
 
@@ -380,9 +444,23 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         }
       }
 
+      onCtxMenu = (e: MouseEvent) => {
+        e.preventDefault()
+        const bl = getBufLine(e)
+        onContextMenuRef.current?.({
+          clientX: e.clientX,
+          clientY: e.clientY,
+          originalRow: bl !== null ? toOriginalLine(bl) : null,
+          collapsedFoldKeys: [...collapsedKeys],
+        })
+      }
+
       eventTarget.addEventListener('mousemove', onMouseMove)
       eventTarget.addEventListener('mouseleave', onMouseLeave)
       eventTarget.addEventListener('click', onClick)
+      // The custom menu replaces the browser one across the whole terminal
+      // area (container, not just the text screen).
+      container.addEventListener('contextmenu', onCtxMenu)
 
       const getMetrics = (): ScrollMetrics => ({
         scrollTop: term.buffer.active.viewportY * TERMINAL_LINE_HEIGHT,
@@ -430,6 +508,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           toDisplayLine,
           toOriginalLine,
           hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
+          setFoldsCollapsed,
+          getCollapsedFoldKeys: () => [...collapsedKeys],
         }
       }
 
@@ -471,6 +551,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       if (onMouseMove) eventTarget.removeEventListener('mousemove', onMouseMove)
       if (onMouseLeave) eventTarget.removeEventListener('mouseleave', onMouseLeave)
       if (onClick) eventTarget.removeEventListener('click', onClick)
+      if (onCtxMenu) container.removeEventListener('contextmenu', onCtxMenu)
+      removeSnapshot?.()
       hoverDecoration?.dispose()
       hoverMarker?.dispose()
       clearFlash()

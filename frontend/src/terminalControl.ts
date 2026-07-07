@@ -22,4 +22,18 @@ export interface TerminalControl {
   toDisplayLine: (origLine: number) => number
   toOriginalLine: (displayLine: number) => number
   hiddenLineCount: () => number
+  // Batch collapse/expand fold groups in a single rewrite. anchorOriginalRow
+  // (original render row, e.g. the right-clicked row) stays put on screen;
+  // defaults to the top visible row when omitted.
+  setFoldsCollapsed: (keys: string[], collapsed: boolean, anchorOriginalRow?: number | null) => void
+  getCollapsedFoldKeys: () => string[]
+}
+
+// Payload for the terminal context menu: where the right-click landed, in
+// original render rows so it can be matched against the positions cache.
+export interface TerminalContextMenuEvent {
+  clientX: number
+  clientY: number
+  originalRow: number | null
+  collapsedFoldKeys: string[]
 }
