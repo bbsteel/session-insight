@@ -15,11 +15,17 @@ function loadOpts(): TerminalSearchOptions {
       return {
         caseSensitive: !!o.caseSensitive,
         wholeWord: !!o.wholeWord,
+        regex: !!o.regex,
         highlightAll: o.highlightAll !== false,
       }
     }
   } catch { /* corrupted storage → defaults */ }
-  return { caseSensitive: false, wholeWord: false, highlightAll: true }
+  return { caseSensitive: false, wholeWord: false, regex: false, highlightAll: true }
+}
+
+function isInvalidRegex(query: string, regexOn: boolean): boolean {
+  if (!regexOn || !query) return false
+  try { new RegExp(query); return false } catch { return true }
 }
 
 interface Props {
@@ -55,11 +61,13 @@ export default function TerminalSearchBar({ controlRef, refreshToken, onClose }:
     localStorage.setItem(OPTS_KEY, JSON.stringify(opts))
   }, [opts])
 
+  const invalidRegex = isInvalidRegex(query, opts.regex)
+
   // Incremental search on typing / option change; re-run after fold rewrites.
   useEffect(() => {
     const ctrl = controlRef.current
     if (!ctrl) return
-    if (!query) {
+    if (!query || isInvalidRegex(query, opts.regex)) {
       ctrl.searchClear()
       setResult(null)
       return
@@ -97,10 +105,11 @@ export default function TerminalSearchBar({ controlRef, refreshToken, onClose }:
         className="h-6 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
       />
       <button onClick={() => toggle('caseSensitive')} title="区分大小写" aria-pressed={opts.caseSensitive} className={toggleCls(opts.caseSensitive)}>Aa</button>
-      <button onClick={() => toggle('wholeWord')} title="全词匹配" aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}>|ab|</button>
+      <button onClick={() => toggle('wholeWord')} title="全词匹配" aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
+      <button onClick={() => toggle('regex')} title="正则表达式" aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
       <button onClick={() => toggle('highlightAll')} title="高亮全部命中" aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>≡</button>
-      <span className="min-w-[52px] text-right text-meta tabular-nums text-[var(--text-muted)]">
-        {query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : '无结果') : ''}
+      <span className={`min-w-[52px] text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
+        {invalidRegex ? '无效正则' : query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : '无结果') : ''}
       </span>
       <button
         onClick={() => step(-1)}

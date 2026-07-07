@@ -38,6 +38,7 @@ export interface TerminalControl {
 export interface TerminalSearchOptions {
   caseSensitive: boolean
   wholeWord: boolean
+  regex: boolean
   // Off = only the active match is highlighted; decorations stay enabled
   // underneath (transparent) so the n/m counter keeps working.
   highlightAll: boolean

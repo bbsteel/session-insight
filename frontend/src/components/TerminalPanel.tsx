@@ -508,11 +508,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       // visual styling lives in app.css on the addon's decoration classes
       // (the DOM renderer ignores decoration background options). "Highlight
       // all" off = container class that blanks the all-match layer via CSS.
-      const buildSearchOptions = (o: { caseSensitive: boolean; wholeWord: boolean; highlightAll: boolean }) => {
+      const buildSearchOptions = (o: { caseSensitive: boolean; wholeWord: boolean; regex: boolean; highlightAll: boolean }) => {
         container.classList.toggle('si-search-active-only', !o.highlightAll)
         return {
           caseSensitive: o.caseSensitive,
           wholeWord: o.wholeWord,
+          regex: o.regex,
           decorations: {
             matchOverviewRuler: o.highlightAll ? '#facc15' : '#00000000',
             // The inline outline this sets is the only DOM marker of the
@@ -527,8 +528,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       // so an option change alone never refreshes the all-match highlight;
       // clearing the cached term forces the next find to re-highlight.
       let lastSearchOptsKey = ''
-      const invalidateSearchOnOptionChange = (o: { caseSensitive: boolean; wholeWord: boolean; highlightAll: boolean }) => {
-        const key = `${o.caseSensitive}|${o.wholeWord}|${o.highlightAll}`
+      const invalidateSearchOnOptionChange = (o: { caseSensitive: boolean; wholeWord: boolean; regex: boolean; highlightAll: boolean }) => {
+        const key = `${o.caseSensitive}|${o.wholeWord}|${o.regex}|${o.highlightAll}`
         if (key !== lastSearchOptsKey) {
           lastSearchOptsKey = key
           searchAddon.clearDecorations()
@@ -559,11 +560,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           getCollapsedFoldKeys: () => [...collapsedKeys],
           searchNext: (query, opts) => {
             invalidateSearchOnOptionChange(opts)
-            return searchAddon.findNext(query, buildSearchOptions(opts))
+            try {
+              return searchAddon.findNext(query, buildSearchOptions(opts))
+            } catch { return false } // invalid regex mid-typing
           },
           searchPrev: (query, opts) => {
             invalidateSearchOnOptionChange(opts)
-            return searchAddon.findPrevious(query, buildSearchOptions(opts))
+            try {
+              return searchAddon.findPrevious(query, buildSearchOptions(opts))
+            } catch { return false }
           },
           searchClear: () => {
             searchAddon.clearDecorations()
