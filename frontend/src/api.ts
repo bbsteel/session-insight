@@ -102,6 +102,15 @@ export async function openFile(req: { path: string; cwd?: string; line?: number;
   if (!res.ok) throw new Error(`Failed to open file: ${res.status} ${await res.text()}`)
 }
 
+// Cheap stat-level change marker for live tail; null = unsupported for this
+// session's agent (frontend then skips live polling entirely).
+export async function fetchLiveRevision(id: string): Promise<number | null> {
+  const res = await fetch(`/api/sessions/${id}/live-revision`)
+  if (!res.ok) return null
+  const data = await res.json() as { revision: number }
+  return data.revision
+}
+
 export interface FsEntry {
   name: string
   is_dir: boolean

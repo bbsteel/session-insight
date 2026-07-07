@@ -769,3 +769,15 @@ func parseCopilotTimestamp(ts string) time.Time {
 	}
 	return time.Time{}
 }
+
+// LiveRevision is a stat-only change marker for live-tail polling.
+func (r *CopilotReader) LiveRevision(id string) (int64, error) {
+	if !validSessionID(id) {
+		return 0, fmt.Errorf("invalid copilot session id: %q", id)
+	}
+	info, err := os.Stat(filepath.Join(r.sessionDir, id, "events.jsonl"))
+	if err != nil {
+		return 0, err
+	}
+	return info.ModTime().UnixNano() + info.Size(), nil
+}

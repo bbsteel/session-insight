@@ -40,6 +40,11 @@ export interface TerminalControl {
   // defaults to the top visible row when omitted.
   setFoldsCollapsed: (keys: string[], collapsed: boolean, anchorOriginalRow?: number | null) => void
   getCollapsedFoldKeys: () => string[]
+  // Live tail: re-fetch the render and apply it incrementally — pure appends
+  // stream into the buffer, structural changes (group counters, folds) fall
+  // back to the snapshot-covered full rewrite. Follows the bottom only when
+  // the viewport was already pinned there.
+  refreshContent: () => Promise<'appended' | 'rewritten' | 'unchanged'>
   // In-terminal search (xterm addon-search). Searches the composed buffer,
   // so content inside collapsed tool groups is not matched until expanded.
   searchNext: (query: string, opts: TerminalSearchOptions) => boolean

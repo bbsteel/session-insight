@@ -615,6 +615,41 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
             searchAddon.clearDecorations()
             term.clearSelection() // the active match is selection-backed
           },
+          refreshContent: async () => {
+            if (!hasWrittenOnce || currentCols === 0) return 'unchanged'
+            const ansi = await fetchRenderANSI(sessionId, currentCols)
+            if (disposed || ansi === rawAnsi) return 'unchanged'
+            const buf = term.buffer.active
+            const atBottom = buf.viewportY >= buf.baseY
+
+            // Pure append: rendering is deterministic, so as long as nothing
+            // structural changed upstream (an in-progress group header's n/m
+            // counter, a collapsed fold), the old ANSI is a strict prefix and
+            // the delta streams straight into the buffer.
+            if (collapsedKeys.size === 0 && !foldView && ansi.startsWith(rawAnsi)) {
+              const suffix = ansi.slice(rawAnsi.length)
+              rawAnsi = ansi
+              await new Promise<void>(resolve => term.write(suffix, () => {
+                scanBuffer()
+                injectFoldRows()
+                queueMetrics()
+                resolve()
+              }))
+              if (atBottom) term.scrollToBottom()
+              return 'appended'
+            }
+
+            const keepRow = buf.viewportY
+            rawAnsi = ansi
+            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys) : null
+            await new Promise<void>(resolve => writeComposed(() => {
+              if (atBottom) term.scrollToBottom()
+              else term.scrollToLine(keepRow)
+              resolve()
+            }))
+            if (foldView) onFoldChangeRef.current?.()
+            return 'rewritten'
+          },
           setSearchResultsListener: (cb) => { searchResultsCb = cb },
         }
       }

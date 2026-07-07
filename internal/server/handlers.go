@@ -11,6 +11,7 @@ import (
 
 	"session-insight/internal/analytics"
 	"session-insight/internal/db"
+	"session-insight/internal/reader"
 	"session-insight/internal/model"
 	"session-insight/internal/render"
 )
@@ -109,6 +110,27 @@ func sessionToSummary(s model.Session) SessionSummary {
 		CreatedAt:    s.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:    s.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
+}
+
+// handleLiveRevision returns a cheap stat-level change marker for live-tail
+// polling. 404 when no reader owns the session or its reader lacks the
+// LiveRevisionProvider capability — the frontend then simply skips live tail.
+func (s *Server) handleLiveRevision(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	for _, rd := range s.Readers {
+		provider, ok := rd.(reader.LiveRevisionProvider)
+		if !ok {
+			continue
+		}
+		rev, err := provider.LiveRevision(id)
+		if err != nil {
+			continue
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int64{"revision": rev})
+		return
+	}
+	http.Error(w, "live revision unavailable", http.StatusNotFound)
 }
 
 func (s *Server) bookmarkSet() (map[string]bool, error) {

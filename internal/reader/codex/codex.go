@@ -846,3 +846,16 @@ func parseArguments(args string) map[string]any {
 	}
 	return result
 }
+
+// LiveRevision is a stat-only change marker for live-tail polling.
+func (r *CodexReader) LiveRevision(id string) (int64, error) {
+	path := r.findSessionFile(id)
+	if path == "" {
+		return 0, fmt.Errorf("codex session not found: %s", id)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.ModTime().UnixNano() + info.Size(), nil
+}

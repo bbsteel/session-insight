@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile } from '../api'
+import { addBookmark, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
@@ -194,6 +194,40 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const [ctxMenu, setCtxMenu] = useState<(TerminalContextMenuEvent & { fileOnly?: boolean; editIdx?: number }) | null>(null)
   const handleTerminalContextMenu = useCallback((e: TerminalContextMenuEvent) => setCtxMenu(e), [])
   useEffect(() => { setCtxMenu(null) }, [sessionId, viewMode])
+
+  // Live tail: poll the stat-level revision every few seconds; on change,
+  // apply the new render incrementally (append when possible) and bump
+  // contentVersion so positions/detail refetch. Polling stops permanently for
+  // agents without live-revision support (404 → null).
+  const [contentVersion, setContentVersion] = useState(0)
+  useEffect(() => {
+    if (!sessionId || viewMode !== 'terminal') return
+    let stopped = false
+    let lastRev: number | null = null
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      if (stopped) return
+      const rev = await fetchLiveRevision(sessionId).catch(() => null)
+      if (stopped) return
+      if (rev === null) return // unsupported → no live tail for this agent
+      if (lastRev !== null && rev !== lastRev) {
+        const result = await termControlRef.current?.refreshContent().catch(() => 'unchanged' as const)
+        if (!stopped && result && result !== 'unchanged') {
+          setContentVersion(v => v + 1)
+        }
+      }
+      lastRev = rev
+      timer = setTimeout(tick, 3000)
+    }
+    void tick()
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [sessionId, viewMode])
+
+  // Content grew: refresh the turn list / header stats (and the LIVE badge).
+  useEffect(() => {
+    if (contentVersion === 0 || !sessionId) return
+    fetchSession(sessionId).then(setSession).catch(() => {})
+  }, [contentVersion, sessionId])
 
   // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
   // helper textarea, which stops keydown propagation before the bubble phase.
@@ -573,7 +607,9 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
       cancelled = true
       clearTimeout(pollTimerRef.current)
     }
-  }, [sessionId, terminalCols])
+    // contentVersion: live tail grew the render → position cache rebuilds
+    // under the new revision, so refetch (202-polling included).
+  }, [sessionId, terminalCols, contentVersion])
 
   // Translate terminal scroll events into ScrollMetrics + visibleRange so that
   // MiniMap stays in sync even though there's no DOM scroller to observe.
@@ -777,6 +813,11 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
           </div>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
+          {session.is_live && (
+            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[var(--accent-green)]/15 px-1.5 text-meta font-medium text-[var(--accent-green)]">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />LIVE
+            </span>
+          )}
           {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tok · {session.turn_count} turns · {sessionDuration}
           {session.repository && <span className="text-[var(--text-muted)]"> · {session.repository.split('/').pop()}</span>}
           {session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>}

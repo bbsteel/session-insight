@@ -22,3 +22,11 @@ type BaseSessionReader interface {
 	// Used by the server to extract structured data (e.g. Edit calls).
 	GetRenderEvents(id string) ([]model.RenderEvent, error)
 }
+
+// LiveRevisionProvider is an optional reader capability: a cheap, stat-level
+// (no parsing) revision of a session's on-disk source. Live-tail polling
+// hits this every few seconds, so implementations must not read file
+// contents. Readers without it simply don't get live tail.
+type LiveRevisionProvider interface {
+	LiveRevision(id string) (int64, error)
+}

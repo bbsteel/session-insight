@@ -584,3 +584,16 @@ func stripTag(s, tag string) string {
 func newEventVM(typ, ts string, data map[string]any) model.EventVM {
 	return model.EventVM{Type: typ, Timestamp: ts, Data: data}
 }
+
+// LiveRevision is a stat-only change marker for live-tail polling.
+func (r *ClaudeReader) LiveRevision(id string) (int64, error) {
+	path := r.findSessionFile(id)
+	if path == "" {
+		return 0, fmt.Errorf("claude session not found: %s", id)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.ModTime().UnixNano() + info.Size(), nil
+}

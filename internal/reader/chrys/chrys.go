@@ -552,3 +552,23 @@ func buildBilling(sf *sessionFile, turns []model.TurnVM) *model.SessionBilling {
 		}},
 	}
 }
+
+// LiveRevision is a stat-only change marker for live-tail polling; the
+// recovery copy counts too since mid-turn content lands there first.
+func (r *ChrysReader) LiveRevision(id string) (int64, error) {
+	if !validSessionID(id) {
+		return 0, fmt.Errorf("invalid chrys session id: %q", id)
+	}
+	var rev int64
+	found := false
+	for _, name := range []string{"session.json", "session.recovery.json"} {
+		if info, err := os.Stat(filepath.Join(r.sessionsDir, id, name)); err == nil {
+			rev += info.ModTime().UnixNano() + info.Size()
+			found = true
+		}
+	}
+	if !found {
+		return 0, fmt.Errorf("chrys session not found: %s", id)
+	}
+	return rev, nil
+}
