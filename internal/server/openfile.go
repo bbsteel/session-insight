@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,29 @@ import (
 // a hostile page on localhost cannot turn this endpoint into "run anything".
 
 const editorCommandKey = "editor_command"
+
+// rejectUnsafeWrite guards the state-changing endpoints against cross-site
+// requests from web pages: a strict JSON Content-Type kills text/plain
+// "simple request" smuggling (no preflight), and any present Origin header
+// must be loopback. Non-browser local clients (curl) send no Origin and pass.
+func rejectUnsafeWrite(w http.ResponseWriter, r *http.Request) bool {
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		http.Error(w, "expected application/json", http.StatusUnsupportedMediaType)
+		return true
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		host := ""
+		if err == nil {
+			host = u.Hostname()
+		}
+		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			return true
+		}
+	}
+	return false
+}
 
 // startEditorCommand is swapped out by tests to capture the argv instead of
 // actually launching an editor.
@@ -140,6 +164,9 @@ func (s *Server) handleResolveFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
+	if rejectUnsafeWrite(w, r) {
+		return
+	}
 	var req struct {
 		Path   string `json:"path"`
 		Cwd    string `json:"cwd"`
@@ -189,6 +216,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
+	if rejectUnsafeWrite(w, r) {
+		return
+	}
 	if s.DB == nil {
 		http.Error(w, "database unavailable", http.StatusInternalServerError)
 		return

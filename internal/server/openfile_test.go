@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -86,10 +87,16 @@ func TestOpenFileAndSettingsHandlers(t *testing.T) {
 	file := filepath.Join(dir, "target.go")
 	os.WriteFile(file, []byte("package x\nfunc Hit() {}\n"), 0o644)
 
+	jsonReq := func(method, target, body string) *http.Request {
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+
 	// Configure a template via the settings API.
 	w := httptest.NewRecorder()
-	srv.Mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/settings",
-		strings.NewReader(`{"editor_command":"myedit --jump {path}:{line}"}`)))
+	srv.Mux.ServeHTTP(w, jsonReq("PUT", "/api/settings",
+		`{"editor_command":"myedit --jump {path}:{line}"}`))
 	if w.Code != 204 {
 		t.Fatalf("PUT settings: %d %s", w.Code, w.Body.String())
 	}
@@ -123,8 +130,8 @@ func TestOpenFileAndSettingsHandlers(t *testing.T) {
 	defer func() { startEditorCommand = orig }()
 
 	w = httptest.NewRecorder()
-	srv.Mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/open-file",
-		strings.NewReader(`{"path":"target.go","cwd":"`+dir+`","search":"func Hit() {}"}`)))
+	srv.Mux.ServeHTTP(w, jsonReq("POST", "/api/open-file",
+		`{"path":"target.go","cwd":"`+dir+`","search":"func Hit() {}"}`))
 	if w.Code != 200 {
 		t.Fatalf("open-file: %d %s", w.Code, w.Body.String())
 	}
@@ -136,9 +143,39 @@ func TestOpenFileAndSettingsHandlers(t *testing.T) {
 	// open-file with a missing file must not launch anything.
 	captured = nil
 	w = httptest.NewRecorder()
-	srv.Mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/open-file",
-		strings.NewReader(`{"path":"/definitely/not/here.go"}`)))
+	srv.Mux.ServeHTTP(w, jsonReq("POST", "/api/open-file", `{"path":"/definitely/not/here.go"}`))
 	if w.Code != 404 || captured != nil {
 		t.Fatalf("open-file missing: code %d, captured %v", w.Code, captured)
+	}
+
+	// Cross-site guards: text/plain smuggling and foreign Origins must be
+	// rejected before any file/exec logic runs.
+	body := `{"path":"target.go","cwd":"` + dir + `"}`
+	captured = nil
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/open-file", strings.NewReader(body)))
+	if w.Code != 415 || captured != nil {
+		t.Fatalf("text/plain smuggle: code %d, captured %v", w.Code, captured)
+	}
+	evil := jsonReq("POST", "/api/open-file", body)
+	evil.Header.Set("Origin", "http://evil.example")
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, evil)
+	if w.Code != 403 || captured != nil {
+		t.Fatalf("evil origin open-file: code %d, captured %v", w.Code, captured)
+	}
+	evilPut := jsonReq("PUT", "/api/settings", `{"editor_command":"pwned"}`)
+	evilPut.Header.Set("Origin", "http://evil.example")
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, evilPut)
+	if w.Code != 403 {
+		t.Fatalf("evil origin settings: code %d", w.Code)
+	}
+	ok := jsonReq("POST", "/api/open-file", body)
+	ok.Header.Set("Origin", "http://127.0.0.1:8080")
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, ok)
+	if w.Code != 200 || captured == nil {
+		t.Fatalf("loopback origin should pass: code %d, captured %v", w.Code, captured)
 	}
 }

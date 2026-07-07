@@ -62,6 +62,9 @@ func main() {
 	srv := server.New(database, readers)
 	srv.Mux.Handle("/", http.FileServer(http.FS(frontendFS)))
 
-	log.Printf("SessionInsight listening on http://localhost:%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, srv.Mux))
+	// Loopback only: the API exposes session contents and (via the editor
+	// command setting + open-file) command execution, so it must never be
+	// reachable from the network.
+	log.Printf("SessionInsight listening on http://127.0.0.1:%s", port)
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, srv.Mux))
 }
