@@ -14,6 +14,10 @@ export interface TerminalActivateMeta {
 export interface TerminalLineMatcher<T = unknown> {
   match: (text: string) => T | null
   tooltip?: string
+  // Optional async confirmation (e.g. does the detected path actually exist).
+  // Rows failing validation lose their hover affordance and click handling;
+  // results are cached per buffer row until the next rewrite.
+  validate?: (lineText: string) => Promise<boolean>
   onActivate: (bufLine: number, data: T, matchIndex: number, meta?: TerminalActivateMeta) => void
 }
 

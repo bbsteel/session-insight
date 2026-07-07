@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, fetchPositions, fetchSession, fetchSessionEdits, openFile, removeBookmark, resolveFile } from '../api'
-import { extractPathAt } from '../filePathDetection'
+import { addBookmark, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile } from '../api'
+import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
@@ -77,6 +77,38 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   // once (on cols-ready) but must see the latest positions and fold mapping.
   const positionsRef = useRef<PositionsResponse | null>(null)
   useEffect(() => { positionsRef.current = positionsData }, [positionsData])
+  const sessionCwdRef = useRef('')
+  useEffect(() => { sessionCwdRef.current = session?.cwd ?? '' }, [session])
+  // Hover-time path existence results, keyed by cwd+path (rows repeat paths).
+  const pathCheckCache = useRef(new Map<string, boolean>())
+  useEffect(() => { pathCheckCache.current.clear() }, [sessionId])
+  // "Session-relevant file" extension allowlist from settings (null = allow
+  // all via '*'); rows whose tokens all fall outside it get no affordance.
+  const fileExtsRef = useRef<Set<string> | null>(new Set(DEFAULT_FILE_OPEN_EXTS))
+  useEffect(() => {
+    fetchSettings()
+      .then(s => { fileExtsRef.current = parseExtList(s.file_open_extensions ?? '') })
+      .catch(() => {})
+  }, [])
+
+  // Resolve the first candidate on the row that exists on disk (cached).
+  const resolveRowFile = useCallback(async (lineText: string, column: number | null): Promise<{ path: string; line: number | null } | null> => {
+    const cwd = sessionCwdRef.current
+    for (const cand of extractPathsAt(lineText, column, fileExtsRef.current)) {
+      const key = cwd + '\0' + cand.path
+      let ok = pathCheckCache.current.get(key)
+      let resolved: string | null = null
+      if (ok === undefined) {
+        resolved = await resolveFile(cand.path, cwd).catch(() => null)
+        ok = resolved !== null
+        pathCheckCache.current.set(key, ok)
+      } else if (ok) {
+        resolved = await resolveFile(cand.path, cwd).catch(() => null)
+      }
+      if (ok && resolved) return { path: resolved, line: cand.line }
+    }
+    return null
+  }, [])
 
   // Left-click on a row with file context opens a small action popover at the
   // cursor (editor / new tab / diff) instead of a single hard-wired action.
@@ -132,10 +164,14 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
         },
       },
       {
-        // Rows containing a file-path-looking token → same file popover.
+        // Rows containing an allowlisted file-path token → same file popover.
         // Registered last: edit headers and truncation lines take precedence.
-        match: (text: string) => (extractPathAt(text, null) ? {} : null),
+        // validate: the affordance only appears when some candidate on the
+        // row actually resolves to an existing file (multi-token rows check
+        // every candidate, so "cd /some/dir && vim a.vue" still qualifies).
+        match: (text: string) => (extractPathsAt(text, null, fileExtsRef.current).length > 0 ? {} : null),
         tooltip: '打开文件（编辑器 / 新 Tab）',
+        validate: async (lineText: string) => (await resolveRowFile(lineText, null)) !== null,
         onActivate: (bufLine: number, _data: unknown, _idx: number, meta?: TerminalActivateMeta) => {
           openFilePopover(bufLine, meta, null)
         },
@@ -206,13 +242,12 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
       const search = (e.new_string || e.old_string).split('\n').find(l => l.trim())
       void resolveFile(e.file_path, cwd).then(p => { if (p) show(p, null, search) })
     } else {
-      const cand = extractPathAt(ctxMenu.lineText, ctxMenu.column)
-      if (cand) {
-        void resolveFile(cand.path, cwd).then(p => { if (p) show(p, cand.line) })
-      }
+      void resolveRowFile(ctxMenu.lineText, ctxMenu.column).then(hit => {
+        if (hit) show(hit.path, hit.line)
+      })
     }
     return () => { cancelled = true }
-  }, [ctxMenu, edits, positionsData, session])
+  }, [ctxMenu, edits, positionsData, session, resolveRowFile])
 
   const ctxMenuSections = useMemo((): TerminalMenuSection[] => {
     const selectedText = window.getSelection()?.toString() ?? ''
@@ -247,19 +282,17 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
       window.open(`#/file?${new URLSearchParams({ path: fileTarget.path, cwd: sessionCwd })}`, '_blank')
       setCtxMenu(null)
     }
-    const fileItems = (always: boolean) => [
-      ...(fileTarget || always ? [
-        {
-          label: fileTarget ? `用编辑器打开 ${fileTarget.label}` : '用编辑器打开',
-          disabled: !fileTarget,
-          onClick: openWithEditor,
-        },
-        {
-          label: '在新 Tab 打开',
-          disabled: !fileTarget,
-          onClick: openInNewTab,
-        },
-      ] : []),
+    const fileItems = () => [
+      {
+        label: fileTarget ? `用编辑器打开 ${fileTarget.label}` : '用编辑器打开',
+        disabled: !fileTarget,
+        onClick: openWithEditor,
+      },
+      {
+        label: '在新 Tab 打开',
+        disabled: !fileTarget,
+        onClick: openInNewTab,
+      },
       ...(ctxMenu?.editIdx != null ? [{
         label: '查看 Diff 明细',
         onClick: () => {
@@ -272,14 +305,15 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
 
     // Left-click file popover: only the file section, anchored at the cursor.
     if (ctxMenu?.fileOnly) {
-      return [{ title: '文件', items: fileItems(true), emptyText: '未识别到文件' }]
+      return [{ title: '文件', items: fileItems(), emptyText: '未识别到文件' }]
     }
 
     const sections: TerminalMenuSection[] = [
       {
         title: 'Common',
         items: [
-          ...fileItems(false),
+          // Always visible; greyed out when the row has no openable file.
+          ...fileItems(),
           { label: '上一条用户消息', onClick: () => { jump(-1, 'user'); setCtxMenu(null) } },
           { label: '下一条用户消息', onClick: () => { jump(1, 'user'); setCtxMenu(null) } },
           { label: '上一 Turn', onClick: () => { jump(-1, 'turn'); setCtxMenu(null) } },

@@ -96,6 +96,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
     // Line interaction state
     let lineMatchers: TerminalLineMatcher<unknown>[] = []
     const interactionMap = new Map<number, InteractionEntry>()
+    // Per-row async validation results ('pending' while in flight); cleared
+    // on every buffer rescan since row numbers shift across rewrites.
+    const rowValidity = new Map<number, 'pending' | boolean>()
 
     // Fold state: raw ANSI is kept so collapsed tool-group bodies can be
     // recomposed out of the buffer (xterm has no hide-rows primitive; a fold
@@ -282,6 +285,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       // Called after every render so buffer lines are the source of truth (no Go lineStart dependency).
       const scanBuffer = () => {
         interactionMap.clear()
+        rowValidity.clear()
         if (lineMatchers.length === 0) return
         const buf = term.buffer.active
         const matchCounts = new Map<TerminalLineMatcher<unknown>, number>()
@@ -415,24 +419,51 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         else injectFoldRows()
       }
 
+      const showHoverFor = (bl: number, entry: InteractionEntry, clientX: number, clientY: number) => {
+        showHoverDecoration(bl)
+        if (tooltipEl) {
+          const tip = entry.matcher.tooltip ?? ''
+          tooltipEl.textContent = tip
+          tooltipEl.style.display = tip ? 'block' : 'none'
+          tooltipEl.style.left = (clientX + 14) + 'px'
+          tooltipEl.style.top = (clientY - 38) + 'px'
+        }
+        if (xtermScreen) xtermScreen.style.cursor = 'pointer'
+      }
+
+      let lastHover: { bl: number; clientX: number; clientY: number } | null = null
+
       onMouseMove = (e: MouseEvent) => {
         if (!interactionMap.size) { hideHover(); return }
         const bl = getBufLine(e)
-        if (bl === null) { hideHover(); return }
+        if (bl === null) { hideHover(); lastHover = null; return }
         const entry = interactionMap.get(bl)
-        if (entry) {
-          showHoverDecoration(bl)
-          if (tooltipEl) {
-            const tip = entry.matcher.tooltip ?? ''
-            tooltipEl.textContent = tip
-            tooltipEl.style.display = tip ? 'block' : 'none'
-            tooltipEl.style.left = (e.clientX + 14) + 'px'
-            tooltipEl.style.top = (e.clientY - 38) + 'px'
+        lastHover = { bl, clientX: e.clientX, clientY: e.clientY }
+        if (!entry) { hideHover(); return }
+
+        // Rows with a validator only get the affordance once it confirms
+        // (e.g. the detected path really exists). The mouse may sit still
+        // while the check resolves, so completion re-shows from lastHover.
+        if (entry.matcher.validate) {
+          const state = rowValidity.get(bl)
+          if (state === undefined) {
+            rowValidity.set(bl, 'pending')
+            hideHover()
+            const text = term.buffer.active.getLine(bl)?.translateToString(true) ?? ''
+            entry.matcher.validate(text).then(ok => {
+              if (disposed || rowValidity.get(bl) !== 'pending') return
+              rowValidity.set(bl, ok)
+              if (!ok) {
+                interactionMap.delete(bl)
+                return
+              }
+              if (lastHover?.bl === bl) showHoverFor(bl, entry, lastHover.clientX, lastHover.clientY)
+            })
+            return
           }
-          if (xtermScreen) xtermScreen.style.cursor = 'pointer'
-        } else {
-          hideHover()
+          if (state !== true) { hideHover(); return }
         }
+        showHoverFor(bl, entry, e.clientX, e.clientY)
       }
 
       onMouseLeave = () => hideHover()
@@ -442,6 +473,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         if (bl === null) return
         const entry = interactionMap.get(bl)
         if (entry) {
+          // Validated matchers only activate after their check confirmed.
+          if (entry.matcher.validate && rowValidity.get(bl) !== true) return
           e.preventDefault()
           e.stopPropagation()
           const core = (term as unknown as { _core?: XtermCoreWithMouse })._core

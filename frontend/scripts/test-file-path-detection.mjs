@@ -21,6 +21,9 @@ assertEq(extractPathAt('see https://example.com/a/b docs', 14), null, 'url is no
 assertEq(extractPathAt('a.go and src/main.go', 0), { path: 'src/main.go', line: null }, 'column misses → first path-like token')
 assertEq(extractPathAt('left src/a.ts right src/b.ts', 22), { path: 'src/b.ts', line: null }, 'column picks the second token')
 assertEq(extractPathAt('padded  ./scripts/run.sh  tail', null), { path: './scripts/run.sh', line: null }, 'null column → first token')
+assertEq(extractPathAt('uv venv --help 2>/dev/null | head -3', null), null, 'shell redirection /dev/null is not a file')
+assertEq(extractPathAt('cat /proc/self/status /sys/class/net', null), null, 'pseudo filesystems excluded')
+assertEq(extractPathAt('log to /dev/null but edit src/main.go', 30), { path: 'src/main.go', line: null }, 'real path survives next to /dev/null')
 
 if (failures > 0) {
   console.error(`${failures} failure(s)`)

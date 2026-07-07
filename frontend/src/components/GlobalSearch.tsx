@@ -152,6 +152,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
   const [editorCommand, setEditorCommand] = useState('')
   const [editorCommandDefault, setEditorCommandDefault] = useState('')
   const savedEditorCommandRef = useRef('')
+  const [fileExts, setFileExts] = useState('')
+  const savedFileExtsRef = useRef('')
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -170,6 +172,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
         setEditorCommand(s.editor_command)
         setEditorCommandDefault(s.editor_command_default)
         savedEditorCommandRef.current = s.editor_command
+        setFileExts(s.file_open_extensions ?? '')
+        savedFileExtsRef.current = s.file_open_extensions ?? ''
       })
       .catch(() => {})
   }, [showSettings])
@@ -182,6 +186,17 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
       savedEditorCommandRef.current = value
     } catch {
       setEditorCommand(savedEditorCommandRef.current)
+    }
+  }
+
+  const persistFileExts = async () => {
+    const value = fileExts.trim()
+    if (value === savedFileExtsRef.current) return
+    try {
+      await saveSettings({ file_open_extensions: value })
+      savedFileExtsRef.current = value
+    } catch {
+      setFileExts(savedFileExtsRef.current)
     }
   }
 
@@ -487,6 +502,20 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
               </label>
               <div className="mt-1 text-meta text-[var(--text-muted)]">
                 {'占位符 {path}、{line}；留空自动探测（code → xdg-open）'}
+              </div>
+              <label className="mt-3 block text-helper text-[var(--text-primary)]">
+                可打开文件类型
+                <input
+                  type="text"
+                  value={fileExts}
+                  placeholder="留空 = 默认代码/文本扩展名"
+                  onChange={e => setFileExts(e.target.value)}
+                  onBlur={() => void persistFileExts()}
+                  className="mt-1 h-7 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 font-mono text-meta text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
+                />
+              </label>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">
+                逗号分隔（如 go,ts,vue）；* 表示不限制。终端里只有这些类型的文件才会出现打开入口，改动刷新后生效
               </div>
             </div>
           )}

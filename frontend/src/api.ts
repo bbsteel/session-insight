@@ -122,6 +122,7 @@ export async function fsRead(path: string): Promise<{ path: string; content: str
 export interface AppSettings {
   editor_command: string
   editor_command_default: string
+  file_open_extensions: string
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
@@ -130,7 +131,7 @@ export async function fetchSettings(): Promise<AppSettings> {
   return res.json()
 }
 
-export async function saveSettings(settings: { editor_command: string }): Promise<void> {
+export async function saveSettings(settings: { editor_command?: string; file_open_extensions?: string }): Promise<void> {
   const res = await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

@@ -18,7 +18,12 @@ import (
 // the HTTP surface only ever supplies a file path that must exist on disk, so
 // a hostile page on localhost cannot turn this endpoint into "run anything".
 
-const editorCommandKey = "editor_command"
+const (
+	editorCommandKey = "editor_command"
+	// Extension allowlist for the terminal file-open affordance; empty means
+	// the frontend's built-in default list, "*" means no restriction.
+	fileOpenExtsKey = "file_open_extensions"
+)
 
 // rejectUnsafeWrite guards the state-changing endpoints against cross-site
 // requests from web pages: a strict JSON Content-Type kills text/plain
@@ -202,16 +207,20 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	editorCmd := ""
+	editorCmd, fileExts := "", ""
 	if s.DB != nil {
 		if v, err := s.DB.GetSetting(editorCommandKey); err == nil {
 			editorCmd = v
+		}
+		if v, err := s.DB.GetSetting(fileOpenExtsKey); err == nil {
+			fileExts = v
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"editor_command":         editorCmd,
 		"editor_command_default": s.editorCommandTemplate(),
+		"file_open_extensions":   fileExts,
 	})
 }
 
@@ -224,7 +233,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		EditorCommand *string `json:"editor_command"`
+		EditorCommand      *string `json:"editor_command"`
+		FileOpenExtensions *string `json:"file_open_extensions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -232,6 +242,12 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.EditorCommand != nil {
 		if err := s.DB.SetSetting(editorCommandKey, strings.TrimSpace(*req.EditorCommand)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.FileOpenExtensions != nil {
+		if err := s.DB.SetSetting(fileOpenExtsKey, strings.TrimSpace(*req.FileOpenExtensions)); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
