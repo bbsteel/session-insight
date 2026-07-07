@@ -16,7 +16,8 @@ function loadOpts(): TerminalSearchOptions {
         caseSensitive: !!o.caseSensitive,
         wholeWord: !!o.wholeWord,
         regex: !!o.regex,
-        highlightAll: o.highlightAll !== false,
+        // Deliberately not persisted: highlight-all always starts on.
+        highlightAll: true,
       }
     }
   } catch { /* corrupted storage → defaults */ }
@@ -32,10 +33,12 @@ interface Props {
   controlRef: React.MutableRefObject<TerminalControl | null>
   /** Bumped on fold rewrites — the buffer was replaced, so re-run the search. */
   refreshToken: number
+  /** Bumped on every Ctrl+F — refocus the input even when already open. */
+  focusToken: number
   onClose: () => void
 }
 
-export default function TerminalSearchBar({ controlRef, refreshToken, onClose }: Props) {
+export default function TerminalSearchBar({ controlRef, refreshToken, focusToken, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [opts, setOpts] = useState<TerminalSearchOptions>(loadOpts)
   const [result, setResult] = useState<{ index: number; count: number } | null>(null)
@@ -45,8 +48,14 @@ export default function TerminalSearchBar({ controlRef, refreshToken, onClose }:
   const optsRef = useRef(opts)
   optsRef.current = opts
 
+  // Refocus (and select the query for quick replacement) on every Ctrl+F,
+  // including when the bar is already open but focus wandered off.
   useEffect(() => {
     inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [focusToken])
+
+  useEffect(() => {
     const ctrl = controlRef.current
     ctrl?.setSearchResultsListener((index, count) => {
       setResult(count >= 0 ? { index, count } : null)
@@ -88,7 +97,7 @@ export default function TerminalSearchBar({ controlRef, refreshToken, onClose }:
 
   const toggleCls = (on: boolean) =>
     `h-6 min-w-6 rounded px-1 text-meta ${on
-      ? 'bg-[var(--accent-blue)]/20 text-[var(--accent-blue)]'
+      ? 'bg-[var(--accent-blue)] text-white shadow-[inset_0_2px_3px_rgba(0,0,0,0.35)]'
       : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`
 
   return (
@@ -107,7 +116,7 @@ export default function TerminalSearchBar({ controlRef, refreshToken, onClose }:
       <button onClick={() => toggle('caseSensitive')} title="区分大小写" aria-pressed={opts.caseSensitive} className={toggleCls(opts.caseSensitive)}>Aa</button>
       <button onClick={() => toggle('wholeWord')} title="全词匹配" aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
       <button onClick={() => toggle('regex')} title="正则表达式" aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
-      <button onClick={() => toggle('highlightAll')} title="高亮全部命中" aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>≡</button>
+      <button onClick={() => toggle('highlightAll')} title="高亮全部命中" aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>全亮</button>
       <span className={`min-w-[52px] text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
         {invalidRegex ? '无效正则' : query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : '无结果') : ''}
       </span>

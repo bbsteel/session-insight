@@ -136,6 +136,8 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
   // helper textarea, which stops keydown propagation before the bubble phase.
   const [searchOpen, setSearchOpen] = useState(false)
+  // Bumped on every Ctrl+F so an already-open bar pulls focus back to itself.
+  const [searchFocusToken, setSearchFocusToken] = useState(0)
   useEffect(() => { setSearchOpen(false) }, [sessionId, viewMode])
   useEffect(() => {
     if (!sessionId) return
@@ -144,6 +146,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
         if (viewMode !== 'terminal') return
         e.preventDefault()
         setSearchOpen(true)
+        setSearchFocusToken(t => t + 1)
       }
     }
     document.addEventListener('keydown', onKey, true)
@@ -741,6 +744,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
             <TerminalSearchBar
               controlRef={termControlRef}
               refreshToken={foldVersion}
+              focusToken={searchFocusToken}
               onClose={() => setSearchOpen(false)}
             />
           )}
