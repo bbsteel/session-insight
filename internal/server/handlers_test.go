@@ -44,11 +44,12 @@ func TestHandleListSessionsEmpty(t *testing.T) {
 
 // stubReader is a minimal BaseSessionReader for handler tests.
 type stubReader struct {
-	agentType       string
-	id              string
-	sessions        []model.Session
-	events          []model.RenderEvent
-	getSessionCalls int
+	agentType        string
+	id               string
+	sessions         []model.Session
+	events           []model.RenderEvent
+	getSessionCalls  int
+	listSessionCalls int
 }
 
 func (s *stubReader) AgentType() string {
@@ -59,6 +60,7 @@ func (s *stubReader) AgentType() string {
 }
 func (s *stubReader) DisplayName() string { return s.AgentType() }
 func (s *stubReader) ListSessions() ([]model.Session, error) {
+	s.listSessionCalls++
 	if s.sessions != nil {
 		return s.sessions, nil
 	}
@@ -227,7 +229,10 @@ func TestBookmarkHandlersAnnotateSessionsAndListBookmarks(t *testing.T) {
 	}
 }
 
-func TestHandleListBookmarksUsesSessionSummaries(t *testing.T) {
+// The bookmark list must load each bookmarked session by id: ListSessions
+// re-parses every session on disk (measured ~1.2s across 700+ sessions for a
+// handful of bookmarks), so a full scan here is a per-open UI stall.
+func TestHandleListBookmarksLoadsSessionsByID(t *testing.T) {
 	database, err := db.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("Open db: %v", err)
@@ -269,7 +274,10 @@ func TestHandleListBookmarksUsesSessionSummaries(t *testing.T) {
 	if len(bookmarks) != 3 {
 		t.Fatalf("expected 3 bookmarks, got %d", len(bookmarks))
 	}
-	if rd.getSessionCalls != 0 {
-		t.Fatalf("expected bookmark list to use ListSessions summaries, called GetSession %d times", rd.getSessionCalls)
+	if rd.getSessionCalls != 3 {
+		t.Fatalf("expected one GetSession call per bookmark, got %d", rd.getSessionCalls)
+	}
+	if rd.listSessionCalls != 0 {
+		t.Fatalf("bookmark list must not trigger a full ListSessions scan, called %d times", rd.listSessionCalls)
 	}
 }
