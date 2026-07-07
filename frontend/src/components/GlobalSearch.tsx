@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchSearch } from '../api'
+import { fetchSearch, fetchSettings, saveSettings } from '../api'
 import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import ThemeToggle from './ThemeToggle'
@@ -149,6 +149,9 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
   const [showSettings, setShowSettings] = useState(false)
   const isDark = useIsDark()
   const [bannerColor, setBannerColor] = useState<string | null>(getBannerColorOverride)
+  const [editorCommand, setEditorCommand] = useState('')
+  const [editorCommandDefault, setEditorCommandDefault] = useState('')
+  const savedEditorCommandRef = useRef('')
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -157,6 +160,30 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
   const isHistoryMode = !query.trim()
   const visibleHistory = sortAndTrim(history, historyLimit)
   const listLength = isHistoryMode ? visibleHistory.length : results.length
+
+  // Editor command template lives server-side (the server executes it);
+  // loaded when the settings panel opens, saved on blur if changed.
+  useEffect(() => {
+    if (!showSettings) return
+    fetchSettings()
+      .then(s => {
+        setEditorCommand(s.editor_command)
+        setEditorCommandDefault(s.editor_command_default)
+        savedEditorCommandRef.current = s.editor_command
+      })
+      .catch(() => {})
+  }, [showSettings])
+
+  const persistEditorCommand = async () => {
+    const value = editorCommand.trim()
+    if (value === savedEditorCommandRef.current) return
+    try {
+      await saveSettings({ editor_command: value })
+      savedEditorCommandRef.current = value
+    } catch {
+      setEditorCommand(savedEditorCommandRef.current)
+    }
+  }
 
   useEffect(() => {
     if (!query.trim()) {
@@ -444,6 +471,23 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
                 </span>
               </label>
               <div className="mt-1 text-meta text-[var(--text-muted)]">默认随深/浅主题，改动即时生效</div>
+              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                编辑器
+              </div>
+              <label className="block text-helper text-[var(--text-primary)]">
+                打开文件命令
+                <input
+                  type="text"
+                  value={editorCommand}
+                  placeholder={editorCommandDefault || 'code --goto {path}:{line}'}
+                  onChange={e => setEditorCommand(e.target.value)}
+                  onBlur={() => void persistEditorCommand()}
+                  className="mt-1 h-7 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 font-mono text-meta text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
+                />
+              </label>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">
+                {'占位符 {path}、{line}；留空自动探测（code → xdg-open）'}
+              </div>
             </div>
           )}
         </div>

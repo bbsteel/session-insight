@@ -98,6 +98,7 @@ export interface SessionDetail {
   name: string
   repository: string
   branch: string
+  cwd: string
   turn_count: number
   message_count: number
   is_live: boolean

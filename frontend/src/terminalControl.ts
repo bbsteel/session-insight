@@ -31,9 +31,13 @@ export interface TerminalControl {
 
 // Payload for the terminal context menu: where the right-click landed, in
 // original render rows so it can be matched against the positions cache.
+// lineText/column describe the clicked buffer row so the menu can offer
+// row-content-aware actions (e.g. open the file path under the cursor).
 export interface TerminalContextMenuEvent {
   clientX: number
   clientY: number
   originalRow: number | null
+  column: number | null
+  lineText: string
   collapsedFoldKeys: string[]
 }

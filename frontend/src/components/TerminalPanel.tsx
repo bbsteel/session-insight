@@ -447,10 +447,17 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       onCtxMenu = (e: MouseEvent) => {
         e.preventDefault()
         const bl = getBufLine(e)
+        // Column comes from the same xterm MouseService call as the row
+        // (coords are 1-based); needed to pick the path token under the cursor.
+        const core = (term as unknown as { _core?: XtermCoreWithMouse })._core
+        const screenElement = core?.screenElement ?? xtermScreen ?? container
+        const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
         onContextMenuRef.current?.({
           clientX: e.clientX,
           clientY: e.clientY,
           originalRow: bl !== null ? toOriginalLine(bl) : null,
+          column: coords ? coords[0] - 1 : null,
+          lineText: bl !== null ? (term.buffer.active.getLine(bl)?.translateToString(true) ?? '') : '',
           collapsedFoldKeys: [...collapsedKeys],
         })
       }

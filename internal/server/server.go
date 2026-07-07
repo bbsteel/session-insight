@@ -56,4 +56,8 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/sessions/{id}/edits", s.handleSessionEdits)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/tool-outputs", s.handleSessionToolOutputs)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/positions", s.handleSessionPositions)
+	s.Mux.HandleFunc("GET /api/resolve-file", s.handleResolveFile)
+	s.Mux.HandleFunc("POST /api/open-file", s.handleOpenFile)
+	s.Mux.HandleFunc("GET /api/settings", s.handleGetSettings)
+	s.Mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
 }

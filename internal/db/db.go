@@ -167,6 +167,11 @@ func migrate(conn *sql.DB) error {
 	    created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	    PRIMARY KEY (agent_type, session_id)
 	);
+
+	CREATE TABLE IF NOT EXISTS app_settings (
+	    key TEXT PRIMARY KEY,
+	    value TEXT NOT NULL
+	);
 	`
 	_, err := conn.Exec(query)
 	if err != nil {

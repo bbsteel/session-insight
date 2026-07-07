@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, fetchPositions, fetchSession, fetchSessionEdits, removeBookmark } from '../api'
+import { addBookmark, fetchPositions, fetchSession, fetchSessionEdits, openFile, removeBookmark, resolveFile } from '../api'
+import { extractPathAt } from '../filePathDetection'
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
@@ -131,9 +132,108 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const handleTerminalContextMenu = useCallback((e: TerminalContextMenuEvent) => setCtxMenu(e), [])
   useEffect(() => { setCtxMenu(null) }, [sessionId, viewMode])
 
+  // "Open in editor" target for the clicked row, resolved asynchronously so
+  // the item only appears for files that actually exist. Edit header rows use
+  // the exact file from the edits API (plus a best-effort line via content
+  // search); other rows go through path-token heuristics on the row text.
+  const [fileTarget, setFileTarget] = useState<{ path: string; label: string; line: number | null; search?: string } | null>(null)
+  const [openFileError, setOpenFileError] = useState<string | null>(null)
+  useEffect(() => {
+    setFileTarget(null)
+    if (!ctxMenu) return
+    let cancelled = false
+    const cwd = session?.cwd ?? ''
+    const show = (path: string, line: number | null, search?: string) => {
+      if (cancelled) return
+      setFileTarget({ path, label: path.split('/').pop() ?? path, line, search })
+    }
+
+    const editPositions = (positionsData?.positions ?? [])
+      .filter(p => p.kind === 'edit')
+      .sort((a, b) => a.line_start - b.line_start)
+    const editIdx = ctxMenu.originalRow !== null
+      ? editPositions.findIndex(p => p.line_start === ctxMenu.originalRow)
+      : -1
+    if (editIdx >= 0 && edits[editIdx]) {
+      const e = edits[editIdx]
+      const search = (e.new_string || e.old_string).split('\n').find(l => l.trim())
+      void resolveFile(e.file_path, cwd).then(p => { if (p) show(p, null, search) })
+    } else {
+      const cand = extractPathAt(ctxMenu.lineText, ctxMenu.column)
+      if (cand) {
+        void resolveFile(cand.path, cwd).then(p => { if (p) show(p, cand.line) })
+      }
+    }
+    return () => { cancelled = true }
+  }, [ctxMenu, edits, positionsData, session])
+
   const ctxMenuSections = useMemo((): TerminalMenuSection[] => {
+    const selectedText = window.getSelection()?.toString() ?? ''
+    const copyText = (text: string) => {
+      void navigator.clipboard.writeText(text)
+      setCtxMenu(null)
+    }
+    const scrollToBottom = () => {
+      const ctrl = termControlRef.current
+      if (!ctrl) return
+      const metrics = ctrl.getMetrics()
+      ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
+      setCtxMenu(null)
+    }
+    const sessionCwd = (session as (SessionDetail & { cwd?: string }) | null)?.cwd ?? ''
     const sections: TerminalMenuSection[] = [
-      { title: 'Common', items: [], emptyText: '暂无操作' },
+      {
+        title: 'Common',
+        items: [
+          ...(fileTarget ? [{
+            label: `用编辑器打开 ${fileTarget.label}`,
+            onClick: () => {
+              void openFile({
+                path: fileTarget.path,
+                line: fileTarget.line ?? undefined,
+                search: fileTarget.search,
+              }).catch(err => {
+                setOpenFileError(err instanceof Error ? err.message : '打开文件失败')
+                setTimeout(() => setOpenFileError(null), 5000)
+              })
+              setCtxMenu(null)
+            },
+          }] : []),
+          { label: '上一条用户消息', onClick: () => { jump(-1, 'user'); setCtxMenu(null) } },
+          { label: '下一条用户消息', onClick: () => { jump(1, 'user'); setCtxMenu(null) } },
+          { label: '上一 Turn', onClick: () => { jump(-1, 'turn'); setCtxMenu(null) } },
+          { label: '下一 Turn', onClick: () => { jump(1, 'turn'); setCtxMenu(null) } },
+          { label: '回到顶部', onClick: () => { termControlRef.current?.scrollToLine(0); setCtxMenu(null) } },
+          { label: '回到底部', onClick: scrollToBottom },
+          {
+            label: '复制选中文本',
+            disabled: selectedText.length === 0,
+            onClick: () => copyText(selectedText),
+          },
+          { label: '复制会话 ID', onClick: () => copyText(session?.id ?? '') },
+          {
+            label: '复制工作目录',
+            disabled: sessionCwd.length === 0,
+            onClick: () => copyText(sessionCwd),
+          },
+          {
+            label: '导出会话',
+            onClick: () => {
+              if (session) window.location.href = `/api/sessions/${session.id}/export`
+              setCtxMenu(null)
+            },
+          },
+          {
+            label: session?.bookmarked ? '取消收藏' : '收藏',
+            disabled: bookmarkBusy,
+            onClick: () => {
+              void toggleBookmark()
+              setCtxMenu(null)
+            },
+          },
+        ],
+        emptyText: '暂无操作',
+      },
     ]
     if (!ctxMenu || folds.length === 0) return sections
 
@@ -175,7 +275,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
       ],
     })
     return sections
-  }, [ctxMenu, folds, positionsData, session])
+  }, [ctxMenu, fileTarget, folds, positionsData, session])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -488,6 +588,11 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
           {bookmarkError && (
             <span className="text-meta text-[var(--error)]" role="status">
               {bookmarkError}
+            </span>
+          )}
+          {openFileError && (
+            <span className="text-meta text-[var(--error)]" role="status">
+              {openFileError}
             </span>
           )}
           <span className="text-[var(--border-default)]">|</span>

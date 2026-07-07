@@ -83,6 +83,45 @@ export async function fetchSearch(q: string): Promise<SearchResult[]> {
   return res.json()
 }
 
+// Resolves a (possibly cwd-relative) path to an absolute existing file, or
+// null — the context menu only offers "open in editor" for real files.
+export async function resolveFile(path: string, cwd: string): Promise<string | null> {
+  const params = new URLSearchParams({ path, cwd })
+  const res = await fetch(`/api/resolve-file?${params}`)
+  if (!res.ok) return null
+  const data = await res.json() as { path: string }
+  return data.path
+}
+
+export async function openFile(req: { path: string; cwd?: string; line?: number; search?: string }): Promise<void> {
+  const res = await fetch('/api/open-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new Error(`Failed to open file: ${res.status} ${await res.text()}`)
+}
+
+export interface AppSettings {
+  editor_command: string
+  editor_command_default: string
+}
+
+export async function fetchSettings(): Promise<AppSettings> {
+  const res = await fetch('/api/settings')
+  if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`)
+  return res.json()
+}
+
+export async function saveSettings(settings: { editor_command: string }): Promise<void> {
+  const res = await fetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+  if (!res.ok) throw new Error(`Failed to save settings: ${res.status}`)
+}
+
 async function readJson<T>(res: Response, label: string): Promise<T> {
   const contentType = res.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {
