@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { fetchToolOutputs, type TruncatedOutput } from '../api'
+
+const SyntaxCodeBlock = lazy(() => import('./SyntaxCodeBlock'))
 
 interface Props {
   sessionId: string
@@ -30,6 +32,18 @@ export default function OutputModal({ sessionId, outputIndex, onClose }: Props) 
 
   const output = outputs?.[outputIndex]
 
+  // JSON payloads get pretty-printed syntax highlighting; anything that
+  // doesn't parse stays a plain <pre> untouched.
+  const prettyJson = useMemo(() => {
+    const t = output?.content.trim() ?? ''
+    if (!t.startsWith('{') && !t.startsWith('[')) return null
+    try {
+      return JSON.stringify(JSON.parse(t), null, 2)
+    } catch {
+      return null
+    }
+  }, [output])
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
@@ -51,11 +65,19 @@ export default function OutputModal({ sessionId, outputIndex, onClose }: Props) 
           {error && <div className="text-sm text-[var(--error)]">加载失败：{error}</div>}
           {!error && !outputs && <div className="text-sm text-[var(--text-secondary)]">加载中…</div>}
           {!error && outputs && !output && <div className="text-sm text-[var(--text-secondary)]">未找到对应输出（会话可能已更新，请刷新）</div>}
-          {output && (
+          {output && (prettyJson !== null ? (
+            <Suspense fallback={
+              <pre className="text-xs leading-5 font-mono whitespace-pre-wrap break-all text-[var(--text-primary)] bg-[var(--bg-inset)] rounded-md p-3">
+                {prettyJson}
+              </pre>
+            }>
+              <SyntaxCodeBlock code={prettyJson} language="json" />
+            </Suspense>
+          ) : (
             <pre className="text-xs leading-5 font-mono whitespace-pre-wrap break-all text-[var(--text-primary)] bg-[var(--bg-inset)] rounded-md p-3">
               {output.content}
             </pre>
-          )}
+          ))}
         </div>
       </div>
     </div>

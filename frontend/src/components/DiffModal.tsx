@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { refractor } from 'refractor'
 import { fetchSessionEdits } from '../api'
+import { langForPath } from '../langMap'
+import { useIsDark } from '../terminalTheme'
 import type { EditCall } from '../types'
 
 // ---------- diff algorithm ----------
@@ -30,6 +33,116 @@ function computeDiff(oldText: string, newText: string): DiffOp[] {
   return ops
 }
 
+// ---------- theme palettes ----------
+
+interface Palette {
+  overlay: string
+  surface: string
+  header: string
+  border: string
+  borderMuted: string
+  text: string
+  muted: string
+  dim: string
+  gutterBg: string
+  emptyBg: string
+  removeBg: string
+  addBg: string
+  removeText: string
+  addText: string
+  removeSig: string
+  addSig: string
+  accent: string
+  accentText: string
+  accentBg: string
+}
+
+const DARK: Palette = {
+  overlay: 'rgba(0,0,0,0.65)', surface: '#1a1b26', header: '#1e2030',
+  border: 'rgba(255,255,255,0.1)', borderMuted: 'rgba(255,255,255,0.06)',
+  text: '#c0caf5', muted: '#6b7280', dim: '#374151',
+  gutterBg: 'rgba(0,0,0,0.25)', emptyBg: 'rgba(0,0,0,0.15)',
+  removeBg: '#3d1020', addBg: '#0d3320',
+  removeText: '#fca5a5', addText: '#86efac',
+  removeSig: '#f87171', addSig: '#4ade80',
+  accent: '#7c3aed', accentText: '#a78bfa', accentBg: 'rgba(124,58,237,0.3)',
+}
+
+const LIGHT: Palette = {
+  overlay: 'rgba(15,18,25,0.35)', surface: '#ffffff', header: '#f5f6f8',
+  border: 'rgba(15,18,25,0.14)', borderMuted: 'rgba(15,18,25,0.07)',
+  text: '#1f2430', muted: '#6b7280', dim: '#c3c8d4',
+  gutterBg: 'rgba(15,18,25,0.04)', emptyBg: 'rgba(15,18,25,0.05)',
+  removeBg: '#ffe3e8', addBg: '#dcf5e4',
+  removeText: '#9f1239', addText: '#14652f',
+  removeSig: '#dc2626', addSig: '#16a34a',
+  accent: '#7c3aed', accentText: '#6d28d9', accentBg: 'rgba(124,58,237,0.12)',
+}
+
+// ---------- per-line syntax highlighting (refractor → spans) ----------
+
+const TOKENS_DARK: Record<string, string> = {
+  keyword: '#c678dd', 'class-name': '#e5c07b', builtin: '#e5c07b',
+  function: '#61afef', string: '#98c379', char: '#98c379', regex: '#98c379',
+  comment: '#7f848e', number: '#d19a66', boolean: '#d19a66', constant: '#d19a66',
+  operator: '#56b6c2', punctuation: '#889096', property: '#e06c75', tag: '#e06c75',
+  'attr-name': '#d19a66', 'attr-value': '#98c379', selector: '#e06c75', variable: '#e06c75',
+  important: '#c678dd', atrule: '#c678dd', url: '#56b6c2', symbol: '#56b6c2',
+}
+
+const TOKENS_LIGHT: Record<string, string> = {
+  keyword: '#a626a4', 'class-name': '#c18401', builtin: '#c18401',
+  function: '#4078f2', string: '#50a14f', char: '#50a14f', regex: '#50a14f',
+  comment: '#a0a1a7', number: '#986801', boolean: '#986801', constant: '#986801',
+  operator: '#0184bc', punctuation: '#5c6370', property: '#e45649', tag: '#e45649',
+  'attr-name': '#986801', 'attr-value': '#50a14f', selector: '#e45649', variable: '#e45649',
+  important: '#a626a4', atrule: '#a626a4', url: '#0184bc', symbol: '#0184bc',
+}
+
+interface HastNode {
+  type: string
+  value?: string
+  tagName?: string
+  properties?: { className?: string[] }
+  children?: HastNode[]
+}
+
+function hastToNodes(nodes: HastNode[], colors: Record<string, string>, keyBase: string): ReactNode[] {
+  return nodes.map((n, i) => {
+    if (n.type === 'text') return n.value ?? ''
+    if (n.type === 'element') {
+      const cls = n.properties?.className ?? []
+      const color = cls.map(c => colors[c]).find(Boolean)
+      return (
+        <span key={keyBase + i} style={color ? { color } : undefined}>
+          {hastToNodes(n.children ?? [], colors, `${keyBase}${i}-`)}
+        </span>
+      )
+    }
+    return null
+  })
+}
+
+function resolveLang(lang: string): string | null {
+  if (refractor.registered(lang)) return lang
+  if (lang === 'tsx' && refractor.registered('typescript')) return 'typescript'
+  return null
+}
+
+// One diff line, syntax-colored when the language is known; falls back to the
+// kind-based flat color otherwise. Tokenizing per line loses multi-line
+// constructs (block comments), an accepted trade-off for row-level diffs.
+function TokenLine({ text, lang, colors, fallback }: { text: string; lang: string | null; colors: Record<string, string>; fallback: string }) {
+  if (!text) return <>{' '}</>
+  if (!lang) return <span style={{ color: fallback }}>{text}</span>
+  try {
+    const root = refractor.highlight(text, lang) as unknown as { children: HastNode[] }
+    return <>{hastToNodes(root.children, colors, 'h')}</>
+  } catch {
+    return <span style={{ color: fallback }}>{text}</span>
+  }
+}
+
 // ---------- inline view ----------
 
 interface NumberedOp { kind: DiffKind; text: string; oldNum?: number; newNum?: number }
@@ -44,35 +157,30 @@ function numberOps(diff: DiffOp[]): NumberedOp[] {
   })
 }
 
-function InlineDiff({ diff }: { diff: DiffOp[] }) {
+interface ViewProps { diff: DiffOp[]; pal: Palette; lang: string | null; tokens: Record<string, string> }
+
+function InlineDiff({ diff, pal, lang, tokens }: ViewProps) {
   const lines = numberOps(diff)
   return (
     <table className="w-full border-collapse" style={{ fontFamily: '"JetBrains Mono", "Menlo", monospace', fontSize: 12 }}>
       <tbody>
         {lines.map((row, i) => {
-          const bg =
-            row.kind === 'remove' ? '#3d1020' :
-            row.kind === 'add'    ? '#0d3320' :
-            'transparent'
-          const textColor =
-            row.kind === 'remove' ? '#fca5a5' :
-            row.kind === 'add'    ? '#86efac' :
-            '#c0caf5'
-          const sigColor =
-            row.kind === 'remove' ? '#f87171' :
-            row.kind === 'add'    ? '#4ade80' :
-            'transparent'
+          const bg = row.kind === 'remove' ? pal.removeBg : row.kind === 'add' ? pal.addBg : 'transparent'
+          const fallback = row.kind === 'remove' ? pal.removeText : row.kind === 'add' ? pal.addText : pal.text
+          const sigColor = row.kind === 'remove' ? pal.removeSig : row.kind === 'add' ? pal.addSig : 'transparent'
           const sig = row.kind === 'remove' ? '-' : row.kind === 'add' ? '+' : ' '
           return (
             <tr key={i} style={{ background: bg }}>
-              <td style={{ width: 44, minWidth: 44, textAlign: 'right', paddingRight: 8, paddingLeft: 4, color: '#6b7280', userSelect: 'none', background: 'rgba(0,0,0,0.25)', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+              <td style={{ width: 44, minWidth: 44, textAlign: 'right', paddingRight: 8, paddingLeft: 4, color: pal.muted, userSelect: 'none', background: pal.gutterBg, borderRight: `1px solid ${pal.borderMuted}` }}>
                 {row.oldNum ?? ''}
               </td>
-              <td style={{ width: 44, minWidth: 44, textAlign: 'right', paddingRight: 8, paddingLeft: 4, color: '#6b7280', userSelect: 'none', background: 'rgba(0,0,0,0.25)', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+              <td style={{ width: 44, minWidth: 44, textAlign: 'right', paddingRight: 8, paddingLeft: 4, color: pal.muted, userSelect: 'none', background: pal.gutterBg, borderRight: `1px solid ${pal.borderMuted}` }}>
                 {row.newNum ?? ''}
               </td>
               <td style={{ width: 20, minWidth: 20, paddingLeft: 6, color: sigColor, userSelect: 'none', fontWeight: 600 }}>{sig}</td>
-              <td style={{ paddingLeft: 4, paddingRight: 12, whiteSpace: 'pre', color: textColor, width: '100%' }}>{row.text || ' '}</td>
+              <td style={{ paddingLeft: 4, paddingRight: 12, whiteSpace: 'pre', color: fallback, width: '100%' }}>
+                <TokenLine text={row.text} lang={lang} colors={tokens} fallback={fallback} />
+              </td>
             </tr>
           )
         })}
@@ -112,42 +220,44 @@ function buildSplitRows(diff: DiffOp[]): SplitRow[] {
   return rows
 }
 
-function SplitCell({ side }: { side?: SplitRow['left'] | SplitRow['right'] }) {
+function SplitCell({ side, pal, lang, tokens }: { side?: SplitRow['left'] | SplitRow['right'] } & Omit<ViewProps, 'diff'>) {
   if (!side) return (
-    <td colSpan={3} style={{ background: 'rgba(0,0,0,0.15)', width: '50%' }}>&nbsp;</td>
+    <td colSpan={3} style={{ background: pal.emptyBg, width: '50%' }}>&nbsp;</td>
   )
   const isRemove = side.kind === 'remove'
   const isAdd    = (side as { kind: string }).kind === 'add'
-  const bg        = isRemove ? '#3d1020' : isAdd ? '#0d3320' : 'transparent'
-  const textColor = isRemove ? '#fca5a5' : isAdd ? '#86efac' : '#c0caf5'
-  const sigColor  = isRemove ? '#f87171' : isAdd ? '#4ade80' : 'transparent'
+  const bg       = isRemove ? pal.removeBg : isAdd ? pal.addBg : 'transparent'
+  const fallback = isRemove ? pal.removeText : isAdd ? pal.addText : pal.text
+  const sigColor = isRemove ? pal.removeSig : isAdd ? pal.addSig : 'transparent'
   const sig = isRemove ? '-' : isAdd ? '+' : ' '
   return (
     <>
-      <td style={{ width: 40, minWidth: 40, textAlign: 'right', paddingRight: 6, paddingLeft: 4, color: '#6b7280', userSelect: 'none', background: bg === 'transparent' ? 'rgba(0,0,0,0.25)' : bg, borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+      <td style={{ width: 40, minWidth: 40, textAlign: 'right', paddingRight: 6, paddingLeft: 4, color: pal.muted, userSelect: 'none', background: bg === 'transparent' ? pal.gutterBg : bg, borderRight: `1px solid ${pal.borderMuted}` }}>
         {side.num}
       </td>
       <td style={{ width: 18, minWidth: 18, paddingLeft: 5, color: sigColor, userSelect: 'none', fontWeight: 600, background: bg }}>{sig}</td>
-      <td style={{ paddingLeft: 4, paddingRight: 8, whiteSpace: 'pre', color: textColor, background: bg, width: 'calc(50% - 58px)' }}>{side.text || ' '}</td>
+      <td style={{ paddingLeft: 4, paddingRight: 8, whiteSpace: 'pre', color: fallback, background: bg, width: 'calc(50% - 58px)' }}>
+        <TokenLine text={side.text} lang={lang} colors={tokens} fallback={fallback} />
+      </td>
     </>
   )
 }
 
-function SplitDiff({ diff }: { diff: DiffOp[] }) {
+function SplitDiff({ diff, pal, lang, tokens }: ViewProps) {
   const rows = buildSplitRows(diff)
   return (
     <table className="w-full border-collapse" style={{ fontFamily: '"JetBrains Mono", "Menlo", monospace', fontSize: 12, tableLayout: 'fixed' }}>
       <colgroup>
         <col style={{ width: 40 }} /><col style={{ width: 18 }} /><col />
-        <td style={{ width: 1, background: 'rgba(255,255,255,0.08)' }} />
+        <col style={{ width: 1 }} />
         <col style={{ width: 40 }} /><col style={{ width: 18 }} /><col />
       </colgroup>
       <tbody>
         {rows.map((row, i) => (
           <tr key={i}>
-            <SplitCell side={row.left} />
-            <td style={{ width: 1, background: 'rgba(255,255,255,0.08)', padding: 0 }} />
-            <SplitCell side={row.right} />
+            <SplitCell side={row.left} pal={pal} lang={lang} tokens={tokens} />
+            <td style={{ width: 1, background: pal.borderMuted, padding: 0 }} />
+            <SplitCell side={row.right} pal={pal} lang={lang} tokens={tokens} />
           </tr>
         ))}
       </tbody>
@@ -170,6 +280,9 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
   const [idx, setIdx] = useState(initialIdx)
   const [viewMode, setViewMode] = useState<'inline' | 'split'>('inline')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const isDark = useIsDark()
+  const pal = isDark ? DARK : LIGHT
+  const tokens = isDark ? TOKENS_DARK : TOKENS_LIGHT
 
   useEffect(() => {
     fetchSessionEdits(sessionId)
@@ -194,29 +307,30 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
   const diff = edit ? computeDiff(edit.old_string, edit.new_string) : []
   const removeCount = diff.filter(d => d.kind === 'remove').length
   const addCount    = diff.filter(d => d.kind === 'add').length
+  const lang = edit ? resolveLang(langForPath(edit.file_path)) : null
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(2px)' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: pal.overlay, backdropFilter: 'blur(2px)' }}
       onClick={onClose}
     >
       <div
         onClick={e => e.stopPropagation()}
-        style={{ width: '92vw', maxWidth: 1200, height: '88vh', display: 'flex', flexDirection: 'column', background: '#1a1b26', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.6)' }}
+        style={{ width: '92vw', maxWidth: 1200, height: '88vh', display: 'flex', flexDirection: 'column', background: pal.surface, border: `1px solid ${pal.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}
       >
         {/* header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', height: 44, flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)', background: '#1e2030' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', height: 44, flexShrink: 0, borderBottom: `1px solid ${pal.border}`, background: pal.header }}>
           {/* file path */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
-            <span style={{ color: '#7c3aed', fontSize: 13 }}>✎</span>
-            <span style={{ color: '#c0caf5', fontSize: 13, fontFamily: '"JetBrains Mono", monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: pal.accent, fontSize: 13 }}>✎</span>
+            <span style={{ color: pal.text, fontSize: 13, fontFamily: '"JetBrains Mono", monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {edit?.file_path ?? '—'}
             </span>
             {edit && (
-              <span style={{ fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }}>
-                <span style={{ color: '#f87171' }}>-{removeCount}</span>
+              <span style={{ fontSize: 11, color: pal.muted, whiteSpace: 'nowrap' }}>
+                <span style={{ color: pal.removeSig }}>-{removeCount}</span>
                 {' '}
-                <span style={{ color: '#4ade80' }}>+{addCount}</span>
+                <span style={{ color: pal.addSig }}>+{addCount}</span>
               </span>
             )}
           </div>
@@ -227,24 +341,24 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
               <button
                 onClick={() => setIdx(i => Math.max(i - 1, 0))}
                 disabled={idx === 0}
-                style={{ width: 26, height: 26, borderRadius: 5, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: idx === 0 ? '#374151' : '#9ca3af', cursor: idx === 0 ? 'default' : 'pointer', fontSize: 13 }}
+                style={{ width: 26, height: 26, borderRadius: 5, border: `1px solid ${pal.border}`, background: 'transparent', color: idx === 0 ? pal.dim : pal.muted, cursor: idx === 0 ? 'default' : 'pointer', fontSize: 13 }}
               >←</button>
-              <span style={{ fontSize: 12, color: '#6b7280', minWidth: 52, textAlign: 'center' }}>{idx + 1} / {edits.length}</span>
+              <span style={{ fontSize: 12, color: pal.muted, minWidth: 52, textAlign: 'center' }}>{idx + 1} / {edits.length}</span>
               <button
                 onClick={() => setIdx(i => Math.min(i + 1, edits.length - 1))}
                 disabled={idx === edits.length - 1}
-                style={{ width: 26, height: 26, borderRadius: 5, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: idx === edits.length - 1 ? '#374151' : '#9ca3af', cursor: idx === edits.length - 1 ? 'default' : 'pointer', fontSize: 13 }}
+                style={{ width: 26, height: 26, borderRadius: 5, border: `1px solid ${pal.border}`, background: 'transparent', color: idx === edits.length - 1 ? pal.dim : pal.muted, cursor: idx === edits.length - 1 ? 'default' : 'pointer', fontSize: 13 }}
               >→</button>
             </div>
           )}
 
           {/* view toggle */}
-          <div style={{ display: 'flex', borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', flexShrink: 0 }}>
+          <div style={{ display: 'flex', borderRadius: 6, border: `1px solid ${pal.border}`, overflow: 'hidden', flexShrink: 0 }}>
             {(['inline', 'split'] as const).map(mode => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
-                style={{ padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', background: viewMode === mode ? 'rgba(124,58,237,0.3)' : 'transparent', color: viewMode === mode ? '#a78bfa' : '#6b7280', borderRight: mode === 'inline' ? '1px solid rgba(255,255,255,0.1)' : 'none' }}
+                style={{ padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', background: viewMode === mode ? pal.accentBg : 'transparent', color: viewMode === mode ? pal.accentText : pal.muted, borderRight: mode === 'inline' ? `1px solid ${pal.border}` : 'none' }}
               >
                 {mode === 'inline' ? '合并' : '并列'}
               </button>
@@ -254,33 +368,33 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
           {/* close */}
           <button
             onClick={onClose}
-            style={{ width: 26, height: 26, borderRadius: 5, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#6b7280', cursor: 'pointer', fontSize: 16, flexShrink: 0 }}
+            style={{ width: 26, height: 26, borderRadius: 5, border: `1px solid ${pal.border}`, background: 'transparent', color: pal.muted, cursor: 'pointer', fontSize: 16, flexShrink: 0 }}
             title="关闭 (Esc)"
           >×</button>
         </div>
 
         {/* turn badge */}
         {edit && (
-          <div style={{ padding: '4px 14px', background: '#1e2030', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: 11, color: '#6b7280', flexShrink: 0 }}>
+          <div style={{ padding: '4px 14px', background: pal.header, borderBottom: `1px solid ${pal.borderMuted}`, fontSize: 11, color: pal.muted, flexShrink: 0 }}>
             Turn {edit.turn_index}{edit.replace_all ? ' · replace_all' : ''}
           </div>
         )}
 
         {/* body */}
-        <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', background: '#1a1b26' }}>
+        <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', background: pal.surface }}>
           {loading && (
-            <div style={{ padding: 32, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>加载中…</div>
+            <div style={{ padding: 32, textAlign: 'center', color: pal.muted, fontSize: 13 }}>加载中…</div>
           )}
           {error && (
-            <div style={{ padding: 32, textAlign: 'center', color: '#f87171', fontSize: 13 }}>{error}</div>
+            <div style={{ padding: 32, textAlign: 'center', color: pal.removeSig, fontSize: 13 }}>{error}</div>
           )}
           {!loading && !error && edits.length === 0 && (
-            <div style={{ padding: 32, textAlign: 'center', color: '#6b7280', fontSize: 13 }}>本次会话没有 Edit 操作。</div>
+            <div style={{ padding: 32, textAlign: 'center', color: pal.muted, fontSize: 13 }}>本次会话没有 Edit 操作。</div>
           )}
           {!loading && edit && (
             viewMode === 'inline'
-              ? <InlineDiff diff={diff} />
-              : <SplitDiff diff={diff} />
+              ? <InlineDiff diff={diff} pal={pal} lang={lang} tokens={tokens} />
+              : <SplitDiff diff={diff} pal={pal} lang={lang} tokens={tokens} />
           )}
         </div>
       </div>
