@@ -27,6 +27,12 @@ export interface TerminalControl {
   // defaults to the top visible row when omitted.
   setFoldsCollapsed: (keys: string[], collapsed: boolean, anchorOriginalRow?: number | null) => void
   getCollapsedFoldKeys: () => string[]
+  // In-terminal search (xterm addon-search). Searches the composed buffer,
+  // so content inside collapsed tool groups is not matched until expanded.
+  searchNext: (query: string) => boolean
+  searchPrev: (query: string) => boolean
+  searchClear: () => void
+  setSearchResultsListener: (cb: ((index: number, count: number) => void) | null) => void
 }
 
 // Payload for the terminal context menu: where the right-click landed, in

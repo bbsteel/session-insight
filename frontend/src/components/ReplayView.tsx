@@ -10,6 +10,7 @@ import GlobalSearch from './GlobalSearch'
 import DiffModal from './DiffModal'
 import OutputModal from './OutputModal'
 import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContextMenu'
+import TerminalSearchBar from './TerminalSearchBar'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
@@ -131,6 +132,23 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const [ctxMenu, setCtxMenu] = useState<TerminalContextMenuEvent | null>(null)
   const handleTerminalContextMenu = useCallback((e: TerminalContextMenuEvent) => setCtxMenu(e), [])
   useEffect(() => { setCtxMenu(null) }, [sessionId, viewMode])
+
+  // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
+  // helper textarea, which stops keydown propagation before the bubble phase.
+  const [searchOpen, setSearchOpen] = useState(false)
+  useEffect(() => { setSearchOpen(false) }, [sessionId, viewMode])
+  useEffect(() => {
+    if (!sessionId) return
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+        if (viewMode !== 'terminal') return
+        e.preventDefault()
+        setSearchOpen(true)
+      }
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [sessionId, viewMode])
 
   // "Open in editor" target for the clicked row, resolved asynchronously so
   // the item only appears for files that actually exist. Edit header rows use
@@ -718,7 +736,14 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
       )}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-w-0 flex-1 overflow-hidden">
+        <div className="relative flex min-w-0 flex-1 overflow-hidden">
+          {viewMode === 'terminal' && searchOpen && (
+            <TerminalSearchBar
+              controlRef={termControlRef}
+              refreshToken={foldVersion}
+              onClose={() => setSearchOpen(false)}
+            />
+          )}
           {viewMode === 'analytics' ? (
             <Suspense fallback={<AnalyticsSkeleton />}>
               <AnalyticsView sessionId={session.id} agentType={session.agent_type} onJumpToTurn={handleJumpToTurn} />

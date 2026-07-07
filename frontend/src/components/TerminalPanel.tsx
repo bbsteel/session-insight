@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Terminal, type IDecoration, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import { fetchRenderANSI } from '../api'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
@@ -81,6 +82,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
+    const searchAddon = new SearchAddon()
+    term.loadAddon(searchAddon)
     termRef.current = term
 
     let disposeOnScroll: { dispose(): void } | null = null
@@ -130,6 +133,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
     // rewrite (and its anchor scroll) has painted.
     let removeSnapshot: (() => void) | null = null
     let hasWrittenOnce = false
+    let disposeSearchResultsRef: { dispose(): void } | null = null
 
     waitForTerminalFont().then(() => {
       if (disposed) return
@@ -500,6 +504,25 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
       }
 
+      // Search: shared options give every match a highlight; the listener is
+      // owned by the search bar (registered through the control).
+      const searchOptions = {
+        caseSensitive: false,
+        decorations: {
+          matchBackground: '#7c3aed55',
+          matchBorder: '#7c3aed00',
+          matchOverviewRuler: '#7c3aed',
+          activeMatchBackground: '#f59e0baa',
+          activeMatchBorder: '#f59e0b',
+          activeMatchColorOverviewRuler: '#f59e0b',
+        },
+      }
+      let searchResultsCb: ((index: number, count: number) => void) | null = null
+      const disposeSearchResults = searchAddon.onDidChangeResults(r => {
+        searchResultsCb?.(r.resultIndex, r.resultCount)
+      })
+      disposeSearchResultsRef = disposeSearchResults
+
       if (controlRef) {
         controlRef.current = {
           scrollToLine: (line) => term.scrollToLine(line),
@@ -517,6 +540,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
           setFoldsCollapsed,
           getCollapsedFoldKeys: () => [...collapsedKeys],
+          searchNext: (query) => searchAddon.findNext(query, searchOptions),
+          searchPrev: (query) => searchAddon.findPrevious(query, searchOptions),
+          searchClear: () => searchAddon.clearDecorations(),
+          setSearchResultsListener: (cb) => { searchResultsCb = cb },
         }
       }
 
@@ -559,6 +586,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       if (onMouseLeave) eventTarget.removeEventListener('mouseleave', onMouseLeave)
       if (onClick) eventTarget.removeEventListener('click', onClick)
       if (onCtxMenu) container.removeEventListener('contextmenu', onCtxMenu)
+      disposeSearchResultsRef?.dispose()
       removeSnapshot?.()
       hoverDecoration?.dispose()
       hoverMarker?.dispose()
