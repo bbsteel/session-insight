@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse, SessionBillingSummary, TurnVM } from '../types'
 import {
+  getScrollBoundaryTop,
   getScrollTopFromTrackPosition,
   getViewportFrame,
+  type ScrollBoundary,
   type ScrollMetrics,
 } from '../minimapGeometry'
 import { getMiniMapEventKind, getMiniMapTurnPositionPercent, getTokenPressureTone, type MiniMapEventKind, type TokenPressureTone } from '../minimapSemantics'
@@ -339,6 +341,12 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
     scrollToTopRef?.current?.(line * 16, 'auto')
   }
 
+  function scrollToBoundary(boundary: ScrollBoundary) {
+    const metrics = scrollMetricsRef.current
+    const targetTop = metrics ? getScrollBoundaryTop(metrics, boundary) : 0
+    scrollToTopRef?.current?.(targetTop, 'auto')
+  }
+
   function scrollFromPointer(clientY: number) {
     if (!containerRef.current) return
     const rect = containerRef.current.getBoundingClientRect()
@@ -441,6 +449,19 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       className="minimap-shell flex-shrink-0 border-l border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col select-none"
       aria-label="MiniMap"
     >
+      <button
+        type="button"
+        className="flex h-[22px] flex-shrink-0 items-center justify-center border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
+        title="滚动到顶部"
+        aria-label="滚动到顶部"
+        onPointerDown={e => e.stopPropagation()}
+        onClick={e => {
+          e.stopPropagation()
+          scrollToBoundary('top')
+        }}
+      >
+        ↑
+      </button>
       <div
         ref={containerRef}
         className="flex-1 relative overflow-hidden bg-[var(--bg-inset)]"
@@ -532,6 +553,19 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
         </div>
       </div>
 
+      <button
+        type="button"
+        className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
+        title="滚动到底部"
+        aria-label="滚动到底部"
+        onPointerDown={e => e.stopPropagation()}
+        onClick={e => {
+          e.stopPropagation()
+          scrollToBoundary('bottom')
+        }}
+      >
+        ↓
+      </button>
       <div className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
         <span ref={rangeLabelRef} className="text-meta text-[var(--text-muted)]">
           {usePositions ? `0 / ${positions!.total_lines}` : `1 / ${barCount}`}

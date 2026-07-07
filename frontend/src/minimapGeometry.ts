@@ -9,6 +9,8 @@ export interface ViewportFrame {
   height: number
 }
 
+export type ScrollBoundary = 'top' | 'bottom'
+
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
@@ -55,4 +57,9 @@ export function getScrollTopFromTrackPosition({
 
   const viewportTop = clamp(pointerPosition - trackStart - dragOffset, 0, maxViewportTop)
   return (viewportTop / maxViewportTop) * maxScroll
+}
+
+export function getScrollBoundaryTop(metrics: ScrollMetrics, boundary: ScrollBoundary): number {
+  if (boundary === 'top') return 0
+  return Math.max(0, metrics.scrollHeight - metrics.clientHeight)
 }
