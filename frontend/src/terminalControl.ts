@@ -2,10 +2,19 @@ import type { ScrollMetrics } from './minimapGeometry'
 
 export const TERMINAL_LINE_HEIGHT = 16
 
+// Screen/cell context of the click that activated a matcher row, so handlers
+// can anchor popovers at the cursor and inspect the exact clicked column.
+export interface TerminalActivateMeta {
+  clientX: number
+  clientY: number
+  column: number | null
+  lineText: string
+}
+
 export interface TerminalLineMatcher<T = unknown> {
   match: (text: string) => T | null
   tooltip?: string
-  onActivate: (bufLine: number, data: T, matchIndex: number) => void
+  onActivate: (bufLine: number, data: T, matchIndex: number, meta?: TerminalActivateMeta) => void
 }
 
 export interface TerminalControl {

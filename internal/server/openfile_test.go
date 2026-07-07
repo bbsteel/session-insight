@@ -75,6 +75,57 @@ func TestFindLineBySearch(t *testing.T) {
 	}
 }
 
+func TestFsEndpoints(t *testing.T) {
+	srv := New(nil, []reader.BaseSessionReader{})
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{1, 0, 2}, 0o644)
+
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/list?dir="+dir, nil))
+	if w.Code != 200 {
+		t.Fatalf("fs/list: %d %s", w.Code, w.Body.String())
+	}
+	var entries []fsEntry
+	json.NewDecoder(w.Body).Decode(&entries)
+	if len(entries) != 3 || !entries[0].IsDir || entries[0].Name != "sub" {
+		t.Fatalf("fs/list should be dirs-first: %+v", entries)
+	}
+
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/list?dir=relative/x", nil))
+	if w.Code != 400 {
+		t.Fatalf("fs/list relative dir: %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/read?path="+filepath.Join(dir, "a.go"), nil))
+	if w.Code != 200 {
+		t.Fatalf("fs/read: %d", w.Code)
+	}
+	var body struct {
+		Content   string `json:"content"`
+		Truncated bool   `json:"truncated"`
+	}
+	json.NewDecoder(w.Body).Decode(&body)
+	if body.Content != "package a\n" || body.Truncated {
+		t.Fatalf("fs/read body: %+v", body)
+	}
+
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/read?path="+filepath.Join(dir, "blob.bin"), nil))
+	if w.Code != 415 {
+		t.Fatalf("fs/read binary should be 415: %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/read?path="+filepath.Join(dir, "nope.go"), nil))
+	if w.Code != 404 {
+		t.Fatalf("fs/read missing: %d", w.Code)
+	}
+}
+
 func TestOpenFileAndSettingsHandlers(t *testing.T) {
 	database, err := db.Open(t.TempDir())
 	if err != nil {

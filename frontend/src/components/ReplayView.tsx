@@ -4,7 +4,7 @@ import { extractPathAt } from '../filePathDetection'
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
-import { TERMINAL_LINE_HEIGHT, type TerminalContextMenuEvent, type TerminalControl } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import DiffModal from './DiffModal'
@@ -78,24 +78,41 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const positionsRef = useRef<PositionsResponse | null>(null)
   useEffect(() => { positionsRef.current = positionsData }, [positionsData])
 
+  // Left-click on a row with file context opens a small action popover at the
+  // cursor (editor / new tab / diff) instead of a single hard-wired action.
+  const openFilePopover = useCallback((bufLine: number, meta: TerminalActivateMeta | undefined, editIdx: number | null) => {
+    if (!meta) return
+    const ctrl = termControlRef.current
+    setCtxMenu({
+      clientX: meta.clientX,
+      clientY: meta.clientY,
+      originalRow: ctrl ? ctrl.toOriginalLine(bufLine) : bufLine,
+      column: meta.column,
+      lineText: meta.lineText,
+      collapsedFoldKeys: ctrl?.getCollapsedFoldKeys() ?? [],
+      fileOnly: true,
+      editIdx: editIdx ?? undefined,
+    })
+  }, [])
+
   const registerMatchers = useCallback(() => {
     termControlRef.current?.setLineMatchers([
       {
-        // ✏️ diff headers. matchIndex over the visible buffer breaks once a
-        // fold hides some headers, so the click is resolved back to the
-        // original row and looked up among the "edit" positions; matchIndex
-        // stays as fallback when positions are unavailable.
+        // ✏️ diff headers → file action popover (open in editor / new tab /
+        // diff detail). matchIndex over the visible buffer breaks once a fold
+        // hides some headers, so the click is resolved back to the original
+        // row and looked up among the "edit" positions; matchIndex stays as
+        // fallback when positions are unavailable.
         match: (text: string) => parseEditHeaderLine(text),
-        tooltip: '打开 Diff 明细',
-        onActivate: (bufLine: number, _data: unknown, matchIndex: number) => {
+        tooltip: '文件操作：编辑器 / 新 Tab / Diff',
+        onActivate: (bufLine: number, _data: unknown, matchIndex: number, meta?: TerminalActivateMeta) => {
           const ctrl = termControlRef.current
           const orig = ctrl ? ctrl.toOriginalLine(bufLine) : bufLine
           const editPositions = (positionsRef.current?.positions ?? [])
             .filter(p => p.kind === 'edit')
             .sort((a, b) => a.line_start - b.line_start)
           const idx = editPositions.findIndex(p => p.line_start === orig)
-          setInitialDiffIdx(idx >= 0 ? idx : matchIndex)
-          setShowDiffModal(true)
+          openFilePopover(bufLine, meta, idx >= 0 ? idx : matchIndex)
         },
       },
       {
@@ -114,8 +131,17 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
           setOutputModalIdx(idx)
         },
       },
+      {
+        // Rows containing a file-path-looking token → same file popover.
+        // Registered last: edit headers and truncation lines take precedence.
+        match: (text: string) => (extractPathAt(text, null) ? {} : null),
+        tooltip: '打开文件（编辑器 / 新 Tab）',
+        onActivate: (bufLine: number, _data: unknown, _idx: number, meta?: TerminalActivateMeta) => {
+          openFilePopover(bufLine, meta, null)
+        },
+      },
     ])
-  }, [])
+  }, [openFilePopover])
 
   const handleColsReady = useCallback((cols: number) => {
     setTerminalCols(cols)
@@ -129,7 +155,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
 
   // Terminal context menu: opened by right-click with a snapshot of the
   // collapse state so item enablement is stable while the menu is up.
-  const [ctxMenu, setCtxMenu] = useState<TerminalContextMenuEvent | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<(TerminalContextMenuEvent & { fileOnly?: boolean; editIdx?: number }) | null>(null)
   const handleTerminalContextMenu = useCallback((e: TerminalContextMenuEvent) => setCtxMenu(e), [])
   useEffect(() => { setCtxMenu(null) }, [sessionId, viewMode])
 
@@ -202,24 +228,58 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
       setCtxMenu(null)
     }
     const sessionCwd = (session as (SessionDetail & { cwd?: string }) | null)?.cwd ?? ''
+
+    // File actions shared by the left-click popover and the full menu.
+    const openWithEditor = () => {
+      if (!fileTarget) return
+      void openFile({
+        path: fileTarget.path,
+        line: fileTarget.line ?? undefined,
+        search: fileTarget.search,
+      }).catch(err => {
+        setOpenFileError(err instanceof Error ? err.message : '打开文件失败')
+        setTimeout(() => setOpenFileError(null), 5000)
+      })
+      setCtxMenu(null)
+    }
+    const openInNewTab = () => {
+      if (!fileTarget) return
+      window.open(`#/file?${new URLSearchParams({ path: fileTarget.path, cwd: sessionCwd })}`, '_blank')
+      setCtxMenu(null)
+    }
+    const fileItems = (always: boolean) => [
+      ...(fileTarget || always ? [
+        {
+          label: fileTarget ? `用编辑器打开 ${fileTarget.label}` : '用编辑器打开',
+          disabled: !fileTarget,
+          onClick: openWithEditor,
+        },
+        {
+          label: '在新 Tab 打开',
+          disabled: !fileTarget,
+          onClick: openInNewTab,
+        },
+      ] : []),
+      ...(ctxMenu?.editIdx != null ? [{
+        label: '查看 Diff 明细',
+        onClick: () => {
+          setInitialDiffIdx(ctxMenu.editIdx!)
+          setShowDiffModal(true)
+          setCtxMenu(null)
+        },
+      }] : []),
+    ]
+
+    // Left-click file popover: only the file section, anchored at the cursor.
+    if (ctxMenu?.fileOnly) {
+      return [{ title: '文件', items: fileItems(true), emptyText: '未识别到文件' }]
+    }
+
     const sections: TerminalMenuSection[] = [
       {
         title: 'Common',
         items: [
-          ...(fileTarget ? [{
-            label: `用编辑器打开 ${fileTarget.label}`,
-            onClick: () => {
-              void openFile({
-                path: fileTarget.path,
-                line: fileTarget.line ?? undefined,
-                search: fileTarget.search,
-              }).catch(err => {
-                setOpenFileError(err instanceof Error ? err.message : '打开文件失败')
-                setTimeout(() => setOpenFileError(null), 5000)
-              })
-              setCtxMenu(null)
-            },
-          }] : []),
+          ...fileItems(false),
           { label: '上一条用户消息', onClick: () => { jump(-1, 'user'); setCtxMenu(null) } },
           { label: '下一条用户消息', onClick: () => { jump(1, 'user'); setCtxMenu(null) } },
           { label: '上一 Turn', onClick: () => { jump(-1, 'turn'); setCtxMenu(null) } },

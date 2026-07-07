@@ -444,7 +444,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         if (entry) {
           e.preventDefault()
           e.stopPropagation()
-          entry.matcher.onActivate(bl, entry.data, entry.matchIndex)
+          const core = (term as unknown as { _core?: XtermCoreWithMouse })._core
+          const screenElement = core?.screenElement ?? xtermScreen ?? container
+          const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
+          entry.matcher.onActivate(bl, entry.data, entry.matchIndex, {
+            clientX: e.clientX,
+            clientY: e.clientY,
+            column: coords ? coords[0] - 1 : null,
+            lineText: term.buffer.active.getLine(bl)?.translateToString(true) ?? '',
+          })
         }
       }
 

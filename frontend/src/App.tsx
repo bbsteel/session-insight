@@ -1,9 +1,22 @@
 import { useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
+import FileViewer from './components/FileViewer'
 import type { BookmarkChange } from './bookmarkState'
 
+// Hash route for the new-tab file viewer (#/file?path=…&cwd=…): the Go embed
+// file server only knows "/", so client-side hash routing keeps it zero-config.
+function parseFileRoute(): { path: string; cwd: string } | null {
+  const hash = window.location.hash
+  if (!hash.startsWith('#/file?')) return null
+  const params = new URLSearchParams(hash.slice('#/file?'.length))
+  const path = params.get('path')
+  if (!path) return null
+  return { path, cwd: params.get('cwd') ?? '' }
+}
+
 export default function App() {
+  const [fileRoute] = useState(parseFileRoute)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
@@ -11,6 +24,10 @@ export default function App() {
   const selectSession = (id: string) => {
     setSelectedId(id)
     setSidebarOpen(false)
+  }
+
+  if (fileRoute) {
+    return <FileViewer path={fileRoute.path} cwd={fileRoute.cwd} />
   }
 
   return (
