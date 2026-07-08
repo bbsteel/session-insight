@@ -17,6 +17,9 @@ const TERMINAL_FONT_SIZE = 13
 // finds this row and overlays a spinning hourglass. Keep in sync with the
 // formatter's "in_progress" case.
 const PROGRESS_ROW_TEXT = '推理中…'
+// The live progress row sits at the transcript tail; only scan this many rows
+// up from the bottom to find it (historical sessions have none).
+const PROGRESS_SCAN_ROWS = 400
 
 interface Props {
   sessionId: string
@@ -121,6 +124,11 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
     let rawAnsi = ''
     let foldRanges: FoldRange[] = foldsRef.current
     const collapsedKeys = new Set<string>()
+    // Tool folds default to collapsed (hide each tool's output, keep the compact
+    // header). defaultedKeys records which we've already auto-collapsed so a
+    // user's manual expand sticks while folds that first appear (session grew)
+    // still start collapsed.
+    const defaultedKeys = new Set<string>()
     let foldView: FoldView | null = null
     const toDisplayLine = (n: number) => (foldView ? foldView.toDisplay(n) : n)
     const toOriginalLine = (n: number) => (foldView ? foldView.toOriginal(n) : n)
@@ -187,7 +195,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       }
       if (webglOk) {
         try {
-          const webgl = new WebglAddon()
+          // preserveDrawingBuffer: true so the anti-flicker snapshot
+          // (snapshotTerminal → drawImage of the live canvas) can read real
+          // pixels. Without it WebGL clears the buffer outside its render loop,
+          // the fold-rewrite cover snapshot comes out blank, and toggling a
+          // fold flickers the terminal blank for a couple of frames.
+          const webgl = new WebglAddon(true)
           webgl.onContextLoss(() => {
             webgl.dispose()
             setWebglDegraded(true)
@@ -371,7 +384,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       }
       const injectFoldRows = () => {
         if (!foldRanges.length) return
-        for (const f of foldRanges) {
+        // Inject group folds last: when a group is collapsed, every tool
+        // fold inside it also maps its header to the group header row (fold
+        // bodies collapse to their header). If a tool fold were injected
+        // after the group fold it would overwrite the interactionMap entry,
+        // making the group header untoggable.
+        const sorted = [...foldRanges].sort((a, b) =>
+          a.level === 'group' ? 1 : b.level === 'group' ? -1 : 0)
+        for (const f of sorted) {
           const row = toDisplayLine(f.headerDisplay)
           interactionMap.set(row, { matcher: foldToggleMatcher as TerminalLineMatcher<unknown>, data: f, matchIndex: 0 })
         }
@@ -383,7 +403,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       const injectProgressRow = () => {
         clearProgress()
         const buf = term.buffer.active
-        for (let i = buf.length - 1; i >= 0; i--) {
+        // The in-progress "推理中…" row only exists for a live session and sits
+        // at the tail. Historical sessions have none, so scanning the whole
+        // buffer bottom-to-top just to find nothing is pure waste — cap the scan
+        // to the last rows.
+        const scanFloor = Math.max(0, buf.length - PROGRESS_SCAN_ROWS)
+        for (let i = buf.length - 1; i >= scanFloor; i--) {
           const line = buf.getLine(i)
           if (!line) continue
           if (!line.translateToString(true).includes(PROGRESS_ROW_TEXT)) continue
@@ -513,7 +538,19 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         for (const k of [...collapsedKeys]) {
           if (!valid.has(k)) { collapsedKeys.delete(k); dropped = true }
         }
-        if (collapsedKeys.size > 0 || dropped || foldView) recompose()
+        for (const k of [...defaultedKeys]) {
+          if (!valid.has(k)) defaultedKeys.delete(k)
+        }
+        // Default each newly-seen tool fold to collapsed.
+        let addedDefault = false
+        for (const f of next) {
+          if (f.level === 'tool' && !defaultedKeys.has(f.key)) {
+            defaultedKeys.add(f.key)
+            collapsedKeys.add(f.key)
+            addedDefault = true
+          }
+        }
+        if (collapsedKeys.size > 0 || dropped || addedDefault || foldView) recompose()
         else { injectFoldRows(); injectProgressRow() }
       }
 

@@ -255,15 +255,123 @@ func TestClaudeGroupHeaderStatsAndFolds(t *testing.T) {
 	if !strings.Contains(ansi, "╔") || strings.Contains(ansi, "╭") {
 		t.Errorf("claude must keep the default box charset")
 	}
-	var folds int
+	// claude has no ToolBullet, so per-tool folds are disabled: only the single
+	// group fold is emitted (per-tool folds are a chrys-only affordance).
+	var groupFolds, toolFolds int
 	for _, p := range positions {
-		if p.Kind == "fold" {
-			folds++
+		if p.Kind != "fold" {
+			continue
+		}
+		switch p.Payload["level"] {
+		case "group":
+			groupFolds++
+		case "tool":
+			toolFolds++
 		}
 	}
-	if folds != 1 {
-		t.Errorf("claude should emit 1 fold position, got %d", folds)
+	if groupFolds != 1 || toolFolds != 0 {
+		t.Errorf("claude should emit 1 group fold + 0 tool folds, got group=%d tool=%d", groupFolds, toolFolds)
 	}
+}
+
+func TestChrysPerToolFolds(t *testing.T) {
+	ts := time.Now()
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "chrys"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "chrys",
+			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "ls -la"}},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", ToolCallID: "c1", Stdout: "a\nb\nc"},
+		{EventID: "i1", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "chrys",
+			ToolName: "Grep", ToolCallID: "c2", ToolInput: map[string]any{"pattern": "foo"}},
+		{EventID: "r1", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", ToolCallID: "c2", Stdout: "hit"},
+		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", Text: "done"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 120)
+
+	var groupFolds, toolFolds int
+	groupKey := ""
+	for _, p := range positions {
+		if p.Kind != "fold" {
+			continue
+		}
+		switch p.Payload["level"] {
+		case "group":
+			groupFolds++
+			groupKey = p.PositionKey
+		case "tool":
+			toolFolds++
+			if gk, _ := p.Payload["group_key"].(string); gk == "" {
+				t.Errorf("tool fold missing group_key: %+v", p.Payload)
+			}
+		}
+	}
+	if groupFolds != 1 || toolFolds != 2 {
+		t.Fatalf("chrys should emit 1 group fold + 2 tool folds, got group=%d tool=%d", groupFolds, toolFolds)
+	}
+	// Every tool fold references the enclosing group so a collapsed group can
+	// subsume them on the client.
+	for _, p := range positions {
+		if p.Kind == "fold" && p.Payload["level"] == "tool" {
+			if gk, _ := p.Payload["group_key"].(string); gk != groupKey {
+				t.Errorf("tool fold group_key %q != group %q", gk, groupKey)
+			}
+		}
+	}
+	// Compact per-tool header stays visible with the command summary, indented
+	// two columns under the group header.
+	hasIndentedHeader := false
+	for _, l := range strings.Split(ansi, "\n") {
+		if strings.Contains(stripANSIForTest(l), "  ▼ • Bash  ls -la") {
+			hasIndentedHeader = true
+			break
+		}
+	}
+	if !hasIndentedHeader {
+		t.Errorf("Bash tool fold header (indented, with summary) missing:\n%s", ansi[:min(len(ansi), 700)])
+	}
+}
+
+// TestChrysPairsBatchedToolResults verifies that chrys's parallel-call order
+// (all invocations, then all results) is reordered so each tool fold's body
+// covers that tool's own output — not the next tool's.
+func TestChrysPairsBatchedToolResults(t *testing.T) {
+	ts := time.Now()
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "chrys"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", Text: "hi"},
+		// Batched: two invocations first, then two results (chrys parallel calls).
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "chrys",
+			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "echo one"}},
+		{EventID: "i1", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "chrys",
+			ToolName: "Bash", ToolCallID: "c2", ToolInput: map[string]any{"command": "echo two"}},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", ToolCallID: "c1", Stdout: "OUT_ONE"},
+		{EventID: "r1", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", ToolCallID: "c2", Stdout: "OUT_TWO"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 120)
+	lines := strings.Split(ansi, "\n")
+
+	// Locate each tool fold and assert its body lines contain that tool's own
+	// output (paired), which the pre-pairing batched order would not satisfy.
+	strip := func(s string) string { return stripANSIForTest(s) }
+	find := func(sub string) int {
+		for i, l := range lines {
+			if strings.Contains(strip(l), sub) {
+				return i
+			}
+		}
+		return -1
+	}
+	oneHdr, twoHdr := find("echo one"), find("echo two")
+	oneOut, twoOut := find("OUT_ONE"), find("OUT_TWO")
+	if oneHdr < 0 || twoHdr < 0 || oneOut < 0 || twoOut < 0 {
+		t.Fatalf("missing rows: oneHdr=%d twoHdr=%d oneOut=%d twoOut=%d\n%s", oneHdr, twoHdr, oneOut, twoOut, ansi)
+	}
+	// Paired order: echo one … OUT_ONE … echo two … OUT_TWO.
+	if !(oneHdr < oneOut && oneOut < twoHdr && twoHdr < twoOut) {
+		t.Errorf("tool results not paired with invocations; order oneHdr=%d oneOut=%d twoHdr=%d twoOut=%d", oneHdr, oneOut, twoHdr, twoOut)
+	}
+	_ = positions
 }
 
 func TestFencedCodeBlockHighlight(t *testing.T) {

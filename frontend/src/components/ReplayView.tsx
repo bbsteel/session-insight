@@ -249,6 +249,26 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     return () => document.removeEventListener('keydown', onKey, true)
   }, [sessionId, viewMode])
 
+  // Ctrl+C / Ctrl+Shift+C / Ctrl+Insert to copy terminal selection.
+  // Capture phase: xterm's helper textarea stops keydown propagation before
+  // the bubble phase, so we must intercept the event during capture.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (viewMode !== 'terminal') return
+      const isCopy =
+        ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === 'c') ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C') ||
+        (e.ctrlKey && e.key === 'Insert')
+      if (!isCopy) return
+      const selectedText = window.getSelection()?.toString() ?? ''
+      if (selectedText.length === 0) return
+      e.preventDefault()
+      void navigator.clipboard.writeText(selectedText)
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [viewMode])
+
   // "Open in editor" target for the clicked row, resolved asynchronously so
   // the item only appears for files that actually exist. Edit header rows use
   // the exact file from the edits API (plus a best-effort line via content

@@ -44,6 +44,11 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 	}
 
 	p := profileFor(events)
+	// chrys emits a turn's parallel invocations first and all results after;
+	// pair each invocation with its result so a per-tool fold covers input+output.
+	if p.ToolBullet {
+		events = pairToolRuns(events)
+	}
 	groupStarts := computeToolRuns(p, events)
 
 	tb := newTrackingBuilder(cols)
@@ -62,6 +67,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 	type openFoldState struct {
 		run            toolRun
 		turnIndex      int
+		key            string
 		headerDisplay  int
 		headerLogical  int
 		bodyDisplay    int
@@ -79,17 +85,61 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		}
 		endIncl := tb.CurrentLine() - 1
 		positions = append(positions, RenderPosition{
-			PositionKey: fmt.Sprintf("fold:%d:%d", f.turnIndex, f.headerDisplay),
+			PositionKey: f.key,
 			Kind:        "fold",
 			TurnIndex:   f.turnIndex,
 			LineStart:   f.headerDisplay,
 			LineEnd:     &endIncl,
 			Label:       fmt.Sprintf("Tools (%d/%d)", f.run.succeeded, f.run.total),
 			Payload: map[string]any{
-				"display_start": float64(f.bodyDisplay),
-				"display_end":   float64(tb.CurrentLine()), // exclusive
-				"logical_start": float64(f.bodyLogical),
-				"logical_end":   float64(tb.CurrentLogicalLine()), // exclusive
+				"level":          "group",
+				"display_start":  float64(f.bodyDisplay),
+				"display_end":    float64(tb.CurrentLine()), // exclusive
+				"logical_start":  float64(f.bodyLogical),
+				"logical_end":    float64(tb.CurrentLogicalLine()), // exclusive
+				"header_logical": float64(f.headerLogical),
+			},
+		})
+	}
+
+	// openToolFold tracks the single tool currently being rendered inside a
+	// group so its own body (input box + output box) can be folded independently
+	// of the group — the collapsed default hides each tool's output/input box
+	// while the compact "▼ • Name summary" header line stays visible.
+	type toolFoldState struct {
+		turnIndex     int
+		key           string
+		groupKey      string
+		headerDisplay int
+		headerLogical int
+		bodyDisplay   int
+		bodyLogical   int
+	}
+	var openToolFold *toolFoldState
+	closeToolFold := func() {
+		if openToolFold == nil {
+			return
+		}
+		f := openToolFold
+		openToolFold = nil
+		if tb.CurrentLine() <= f.bodyDisplay {
+			return // header only, no body — nothing to fold
+		}
+		endIncl := tb.CurrentLine() - 1
+		positions = append(positions, RenderPosition{
+			PositionKey: f.key,
+			Kind:        "fold",
+			TurnIndex:   f.turnIndex,
+			LineStart:   f.headerDisplay,
+			LineEnd:     &endIncl,
+			Label:       "tool",
+			Payload: map[string]any{
+				"level":          "tool",
+				"group_key":      f.groupKey,
+				"display_start":  float64(f.bodyDisplay),
+				"display_end":    float64(tb.CurrentLine()), // exclusive
+				"logical_start":  float64(f.bodyLogical),
+				"logical_end":    float64(tb.CurrentLogicalLine()), // exclusive
 				"header_logical": float64(f.headerLogical),
 			},
 		})
@@ -130,10 +180,12 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 	for i, evt := range events {
 		if openFold != nil && i >= openFold.run.endIdx {
+			closeToolFold() // close the group's last tool before the group itself
 			closeFold()
 		}
 
 		if evt.TurnIndex != prevTurnIndex {
+			closeToolFold() // never let a tool fold span a turn boundary
 			emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
 			writeSeparator(tb, evt.TurnIndex, cols)
 			prevTurnIndex = evt.TurnIndex
@@ -141,12 +193,17 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		}
 
 		if g, ok := groupStarts[i]; ok {
+			// Vertical spacing before the group header.
+			if p.ToolBullet {
+				tb.WriteString("\n")
+			}
 			headerDisplay := tb.CurrentLine()
 			headerLogical := tb.CurrentLogicalLine()
 			writeToolGroupHeader(p, tb, g)
 			openFold = &openFoldState{
 				run:           g,
 				turnIndex:     evt.TurnIndex,
+				key:           fmt.Sprintf("fold:%d:%d", evt.TurnIndex, headerDisplay),
 				headerDisplay: headerDisplay,
 				headerLogical: headerLogical,
 				bodyDisplay:   tb.CurrentLine(),
@@ -155,6 +212,12 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		}
 
 		prefix := depthPrefix(evt.Depth)
+		// Indent a group's depth-0 tools two columns under the "▼ Tools" header
+		// so the per-tool fold rows read as children of the group.
+		if p.ToolBullet && openFold != nil && evt.Depth == 0 &&
+			(evt.Type == "ToolInvocation" || evt.Type == "ToolResult") {
+			prefix = "  " + prefix
+		}
 
 		switch evt.Type {
 		case "TurnBoundary":
@@ -180,11 +243,41 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			}
 			writeTextChunk(tb, evt, prefix, cols)
 		case "ToolInvocation":
-			writeToolInvocation(p, tb, evt, prefix, bWidth, func(filePath string) {
+			onEdit := func(filePath string) {
 				seq := editSeqByTurn[evt.TurnIndex]
 				editSeqByTurn[evt.TurnIndex]++
 				emit("edit", filePath, "", evt.TurnIndex, map[string]any{"edit_seq": float64(seq)})
-			})
+			}
+			// Each non-edit tool inside a group folds independently: its compact
+			// "▼ • Name summary" line stays visible while the input/output boxes
+			// (the byte-heavy part) collapse by default. Edit tools render as
+			// diffs (no bullet header) and are left unfolded.
+			//
+			// Only a depth-0 tool ends the previous one; nested subagent tools
+			// (depth>0) stay inside their parent Agent's fold so collapsing it
+			// hides the whole sub-transcript.
+			if evt.Depth == 0 {
+				closeToolFold()
+			}
+			// Per-tool folds need the bullet line as their "▼ …" header, so
+			// they're limited to bullet profiles (chrys). Non-bullet profiles
+			// (claude/codex) keep the existing group-only fold.
+			if openFold != nil && evt.Depth == 0 && p.ToolBullet && !model.IsEditTool(evt.ToolName) {
+				headerDisplay := tb.CurrentLine()
+				headerLogical := tb.CurrentLogicalLine()
+				bodyD, bodyL := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true)
+				openToolFold = &toolFoldState{
+					turnIndex:     evt.TurnIndex,
+					key:           fmt.Sprintf("tfold:%d:%d", evt.TurnIndex, headerDisplay),
+					groupKey:      openFold.key,
+					headerDisplay: headerDisplay,
+					headerLogical: headerLogical,
+					bodyDisplay:   bodyD,
+					bodyLogical:   bodyL,
+				}
+			} else {
+				writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, false)
+			}
 		case "ToolResult":
 			if evt.ExitCode != 0 || evt.Stderr != "" {
 				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName})
@@ -200,6 +293,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			prevDepth0Type = evt.Type
 		}
 	}
+	closeToolFold()
 	closeFold()
 
 	// Deduplicate: if two positions share the same position_key, keep first.
@@ -218,7 +312,76 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 14
+const FormatVersion int64 = 18
+
+// pairToolRuns reorders each contiguous tool run so every depth-0
+// ToolInvocation is immediately followed by its matching ToolResult (and the
+// nested sub-agent block emitted just before that result). chrys emits all of a
+// turn's parallel invocations first and all results after; pairing them makes
+// each tool a self-contained input→output unit so per-tool folds cover both.
+func pairToolRuns(events []model.RenderEvent) []model.RenderEvent {
+	out := make([]model.RenderEvent, 0, len(events))
+	i := 0
+	for i < len(events) {
+		if !isToolRunMember(events[i]) {
+			out = append(out, events[i])
+			i++
+			continue
+		}
+		start := i
+		turn := events[i].TurnIndex
+		for i < len(events) && isToolRunMember(events[i]) && events[i].TurnIndex == turn {
+			i++
+		}
+		out = append(out, pairRun(events[start:i])...)
+	}
+	return out
+}
+
+// pairRun reorders one run: [inv1 inv2 … res1 res2 …] → [inv1 res1 inv2 res2 …].
+// Depth>0 / AgentSpecific events (a spliced sub-agent transcript) accumulate
+// into the block of the result they precede. Results with no matching
+// invocation and any trailing remainder keep their order at the end so nothing
+// is dropped or reordered across turns.
+func pairRun(run []model.RenderEvent) []model.RenderEvent {
+	order := make([]string, 0, len(run))
+	invByID := make(map[string]model.RenderEvent, len(run))
+	blockByID := make(map[string][]model.RenderEvent, len(run))
+	var pending []model.RenderEvent
+	var leftover []model.RenderEvent
+
+	for _, e := range run {
+		switch {
+		case e.Depth == 0 && e.Type == "ToolInvocation":
+			if len(pending) > 0 { // orphan block with no owning result
+				leftover = append(leftover, pending...)
+				pending = nil
+			}
+			invByID[e.ToolCallID] = e
+			order = append(order, e.ToolCallID)
+		case e.Depth == 0 && e.Type == "ToolResult":
+			block := make([]model.RenderEvent, 0, len(pending)+1)
+			block = append(block, pending...)
+			block = append(block, e)
+			pending = nil
+			if _, ok := invByID[e.ToolCallID]; ok {
+				blockByID[e.ToolCallID] = block
+			} else {
+				leftover = append(leftover, block...)
+			}
+		default:
+			pending = append(pending, e)
+		}
+	}
+	leftover = append(leftover, pending...)
+
+	out := make([]model.RenderEvent, 0, len(run))
+	for _, id := range order {
+		out = append(out, invByID[id])
+		out = append(out, blockByID[id]...)
+	}
+	return append(out, leftover...)
+}
 
 // toolRun summarizes one contiguous run of tool events for the group header.
 // endIdx is the index just past the run's last event.
@@ -529,7 +692,13 @@ func promoteBoxHeader(input map[string]any) (string, map[string]any) {
 	return "", input
 }
 
-func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string)) {
+// writeToolInvocation renders a tool's input. When asFoldHeader is true (a
+// non-edit tool inside a group) the bullet line becomes the fold header
+// "▼ • Name summary" and the returned (bodyDisplay, bodyLogical) mark the line
+// just past it — the caller folds [body … tool end) so only the header shows
+// when collapsed. Edit tools ignore asFoldHeader (they render diffs, no bullet)
+// and return (0, 0).
+func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool) (bodyDisplay, bodyLogical int) {
 	if model.IsEditTool(evt.ToolName) {
 		if evt.ToolName == "apply_patch" {
 			// apply_patch carries a raw patch string (under args/input/patch),
@@ -549,7 +718,7 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				writeEditDiff(p, sb, syn, prefix, bWidth)
 			}
 			if len(calls) > 0 {
-				return
+				return 0, 0
 			}
 			// Empty or malformed patch: fall through to generic tool box.
 		} else {
@@ -558,7 +727,7 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				onEditStart(filePath)
 			}
 			writeEditDiff(p, sb, evt, prefix, bWidth)
-			return
+			return 0, 0
 		}
 	}
 
@@ -572,16 +741,29 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	input := evt.ToolInput
 
 	if p.ToolBullet {
-		sb.WriteString(prefix)
-		sb.WriteString(styled("• "+toolName, ColFg, ColNone, true, false))
-		sb.WriteString("\n")
 		var purpose string
 		if purpose, input = promoteBoxHeader(evt.ToolInput); purpose != "" {
 			header = " " + sanitizeControlChars(purpose) + " "
 		} else {
 			header = ""
 		}
+		sb.WriteString(prefix)
+		if asFoldHeader {
+			bullet := "▼ • " + toolName
+			if s := toolSummary(purpose, evt.ToolInput); s != "" {
+				bullet += "  " + s
+			}
+			sb.WriteString(styled(bullet, ColFg, ColNone, true, false))
+		} else {
+			sb.WriteString(styled("• "+toolName, ColFg, ColNone, true, false))
+		}
+		sb.WriteString("\n")
 	}
+
+	// Body starts after the (possibly wrapped) header line: everything from
+	// here to the tool's end is what a collapsed fold hides.
+	bodyDisplay = sb.CurrentLine()
+	bodyLogical = sb.CurrentLogicalLine()
 
 	inputLines := formatToolInput(input)
 
@@ -590,6 +772,36 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 		writeBoxRow(p, sb, prefix, il, bWidth, borderColor, ColFg)
 	}
 	writeBoxBottom(p, sb, prefix, "", bWidth, borderColor)
+	return bodyDisplay, bodyLogical
+}
+
+// toolSummary returns a compact one-line description for a tool's fold header:
+// the promoted purpose when present, else the most salient input argument
+// (command / path / pattern / …), truncated so the header rarely soft-wraps.
+func toolSummary(purpose string, input map[string]any) string {
+	// Not width-truncated: the full command/path stays on the header (it soft-
+	// wraps if long) so the collapsed row shows the whole invocation.
+	if s := oneLine(purpose); s != "" {
+		return sanitizeControlChars(s)
+	}
+	for _, k := range []string{"command", "file_path", "path", "pattern", "query", "url", "prompt", "description"} {
+		if v, ok := input[k].(string); ok {
+			if s := oneLine(v); s != "" {
+				return sanitizeControlChars(s)
+			}
+		}
+	}
+	return ""
+}
+
+// oneLine collapses s to its first non-empty line, trimmed.
+func oneLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 func formatToolInput(input map[string]any) []string {

@@ -12,7 +12,8 @@ import type { MiniMapPosition } from './types'
 export interface FoldRange {
   key: string
   label: string
-  headerDisplay: number // display row of the "▼ Tools (n/m)" header line
+  level: 'group' | 'tool' // group = whole "▼ Tools (n/m)" run; tool = one tool's body
+  headerDisplay: number // display row of the "▼ …" header line
   headerLogical: number
   displayStart: number // body extent, display rows [start, end)
   displayEnd: number
@@ -34,9 +35,11 @@ export function foldsFromPositions(positions: MiniMapPosition[] | undefined | nu
     const headerLogical = num('header_logical')
     if (displayStart === null || displayEnd === null || logicalStart === null || logicalEnd === null || headerLogical === null) continue
     if (displayEnd <= displayStart || logicalEnd <= logicalStart) continue
+    const level = pl['level'] === 'tool' ? 'tool' : 'group'
     folds.push({
       key: p.position_key,
       label: p.label,
+      level,
       headerDisplay: p.line_start,
       headerLogical,
       displayStart,
@@ -79,18 +82,40 @@ export interface FoldView {
 }
 
 export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: ReadonlySet<string>): FoldView {
-  const active = folds
-    .filter(f => collapsed.has(f.key))
+  const collapsedFolds = folds.filter(f => collapsed.has(f.key))
+  // De-nest: when a group is collapsed it already hides its member tool folds,
+  // so drop any collapsed range fully contained in another collapsed range.
+  // This keeps the active ranges disjoint — the prefix-sum row math below
+  // assumes no overlap, and double-counting a nested body would corrupt it.
+  const active = collapsedFolds
+    .filter(f => !collapsedFolds.some(g =>
+      g.key !== f.key && g.displayStart <= f.displayStart && f.displayEnd <= g.displayEnd
+      && (g.displayStart < f.displayStart || f.displayEnd < g.displayEnd)))
     .sort((a, b) => a.displayStart - b.displayStart)
+
+  // Hidden display-row count per collapsed fold, shown as "(N 行)" on its header.
+  const hiddenByHeaderLogical = new Map<number, number>()
+  for (const f of active) hiddenByHeaderLogical.set(f.headerLogical, f.displayEnd - f.displayStart)
 
   let text = ansi
   if (active.length > 0) {
     const lines = ansi.split('\n')
     const out: string[] = []
     let cursor = 0
+    const foldHeader = (line: string, hidden: number): string => {
+      // Flip ▼→▶ and append the hidden-row count before the line's trailing
+      // reset so the badge inherits no stray color.
+      const flipped = line.replace('▼', '▶')
+      const badge = `\x1b[2m (${hidden} 行)\x1b[0m`
+      const resetAt = flipped.lastIndexOf('\x1b[0m')
+      return resetAt >= 0
+        ? flipped.slice(0, resetAt + 4) + badge
+        : flipped + badge
+    }
     for (const f of [...active].sort((a, b) => a.logicalStart - b.logicalStart)) {
       for (let i = cursor; i < f.logicalStart && i < lines.length; i++) {
-        out.push(i === f.headerLogical ? lines[i].replace('▼', '▶') : lines[i])
+        const hidden = hiddenByHeaderLogical.get(i)
+        out.push(hidden !== undefined ? foldHeader(lines[i], hidden) : lines[i])
       }
       cursor = Math.max(cursor, f.logicalEnd)
     }
