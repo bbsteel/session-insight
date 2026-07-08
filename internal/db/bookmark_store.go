@@ -11,6 +11,24 @@ type Bookmark struct {
 	CreatedAt string
 }
 
+// BookmarkedSession carries the full session summary stored at bookmark time
+// so listing bookmarks is a pure SQL query with no per-session disk reads.
+type BookmarkedSession struct {
+	AgentType         string
+	SessionID         string
+	Name              string
+	ModelName         string
+	Repository        string
+	Project           string
+	CWD               string
+	PreviewText       string
+	TurnCount         int
+	MessageCount      int
+	Branch            string
+	SessionUpdatedAt  string
+	BookmarkCreatedAt string
+}
+
 func (db *DB) AddBookmark(agentType, sessionID string) error {
 	_, err := db.conn.Exec(
 		`INSERT OR IGNORE INTO bookmarked_sessions(agent_type, session_id) VALUES (?, ?)`,
@@ -18,6 +36,24 @@ func (db *DB) AddBookmark(agentType, sessionID string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("add bookmark: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) UpdateBookmarkMeta(s BookmarkedSession) error {
+	const q = `UPDATE bookmarked_sessions SET
+		name = ?, model_name = ?, repository = ?, project = ?, cwd = ?,
+		preview_text = ?, turn_count = ?, message_count = ?, branch = ?,
+		session_updated_at = ?
+		WHERE agent_type = ? AND session_id = ?`
+	_, err := db.conn.Exec(q,
+		s.Name, s.ModelName, s.Repository, s.Project, s.CWD,
+		s.PreviewText, s.TurnCount, s.MessageCount, s.Branch,
+		s.SessionUpdatedAt,
+		s.AgentType, s.SessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("update bookmark meta: %w", err)
 	}
 	return nil
 }
@@ -74,6 +110,43 @@ func (db *DB) ListBookmarks() ([]Bookmark, error) {
 		bookmarks = []Bookmark{}
 	}
 	return bookmarks, nil
+}
+
+// ListBookmarkedSessions returns full session summaries directly from the
+// bookmarks table — no per-session disk reads needed. Missing metadata
+// (pre-v7 bookmarks) will have zero/default values for the new columns.
+func (db *DB) ListBookmarkedSessions() ([]BookmarkedSession, error) {
+	rows, err := db.conn.Query(
+		`SELECT agent_type, session_id, name, model_name, repository, project, cwd,
+		        preview_text, turn_count, message_count, branch, session_updated_at,
+		        created_at
+		 FROM bookmarked_sessions
+		 ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list bookmarked sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []BookmarkedSession
+	for rows.Next() {
+		var s BookmarkedSession
+		if err := rows.Scan(
+			&s.AgentType, &s.SessionID, &s.Name, &s.ModelName, &s.Repository,
+			&s.Project, &s.CWD, &s.PreviewText, &s.TurnCount, &s.MessageCount,
+			&s.Branch, &s.SessionUpdatedAt, &s.BookmarkCreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan bookmarked session: %w", err)
+		}
+		sessions = append(sessions, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bookmarked sessions: %w", err)
+	}
+	if sessions == nil {
+		sessions = []BookmarkedSession{}
+	}
+	return sessions, nil
 }
 
 func (db *DB) BookmarkSet() (map[string]bool, error) {

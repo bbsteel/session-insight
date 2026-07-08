@@ -27,15 +27,17 @@ export function removeBookmarkFromList<T extends Pick<SessionSummary, 'id' | 'ag
 export interface BookmarkFilters {
   agentType: string
   project: string
+  modelName: string
 }
 
-export function filterBookmarks<T extends Pick<SessionSummary, 'agent_type' | 'project'>>(
+export function filterBookmarks<T extends Pick<SessionSummary, 'agent_type' | 'project' | 'model_name'>>(
   bookmarks: T[],
   filters: BookmarkFilters,
 ): T[] {
   return bookmarks.filter(session => {
     if (filters.agentType && session.agent_type !== filters.agentType) return false
     if (filters.project && session.project !== filters.project) return false
+    if (filters.modelName && session.model_name !== filters.modelName) return false
     return true
   })
 }

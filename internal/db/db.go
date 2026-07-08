@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 type DB struct {
 	conn *sql.DB
@@ -259,6 +259,25 @@ func migrate(conn *sql.DB) error {
 		conn.Exec(`
 		CREATE INDEX IF NOT EXISTS idx_session_positions_lookup
 		    ON session_positions(agent_type, session_id, revision, cols, line_start)`)
+	}
+
+	// Version 7: expand bookmarked_sessions with session metadata so
+	// listing bookmarks is a pure SQL query (no per-session disk reads).
+	if maxVersion < 7 {
+		for _, col := range []string{
+			`name TEXT NOT NULL DEFAULT ''`,
+			`model_name TEXT NOT NULL DEFAULT ''`,
+			`repository TEXT NOT NULL DEFAULT ''`,
+			`project TEXT NOT NULL DEFAULT ''`,
+			`cwd TEXT NOT NULL DEFAULT ''`,
+			`preview_text TEXT NOT NULL DEFAULT ''`,
+			`turn_count INTEGER NOT NULL DEFAULT 0`,
+			`message_count INTEGER NOT NULL DEFAULT 0`,
+			`branch TEXT NOT NULL DEFAULT ''`,
+			`session_updated_at TEXT NOT NULL DEFAULT ''`,
+		} {
+			conn.Exec(`ALTER TABLE bookmarked_sessions ADD COLUMN ` + col)
+		}
 	}
 
 	_, err = conn.Exec(

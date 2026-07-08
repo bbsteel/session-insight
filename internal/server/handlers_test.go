@@ -260,13 +260,14 @@ func TestHandleListBookmarksLoadsSessionsByID(t *testing.T) {
 	rd := &stubReader{agentType: "claude", sessions: sessions}
 	srv := New(database, []reader.BaseSessionReader{rd})
 
+	// First request: legacy bookmarks without metadata trigger self-healing
+	// hydration (one GetSession per bookmark to backfill).
 	req := httptest.NewRequest("GET", "/api/bookmarks", nil)
 	w := httptest.NewRecorder()
 	srv.Mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET bookmarks expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-
 	var bookmarks []SessionSummary
 	if err := json.NewDecoder(w.Body).Decode(&bookmarks); err != nil {
 		t.Fatalf("decode bookmarks: %v", err)
@@ -275,9 +276,20 @@ func TestHandleListBookmarksLoadsSessionsByID(t *testing.T) {
 		t.Fatalf("expected 3 bookmarks, got %d", len(bookmarks))
 	}
 	if rd.getSessionCalls != 3 {
-		t.Fatalf("expected one GetSession call per bookmark, got %d", rd.getSessionCalls)
+		t.Fatalf("legacy bookmarks: expected one GetSession per bookmark for self-heal, got %d", rd.getSessionCalls)
 	}
 	if rd.listSessionCalls != 0 {
 		t.Fatalf("bookmark list must not trigger a full ListSessions scan, called %d times", rd.listSessionCalls)
+	}
+
+	// Second request: metadata is now cached — pure SQL, zero GetSession calls.
+	rd.getSessionCalls = 0
+	w2 := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w2, req)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second GET bookmarks expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	if rd.getSessionCalls != 0 {
+		t.Fatalf("cached bookmarks: expected 0 GetSession calls, got %d", rd.getSessionCalls)
 	}
 }

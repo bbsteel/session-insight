@@ -146,29 +146,60 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode([]SessionSummary{})
 		return
 	}
-	bookmarks, err := s.DB.ListBookmarks()
+	sessions, err := s.DB.ListBookmarkedSessions()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Load each bookmarked session directly by id instead of ListSessions()
-	// per agent: a full scan parses every session on disk (~1.2s measured for
-	// 4 bookmarks) just to pick out the bookmarked few. Sessions that fail to
-	// load (deleted on disk) are skipped, matching the previous behavior.
-	summaries := []SessionSummary{}
-	for _, b := range bookmarks {
-		for _, rd := range s.Readers {
-			if rd.AgentType() != b.AgentType {
-				continue
-			}
-			if detail, err := rd.GetSession(b.SessionID); err == nil && detail != nil {
-				sess := detail.Session
-				sess.Bookmarked = true
-				summaries = append(summaries, sessionToSummary(sess))
-			}
-			break
+	summaries := make([]SessionSummary, 0, len(sessions))
+	for _, bm := range sessions {
+		ss := SessionSummary{
+			ID:           bm.SessionID,
+			AgentType:    bm.AgentType,
+			Name:         bm.Name,
+			ModelName:    bm.ModelName,
+			Repository:   bm.Repository,
+			Project:      bm.Project,
+			CWD:          bm.CWD,
+			PreviewText:  bm.PreviewText,
+			TurnCount:    bm.TurnCount,
+			MessageCount: bm.MessageCount,
+			Branch:       bm.Branch,
+			IsLive:       false,
+			Bookmarked:   true,
+			CreatedAt:    bm.BookmarkCreatedAt,
+			UpdatedAt:    bm.SessionUpdatedAt,
 		}
+		// Legacy bookmark without metadata: hydrate from reader once and
+		// backfill so subsequent requests are pure SQL.
+		if bm.Name == "" {
+			for _, rd := range s.Readers {
+				if rd.AgentType() != bm.AgentType {
+					continue
+				}
+				if detail, e := rd.GetSession(bm.SessionID); e == nil && detail != nil {
+					ss = sessionToSummary(detail.Session)
+					ss.Bookmarked = true
+					s.DB.UpdateBookmarkMeta(db.BookmarkedSession{
+						AgentType:        bm.AgentType,
+						SessionID:        bm.SessionID,
+						Name:             ss.Name,
+						ModelName:        ss.ModelName,
+						Repository:       ss.Repository,
+						Project:          ss.Project,
+						CWD:              ss.CWD,
+						PreviewText:      ss.PreviewText,
+						TurnCount:        ss.TurnCount,
+						MessageCount:     ss.MessageCount,
+						Branch:           ss.Branch,
+						SessionUpdatedAt: ss.UpdatedAt,
+					})
+				}
+				break
+			}
+		}
+		summaries = append(summaries, ss)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(summaries)
@@ -201,6 +232,32 @@ func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add
 	var err error
 	if add {
 		err = s.DB.AddBookmark(agentType, id)
+		// Store session metadata so listing bookmarks is a pure SQL query.
+		if err == nil {
+			for _, rd := range s.Readers {
+				if rd.AgentType() != agentType {
+					continue
+				}
+				if detail, e := rd.GetSession(id); e == nil && detail != nil {
+					ss := sessionToSummary(detail.Session)
+					s.DB.UpdateBookmarkMeta(db.BookmarkedSession{
+						AgentType:        agentType,
+						SessionID:        id,
+						Name:             ss.Name,
+						ModelName:        ss.ModelName,
+						Repository:       ss.Repository,
+						Project:          ss.Project,
+						CWD:              ss.CWD,
+						PreviewText:      ss.PreviewText,
+						TurnCount:        ss.TurnCount,
+						MessageCount:     ss.MessageCount,
+						Branch:           ss.Branch,
+						SessionUpdatedAt: ss.UpdatedAt,
+					})
+				}
+				break
+			}
+		}
 	} else {
 		err = s.DB.RemoveBookmark(agentType, id)
 	}
