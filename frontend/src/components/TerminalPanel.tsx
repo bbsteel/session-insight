@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Terminal, type IDecoration, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { fetchRenderANSI } from '../api'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
@@ -159,6 +160,24 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       if (disposed) return
 
       term.open(container)
+
+      // WebGL renderer: rasterizes every glyph into a fixed grid cell, so CJK
+      // (wide) characters occupy exactly the two cells xterm allocates them.
+      // The default DOM renderer instead lays glyphs out as text and leans on
+      // the font for cell width — but our terminal font (JetBrains Mono) has no
+      // CJK glyphs, so Chinese falls back to a system font whose advance width
+      // isn't exactly double, drifting box-drawing borders out of alignment on
+      // rows with Chinese. Must load after open(). On context loss dispose the
+      // addon so xterm transparently reverts to the DOM renderer; wrap in
+      // try/catch for environments without WebGL support.
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => webgl.dispose())
+        term.loadAddon(webgl)
+      } catch {
+        // WebGL unavailable → keep the DOM renderer (still functional).
+      }
+
       fitAddon.fit()
       currentCols = term.cols
 

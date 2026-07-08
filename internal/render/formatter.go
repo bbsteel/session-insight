@@ -218,7 +218,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 10
+const FormatVersion int64 = 13
 
 // toolRun summarizes one contiguous run of tool events for the group header.
 // endIdx is the index just past the run's last event.
@@ -394,39 +394,36 @@ func writeThinking(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
 }
 
 func writeTextChunk(sb *trackingBuilder, evt model.RenderEvent, prefix string, termWidth int) {
-	lines := strings.Split(sanitizeControlChars(evt.Text), "\n")
-	hasDiff := scanForDiff(lines)
-	highlighted := highlightFencedBlocks(lines)
-	inCodeBlock := false
+	text := sanitizeControlChars(evt.Text)
+	lines := strings.Split(text, "\n")
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if hasDiff && isDiffAdd(line) {
-			padded := padRight(line, termWidth)
+	// A pasted unified diff (carries "@@ … @@" hunk markers) is a distinct
+	// content type, not Markdown: it is rendered line-by-line with add/del
+	// backgrounds, bypassing the Markdown parser (which would otherwise grab
+	// its "- " deletion lines as a bullet list). See scanForDiff.
+	if scanForDiff(lines) {
+		for i, line := range lines {
 			sb.WriteString(prefix)
-			sb.WriteString(bgWrap(fgWrap(padded, ColFg), ColDiffAdd))
-		} else if hasDiff && isDiffDel(line) {
-			padded := padRight(line, termWidth)
-			sb.WriteString(prefix)
-			sb.WriteString(bgWrap(fgWrap(padded, ColFg), ColDiffDel))
-		} else if strings.HasPrefix(trimmed, "```") {
-			inCodeBlock = !inCodeBlock
-			sb.WriteString(prefix)
-			sb.WriteString(fgWrap(line, ColMuted))
-		} else if inCodeBlock {
-			sb.WriteString(prefix)
-			if h := highlighted[i]; h != "" {
-				sb.WriteString(h)
-			} else {
-				sb.WriteString(fgWrap(line, ColWarning))
+			switch {
+			case isDiffAdd(line):
+				sb.WriteString(bgWrap(fgWrap(padRight(line, termWidth), ColFg), ColDiffAdd))
+			case isDiffDel(line):
+				sb.WriteString(bgWrap(fgWrap(padRight(line, termWidth), ColFg), ColDiffDel))
+			default:
+				sb.WriteString(fgWrap(line, ColFg))
 			}
-		} else {
-			sb.WriteString(prefix)
-			sb.WriteString(renderMarkdownLine(line, ColFg))
+			if i < len(lines)-1 {
+				sb.WriteString("\n")
+			}
 		}
-		if i < len(lines)-1 {
-			sb.WriteString("\n")
-		}
+		sb.WriteString("\n")
+		return
+	}
+
+	for _, line := range renderMarkdownDoc(text, ColFg, termWidth) {
+		sb.WriteString(prefix)
+		sb.WriteString(line)
+		sb.WriteString("\n")
 	}
 	sb.WriteString("\n")
 }
@@ -1022,268 +1019,6 @@ func wrapInBox(il string, contentWidth int) []string {
 		}
 	}
 	return lines
-}
-
-// renderMarkdownLine renders a single non-fenced-code-block text line with
-// full Markdown block-level and inline formatting.
-//
-// Block-level (detected at line start):
-//   - ATX headings: # / ## / ### ... ###### → stripped marker, bold white
-//   - Horizontal rules: ---, ***, ___ (3+ same chars, optional spaces)
-//   - Blockquotes: > text
-//   - GFM tables: lines starting with |; separator rows become thin rules
-//   - Unordered lists: - / * / + followed by space
-//   - Ordered lists: N. followed by space
-//
-// Inline (within line content): **bold**, ***bold+italic***, *italic*,
-// `code`, ~~strikethrough~~, [text](url).
-func renderMarkdownLine(line string, defaultFg Color) string {
-	trimmed := strings.TrimSpace(line)
-
-	if lvl := headingLevel(trimmed); lvl > 0 {
-		// Strip "##… " marker; ColSkill (violet) + bold — safe because
-		// drawBoldTextInBrightColors is disabled, so no palette-slot remap.
-		return styled(trimmed[lvl+1:], ColSkill, ColNone, true, false)
-	}
-	if isHorizontalRule(trimmed) {
-		return fgWrap(strings.Repeat("─", TermWidth), ColMuted)
-	}
-	if strings.HasPrefix(trimmed, "> ") || trimmed == ">" {
-		leadSpaces := len(line) - len(strings.TrimLeft(line, " \t"))
-		content := strings.TrimPrefix(trimmed, "> ")
-		return strings.Repeat(" ", leadSpaces) +
-			fgWrap("│ ", ColMuted) +
-			styled(content, ColMuted, ColNone, false, true)
-	}
-	if m, ok := matchUnorderedList(line); ok {
-		return m.indent + fgWrap("•", ColUser) + " " + renderInlineMd(m.content, defaultFg)
-	}
-	if m, ok := matchOrderedList(line); ok {
-		return m.indent + fgWrap(m.marker, ColUser) + " " + renderInlineMd(m.content, defaultFg)
-	}
-	return renderInlineMd(line, defaultFg)
-}
-
-// headingLevel returns 1-6 for ATX headings, 0 otherwise.
-func headingLevel(s string) int {
-	lvl := 0
-	for _, r := range s {
-		if r != '#' {
-			break
-		}
-		lvl++
-	}
-	if lvl >= 1 && lvl <= 6 && lvl < len(s) && s[lvl] == ' ' {
-		return lvl
-	}
-	return 0
-}
-
-// isHorizontalRule returns true when s is composed of 3+ identical
-// '-'/'*'/'_' characters with optional spaces between them.
-func isHorizontalRule(s string) bool {
-	if len(s) < 3 {
-		return false
-	}
-	ch := s[0]
-	if ch != '-' && ch != '*' && ch != '_' {
-		return false
-	}
-	count := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == ch {
-			count++
-		} else if s[i] != ' ' {
-			return false
-		}
-	}
-	return count >= 3
-}
-
-type listItem struct {
-	indent  string
-	marker  string
-	content string
-}
-
-func matchUnorderedList(line string) (listItem, bool) {
-	trimmed := strings.TrimLeft(line, " \t")
-	indent := line[:len(line)-len(trimmed)]
-	if len(trimmed) >= 2 &&
-		(trimmed[0] == '-' || trimmed[0] == '*' || trimmed[0] == '+') &&
-		trimmed[1] == ' ' {
-		return listItem{indent, string(trimmed[0]), trimmed[2:]}, true
-	}
-	return listItem{}, false
-}
-
-func matchOrderedList(line string) (listItem, bool) {
-	trimmed := strings.TrimLeft(line, " \t")
-	indent := line[:len(line)-len(trimmed)]
-	i := 0
-	for i < len(trimmed) && trimmed[i] >= '0' && trimmed[i] <= '9' {
-		i++
-	}
-	if i > 0 && i+1 < len(trimmed) && trimmed[i] == '.' && trimmed[i+1] == ' ' {
-		return listItem{indent, trimmed[:i+1], trimmed[i+2:]}, true
-	}
-	return listItem{}, false
-}
-
-// renderInlineMd applies inline Markdown spans to a single line using a
-// state machine. Supported: ***bold+italic***, **bold**, *italic*,
-// `code`, ~~strikethrough~~, [text](url).
-func renderInlineMd(line string, defaultFg Color) string {
-	if !strings.ContainsAny(line, "*`~[") {
-		return fgWrap(line, defaultFg)
-	}
-
-	type mdSpan int
-	const (
-		spanNormal mdSpan = iota
-		spanBoldItalic
-		spanBold
-		spanItalic
-		spanCode
-		spanStrike
-	)
-
-	var out strings.Builder
-	var buf strings.Builder
-	state := spanNormal
-	runes := []rune(line)
-	n := len(runes)
-
-	flush := func(s mdSpan) {
-		text := buf.String()
-		buf.Reset()
-		if text == "" {
-			return
-		}
-		switch s {
-		case spanNormal:
-			out.WriteString(fgWrap(text, defaultFg))
-		case spanBoldItalic:
-			out.WriteString(styled(text, defaultFg, ColNone, true, true))
-		case spanBold:
-			out.WriteString(styled(text, defaultFg, ColNone, true, false))
-		case spanItalic:
-			out.WriteString(styled(text, defaultFg, ColNone, false, true))
-		case spanCode:
-			out.WriteString(fgWrap(text, ColWarning))
-		case spanStrike:
-			out.WriteString(strikeCode + fgWrap(text, ColMuted) + resetCode)
-		}
-	}
-
-	runesHave := func(start int, pat string) bool {
-		pr := []rune(pat)
-		pn := len(pr)
-		for i := start; i <= n-pn; i++ {
-			match := true
-			for j := 0; j < pn; j++ {
-				if runes[i+j] != pr[j] {
-					match = false
-					break
-				}
-			}
-			if match {
-				return true
-			}
-		}
-		return false
-	}
-
-	for i := 0; i < n; {
-		r := runes[i]
-		switch state {
-		case spanNormal:
-			switch {
-			case i+2 < n && r == '*' && runes[i+1] == '*' && runes[i+2] == '*' && runesHave(i+3, "***"):
-				flush(spanNormal); state = spanBoldItalic; i += 3
-			case i+1 < n && r == '*' && runes[i+1] == '*' && runesHave(i+2, "**"):
-				flush(spanNormal); state = spanBold; i += 2
-			case r == '*' && (i+1 >= n || runes[i+1] != ' ') && runesHave(i+1, "*"):
-				flush(spanNormal); state = spanItalic; i++
-			case r == '`' && runesHave(i+1, "`"):
-				flush(spanNormal); state = spanCode; i++
-			case i+1 < n && r == '~' && runes[i+1] == '~' && runesHave(i+2, "~~"):
-				flush(spanNormal); state = spanStrike; i += 2
-			case r == '[':
-				if text, skip := matchLink(runes, i); skip > 0 {
-					flush(spanNormal)
-					out.WriteString(fgWrap(text, ColTool))
-					i += skip
-				} else {
-					buf.WriteRune(r); i++
-				}
-			default:
-				buf.WriteRune(r); i++
-			}
-		case spanBoldItalic:
-			if i+2 < n && r == '*' && runes[i+1] == '*' && runes[i+2] == '*' {
-				flush(spanBoldItalic); state = spanNormal; i += 3
-			} else {
-				buf.WriteRune(r); i++
-			}
-		case spanBold:
-			if i+1 < n && r == '*' && runes[i+1] == '*' {
-				flush(spanBold); state = spanNormal; i += 2
-			} else {
-				buf.WriteRune(r); i++
-			}
-		case spanItalic:
-			if r == '*' && (i+1 >= n || runes[i+1] != '*') {
-				flush(spanItalic); state = spanNormal; i++
-			} else {
-				buf.WriteRune(r); i++
-			}
-		case spanCode:
-			if r == '`' {
-				flush(spanCode); state = spanNormal; i++
-			} else {
-				buf.WriteRune(r); i++
-			}
-		case spanStrike:
-			if i+1 < n && r == '~' && runes[i+1] == '~' {
-				flush(spanStrike); state = spanNormal; i += 2
-			} else {
-				buf.WriteRune(r); i++
-			}
-		}
-	}
-	flush(state)
-	return out.String()
-}
-
-// matchLink matches [text](url) at position start in runes. Returns the link
-// text and the number of runes consumed (0 if no match).
-func matchLink(runes []rune, start int) (text string, consumed int) {
-	n := len(runes)
-	if runes[start] != '[' {
-		return "", 0
-	}
-	textEnd := -1
-	for i := start + 1; i < n; i++ {
-		if runes[i] == ']' {
-			textEnd = i
-			break
-		}
-	}
-	if textEnd < 0 || textEnd+1 >= n || runes[textEnd+1] != '(' {
-		return "", 0
-	}
-	urlEnd := -1
-	for i := textEnd + 2; i < n; i++ {
-		if runes[i] == ')' {
-			urlEnd = i
-			break
-		}
-	}
-	if urlEnd < 0 {
-		return "", 0
-	}
-	return string(runes[start+1 : textEnd]), urlEnd - start + 1
 }
 
 // lcsLineDiff returns a line-level LCS diff between old and new.

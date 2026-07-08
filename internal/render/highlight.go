@@ -10,68 +10,49 @@ import (
 )
 
 // Syntax highlighting for fenced code blocks inside assistant text, emitted
-// as xterm-256 ANSI. Blocks are tokenized whole (multi-line constructs keep
-// their state) and the output is split back into lines; the replacement only
-// adds color codes, so line counts and display widths are untouched and the
+// as xterm-256 ANSI. The block is tokenized whole (multi-line constructs keep
+// their state) and the output is split back into lines; highlighting only adds
+// color codes, so line counts and display widths are untouched and the
 // position cache stays valid.
 //
 // terminal256 uses the fixed xterm 256-color cube (slots ≥16), deliberately
 // bypassing the theme-remapped 16-slot palette — those slots are repurposed
 // (banner, diff backgrounds) and would garble code colors.
 
-// highlightFencedBlocks returns, aligned with lines, the ANSI-highlighted
-// replacement for each fenced code block body line ("" = no highlight, the
-// caller falls back to the flat code color).
-func highlightFencedBlocks(lines []string) []string {
-	out := make([]string, len(lines))
-	for i := 0; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(trimmed, "```") {
-			continue
-		}
-		info := strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
-		lang := ""
-		if f := strings.Fields(info); len(f) > 0 {
-			lang = strings.ToLower(f[0])
-		}
-		end := i + 1
-		for end < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[end]), "```") {
-			end++
-		}
-		if lang != "" && end > i+1 {
-			applyHighlight(lines, out, i+1, end, lang)
-		}
-		i = end // land on the closing fence; the loop increment moves past it
+// highlightCodeBody returns, aligned 1:1 with code, the ANSI-highlighted
+// replacement for each code line, or nil when the language is unknown or the
+// highlighter's line count drifts from the input (caller falls back to the
+// flat code color). Each returned line ends in a reset so a multi-line token's
+// SGR never leaks into the next terminal row's prefix/border.
+func highlightCodeBody(code []string, lang string) []string {
+	if lang == "" || len(code) == 0 {
+		return nil
 	}
-	return out
-}
-
-func applyHighlight(lines, out []string, start, end int, lang string) {
 	lexer := lexers.Get(lang)
 	if lexer == nil {
-		return
+		return nil
 	}
 	lexer = chroma.Coalesce(lexer)
-	src := strings.Join(lines[start:end], "\n")
+	src := strings.Join(code, "\n")
 	it, err := lexer.Tokenise(nil, src)
 	if err != nil {
-		return
+		return nil
 	}
 	var buf strings.Builder
 	if err := formatters.Get("terminal256").Format(&buf, styles.Get("monokai"), it); err != nil {
-		return
+		return nil
 	}
 	colored := strings.Split(buf.String(), "\n")
 	// Many lexers have EnsureNL and append a trailing newline; drop it.
-	if len(colored) == end-start+1 && colored[len(colored)-1] == "" {
+	if len(colored) == len(code)+1 && colored[len(colored)-1] == "" {
 		colored = colored[:len(colored)-1]
 	}
-	if len(colored) != end-start {
-		return // line-count drift → keep the un-highlighted fallback
+	if len(colored) != len(code) {
+		return nil // line-count drift → flat fallback
 	}
-	for k, c := range colored {
-		// Reset per line: a multi-line token's SGR must not leak into the
-		// prefix/border of the next terminal row.
-		out[start+k] = c + "\x1b[0m"
+	out := make([]string, len(colored))
+	for i, cline := range colored {
+		out[i] = cline + "\x1b[0m"
 	}
+	return out
 }
