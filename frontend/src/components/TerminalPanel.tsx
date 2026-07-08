@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal, type IDecoration, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -59,6 +59,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
   const isDark = useIsDark()
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
+  // WebGL renderer degraded to the DOM fallback (no hardware acceleration /
+  // WebGL2 unavailable / context lost). The DOM renderer can't hold CJK
+  // box-drawing borders in alignment (the terminal font has no CJK glyphs, so
+  // Chinese falls back to a system font whose advance isn't exactly 2 cells),
+  // so we surface a dismissible hint. WebGL users never see it.
+  const [webglDegraded, setWebglDegraded] = useState(false)
+  const [warnDismissed, setWarnDismissed] = useState(
+    () => localStorage.getItem('si-webgl-warn-dismissed') === '1',
+  )
   const agentTypeRef = useRef(agentType)
   agentTypeRef.current = agentType
   const foldsRef = useRef<FoldRange[]>(folds ?? [])
@@ -167,16 +176,28 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       // the font for cell width — but our terminal font (JetBrains Mono) has no
       // CJK glyphs, so Chinese falls back to a system font whose advance width
       // isn't exactly double, drifting box-drawing borders out of alignment on
-      // rows with Chinese. Must load after open(). On context loss dispose the
-      // addon so xterm transparently reverts to the DOM renderer; wrap in
-      // try/catch for environments without WebGL support.
+      // rows with Chinese. Must load after open(). Any failure path (WebGL2
+      // unavailable, addon throws, or a later context loss) reverts to the DOM
+      // renderer and flags the degraded state so the hint banner can show.
+      let webglOk = false
       try {
-        const webgl = new WebglAddon()
-        webgl.onContextLoss(() => webgl.dispose())
-        term.loadAddon(webgl)
+        webglOk = !!document.createElement('canvas').getContext('webgl2')
       } catch {
-        // WebGL unavailable → keep the DOM renderer (still functional).
+        webglOk = false
       }
+      if (webglOk) {
+        try {
+          const webgl = new WebglAddon()
+          webgl.onContextLoss(() => {
+            webgl.dispose()
+            setWebglDegraded(true)
+          })
+          term.loadAddon(webgl)
+        } catch {
+          webglOk = false
+        }
+      }
+      if (!webglOk) setWebglDegraded(true)
 
       fitAddon.fit()
       currentCols = term.cols
@@ -804,8 +825,50 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
     applyFoldsRef.current?.(folds ?? [])
   }, [folds])
 
+  const dismissWebglWarn = () => {
+    localStorage.setItem('si-webgl-warn-dismissed', '1')
+    setWarnDismissed(true)
+  }
+
   return (
     <div style={{ flex: 1, overflow: 'hidden', background: terminalTheme(isDark).background, display: 'flex', flexDirection: 'column' }}>
+      {webglDegraded && !warnDismissed && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '5px 10px',
+            fontSize: 12,
+            lineHeight: 1.4,
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            color: isDark ? '#fde68a' : '#854d0e',
+            background: isDark ? 'rgba(234,179,8,0.14)' : '#fef9c3',
+            borderBottom: `1px solid ${isDark ? 'rgba(234,179,8,0.30)' : '#fde68a'}`,
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            ⚠ 未开启浏览器硬件加速（WebGL 不可用），部分会话的终端化渲染（如中文表格边框对齐）可能有偏差。开启浏览器硬件加速后刷新即可修复。
+          </span>
+          <button
+            onClick={dismissWebglWarn}
+            title="不再提示"
+            style={{
+              flexShrink: 0,
+              border: 'none',
+              background: 'transparent',
+              color: 'inherit',
+              cursor: 'pointer',
+              fontSize: 15,
+              lineHeight: 1,
+              padding: '0 2px',
+              opacity: 0.7,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div ref={containerRef} style={{ flex: 1, overflow: 'hidden' }} />
     </div>
   )
