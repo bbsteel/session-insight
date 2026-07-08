@@ -215,7 +215,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 5
+const FormatVersion int64 = 6
 
 // toolRun summarizes one contiguous run of tool events for the group header.
 // endIdx is the index just past the run's last event.
@@ -917,6 +917,13 @@ func writeAgentSpecific(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 	case "interrupted":
 		sb.WriteString(prefix)
 		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 中断: %s", sanitizeControlChars(evt.Text)), ColError))
+		sb.WriteString("\n")
+	case "in_progress":
+		// A turn still running (chrys in-flight checkpoint). Neutral, not an
+		// error; two leading spaces reserve a cell for the frontend's spinning
+		// hourglass overlay (raw render without a frontend still reads fine).
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap("  推理中…", ColMuted))
 		sb.WriteString("\n")
 	default:
 		sb.WriteString(prefix)

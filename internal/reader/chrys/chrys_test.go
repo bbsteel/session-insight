@@ -336,6 +336,82 @@ func TestRenderEvents(t *testing.T) {
 	}
 }
 
+const fixtureInFlight = `{
+  "meta": {"schema_version": 1, "session_id": "beef", "agent_profile": "chrys", "updated_at": "2026-07-06T05:00:10+00:00"},
+  "state": {
+    "messages": [
+      {"type": "message", "role": "user",
+       "contents": [{"type": "text", "text": "内存是不是给高了", "additional_properties": {}}],
+       "additional_properties": {"_chrys_created_at": "2026-07-06T05:00:00+00:00"}},
+      {"type": "message", "role": "assistant",
+       "contents": [{"type": "text", "text": "Session closed before the turn finished", "additional_properties": {}}],
+       "additional_properties": {"_chrys_kind": "interrupted", "_interrupted_by": "", "_chrys_created_at": "2026-07-06T05:00:10+00:00"}}
+    ],
+    "compressed_msgs": [], "turn_counter": 1
+  }
+}`
+
+// A chrys in-flight recovery checkpoint (interrupted marker with an empty
+// _interrupted_by) is a turn still running, not an interruption: it renders as
+// a neutral "推理中…" placeholder and must not flag the turn as an anomaly.
+func TestInFlightCheckpointNotAnomaly(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "beef")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.json"), []byte(fixtureInFlight), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New(root)
+
+	d, err := r.GetSession("beef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Turns) != 1 {
+		t.Fatalf("want 1 turn, got %d", len(d.Turns))
+	}
+	if d.Turns[0].ErrorCount != 0 {
+		t.Errorf("in-flight checkpoint counted as error: %d", d.Turns[0].ErrorCount)
+	}
+	for _, a := range d.Turns[0].Anomalies {
+		if a == "interrupted" {
+			t.Errorf("in-flight checkpoint flagged as interrupted anomaly")
+		}
+	}
+
+	events, err := r.GetRenderEvents("beef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Type == "AgentSpecific" && e.Subtype == "interrupted" {
+			t.Errorf("in-flight checkpoint emitted an interrupted event")
+		}
+	}
+	gotInProgress := false
+	for _, e := range events {
+		if e.Type == "AgentSpecific" && e.Subtype == "in_progress" {
+			gotInProgress = true
+		}
+	}
+	if !gotInProgress {
+		t.Errorf("missing in_progress render event")
+	}
+
+	ansi, err := r.RenderANSI("beef", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ansi, "推理中") {
+		t.Errorf("ANSI missing in-progress placeholder")
+	}
+	if strings.Contains(ansi, "中断") {
+		t.Errorf("ANSI wrongly shows an interruption for an in-flight checkpoint")
+	}
+}
+
 func TestGetSessionRejectsPathTraversal(t *testing.T) {
 	r := New(writeFixture(t))
 	if _, err := r.GetSession("../evil"); err == nil {

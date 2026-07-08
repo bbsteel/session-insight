@@ -12,6 +12,10 @@ import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 
 const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "Menlo", monospace'
 const TERMINAL_FONT_SIZE = 13
+// Text the backend renders for a chrys turn still in progress; the frontend
+// finds this row and overlays a spinning hourglass. Keep in sync with the
+// formatter's "in_progress" case.
+const PROGRESS_ROW_TEXT = '推理中…'
 
 interface Props {
   sessionId: string
@@ -124,6 +128,18 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       flashMarkers.forEach(m => m.dispose())
       flashDecorations = []
       flashMarkers = []
+    }
+
+    // Spinning hourglass over a "turn in progress" row (chrys in-flight
+    // checkpoint). One decoration, re-applied after every rewrite so it tracks
+    // the row as the buffer changes; disposed when the marker text is gone.
+    let progressDecoration: IDecoration | null = null
+    let progressMarker: IMarker | null = null
+    const clearProgress = () => {
+      progressDecoration?.dispose()
+      progressMarker?.dispose()
+      progressDecoration = null
+      progressMarker = null
     }
 
     let onMouseMove: ((e: MouseEvent) => void) | null = null
@@ -320,6 +336,46 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         }
       }
 
+      // Overlay a spinning hourglass on chrys's "推理中…" in-progress row. The
+      // marker rides xterm's own viewport math (AGENTS.md: no hand-rolled DOM
+      // row coordinates); the row sits near the tail, so scan from the bottom.
+      const injectProgressRow = () => {
+        clearProgress()
+        const buf = term.buffer.active
+        for (let i = buf.length - 1; i >= 0; i--) {
+          const line = buf.getLine(i)
+          if (!line) continue
+          if (!line.translateToString(true).includes(PROGRESS_ROW_TEXT)) continue
+          const offset = getMarkerOffsetForBufferLine({ bufferLine: i, baseY: buf.baseY, cursorY: buf.cursorY })
+          const marker = term.registerMarker(offset)
+          if (!marker) break
+          let decoration: IDecoration | undefined
+          try {
+            decoration = term.registerDecoration({ marker, x: 0, width: 2, height: 1, layer: 'top' })
+          } catch {
+            marker.dispose()
+            break
+          }
+          if (!decoration) { marker.dispose(); break }
+          decoration.onRender(element => {
+            if (element.dataset.siProgress === '1') return // onRender fires per xterm paint
+            element.dataset.siProgress = '1'
+            element.style.pointerEvents = 'none'
+            element.style.display = 'flex'
+            element.style.alignItems = 'center'
+            element.style.justifyContent = 'center'
+            element.textContent = '⏳'
+            element.animate(
+              [{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }],
+              { duration: 1600, iterations: Infinity, easing: 'linear' },
+            )
+          })
+          progressMarker = marker
+          progressDecoration = decoration
+          break
+        }
+      }
+
       const snapshotTerminal = () => {
         removeSnapshot?.()
         removeSnapshot = null
@@ -362,6 +418,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           hasWrittenOnce = true
           scanBuffer()
           injectFoldRows()
+          injectProgressRow()
           queueMetrics()
           afterWrite?.()
           // Two frames: one for xterm's render, one to be past the paint.
@@ -416,7 +473,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           if (!valid.has(k)) { collapsedKeys.delete(k); dropped = true }
         }
         if (collapsedKeys.size > 0 || dropped || foldView) recompose()
-        else injectFoldRows()
+        else { injectFoldRows(); injectProgressRow() }
       }
 
       const showHoverFor = (bl: number, entry: InteractionEntry, clientX: number, clientY: number) => {
@@ -591,6 +648,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
             if (term.buffer.active.length > 1) {
               scanBuffer()
               injectFoldRows()
+              injectProgressRow()
             }
           },
           flashLines,
@@ -632,6 +690,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
               await new Promise<void>(resolve => term.write(suffix, () => {
                 scanBuffer()
                 injectFoldRows()
+                injectProgressRow()
                 queueMetrics()
                 resolve()
               }))
@@ -698,6 +757,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       hoverDecoration?.dispose()
       hoverMarker?.dispose()
       clearFlash()
+      clearProgress()
       tooltipEl?.remove()
       if (controlRef) controlRef.current = null
       applyFoldsRef.current = null

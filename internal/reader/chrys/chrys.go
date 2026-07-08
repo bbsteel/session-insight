@@ -112,6 +112,27 @@ func (m *chrysMessage) markerKind() string {
 	return s
 }
 
+// interruptedBy returns the interrupted marker's _interrupted_by source:
+// "user" (Esc) or "error" (execution failure) for a genuine interruption, or
+// "" for chrys's in-flight recovery checkpoint — the sidecar snapshot chrys
+// writes at every LLM boundary of a turn that is still running (checkpoint.py
+// shapes it with source=""). An empty source therefore means "the turn hasn't
+// finished", not "the turn was interrupted".
+func (m *chrysMessage) interruptedBy() string {
+	if m.Props == nil {
+		return ""
+	}
+	s, _ := m.Props["_interrupted_by"].(string)
+	return s
+}
+
+// isInFlightCheckpoint reports whether an interrupted marker is chrys's
+// crash-recovery checkpoint for a turn still in progress, rather than a real
+// user/error interruption.
+func (m *chrysMessage) isInFlightCheckpoint() bool {
+	return m.markerKind() == "interrupted" && m.interruptedBy() == ""
+}
+
 func (m *chrysMessage) createdAt() time.Time {
 	if m.Props == nil {
 		return time.Time{}
@@ -401,7 +422,9 @@ func buildTurns(sf *sessionFile) []model.TurnVM {
 
 		switch {
 		case kind == "interrupted":
-			if currentTurn != nil {
+			// An in-flight checkpoint (source empty) is a turn still running,
+			// not an anomaly — only genuine user/error interruptions count.
+			if m.interruptedBy() != "" && currentTurn != nil {
 				currentTurn.Anomalies = append(currentTurn.Anomalies, "interrupted")
 				currentTurn.ErrorCount++
 			}

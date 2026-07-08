@@ -96,6 +96,18 @@ func (r *ChrysReader) toRenderEvents(id string) ([]model.RenderEvent, error) {
 			if turnIdx < 0 {
 				turnIdx = 0
 			}
+			if m.isInFlightCheckpoint() {
+				// Turn still in progress (chrys's recovery checkpoint). Render a
+				// neutral placeholder, not a red interruption; the frontend
+				// overlays a spinning hourglass on this row.
+				rs.emit(model.RenderEvent{
+					Type:      "AgentSpecific",
+					Subtype:   "in_progress",
+					Timestamp: ts,
+					TurnIndex: turnIdx,
+				})
+				break
+			}
 			text := m.userText()
 			if text == "" {
 				text = "会话被中断"
