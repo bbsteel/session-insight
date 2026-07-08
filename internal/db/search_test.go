@@ -76,13 +76,13 @@ func TestSearch_Chinese(t *testing.T) {
 		t.Fatalf("expected sess-3 in results for '中文测试', got %v", results)
 	}
 
-	// 2-rune query: should return empty (rune count < 3)
+	// 2-rune query: now uses LIKE fallback, should find sess-3
 	results, err = database.SearchTurns("你好", 30)
 	if err != nil {
 		t.Fatalf("SearchTurns('你好'): %v", err)
 	}
-	if len(results) != 0 {
-		t.Fatalf("expected empty results for 2-rune query '你好', got %v", results)
+	if !containsSession(results, "sess-3") {
+		t.Fatalf("expected sess-3 in results for '你好' (LIKE fallback), got %v", results)
 	}
 }
 
@@ -147,12 +147,17 @@ func TestSearch_ShortQuery(t *testing.T) {
 	database := setupSearchDB(t)
 	defer database.Close()
 
+	// 1-rune query: now uses LIKE fallback, should find sessions with 'a'
 	results, err := database.SearchTurns("a", 30)
 	if err != nil {
 		t.Fatalf("SearchTurns('a'): unexpected error: %v", err)
 	}
-	if len(results) != 0 {
-		t.Fatalf("expected empty results for single-rune query, got %v", results)
+	if len(results) == 0 {
+		t.Fatalf("expected results for single-rune LIKE query 'a', got empty")
+	}
+	// sess-2 has "another" and "bar.go", metric-only has "Dashboard"
+	if !containsSession(results, "sess-2") {
+		t.Fatalf("expected sess-2 in results for 'a', got %v", results)
 	}
 }
 

@@ -109,8 +109,16 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 	}
 
 	turns := buildTurnTexts(sess, detail)
-	// turns 可以为空（会话内容被清空），UpsertTurns 会执行删除 + watermark 更新
-	return ix.db.UpsertTurns(agentType, sess.ID, turns, revision)
+	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
+		return fmt.Errorf("upsert turns: %w", err)
+	}
+	// Also persist session metadata so search enrichment is a pure SQL query.
+	return ix.db.UpsertSessionMeta(
+		agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
+		sess.Project, sess.Name, sess.ModelName,
+		sess.TurnCount, sess.MessageCount,
+		sess.CreatedAt, sess.UpdatedAt,
+	)
 }
 
 // buildTurnTexts 从 SessionDetail 构造待索引行列表：

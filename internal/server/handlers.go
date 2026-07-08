@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -574,25 +575,54 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 反查会话元数据：命中结果只带 (agent_type, session_id)，
-	// project / 会话名 / 更新时间来自各 reader 的会话列表
-	type sessionMeta struct {
-		project   string
-		name      string
-		updatedAt time.Time
-	}
-	metas := make(map[string]sessionMeta)
-	if len(results) > 0 {
-		for _, reader := range s.Readers {
-			list, err := reader.ListSessions()
-			if err != nil {
+	// Resolve session metadata from the sessions table (populated by the
+	// indexer). Falls back to ListSessions for any session not yet indexed.
+	metas := make(map[string]db.SessionMeta)
+	if s.DB != nil && len(results) > 0 {
+		keys := make([]struct{ AgentType, SessionID string }, 0, len(results))
+		seen := make(map[string]bool, len(results))
+		for _, r := range results {
+			k := r.AgentType + "\x00" + r.SessionID
+			if seen[k] {
 				continue
 			}
-			for _, sess := range list {
-				metas[sess.AgentType+"\x00"+sess.ID] = sessionMeta{
-					project:   sess.Project,
-					name:      sess.Name,
-					updatedAt: sess.UpdatedAt,
+			seen[k] = true
+			keys = append(keys, struct{ AgentType, SessionID string }{r.AgentType, r.SessionID})
+		}
+		metas, err := s.DB.GetSessionMetas(keys)
+		if err != nil {
+			log.Printf("search: GetSessionMetas: %v", err)
+		}
+		if metas == nil {
+			metas = make(map[string]db.SessionMeta)
+		}
+
+		// Fallback: any keys not found in DB, load from readers.
+		missing := false
+		for _, k := range keys {
+			if _, ok := metas[k.AgentType+"\x00"+k.SessionID]; !ok {
+				missing = true
+				break
+			}
+		}
+		if missing {
+			for _, reader := range s.Readers {
+				list, err := reader.ListSessions()
+				if err != nil {
+					continue
+				}
+				for _, sess := range list {
+					key := sess.AgentType + "\x00" + sess.ID
+					if _, ok := metas[key]; ok {
+						continue
+					}
+					if seen[key] {
+						metas[key] = db.SessionMeta{
+							Project:   sess.Project,
+							Name:      sess.Name,
+							UpdatedAt: sess.UpdatedAt,
+						}
+					}
 				}
 			}
 		}
@@ -610,14 +640,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	for _, r := range results {
 		meta := metas[r.AgentType+"\x00"+r.SessionID]
 		updatedAt := ""
-		if !meta.updatedAt.IsZero() {
-			updatedAt = meta.updatedAt.Format("2006-01-02T15:04:05Z")
+		if !meta.UpdatedAt.IsZero() {
+			updatedAt = meta.UpdatedAt.Format("2006-01-02T15:04:05Z")
 		}
 		out = append(out, result{
 			SessionID: r.SessionID,
 			AgentType: r.AgentType,
-			Project:   meta.project,
-			Name:      meta.name,
+			Project:   meta.Project,
+			Name:      meta.Name,
 			UpdatedAt: updatedAt,
 			Match:     r.Match,
 		})

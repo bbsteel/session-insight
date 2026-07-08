@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 type DB struct {
 	conn *sql.DB
@@ -278,6 +278,34 @@ func migrate(conn *sql.DB) error {
 		} {
 			conn.Exec(`ALTER TABLE bookmarked_sessions ADD COLUMN ` + col)
 		}
+	}
+
+	// Version 8: rebuild sessions table with correct composite key and project
+	// column. The old table was never populated (no code path wrote to it), so
+	// DROP + CREATE is safe. Also clear index watermarks so the indexer
+	// repopulates the sessions table on next startup.
+	if maxVersion < 8 {
+		conn.Exec(`DROP TABLE IF EXISTS sessions`)
+		conn.Exec(`
+		CREATE TABLE sessions (
+		    agent_type TEXT NOT NULL DEFAULT 'copilot',
+		    id TEXT NOT NULL,
+		    cwd TEXT NOT NULL DEFAULT '',
+		    repository TEXT NOT NULL DEFAULT '',
+		    branch TEXT NOT NULL DEFAULT '',
+		    project TEXT NOT NULL DEFAULT '',
+		    name TEXT NOT NULL DEFAULT '',
+		    model_name TEXT NOT NULL DEFAULT '',
+		    turn_count INTEGER NOT NULL DEFAULT 0,
+		    message_count INTEGER NOT NULL DEFAULT 0,
+		    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+		    PRIMARY KEY (agent_type, id)
+		)`)
+		conn.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_type)`)
+		conn.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC)`)
+		// Clear watermarks so the indexer backfills session metadata.
+		conn.Exec(`DELETE FROM index_watermarks`)
 	}
 
 	_, err = conn.Exec(

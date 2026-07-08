@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -18,28 +19,95 @@ type TurnSearchResult struct {
 	Match     string `json:"match"` // 纯文本 snippet，无 HTML 标签
 }
 
-// SearchTurns 执行 FTS5 trigram 全文搜索。
+// SearchTurns 执行全文搜索。
 //
 // 规则：
-//   - q < 3 rune 时返回空（trigram 需要至少 3 字符才有意义）
-//   - 用双引号包裹 q，转义内部双引号，防止 FTS 语法注入
-//   - 每个 (agent_type, session_id) 只返回最佳一条（ROW_NUMBER 取 rank ASC 第一）
-//   - role='meta' 行参与 FTS 但不作为 snippet 展示
+//   - q >= 3 rune 时使用 FTS5 trigram MATCH（trigram tokenizer 需要至少 3 字符）
+//   - q < 3 rune 时回退到 LIKE '%q%'（满足 1-2 字符中文搜索如 "折叠"）
+//   - 每个 (agent_type, session_id) 只返回最佳一条
+//   - role='meta' 行参与搜索但不作为 snippet 展示
 //   - limit 由调用方限制（建议 30）
 func (db *DB) SearchTurns(q string, limit int) ([]TurnSearchResult, error) {
-	if utf8.RuneCountInString(q) < 3 {
+	if q == "" {
 		return nil, nil
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
 
-	ftsQuery := prepareFTSQuery(q)
+	short := utf8.RuneCountInString(q) < 3
 
-	// 两层 CTE：
-	//   all_hits  — FTS 全部命中行（含 meta）
-	//   best_hits — 每个 (agent_type, session_id) 取 role != 'meta' 的最佳行；
-	//               若该 session 只在 meta 行命中，取 meta 行
+	var rows *sql.Rows
+	var err error
+
+	if short {
+		rows, err = db.searchLike(q, limit)
+	} else {
+		rows, err = db.searchFTS(q, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []TurnSearchResult
+	for rows.Next() {
+		var agentType, sessionID, content string
+		var rank float64
+		if err := rows.Scan(&agentType, &sessionID, &content, &rank); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		results = append(results, TurnSearchResult{
+			AgentType: agentType,
+			SessionID: sessionID,
+			Match:     snippetAround(content, q, searchSnippetRadius),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// searchLike performs a LIKE-based search for short queries (< 3 runes).
+func (db *DB) searchLike(q string, limit int) (*sql.Rows, error) {
+	pattern := "%" + q + "%"
+	query := `
+		WITH content_hits AS (
+		    SELECT agent_type, session_id, content, 1.0 AS fts_rank,
+		           ROW_NUMBER() OVER (
+		               PARTITION BY agent_type, session_id
+		               ORDER BY rowid ASC
+		           ) AS rn
+		    FROM turn_texts
+		    WHERE role != 'meta' AND content LIKE ?
+		),
+		meta_only AS (
+		    SELECT DISTINCT agent_type, session_id, content, 1.0 AS fts_rank
+		    FROM turn_texts
+		    WHERE role = 'meta' AND content LIKE ?
+		      AND NOT EXISTS (
+		          SELECT 1 FROM content_hits c
+		          WHERE c.agent_type = turn_texts.agent_type AND c.session_id = turn_texts.session_id
+		      )
+		),
+		combined AS (
+		    SELECT agent_type, session_id, content, fts_rank
+		    FROM content_hits WHERE rn = 1
+		    UNION ALL
+		    SELECT agent_type, session_id, content, fts_rank
+		    FROM meta_only
+		)
+		SELECT agent_type, session_id, content, fts_rank
+		FROM combined
+		ORDER BY session_id ASC
+		LIMIT ?`
+	return db.conn.Query(query, pattern, pattern, limit)
+}
+
+// searchFTS performs FTS5 trigram search for queries >= 3 runes.
+func (db *DB) searchFTS(q string, limit int) (*sql.Rows, error) {
+	ftsQuery := prepareFTSQuery(q)
 	query := `
 		WITH all_hits AS (
 		    SELECT tt.agent_type,
@@ -71,8 +139,7 @@ func (db *DB) SearchTurns(q string, limit int) ([]TurnSearchResult, error) {
 		),
 		combined AS (
 		    SELECT agent_type, session_id, content, fts_rank
-		    FROM content_hits
-		    WHERE rn = 1
+		    FROM content_hits WHERE rn = 1
 		    UNION ALL
 		    SELECT agent_type, session_id, content, fts_rank
 		    FROM meta_only
@@ -81,30 +148,7 @@ func (db *DB) SearchTurns(q string, limit int) ([]TurnSearchResult, error) {
 		FROM combined
 		ORDER BY fts_rank ASC, session_id ASC
 		LIMIT ?`
-
-	rows, err := db.conn.Query(query, ftsQuery, limit)
-	if err != nil {
-		return nil, fmt.Errorf("search: %w", err)
-	}
-	defer rows.Close()
-
-	var results []TurnSearchResult
-	for rows.Next() {
-		var agentType, sessionID, content string
-		var rank float64
-		if err := rows.Scan(&agentType, &sessionID, &content, &rank); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-		results = append(results, TurnSearchResult{
-			AgentType: agentType,
-			SessionID: sessionID,
-			Match:     snippetAround(content, q, searchSnippetRadius),
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return results, nil
+	return db.conn.Query(query, ftsQuery, limit)
 }
 
 // prepareFTSQuery 将用户原始输入包裹为 FTS5 短语查询，防止特殊字符被解析为 FTS 语法。
