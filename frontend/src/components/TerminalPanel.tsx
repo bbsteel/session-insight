@@ -391,9 +391,21 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         // making the group header untoggable.
         const sorted = [...foldRanges].sort((a, b) =>
           a.level === 'group' ? 1 : b.level === 'group' ? -1 : 0)
+        const buf = term.buffer.active
         for (const f of sorted) {
           const row = toDisplayLine(f.headerDisplay)
-          interactionMap.set(row, { matcher: foldToggleMatcher as TerminalLineMatcher<unknown>, data: f, matchIndex: 0 })
+          const entry = { matcher: foldToggleMatcher as TerminalLineMatcher<unknown>, data: f, matchIndex: 0 }
+          interactionMap.set(row, entry)
+          // An untruncated header ("▶ • Name  <full summary>") can soft-wrap over
+          // several display rows. Make every one clickable so a click on the
+          // wrapped summary/badge toggles the fold too. isWrapped rides xterm's
+          // own wrap state (AGENTS.md: no hand-rolled row math), so it also
+          // covers the extra row the badge may add.
+          for (let r = row + 1; r < buf.length; r++) {
+            const bl = buf.getLine(r)
+            if (!bl || !bl.isWrapped) break
+            interactionMap.set(r, entry)
+          }
         }
       }
 

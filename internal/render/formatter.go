@@ -5,9 +5,16 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf16"
 
 	"session-insight/internal/model"
 )
+
+// utf16Len returns the number of UTF-16 code units in s — i.e. the index a
+// JavaScript string uses (String.length / slice). The client splices the fold
+// badge into the header line at a backend-supplied offset, so the offset must
+// be in the client's UTF-16 space, not Go's byte space.
+func utf16Len(s string) int { return len(utf16.Encode([]rune(s))) }
 
 const maxStdoutLines = 10
 
@@ -114,6 +121,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		headerLogical int
 		bodyDisplay   int
 		bodyLogical   int
+		badgeOffset   int // UTF-16 index in the header line where the "(N 行)" badge goes
 	}
 	var openToolFold *toolFoldState
 	closeToolFold := func() {
@@ -141,6 +149,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 				"logical_start":  float64(f.bodyLogical),
 				"logical_end":    float64(tb.CurrentLogicalLine()), // exclusive
 				"header_logical": float64(f.headerLogical),
+				"badge_offset":   float64(f.badgeOffset),
 			},
 		})
 	}
@@ -265,7 +274,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			if openFold != nil && evt.Depth == 0 && p.ToolBullet && !model.IsEditTool(evt.ToolName) {
 				headerDisplay := tb.CurrentLine()
 				headerLogical := tb.CurrentLogicalLine()
-				bodyD, bodyL := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true)
+				bodyD, bodyL, badgeOff := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true)
 				openToolFold = &toolFoldState{
 					turnIndex:     evt.TurnIndex,
 					key:           fmt.Sprintf("tfold:%d:%d", evt.TurnIndex, headerDisplay),
@@ -274,6 +283,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 					headerLogical: headerLogical,
 					bodyDisplay:   bodyD,
 					bodyLogical:   bodyL,
+					badgeOffset:   badgeOff,
 				}
 			} else {
 				writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, false)
@@ -312,7 +322,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 18
+const FormatVersion int64 = 19
 
 // pairToolRuns reorders each contiguous tool run so every depth-0
 // ToolInvocation is immediately followed by its matching ToolResult (and the
@@ -698,7 +708,7 @@ func promoteBoxHeader(input map[string]any) (string, map[string]any) {
 // just past it — the caller folds [body … tool end) so only the header shows
 // when collapsed. Edit tools ignore asFoldHeader (they render diffs, no bullet)
 // and return (0, 0).
-func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool) (bodyDisplay, bodyLogical int) {
+func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool) (bodyDisplay, bodyLogical, headerBadgeOffset int) {
 	if model.IsEditTool(evt.ToolName) {
 		if evt.ToolName == "apply_patch" {
 			// apply_patch carries a raw patch string (under args/input/patch),
@@ -718,7 +728,7 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				writeEditDiff(p, sb, syn, prefix, bWidth)
 			}
 			if len(calls) > 0 {
-				return 0, 0
+				return 0, 0, 0
 			}
 			// Empty or malformed patch: fall through to generic tool box.
 		} else {
@@ -727,7 +737,7 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				onEditStart(filePath)
 			}
 			writeEditDiff(p, sb, evt, prefix, bWidth)
-			return 0, 0
+			return 0, 0, 0
 		}
 	}
 
@@ -749,11 +759,20 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 		}
 		sb.WriteString(prefix)
 		if asFoldHeader {
-			bullet := "▼ • " + toolName
+			// Emit the name and the summary as two independent SGR runs so the
+			// client can splice the fold's "(N 行)" badge between them without any
+			// knowledge of this profile's byte shape: headerBadgeOffset marks the
+			// UTF-16 index just past the name run (right after its trailing reset),
+			// which is where the badge goes. Keeping name/summary in separate runs
+			// means the badge needs no style reopen — the summary run restyles
+			// itself. This is the ONLY place that encodes "where chrys's tool
+			// header ends"; the client stays profile-agnostic.
+			nameRun := styled("▼ • "+toolName, ColFg, ColNone, true, false)
+			sb.WriteString(nameRun)
+			headerBadgeOffset = utf16Len(prefix) + utf16Len(nameRun)
 			if s := toolSummary(purpose, evt.ToolInput); s != "" {
-				bullet += "  " + s
+				sb.WriteString(styled("  "+s, ColFg, ColNone, true, false))
 			}
-			sb.WriteString(styled(bullet, ColFg, ColNone, true, false))
 		} else {
 			sb.WriteString(styled("• "+toolName, ColFg, ColNone, true, false))
 		}
@@ -772,7 +791,7 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 		writeBoxRow(p, sb, prefix, il, bWidth, borderColor, ColFg)
 	}
 	writeBoxBottom(p, sb, prefix, "", bWidth, borderColor)
-	return bodyDisplay, bodyLogical
+	return bodyDisplay, bodyLogical, headerBadgeOffset
 }
 
 // toolSummary returns a compact one-line description for a tool's fold header:

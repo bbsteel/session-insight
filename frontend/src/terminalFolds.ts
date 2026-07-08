@@ -19,6 +19,7 @@ export interface FoldRange {
   displayEnd: number
   logicalStart: number // body extent, logical lines [start, end)
   logicalEnd: number
+  badgeOffset: number // UTF-16 index in the header line to splice the "(N 行)" badge at; -1 = append at end
 }
 
 export function foldsFromPositions(positions: MiniMapPosition[] | undefined | null): FoldRange[] {
@@ -46,6 +47,7 @@ export function foldsFromPositions(positions: MiniMapPosition[] | undefined | nu
       displayEnd,
       logicalStart,
       logicalEnd,
+      badgeOffset: num('badge_offset') ?? -1,
     })
   }
   return folds.sort((a, b) => a.displayStart - b.displayStart)
@@ -93,20 +95,29 @@ export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: Rea
       && (g.displayStart < f.displayStart || f.displayEnd < g.displayEnd)))
     .sort((a, b) => a.displayStart - b.displayStart)
 
-  // Hidden display-row count per collapsed fold, shown as "(N 行)" on its header.
-  const hiddenByHeaderLogical = new Map<number, number>()
-  for (const f of active) hiddenByHeaderLogical.set(f.headerLogical, f.displayEnd - f.displayStart)
+  // Hidden display-row count + badge splice offset per collapsed fold, keyed by
+  // header logical line. The offset comes from the backend profile that rendered
+  // the header (it alone knows where its tool name ends), so composition stays
+  // profile-agnostic — no byte-shape sniffing here.
+  const badgeByHeaderLogical = new Map<number, { hidden: number; offset: number }>()
+  for (const f of active) badgeByHeaderLogical.set(f.headerLogical, { hidden: f.displayEnd - f.displayStart, offset: f.badgeOffset })
 
   let text = ansi
   if (active.length > 0) {
     const lines = ansi.split('\n')
     const out: string[] = []
     let cursor = 0
-    const foldHeader = (line: string, hidden: number): string => {
-      // Flip ▼→▶ and append the hidden-row count before the line's trailing
-      // reset so the badge inherits no stray color.
+    const foldHeader = (line: string, hidden: number, offset: number): string => {
+      // Flip ▼→▶ and show the hidden-row count. The badge (dim, self-reset) is
+      // spliced at the backend-supplied UTF-16 offset — placed just past the tool
+      // name so it stays on the header's first display row next to the arrow even
+      // when a long untruncated summary soft-wraps. offset < 0 (e.g. group
+      // headers) → append before the line's trailing reset.
       const flipped = line.replace('▼', '▶')
       const badge = `\x1b[2m (${hidden} 行)\x1b[0m`
+      if (offset >= 0 && offset <= flipped.length) {
+        return flipped.slice(0, offset) + badge + flipped.slice(offset)
+      }
       const resetAt = flipped.lastIndexOf('\x1b[0m')
       return resetAt >= 0
         ? flipped.slice(0, resetAt + 4) + badge
@@ -114,8 +125,8 @@ export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: Rea
     }
     for (const f of [...active].sort((a, b) => a.logicalStart - b.logicalStart)) {
       for (let i = cursor; i < f.logicalStart && i < lines.length; i++) {
-        const hidden = hiddenByHeaderLogical.get(i)
-        out.push(hidden !== undefined ? foldHeader(lines[i], hidden) : lines[i])
+        const b = badgeByHeaderLogical.get(i)
+        out.push(b !== undefined ? foldHeader(lines[i], b.hidden, b.offset) : lines[i])
       }
       cursor = Math.max(cursor, f.logicalEnd)
     }
