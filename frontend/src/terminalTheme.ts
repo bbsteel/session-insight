@@ -86,9 +86,6 @@ const THEMES: Record<TerminalThemeName, ITheme> = { dark: DARK, light: LIGHT }
 // native structure, the skin provides the native colors. Chrys palette is
 // sampled from its TUI: orange tool frames, pink user, purple headings/banner.
 
-// Bold text on slots 0-7 renders from slots 8-15 (xterm's
-// drawBoldTextInBrightColors), so a skin recoloring a base slot must mirror
-// it onto the bright pair it can legitimately shadow (3→11, 6→14).
 const CHRYS_DARK: Partial<ITheme> = {
   yellow: '#ff9e64', // warnings + Tools group header → orange
   blue: '#ff9e64', // tool box borders → orange

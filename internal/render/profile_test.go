@@ -135,10 +135,13 @@ func TestFoldAndTruncPositions(t *testing.T) {
 	if ls != fold.LineStart+1 {
 		t.Errorf("fold body should start right after header: %d vs %d", ls, fold.LineStart)
 	}
-	// Everything in the body must be tool content; the line after the body
-	// is the "done" text block (with its ◇ header).
-	if !strings.Contains(lines[le], "◇") {
-		t.Errorf("line after fold body should be the assistant header, got %q", lines[le])
+	// Everything in the body must be tool content. A blank separator line
+	// is emitted before the ◇ header, so le is the blank and le+1 is the header.
+	if lines[le] != "" {
+		t.Errorf("line after fold body should be blank separator, got %q", lines[le])
+	}
+	if !strings.Contains(lines[le+1], "◇") {
+		t.Errorf("line after blank separator should be the assistant header, got %q", lines[le+1])
 	}
 	if trunc.LineStart <= fold.LineStart || trunc.LineStart >= le {
 		t.Errorf("trunc line %d should sit inside fold body (%d, %d)", trunc.LineStart, fold.LineStart, le)

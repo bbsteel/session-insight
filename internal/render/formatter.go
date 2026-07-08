@@ -173,6 +173,9 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		case "ThinkingEnd":
 		case "TextChunk":
 			if p.AssistantHeader && evt.Depth == 0 && prevDepth0Type != "TextChunk" {
+				if prevDepth0Type != "" {
+					tb.WriteString("\n")
+				}
 				writeAssistantHeader(tb, agentLabel)
 			}
 			writeTextChunk(tb, evt, prefix, cols)
@@ -215,7 +218,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 6
+const FormatVersion int64 = 10
 
 // toolRun summarizes one contiguous run of tool events for the group header.
 // endIdx is the index just past the run's last event.
@@ -321,11 +324,6 @@ func computeToolRuns(p *Profile, events []model.RenderEvent) map[int]toolRun {
 	return starts
 }
 
-// Bold on slots 0-7 gets remapped by xterm's drawBoldTextInBrightColors to
-// slots 8-15, which this palette repurposes (12 = banner, 10 = diff bg…).
-// Headers therefore either use a slot whose bright counterpart mirrors it in
-// every theme (3→11 for the group header) or skip bold (assistant header:
-// slot 2's bright pair is the diff-add background tint).
 func writeToolGroupHeader(p *Profile, sb *trackingBuilder, g toolRun) {
 	label := fmt.Sprintf("▼ Tools (%d/%d)", g.succeeded, g.total)
 	if p.GroupHeaderStats && len(g.stats) > 0 {
@@ -1030,9 +1028,10 @@ func wrapInBox(il string, contentWidth int) []string {
 // full Markdown block-level and inline formatting.
 //
 // Block-level (detected at line start):
-//   - ATX headings: # / ## / ### ... ######
+//   - ATX headings: # / ## / ### ... ###### → stripped marker, bold white
 //   - Horizontal rules: ---, ***, ___ (3+ same chars, optional spaces)
 //   - Blockquotes: > text
+//   - GFM tables: lines starting with |; separator rows become thin rules
 //   - Unordered lists: - / * / + followed by space
 //   - Ordered lists: N. followed by space
 //
@@ -1041,8 +1040,10 @@ func wrapInBox(il string, contentWidth int) []string {
 func renderMarkdownLine(line string, defaultFg Color) string {
 	trimmed := strings.TrimSpace(line)
 
-	if headingLevel(trimmed) > 0 {
-		return styled(line, ColSkill, ColNone, true, false)
+	if lvl := headingLevel(trimmed); lvl > 0 {
+		// Strip "##… " marker; ColSkill (violet) + bold — safe because
+		// drawBoldTextInBrightColors is disabled, so no palette-slot remap.
+		return styled(trimmed[lvl+1:], ColSkill, ColNone, true, false)
 	}
 	if isHorizontalRule(trimmed) {
 		return fgWrap(strings.Repeat("─", TermWidth), ColMuted)

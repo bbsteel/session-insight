@@ -83,6 +83,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
       convertEol: true,
       disableStdin: true,
       screenReaderMode: false,
+      drawBoldTextInBrightColors: false,
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
