@@ -641,7 +641,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
       {!isMobile && (
         <div
           onPointerDown={beginResize}
-          className="absolute right-0 top-0 h-full w-1 cursor-grab hover:bg-[var(--accent-blue)]/30 active:cursor-grabbing"
+          className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[var(--accent-blue)]/30 active:cursor-col-resize"
           title="拖拽调整侧栏宽度"
         />
       )}
