@@ -124,6 +124,68 @@ func TestMarkdownTableWithInlineCodeCellsAlign(t *testing.T) {
 	}
 }
 
+func TestMarkdownTableFitsTermWidth(t *testing.T) {
+	// A table whose natural width far exceeds the terminal must shrink so xterm
+	// never soft-wraps a row (wrapping shatters the box-drawing grid on browser
+	// resize) AND must never drop text — wide cells wrap onto extra lines rather
+	// than truncate. Regression for both the content-width render (ignored
+	// termWidth) and the truncate-to-fit version that lost text.
+	const termWidth = 40
+	const longDesc = "this is a very long description that easily exceeds the terminal width"
+	text := "| ID | Description |\n| --- | --- |\n" +
+		"| 1 | " + longDesc + " |\n" +
+		"| 22 | short |"
+	lines := renderMarkdownDoc(text, ColFg, termWidth)
+	var tableLines []string
+	for _, ln := range lines {
+		p := stripANSI(ln)
+		if strings.ContainsAny(p, "┌│└├") {
+			tableLines = append(tableLines, p)
+		}
+	}
+	if len(tableLines) < 5 {
+		t.Fatalf("expected a full table, got:\n%s", strings.Join(lines, "\n"))
+	}
+	// Every row fits the terminal (else xterm soft-wraps it) and all rows share
+	// one visible width (borders line up).
+	w0 := displayWidth(tableLines[0])
+	for _, p := range tableLines {
+		if displayWidth(p) > termWidth {
+			t.Errorf("table row width %d exceeds termWidth %d (will wrap):\n%q", displayWidth(p), termWidth, p)
+		}
+		if displayWidth(p) != w0 {
+			t.Errorf("table rows differ in width (%d vs %d) — misaligned:\n%s",
+				w0, displayWidth(p), strings.Join(tableLines, "\n"))
+		}
+	}
+	// No text is lost: wrapping never truncates, so no ellipsis appears and the
+	// full long description survives across the wrapped lines. Reconstruct the
+	// Description column (the 3rd field of each data row) and compare ignoring
+	// spaces, which wrapping may shuffle across line boundaries.
+	body := strings.Join(tableLines, "\n")
+	if strings.Contains(body, "…") {
+		t.Errorf("wrapping must not truncate — found an ellipsis:\n%s", body)
+	}
+	var desc strings.Builder
+	for _, p := range tableLines {
+		if strings.ContainsAny(p, "┌┬┐├┼┤└┴┘") {
+			continue // border/separator rows
+		}
+		if cols := strings.Split(p, "│"); len(cols) >= 3 {
+			desc.WriteString(cols[2])
+		}
+	}
+	want := strings.ReplaceAll(longDesc, " ", "")
+	got := strings.ReplaceAll(desc.String(), " ", "")
+	if !strings.Contains(got, want) {
+		t.Errorf("description text lost in wrapping:\nwant substring %q\ngot %q", want, got)
+	}
+	// Narrow column stays intact.
+	if !strings.Contains(body, "22") {
+		t.Errorf("narrow ID column should not be truncated:\n%s", body)
+	}
+}
+
 func TestMarkdownNestedList(t *testing.T) {
 	text := "- top one\n  - nested a\n  - nested b\n- top two"
 	lines := mdLines(text)

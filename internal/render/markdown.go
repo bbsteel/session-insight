@@ -261,6 +261,11 @@ func (c *mdCtx) renderRawBlock(segs *text.Segments) {
 
 const maxTableCol = 60
 
+// minTableCol floors how narrow shrink-to-fit may squeeze a column. The
+// truncator reserves one column for the ellipsis, so 3 is the smallest width
+// that still shows "one glyph + …" rather than a bare ellipsis.
+const minTableCol = 3
+
 // tableCell keeps a cell's styled ANSI form alongside its *visible* width
 // (measured on the plain text). All column math is done on plain width; the
 // styled form is only sliced by an ANSI-aware truncator. Measuring width on the
@@ -313,9 +318,49 @@ func (c *mdCtx) renderTable(tbl *extast.Table) {
 		}
 	}
 
+	// Shrink to the terminal width so xterm never soft-wraps a row (which
+	// shatters the box-drawing grid on resize). A full row is
+	// Σ(widths[i]+2) verticals + (ncol+1) bars = Σwidths + 3·ncol + 1, so the
+	// content budget is termWidth − 3·ncol − 1. Columns already narrower than
+	// their fair share are left untouched; only the widest ones get shaved
+	// (down to minTableCol), and the overflowing cells then hit the existing
+	// truncator below. If even minTableCol per column can't fit (terminal
+	// narrower than the table's floor), pin to minTableCol and let xterm wrap
+	// as the last resort — no column layout can do better there.
+	if c.termWidth > 0 {
+		avail := c.termWidth - 3*ncol - 1
+		total := 0
+		for _, w := range widths {
+			total += w
+		}
+		floor := minTableCol
+		if avail < ncol*floor {
+			for i := range widths {
+				if widths[i] > floor {
+					widths[i] = floor
+				}
+			}
+		} else {
+			for total > avail {
+				// Reduce the current widest column that is still above the floor.
+				widest := -1
+				for i, w := range widths {
+					if w > floor && (widest < 0 || w > widths[widest]) {
+						widest = i
+					}
+				}
+				if widest < 0 {
+					break
+				}
+				widths[widest]--
+				total--
+			}
+		}
+	}
+
 	// border draws a full-width horizontal rule with the given corner/junction
-	// glyphs (top: ┌┬┐, header split: ├┼┤, bottom: └┴┘). Without the top and
-	// bottom rules the table read as loose columns with a floating header line.
+	// glyphs (top: ┌┬┐, row split: ├┼┤, bottom: └┴┘). Once cells wrap onto
+	// several lines a rule between every row (a full grid) keeps them legible.
 	border := func(left, mid, right string) string {
 		var sb strings.Builder
 		sb.WriteString(left)
@@ -329,59 +374,105 @@ func (c *mdCtx) renderTable(tbl *extast.Table) {
 		return fgWrap(sb.String(), ColMuted)
 	}
 
+	bar := fgWrap("│", ColMuted)
 	c.pushLine(border("┌", "┬", "┐"))
 	for ri, row := range rows {
-		var sb strings.Builder
-		sb.WriteString(fgWrap("│", ColMuted))
+		// Wrap each cell to its column width so no text is ever lost (the old
+		// behaviour truncated with an ellipsis). The row's height is its tallest
+		// wrapped cell; shorter cells pad with blank lines. Header cells wrap the
+		// plain text then re-style each line, so the outer bold/violet isn't
+		// cancelled by a cell's own inline resets.
+		cellLines := make([][]string, ncol)
+		height := 1
 		for i := 0; i < ncol; i++ {
-			var content string
-			vis := 0
-			if i < len(row) {
-				cell := row[i]
-				if isHeader[ri] {
-					// Header: re-style from the plain text so the outer
-					// bold/violet isn't cancelled by the cell's own resets.
-					p := cell.plain
-					if cell.width > widths[i] {
-						p = truncateToWidth(p, widths[i])
-					}
-					content = styled(p, ColSkill, ColNone, true, false)
-					vis = displayWidth(p)
-				} else if cell.width > widths[i] {
-					content = truncateStyledToWidth(cell.styled, widths[i])
-					vis = displayWidth(stripANSI(content))
-				} else {
-					content = cell.styled
-					vis = cell.width
+			if i >= len(row) {
+				cellLines[i] = []string{""}
+				continue
+			}
+			if isHeader[ri] {
+				var styledLines []string
+				for _, p := range wrapPlainToWidth(row[i].plain, widths[i]) {
+					styledLines = append(styledLines, styled(p, ColSkill, ColNone, true, false))
 				}
+				cellLines[i] = styledLines
+			} else {
+				cellLines[i] = wrapStyledToWidth(row[i].styled, widths[i])
 			}
-			pad := widths[i] - vis
-			if pad < 0 {
-				pad = 0
+			if len(cellLines[i]) > height {
+				height = len(cellLines[i])
 			}
-			sb.WriteString(" " + content + strings.Repeat(" ", pad) + " ")
-			sb.WriteString(fgWrap("│", ColMuted))
 		}
-		c.pushLine(sb.String())
-		if isHeader[ri] {
+		for k := 0; k < height; k++ {
+			var sb strings.Builder
+			sb.WriteString(bar)
+			for i := 0; i < ncol; i++ {
+				content := ""
+				if k < len(cellLines[i]) {
+					content = cellLines[i][k]
+				}
+				vis := displayWidth(stripANSI(content))
+				pad := widths[i] - vis
+				if pad < 0 {
+					pad = 0
+				}
+				sb.WriteString(" " + content + strings.Repeat(" ", pad) + " ")
+				sb.WriteString(bar)
+			}
+			c.pushLine(sb.String())
+		}
+		if ri < len(rows)-1 {
 			c.pushLine(border("├", "┼", "┤"))
 		}
 	}
 	c.pushLine(border("└", "┴", "┘"))
 }
 
-// truncateStyledToWidth shortens an ANSI-styled string to at most maxWidth
-// visible columns, appending an ellipsis. Escape sequences (\x1b[…m) are copied
-// through untouched and never counted or split, so styling stays intact and no
-// half-sequence ever reaches the terminal. A trailing reset guards against a
-// cut mid-span leaking color into the padding.
-func truncateStyledToWidth(s string, maxWidth int) string {
-	if maxWidth <= 1 {
-		return "…"
+// wrapPlainToWidth soft-wraps unstyled text into lines of at most maxWidth
+// display columns, breaking on the column boundary (there is no word notion for
+// CJK). An empty string yields a single empty line so a blank cell still
+// occupies one row.
+func wrapPlainToWidth(s string, maxWidth int) []string {
+	if maxWidth < 1 {
+		maxWidth = 1
 	}
-	budget := maxWidth - 1 // reserve one column for the ellipsis
-	var sb strings.Builder
+	if s == "" {
+		return []string{""}
+	}
+	var lines []string
+	remaining := s
+	for displayWidth(remaining) > maxWidth {
+		chunk, rest := splitAtWidth(remaining, maxWidth)
+		if chunk == "" { // a single rune wider than maxWidth (wide char, tiny col)
+			runes := []rune(remaining)
+			chunk = string(runes[0])
+			rest = string(runes[1:])
+		}
+		lines = append(lines, chunk)
+		remaining = rest
+	}
+	return append(lines, remaining)
+}
+
+// wrapStyledToWidth soft-wraps an ANSI-styled string into lines of at most
+// maxWidth *visible* columns. Escape sequences (\x1b[…m) are copied through
+// untouched, never counted toward width and never split. Each produced line
+// ends with a reset so color can't leak into the cell padding or the border,
+// and any style still active at a wrap point is re-opened at the start of the
+// next line so a span that spills across lines keeps its color.
+func wrapStyledToWidth(s string, maxWidth int) []string {
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	var lines []string
+	var cur strings.Builder    // current line being built
+	var active strings.Builder // SGR sequences still in effect (re-opened per line)
 	w := 0
+	flush := func() {
+		lines = append(lines, cur.String()+resetCode)
+		cur.Reset()
+		cur.WriteString(active.String()) // carry the active style onto the next line
+		w = 0
+	}
 	runes := []rune(s)
 	for i := 0; i < len(runes); {
 		if runes[i] == '\x1b' {
@@ -392,7 +483,13 @@ func truncateStyledToWidth(s string, maxWidth int) string {
 			if j < len(runes) {
 				j++ // include the 'm'
 			}
-			sb.WriteString(string(runes[i:j]))
+			esc := string(runes[i:j])
+			cur.WriteString(esc)
+			if esc == resetCode {
+				active.Reset()
+			} else {
+				active.WriteString(esc)
+			}
 			i = j
 			continue
 		}
@@ -400,16 +497,15 @@ func truncateStyledToWidth(s string, maxWidth int) string {
 		if isWideRune(runes[i]) {
 			rw = 2
 		}
-		if w+rw > budget {
-			break
+		if w+rw > maxWidth {
+			flush()
 		}
-		sb.WriteRune(runes[i])
+		cur.WriteRune(runes[i])
 		w += rw
 		i++
 	}
-	sb.WriteString(resetCode)
-	sb.WriteString("…")
-	return sb.String()
+	lines = append(lines, cur.String()+resetCode)
+	return lines
 }
 
 // ── Inline ───────────────────────────────────────────────────────────────────

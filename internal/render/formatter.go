@@ -218,7 +218,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 13
+const FormatVersion int64 = 14
 
 // toolRun summarizes one contiguous run of tool events for the group header.
 // endIdx is the index just past the run's last event.
