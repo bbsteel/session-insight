@@ -119,11 +119,12 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 func buildTurnTexts(sess model.Session, detail *model.SessionDetail) []db.TurnText {
 	var texts []db.TurnText
 
-	// meta 行：会话名称 + repo（合并便于统一 FTS）
+	// meta 行：会话名称 + repo + session ID（合并便于统一 FTS）
 	meta := sess.Name
 	if sess.Repository != "" {
 		meta += " " + sess.Repository
 	}
+	meta += " " + sess.ID
 	if meta != "" {
 		texts = append(texts, db.TurnText{
 			TurnIndex: -1,

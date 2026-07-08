@@ -260,7 +260,8 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
       const branch = (s.branch || '').toLowerCase()
       const agent = (s.agent_type || '').toLowerCase()
       const preview = (s.preview_text || '').toLowerCase()
-      if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !preview.includes(q)) return false
+      const sid = (s.id || '').toLowerCase()
+      if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !preview.includes(q) && !sid.includes(q)) return false
     }
     return true
   }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter])
