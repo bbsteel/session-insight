@@ -22,10 +22,9 @@ const PROGRESS_ROW_TEXT = '推理中…'
 const PROGRESS_SCAN_ROWS = 400
 
 // Diagnostic instrumentation for the intermittent "scroll → blank screen,
-// recovers after a few clicks" symptom. Off by default; enable in DevTools
-// with `localStorage.setItem('si-term-debug','1')` then reopen the session.
-// Logs are prefixed [si-term] so they're easy to filter. This is observation
-// only — no behaviour change — so the cause can be pinned down before fixing.
+// recovers after a few clicks" symptom. Logs are prefixed [si-term] so they
+// can be filtered in DevTools. This is observation only — no behaviour
+// change — so the cause can be pinned down before fixing.
 //
 // The blank symptom has only been seen on Windows (chrys/opencode sessions
 // there), so every debug line carries a platform tag (win32 / darwin / linux)
@@ -36,10 +35,15 @@ const PROGRESS_SCAN_ROWS = 400
 // briefly report a 0×0 content rect mid-scroll. The platform tag plus the
 // existing scroll/resize/resize-zero-detected/selection-change lines let a
 // recorded Windows-only repro reveal which path is the trigger.
-const TERM_DEBUG = typeof localStorage !== 'undefined' && localStorage.getItem('si-term-debug') === '1'
+//
+// Auto-enable on Windows so a repro doesn't require typing anything first;
+// other platforms still need localStorage.setItem('si-term-debug','1') to
+// avoid spamming Linux/macOS users. To silence the Windows auto-enable,
+// localStorage.setItem('si-term-debug','0').
+//
 // Best-effort platform tag. navigator.userAgentData is the modern source
-// but absent from this lib.dom.d.ts; read via a shallow cast, fall back to UA
-// sniff. Only used for labelling debug logs, never for gating behaviour.
+// but absent from this lib.dom.dts; read via a shallow cast, fall back to UA
+// sniff. Only used for labelling/gating debug logs, never for behaviour.
 const TEMP_PLATFORM: string = (() => {
   if (typeof navigator === 'undefined') return 'unknown'
   const ua = navigator.userAgent || ''
@@ -49,6 +53,13 @@ const TEMP_PLATFORM: string = (() => {
   if (low === 'macos' || /mac/i.test(ua)) return 'darwin'
   if (low === 'linux' || /linux|X11/i.test(ua)) return 'linux'
   return ua || 'unknown'
+})()
+const TERM_DEBUG = (() => {
+  if (typeof localStorage === 'undefined') return false
+  const flag = localStorage.getItem('si-term-debug')
+  if (flag === '1') return true
+  if (flag === '0') return false
+  return TEMP_PLATFORM === 'win32'
 })()
 function dbg(tag: string, info?: Record<string, unknown>) {
   if (!TERM_DEBUG) return
