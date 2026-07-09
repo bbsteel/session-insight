@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"session-insight/internal/db"
+	"session-insight/internal/model"
 	"session-insight/internal/reader"
 )
 
@@ -78,7 +79,7 @@ func TestRealSearchPath_Timing(t *testing.T) {
 					AgentType: r.AgentType,
 					Project:   meta.project,
 					Name:      meta.name,
-					UpdatedAt: meta.updatedAt.Format("2006-01-02T15:04:05Z"),
+					UpdatedAt: model.FormatTime(meta.updatedAt),
 					Match:     r.Match,
 				})
 			}

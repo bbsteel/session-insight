@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"session-insight/internal/model"
 )
 
 // SessionMeta is the minimal metadata needed for search result enrichment.
@@ -30,8 +32,8 @@ func (db *DB) UpsertSessionMeta(agentType, id, cwd, repository, branch, project,
 		     updated_at = excluded.updated_at`,
 		agentType, id, cwd, repository, branch, project, name, modelName,
 		turnCount, messageCount,
-		createdAt.Format("2006-01-02T15:04:05Z"),
-		updatedAt.Format("2006-01-02T15:04:05Z"),
+		model.FormatTime(createdAt),
+		model.FormatTime(updatedAt),
 	)
 	return err
 }
@@ -65,7 +67,7 @@ func (db *DB) GetSessionMetas(keys []struct{ AgentType, SessionID string }) (map
 		if err := rows.Scan(&agentType, &sessionID, &project, &name, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan session meta: %w", err)
 		}
-		updatedAt, _ := time.Parse("2006-01-02T15:04:05Z", updatedStr)
+		updatedAt, _ := time.Parse(time.RFC3339, updatedStr)
 		result[agentType+"\x00"+sessionID] = SessionMeta{
 			Project:   project,
 			Name:      name,

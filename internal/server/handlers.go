@@ -108,8 +108,8 @@ func sessionToSummary(s model.Session) SessionSummary {
 		MessageCount: s.MessageCount,
 		IsLive:       model.IsSessionLive(s.UpdatedAt),
 		Bookmarked:   s.Bookmarked,
-		CreatedAt:    s.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:    s.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:    model.FormatTime(s.CreatedAt),
+		UpdatedAt:    model.FormatTime(s.UpdatedAt),
 	}
 }
 
@@ -641,7 +641,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		meta := metas[r.AgentType+"\x00"+r.SessionID]
 		updatedAt := ""
 		if !meta.UpdatedAt.IsZero() {
-			updatedAt = meta.UpdatedAt.Format("2006-01-02T15:04:05Z")
+			updatedAt = model.FormatTime(meta.UpdatedAt)
 		}
 		out = append(out, result{
 			SessionID: r.SessionID,
