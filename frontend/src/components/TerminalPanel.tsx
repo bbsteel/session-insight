@@ -21,6 +21,20 @@ const PROGRESS_ROW_TEXT = '推理中…'
 // up from the bottom to find it (historical sessions have none).
 const PROGRESS_SCAN_ROWS = 400
 
+// Diagnostic instrumentation for the intermittent "scroll → blank screen,
+// recovers after a few clicks" symptom. Off by default; enable in DevTools
+// with `localStorage.setItem('si-term-debug','1')` then reopen the session.
+// Logs are prefixed [si-term] so they're easy to filter. This is observation
+// only — no behaviour change — so the cause can be pinned down before fixing.
+const TERM_DEBUG = typeof localStorage !== 'undefined' && localStorage.getItem('si-term-debug') === '1'
+function dbg(tag: string, info?: Record<string, unknown>) {
+  if (!TERM_DEBUG) return
+  const t = (performance.now() / 1000).toFixed(3)
+  const payload = info ?? {}
+  // eslint-disable-next-line no-console
+  console.debug('[si-term]', t, tag, payload)
+}
+
 interface Props {
   sessionId: string
   agentType?: string
@@ -202,10 +216,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           // fold flickers the terminal blank for a couple of frames.
           const webgl = new WebglAddon(true)
           webgl.onContextLoss(() => {
+            dbg('webgl-context-loss')
             webgl.dispose()
             setWebglDegraded(true)
           })
           term.loadAddon(webgl)
+          dbg('webgl-loaded', { cols: term.cols, rows: term.rows })
         } catch {
           webglOk = false
         }
@@ -214,12 +230,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
 
       fitAddon.fit()
       currentCols = term.cols
+      dbg('initial-fit', { cols: term.cols, rows: term.rows, containerW: container.clientWidth, containerH: container.clientHeight })
 
       const xtermCanvas = container.querySelector<HTMLCanvasElement>('.xterm-screen canvas')
       const dpr = window.devicePixelRatio || 1
       const cellHeight = xtermCanvas && term.rows > 0
         ? xtermCanvas.height / dpr / term.rows
         : TERMINAL_LINE_HEIGHT
+      dbg('open-done', { webglDetected: !!xtermCanvas, canvasW: xtermCanvas?.width, canvasH: xtermCanvas?.height, cellHeight })
 
       container.style.position = 'relative'
 
@@ -454,42 +472,49 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         }
       }
 
-      const snapshotTerminal = () => {
-        removeSnapshot?.()
-        removeSnapshot = null
-        const screen = container.querySelector<HTMLElement>('.xterm')
-        if (!screen) return
-        let snap: HTMLElement
-        try {
-          snap = screen.cloneNode(true) as HTMLElement
-          // Canvas pixels (canvas/webgl renderers) don't survive cloneNode;
-          // copy them explicitly. No-op under the DOM renderer.
-          const srcCanvases = screen.querySelectorAll('canvas')
-          const dstCanvases = snap.querySelectorAll('canvas')
-          srcCanvases.forEach((src, i) => {
-            const dst = dstCanvases[i]
-            if (!dst) return
-            dst.width = src.width
-            dst.height = src.height
-            dst.getContext('2d')?.drawImage(src, 0, 0)
-          })
-        } catch {
-          return
-        }
-        const wrapper = document.createElement('div')
-        const bg = term.options.theme?.background ?? '#1a1b26'
-        wrapper.style.cssText = `position:absolute;inset:0;overflow:hidden;z-index:5;pointer-events:none;background:${bg}`
-        wrapper.appendChild(snap)
-        container.appendChild(wrapper)
-        removeSnapshot = () => {
-          wrapper.remove()
-          removeSnapshot = null
-        }
+const snapshotTerminal = () => {
+      removeSnapshot?.()
+      removeSnapshot = null
+      const screen = container.querySelector<HTMLElement>('.xterm')
+      if (!screen) { dbg('snapshot-skip-no-screen'); return }
+      const snapshotAppliedAt = performance.now()
+      let snap: HTMLElement
+      try {
+        snap = screen.cloneNode(true) as HTMLElement
+        // Canvas pixels (canvas/webgl renderers) don't survive cloneNode;
+        // copy them explicitly. No-op under the DOM renderer.
+        const srcCanvases = screen.querySelectorAll('canvas')
+        const dstCanvases = snap.querySelectorAll('canvas')
+        srcCanvases.forEach((src, i) => {
+          const dst = dstCanvases[i]
+          if (!dst) return
+          dst.width = src.width
+          dst.height = src.height
+          dst.getContext('2d')?.drawImage(src, 0, 0)
+        })
+      } catch (e) {
+        dbg('snapshot-clone-error', { msg: String(e) })
+        return
       }
+      const wrapper = document.createElement('div')
+      const bg = term.options.theme?.background ?? '#1a1b26'
+      wrapper.style.cssText = `position:absolute;inset:0;overflow:hidden;z-index:5;pointer-events:none;background:${bg}`
+      wrapper.appendChild(snap)
+      container.appendChild(wrapper)
+      dbg('snapshot-applied', { appliedAt: snapshotAppliedAt })
+      removeSnapshot = () => {
+        const removedAt = performance.now()
+        wrapper.remove()
+        removeSnapshot = null
+        dbg('snapshot-removed', { holdMs: Math.round(removedAt - snapshotAppliedAt) })
+      }
+    }
 
       const writeComposed = (afterWrite?: () => void) => {
         if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
+        const rewriteStart = performance.now()
+        const wroteBytes = (foldView?.text ?? rawAnsi).length
         term.reset()
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
         term.write(foldView?.text ?? rawAnsi, () => {
@@ -500,7 +525,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
           queueMetrics()
           afterWrite?.()
           // Two frames: one for xterm's render, one to be past the paint.
-          requestAnimationFrame(() => requestAnimationFrame(() => removeSnapshot?.()))
+          let removedInRaf = false
+          requestAnimationFrame(() => requestAnimationFrame(() => { removeSnapshot?.(); removedInRaf = true }))
+          // Safety net: if the double-RAF never fires (tab backgrounded,
+          // rAF throttled by 0Hz display), drop the snapshot by the next
+          // macrotask so it can't permanently mask the terminal.
+          setTimeout(() => {
+            if (removeSnapshot && !removedInRaf) { dbg('snapshot-timeout-remove'); removeSnapshot() }
+          }, 250)
+          dbg('rewrite-done', { ms: Math.round(performance.now() - rewriteStart), bytes: wroteBytes, bufLen: term.buffer.active.length })
         })
       }
 
@@ -808,12 +841,32 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
         if (tooltipEl) tooltipEl.style.display = 'none'
         if (xtermScreen) xtermScreen.style.cursor = ''
         queueMetrics()
+        // Diagnose scroll→blank: coalesce leading-edge samples into a
+        // single debug line per animation frame so we don't spam.
+        if (TERM_DEBUG) {
+          const buf = term.buffer.active
+          const c = container.querySelector<HTMLElement>('.xterm-screen canvas')
+          dbg('scroll', {
+            viewportY: buf.viewportY, baseY: buf.baseY, bufLen: buf.length, rows: term.rows,
+            canvasW: c?.clientWidth, canvasH: c?.clientHeight,
+            snapshotActive: removeSnapshot !== null,
+          })
+        }
       })
 
-      observer = new ResizeObserver(() => {
+      observer = new ResizeObserver(entries => {
+        // 0×0 or out-of-view containers are the most likely scroll→blank
+        // trigger: xterm's fit() can clamp cols/rows to 0 while a parent
+        // scroll container briefly reports zero height, after which the
+        // WebGL renderer holds a cleared buffer until something forces a
+        // repaint (a click → focus does). Log the observed content rect so
+        // we can confirm or rule it out.
+        const er = entries[0]?.contentRect
+        dbg('resize', { w: er?.width, h: er?.height, containerW: container.clientWidth, containerH: container.clientHeight })
         fitAddon.fit()
         queueMetrics()
         const newCols = term.cols
+        if (er && (er.width === 0 || er.height === 0)) dbg('resize-zero-detected', { colsAfterFit: term.cols, rowsAfterFit: term.rows })
         if (newCols !== currentCols) {
           currentCols = newCols
           if (resizeDebounce) clearTimeout(resizeDebounce)

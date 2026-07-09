@@ -8,10 +8,17 @@ export interface PathCandidate {
   line: number | null
 }
 
-// Tokens containing at least one '/', optionally ~ or ./ prefixed, with an
-// optional :line suffix. Trailing punctuation that commonly wraps paths in
-// prose (quotes, brackets, commas) is excluded from the character class.
-const PATH_TOKEN = /(?:~|\.{1,2})?\/?[\w@+.-]+(?:\/[\w@+.-]+)+(?::\d+)?/g
+// Tokens containing at least one path separator — `/` (Unix) or `\` and `/`
+// (Windows) — optionally `~`/`./`/`../` prefixed, with an optional `:line`
+// suffix. Windows drive-absolute (`C:\…`, `C:/…`) and UNC (`\\server\share\…`)
+// forms get dedicated branches so the drive letter is preserved (the generic
+// branch would otherwise match a lone `C` and bail at the drive colon) and
+// backslash separators are recognised — without this, chrys/opencode sessions
+// recorded on Windows render file paths that the row-affordance matcher never
+// recognises, so plain rows mentioning files aren't clickable. Trailing
+// punctuation that commonly wraps paths in prose (quotes, brackets, commas) is
+// excluded from the character classes.
+const PATH_TOKEN = /(?:[A-Za-z]:[\\/][\w@+.-]+(?:[\\/][\w@+.-]+)*|\\\\[\w@+.-]+(?:[\\/][\w@+.-]+)+|(?:~|\.{1,2})?[\\/]?[\w@+.-]+(?:[\\/][\w@+.-]+)+)(?::\d+)?/g
 
 // Pseudo-filesystem paths (shell redirections like 2>/dev/null, /proc/…)
 // are never files the user wants to open.
@@ -47,7 +54,9 @@ export function parseExtList(raw: string): Set<string> | null {
 
 function candidateAllowed(path: string, exts: Set<string> | null): boolean {
   if (!exts) return true
-  const base = (path.split('/').pop() ?? '').toLowerCase()
+  // Split on both separators so Windows paths (`C:\Users\foo\bar.ts`) yield the
+  // basename rather than the whole string.
+  const base = (path.split(/[\\/]/).pop() ?? '').toLowerCase()
   const dot = base.lastIndexOf('.')
   return dot > 0 ? exts.has(base.slice(dot + 1)) : exts.has(base)
 }

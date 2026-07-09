@@ -25,6 +25,17 @@ assertEq(extractPathAt('uv venv --help 2>/dev/null | head -3', null), null, 'she
 assertEq(extractPathAt('cat /proc/self/status /sys/class/net', null), null, 'pseudo filesystems excluded')
 assertEq(extractPathAt('log to /dev/null but edit src/main.go', 30), { path: 'src/main.go', line: null }, 'real path survives next to /dev/null')
 
+// Windows paths: chrys/opencode sessions recorded on Windows store backslash
+// (C:\…) and sometimes forward-slash (C:/…) forms. Both must keep the drive
+// letter and recognise backslash separators, otherwise plain rows mentioning
+// files get no click affordance.
+assertEq(extractPathAt('读取 C:\\Users\\foo\\main.go 完成', 6), { path: 'C:\\Users\\foo\\main.go', line: null }, 'windows backslash path under cursor')
+assertEq(extractPathAt('读取 C:/Users/foo/main.go 完成', 6), { path: 'C:/Users/foo/main.go', line: null }, 'windows forward-slash path keeps drive letter')
+assertEq(extractPathAt('edit C:\\Users\\foo\\bar.ts:123 done', 6), { path: 'C:\\Users\\foo\\bar.ts', line: 123 }, 'windows backslash path with :line')
+assertEq(extractPathAt('cd C:\\Users\\foo && vim a.vue', 4), { path: 'C:\\Users\\foo', line: null }, 'windows drive dir')
+assertEq(extractPathAt('cat src\\components\\App.tsx', 5), { path: 'src\\components\\App.tsx', line: null }, 'windows relative backslash path')
+assertEq(extractPathAt('share \\\\server\\share\\foo\\bar.go', 7), { path: '\\\\server\\share\\foo\\bar.go', line: null }, 'UNC path')
+
 if (failures > 0) {
   console.error(`${failures} failure(s)`)
   process.exit(1)
