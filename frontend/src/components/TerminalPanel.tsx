@@ -119,6 +119,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
     termRef.current = term
 
     let disposeOnScroll: { dispose(): void } | null = null
+    let disposeOnSelectionChange: { dispose(): void } | null = null
     let observer: ResizeObserver | null = null
     let metricsBatcher: ReturnType<typeof createFrameBatcher<ScrollMetrics>> | null = null
     let disposed = false
@@ -854,6 +855,25 @@ const snapshotTerminal = () => {
         }
       })
 
+      disposeOnSelectionChange = term.onSelectionChange(() => {
+        // Selecting text is another reported trigger for the white-screen
+        // symptom. xterm redraws the viewport glpyhs to overlay selection
+        // styling; if the WebGL renderer's glyph atlas is stale or its
+        // canvas was concurrently resized, this redraw may paint the buffer
+        // clear and only a later click (force-repaint) restores it. Log the
+        // selection's buffer span plus the live canvas dimensions so a
+        // capture of logs around a real blank reveal what the renderer
+        // thinks the screen looks like at that instant.
+        if (!TERM_DEBUG) return
+        const sel = term.getSelection() // returns '' when selection cleared
+        const c = container.querySelector<HTMLElement>('.xterm-screen canvas')
+        dbg('selection-change', {
+          len: sel.length, snapshotActive: removeSnapshot !== null,
+          canvasW: c?.clientWidth, canvasH: c?.clientHeight,
+          cols: term.cols, rows: term.rows, webglDegraded,
+        })
+      })
+
       observer = new ResizeObserver(entries => {
         // 0×0 or out-of-view containers are the most likely scroll→blank
         // trigger: xterm's fit() can clamp cols/rows to 0 while a parent
@@ -889,6 +909,7 @@ const snapshotTerminal = () => {
       if (resizeDebounce) clearTimeout(resizeDebounce)
       observer?.disconnect()
       disposeOnScroll?.dispose()
+      disposeOnSelectionChange?.dispose()
       metricsBatcher?.cancel()
       const eventTarget = container.querySelector<HTMLElement>('.xterm-screen') ?? container
       if (onMouseMove) eventTarget.removeEventListener('mousemove', onMouseMove)
