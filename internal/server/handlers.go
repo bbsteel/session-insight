@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"session-insight/internal/analytics"
-	"session-insight/internal/db"
-	"session-insight/internal/reader"
-	"session-insight/internal/model"
-	"session-insight/internal/render"
+	"github.com/bbsteel/session-insight/internal/analytics"
+	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

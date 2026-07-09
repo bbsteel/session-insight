@@ -1,6 +1,6 @@
 package render
 
-import "session-insight/internal/model"
+import "github.com/bbsteel/session-insight/internal/model"
 
 // Profile is a per-agent terminal layout profile. The formatter has exactly
 // one rendering code path; a profile only parameterizes it (box charset,

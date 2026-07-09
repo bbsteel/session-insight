@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"session-insight/internal/model"
-	"session-insight/internal/render"
-	"session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/render"
+	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
 // RenderANSI implements reader.BaseSessionReader. It resolves the JSONL

@@ -1,6 +1,6 @@
 package shared
 
-import "session-insight/internal/model"
+import "github.com/bbsteel/session-insight/internal/model"
 
 // FilterEmptyTurns removes turns that have no user message, no assistant message,
 // and no tool calls (e.g. trailing empty user messages).

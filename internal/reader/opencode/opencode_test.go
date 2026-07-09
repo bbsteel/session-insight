@@ -11,8 +11,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"session-insight/internal/model"
-	"session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
 func setupTestDB(t *testing.T) (*OpenCodeReader, *sql.DB, func()) {

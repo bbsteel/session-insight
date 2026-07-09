@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // Codex reports inclusive semantics (cached_input ⊂ input, reasoning ⊂

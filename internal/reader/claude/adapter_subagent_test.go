@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 func TestParseClaudeRenderEventsWithSubagents(t *testing.T) {

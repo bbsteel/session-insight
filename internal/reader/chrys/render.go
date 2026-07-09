@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"session-insight/internal/model"
-	"session-insight/internal/render"
-	"session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/render"
+	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
 // RenderANSI implements reader.BaseSessionReader.

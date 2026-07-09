@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // hasFgColor checks that the output contains an indexed foreground ANSI code

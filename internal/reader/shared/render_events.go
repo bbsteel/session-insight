@@ -3,7 +3,7 @@ package shared
 import (
 	"strings"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // DropEmptyRenderTurns removes TurnBoundary+UserPrompt pairs for turns that carry

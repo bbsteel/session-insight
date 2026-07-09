@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"session-insight/internal/db"
-	"session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/reader"
 )
 
 func TestBuildEditorArgs(t *testing.T) {

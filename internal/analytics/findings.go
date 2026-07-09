@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // Finding is one conclusion-style waste pattern detected in a session,

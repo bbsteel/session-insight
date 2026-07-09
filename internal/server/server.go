@@ -3,8 +3,8 @@ package server
 import (
 	"net/http"
 
-	"session-insight/internal/db"
-	"session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/reader"
 )
 
 type Server struct {

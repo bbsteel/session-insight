@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // Sanitized replica of a real session.shutdown payload. The usage.* blocks

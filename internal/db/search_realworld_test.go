@@ -3,6 +3,8 @@
 package db
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -11,7 +13,8 @@ import (
 // production database for quick diagnosis. Not a pass/fail test — log output
 // is the deliverable.
 func TestRealWorld_SearchTiming(t *testing.T) {
-	db, err := Open("/home/user/.session-insight")
+	home, _ := os.UserHomeDir()
+	db, err := Open(filepath.Join(home, ".session-insight"))
 	if err != nil {
 		t.Skipf("production db not available: %v", err)
 	}

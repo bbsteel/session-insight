@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 func TestFindingsAmplificationAndConcentration(t *testing.T) {

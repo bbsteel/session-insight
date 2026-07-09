@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 func chrysEvents() []model.RenderEvent {

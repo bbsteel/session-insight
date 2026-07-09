@@ -3,7 +3,7 @@ package analytics
 import (
 	"testing"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 func copilotLikeDetail() *model.SessionDetail {

@@ -8,7 +8,7 @@ package analytics
 import (
 	"strings"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 type TurnToken struct {

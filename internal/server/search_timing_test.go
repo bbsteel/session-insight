@@ -4,16 +4,19 @@ package server
 
 import (
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"session-insight/internal/db"
-	"session-insight/internal/model"
-	"session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader"
 )
 
 func TestRealSearchPath_Timing(t *testing.T) {
-	database, err := db.Open("/home/user/.session-insight")
+	home, _ := os.UserHomeDir()
+	database, err := db.Open(filepath.Join(home, ".session-insight"))
 	if err != nil {
 		t.Skipf("production db not available: %v", err)
 	}

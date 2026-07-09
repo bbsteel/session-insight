@@ -1,6 +1,6 @@
 package reader
 
-import "session-insight/internal/model"
+import "github.com/bbsteel/session-insight/internal/model"
 
 type BaseSessionReader interface {
 	AgentType() string

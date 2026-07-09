@@ -1,4 +1,4 @@
-module session-insight
+module github.com/bbsteel/session-insight
 
 go 1.25
 

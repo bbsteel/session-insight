@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"session-insight/internal/reader/chrys"
-	"session-insight/internal/reader/claude"
-	"session-insight/internal/reader/codex"
-	"session-insight/internal/reader/copilot"
-	"session-insight/internal/reader/opencode"
+	"github.com/bbsteel/session-insight/internal/reader/chrys"
+	"github.com/bbsteel/session-insight/internal/reader/claude"
+	"github.com/bbsteel/session-insight/internal/reader/codex"
+	"github.com/bbsteel/session-insight/internal/reader/copilot"
+	"github.com/bbsteel/session-insight/internal/reader/opencode"
 )
 
 func Discover() []BaseSessionReader {

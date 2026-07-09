@@ -14,9 +14,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/yaml.v3"
 
-	"session-insight/internal/model"
-	"session-insight/internal/reader/shared"
-	"session-insight/internal/render"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 type CopilotReader struct {

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"session-insight/internal/db"
-	"session-insight/internal/model"
-	"session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader"
 )
 
 const IndexInterval = 3 * time.Minute

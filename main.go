@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"session-insight/internal/db"
-	"session-insight/internal/indexer"
-	"session-insight/internal/reader"
-	"session-insight/internal/server"
+	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/indexer"
+	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/server"
 )
 
 //go:embed frontend/dist

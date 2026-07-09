@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // SessionMeta is the minimal metadata needed for search result enrichment.

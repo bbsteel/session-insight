@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"session-insight/internal/model"
-	"session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
 // ChrysReader reads Chrys sessions from ~/.chrys/sessions/<id>/session.json.

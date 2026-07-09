@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // utf16Len returns the number of UTF-16 code units in s — i.e. the index a

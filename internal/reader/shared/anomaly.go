@@ -3,7 +3,7 @@ package shared
 import (
 	"math"
 
-	"session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // RunAnomalyDetection performs mean+3σ anomaly detection on turns.

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"session-insight/internal/model"
-	"session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
 type ClaudeReader struct {
