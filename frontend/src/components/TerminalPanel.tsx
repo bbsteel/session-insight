@@ -26,11 +26,34 @@ const PROGRESS_SCAN_ROWS = 400
 // with `localStorage.setItem('si-term-debug','1')` then reopen the session.
 // Logs are prefixed [si-term] so they're easy to filter. This is observation
 // only — no behaviour change — so the cause can be pinned down before fixing.
+//
+// The blank symptom has only been seen on Windows (chrys/opencode sessions
+// there), so every debug line carries a platform tag (win32 / darwin / linux)
+// and a captured log stream is self-identifying. On Windows the likely root
+// causes differ from Linux/macOS: WebGL2 repaint timing after wheel/HiDPI
+// scale changes behaves differently, selection styling forces a canvas
+// redraw that may not re-blit glyph-atlas rows, and ResizeObserver can
+// briefly report a 0×0 content rect mid-scroll. The platform tag plus the
+// existing scroll/resize/resize-zero-detected/selection-change lines let a
+// recorded Windows-only repro reveal which path is the trigger.
 const TERM_DEBUG = typeof localStorage !== 'undefined' && localStorage.getItem('si-term-debug') === '1'
+// Best-effort platform tag. navigator.userAgentData is the modern source
+// but absent from this lib.dom.d.ts; read via a shallow cast, fall back to UA
+// sniff. Only used for labelling debug logs, never for gating behaviour.
+const TEMP_PLATFORM: string = (() => {
+  if (typeof navigator === 'undefined') return 'unknown'
+  const ua = navigator.userAgent || ''
+  const aud = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
+  const low = (aud?.platform ?? '').toLowerCase()
+  if (low === 'windows' || /windows/i.test(ua)) return 'win32'
+  if (low === 'macos' || /mac/i.test(ua)) return 'darwin'
+  if (low === 'linux' || /linux|X11/i.test(ua)) return 'linux'
+  return ua || 'unknown'
+})()
 function dbg(tag: string, info?: Record<string, unknown>) {
   if (!TERM_DEBUG) return
   const t = (performance.now() / 1000).toFixed(3)
-  const payload = info ?? {}
+  const payload = { platform: TEMP_PLATFORM, ...(info ?? {}) }
   // eslint-disable-next-line no-console
   console.debug('[si-term]', t, tag, payload)
 }
@@ -120,6 +143,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, onFoldChang
 
     let disposeOnScroll: { dispose(): void } | null = null
     let disposeOnSelectionChange: { dispose(): void } | null = null
+    // DPR-change watcher is created inside the font-ready then() but torn
+    // down in the effect cleanup, so the handles live at effect scope.
+    let dprWatcher: MediaQueryList | null = null
+    let onDprChange: (() => void) | null = null
     let observer: ResizeObserver | null = null
     let metricsBatcher: ReturnType<typeof createFrameBatcher<ScrollMetrics>> | null = null
     let disposed = false
@@ -899,6 +926,30 @@ const snapshotTerminal = () => {
       })
       observer.observe(container)
 
+      // Windows-only signal: devicePixelRatio changes when the session
+      // window is dragged between monitors of different HiDPI scale (very
+      // common on Windows multi-monitor setups) or when the OS scale slider
+      // moves. xterm's WebGL renderer reallocates its atlas on DPR change
+      // and a mid-scroll change can leave the canvas cleared; this is a
+      // prime suspect for the Windows-only blank. matchMedia('(resolution:
+      // …dppx)') change fires reliably across DPR transitions.
+      let dprOld = window.devicePixelRatio || 1
+      if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+        dprWatcher = window.matchMedia(`(resolution: ${dprOld}dppx)`)
+        onDprChange = () => {
+          const now = window.devicePixelRatio || 1
+          dbg('dpr-change', { from: dprOld, to: now, snapshotActive: removeSnapshot !== null, webglDegraded })
+          dprOld = now
+        }
+        // addEventListener is the modern path; older Safari needs the
+        // legacy addListener fallback.
+        if (typeof dprWatcher.addEventListener === 'function') {
+          dprWatcher.addEventListener('change', onDprChange)
+        } else if (typeof dprWatcher.addListener === 'function') {
+          dprWatcher.addListener(onDprChange)
+        }
+      }
+
       loadRender(currentCols)
       onColsReadyRef.current?.(currentCols)
       if (foldsRef.current.length) applyFoldsRef.current?.(foldsRef.current)
@@ -910,6 +961,9 @@ const snapshotTerminal = () => {
       observer?.disconnect()
       disposeOnScroll?.dispose()
       disposeOnSelectionChange?.dispose()
+      if (dprWatcher && onDprChange) {
+        dprWatcher.removeEventListener('change', onDprChange)
+      }
       metricsBatcher?.cancel()
       const eventTarget = container.querySelector<HTMLElement>('.xterm-screen') ?? container
       if (onMouseMove) eventTarget.removeEventListener('mousemove', onMouseMove)
