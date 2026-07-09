@@ -51,6 +51,7 @@ function getResumeCommand(session: SessionSummary): string | null {
   if (at.includes('claude')) agentCmd = `claude --resume ${resumeId}`
   else if (at.includes('codex')) agentCmd = `codex resume ${resumeId}`
   else if (at.includes('opencode')) agentCmd = `opencode -s ${resumeId}`
+  else if (at.includes('chrys')) agentCmd = `chrys -s ${resumeId}`
   else return null
 
   if (session.cwd) {
