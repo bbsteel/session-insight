@@ -196,6 +196,22 @@ interface SplitRow {
   right?: { kind: 'add' | 'equal'; text: string; num: number }
 }
 
+const SPLIT_GUTTER_WIDTH = 44
+const SPLIT_CONTENT_PADDING_CH = 4
+
+function visualLineLength(text: string): number {
+  return text.replace(/\t/g, '    ').length
+}
+
+function splitPaneWidthCh(rows: SplitRow[]): number {
+  let max = 0
+  for (const row of rows) {
+    if (row.left) max = Math.max(max, visualLineLength(row.left.text))
+    if (row.right) max = Math.max(max, visualLineLength(row.right.text))
+  }
+  return Math.max(1, max + SPLIT_CONTENT_PADDING_CH)
+}
+
 function buildSplitRows(diff: DiffOp[]): SplitRow[] {
   const rows: SplitRow[] = []
   let i = 0, o = 1, n = 1
@@ -220,48 +236,86 @@ function buildSplitRows(diff: DiffOp[]): SplitRow[] {
   return rows
 }
 
-function SplitCell({ side, pal, lang, tokens }: { side?: SplitRow['left'] | SplitRow['right'] } & Omit<ViewProps, 'diff'>) {
-  if (!side) return (
-    <td colSpan={3} style={{ background: pal.emptyBg, width: '50%' }}>&nbsp;</td>
-  )
+function SplitPane({
+  side,
+  pal,
+  lang,
+  tokens,
+  softWrap,
+  paneWidthCh,
+}: {
+  side: SplitRow['left'] | SplitRow['right'] | undefined
+  softWrap: boolean
+  paneWidthCh: number
+} & Omit<ViewProps, 'diff'>) {
+  if (!side) {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: `${SPLIT_GUTTER_WIDTH}px minmax(0, 1fr)`, minWidth: 0, background: pal.emptyBg }}>
+        <div style={{ borderRight: `1px solid ${pal.borderMuted}` }} />
+        <div>&nbsp;</div>
+      </div>
+    )
+  }
   const isRemove = side.kind === 'remove'
-  const isAdd    = (side as { kind: string }).kind === 'add'
-  const bg       = isRemove ? pal.removeBg : isAdd ? pal.addBg : 'transparent'
+  const isAdd    = side.kind === 'add'
   const fallback = isRemove ? pal.removeText : isAdd ? pal.addText : pal.text
   const sigColor = isRemove ? pal.removeSig : isAdd ? pal.addSig : 'transparent'
   const sig = isRemove ? '-' : isAdd ? '+' : ' '
+  const bg = isRemove ? pal.removeBg : isAdd ? pal.addBg : 'transparent'
+  const gutterBg = bg === 'transparent' ? pal.gutterBg : bg
   return (
-    <>
-      <td style={{ width: 40, minWidth: 40, textAlign: 'right', paddingRight: 6, paddingLeft: 4, color: pal.muted, userSelect: 'none', background: bg === 'transparent' ? pal.gutterBg : bg, borderRight: `1px solid ${pal.borderMuted}` }}>
+    <div style={{ display: 'grid', gridTemplateColumns: `${SPLIT_GUTTER_WIDTH}px minmax(0, 1fr)`, minWidth: 0, background: bg }}>
+      <div style={{ textAlign: 'right', paddingRight: 6, paddingLeft: 4, color: pal.muted, userSelect: 'none', background: gutterBg, borderRight: `1px solid ${pal.borderMuted}` }}>
         {side.num}
-      </td>
-      <td style={{ width: 18, minWidth: 18, paddingLeft: 5, color: sigColor, userSelect: 'none', fontWeight: 600, background: bg }}>{sig}</td>
-      <td style={{ paddingLeft: 4, paddingRight: 8, whiteSpace: 'pre', color: fallback, background: bg, width: 'calc(50% - 58px)' }}>
-        <TokenLine text={side.text} lang={lang} colors={tokens} fallback={fallback} />
-      </td>
-    </>
+      </div>
+      <div style={{ overflow: 'hidden', minWidth: 0 }}>
+        <div style={{ display: 'flex', width: softWrap ? '100%' : `max(100%, ${paneWidthCh}ch)`, transform: softWrap ? undefined : 'translateX(calc(-1 * var(--diff-scroll-x, 0px)))' }}>
+          <span style={{ width: 18, minWidth: 18, paddingLeft: 5, color: sigColor, userSelect: 'none', fontWeight: 600, flexShrink: 0 }}>{sig}</span>
+          <span style={{ flex: 1, paddingLeft: 4, paddingRight: 8, whiteSpace: softWrap ? 'pre-wrap' : 'pre', wordBreak: softWrap ? 'break-all' : 'normal', color: fallback, minWidth: 0 }}>
+            <TokenLine text={side.text} lang={lang} colors={tokens} fallback={fallback} />
+          </span>
+        </div>
+      </div>
+    </div>
   )
 }
 
-function SplitDiff({ diff, pal, lang, tokens }: ViewProps) {
+function SplitDiff({ diff, pal, lang, tokens, softWrap, resetKey }: ViewProps & { softWrap: boolean; resetKey: number }) {
   const rows = buildSplitRows(diff)
+  const paneWidthCh = splitPaneWidthCh(rows)
+  const verticalRef = useRef<HTMLDivElement>(null)
+  const horizontalRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    verticalRef.current?.style.setProperty('--diff-scroll-x', '0px')
+    verticalRef.current?.scrollTo(0, 0)
+    horizontalRef.current?.scrollTo(0, 0)
+  }, [resetKey, softWrap])
+
   return (
-    <table className="w-full border-collapse" style={{ fontFamily: '"JetBrains Mono", "Menlo", monospace', fontSize: 12, tableLayout: 'fixed' }}>
-      <colgroup>
-        <col style={{ width: 40 }} /><col style={{ width: 18 }} /><col />
-        <col style={{ width: 1 }} />
-        <col style={{ width: 40 }} /><col style={{ width: 18 }} /><col />
-      </colgroup>
-      <tbody>
-        {rows.map((row, i) => (
-          <tr key={i}>
-            <SplitCell side={row.left} pal={pal} lang={lang} tokens={tokens} />
-            <td style={{ width: 1, background: pal.borderMuted, padding: 0 }} />
-            <SplitCell side={row.right} pal={pal} lang={lang} tokens={tokens} />
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, background: pal.surface, fontFamily: '"JetBrains Mono", "Menlo", monospace', fontSize: 12 }}>
+      <div ref={verticalRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+        {rows.map((row, i) => {
+          return (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', minWidth: 0 }}>
+              <SplitPane side={row.left} pal={pal} lang={lang} tokens={tokens} softWrap={softWrap} paneWidthCh={paneWidthCh} />
+              <div style={{ minWidth: 0, borderLeft: `1px solid ${pal.border}` }}>
+                <SplitPane side={row.right} pal={pal} lang={lang} tokens={tokens} softWrap={softWrap} paneWidthCh={paneWidthCh} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {!softWrap && (
+        <div
+          ref={horizontalRef}
+          onScroll={e => verticalRef.current?.style.setProperty('--diff-scroll-x', `${e.currentTarget.scrollLeft}px`)}
+          style={{ flexShrink: 0, height: 16, overflowX: 'auto', overflowY: 'hidden', borderTop: `1px solid ${pal.borderMuted}`, background: pal.header }}
+        >
+          <div style={{ height: 1, width: `max(100%, calc(${paneWidthCh}ch + 50% + ${SPLIT_GUTTER_WIDTH}px))` }} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -278,7 +332,9 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [idx, setIdx] = useState(initialIdx)
-  const [viewMode, setViewMode] = useState<'inline' | 'split'>('inline')
+  const [viewMode, setViewMode] = useState<'inline' | 'split'>('split')
+  const [maximized, setMaximized] = useState(false)
+  const [softWrap, setSoftWrap] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const isDark = useIsDark()
   const pal = isDark ? DARK : LIGHT
@@ -295,6 +351,8 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
       if (e.key === 'Escape') onClose()
       else if (e.key === 'ArrowRight' || e.key === 'l') setIdx(i => Math.min(i + 1, edits.length - 1))
       else if (e.key === 'ArrowLeft'  || e.key === 'h') setIdx(i => Math.max(i - 1, 0))
+      else if (e.key === 'm') setMaximized(m => !m)
+      else if (e.key === 'w') setSoftWrap(w => !w)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -309,14 +367,18 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
   const addCount    = diff.filter(d => d.kind === 'add').length
   const lang = edit ? resolveLang(langForPath(edit.file_path)) : null
 
+  const modalStyle: React.CSSProperties = maximized
+    ? { width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: pal.surface, border: 'none', borderRadius: 0, overflow: 'hidden' }
+    : { width: '92vw', maxWidth: 1200, height: '88vh', display: 'flex', flexDirection: 'column', background: pal.surface, border: `1px solid ${pal.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }
+
   return (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: pal.overlay, backdropFilter: 'blur(2px)' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: pal.overlay, backdropFilter: 'blur(2px)' }}
       onClick={onClose}
     >
       <div
         onClick={e => e.stopPropagation()}
-        style={{ width: '92vw', maxWidth: 1200, height: '88vh', display: 'flex', flexDirection: 'column', background: pal.surface, border: `1px solid ${pal.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}
+        style={modalStyle}
       >
         {/* header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', height: 44, flexShrink: 0, borderBottom: `1px solid ${pal.border}`, background: pal.header }}>
@@ -365,6 +427,24 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
             ))}
           </div>
 
+          {/* soft wrap */}
+          <button
+            onClick={() => setSoftWrap(w => !w)}
+            style={{ padding: '3px 10px', fontSize: 12, borderRadius: 6, border: `1px solid ${pal.border}`, background: softWrap ? pal.accentBg : 'transparent', color: softWrap ? pal.accentText : pal.muted, cursor: 'pointer', flexShrink: 0 }}
+            title={softWrap ? '关闭软换行 (W)' : '开启软换行 (W)'}
+          >
+            换行
+          </button>
+
+          {/* maximize */}
+          <button
+            onClick={() => setMaximized(m => !m)}
+            style={{ width: 26, height: 26, borderRadius: 5, border: `1px solid ${pal.border}`, background: 'transparent', color: pal.muted, cursor: 'pointer', fontSize: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            title={maximized ? '还原 (M)' : '最大化 (M)'}
+          >
+            {maximized ? '❐' : '⛶'}
+          </button>
+
           {/* close */}
           <button
             onClick={onClose}
@@ -375,13 +455,16 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
 
         {/* turn badge */}
         {edit && (
-          <div style={{ padding: '4px 14px', background: pal.header, borderBottom: `1px solid ${pal.borderMuted}`, fontSize: 11, color: pal.muted, flexShrink: 0 }}>
-            Turn {edit.turn_index}{edit.replace_all ? ' · replace_all' : ''}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 14px', background: pal.header, borderBottom: `1px solid ${pal.borderMuted}`, fontSize: 11, color: pal.muted, flexShrink: 0 }}>
+            <span>Turn {edit.turn_index}{edit.replace_all ? ' · replace_all' : ''}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Esc close · ←/→ or H/L switch edit · M maximize · W wrap
+            </span>
           </div>
         )}
 
         {/* body */}
-        <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', background: pal.surface }}>
+        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: viewMode === 'split' ? 'hidden' : 'auto', background: pal.surface }}>
           {loading && (
             <div style={{ padding: 32, textAlign: 'center', color: pal.muted, fontSize: 13 }}>加载中…</div>
           )}
@@ -394,7 +477,7 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
           {!loading && edit && (
             viewMode === 'inline'
               ? <InlineDiff diff={diff} pal={pal} lang={lang} tokens={tokens} />
-              : <SplitDiff diff={diff} pal={pal} lang={lang} tokens={tokens} />
+              : <SplitDiff diff={diff} pal={pal} lang={lang} tokens={tokens} softWrap={softWrap} resetKey={idx} />
           )}
         </div>
       </div>
