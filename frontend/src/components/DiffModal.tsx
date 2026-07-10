@@ -348,11 +348,12 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase()
       if (e.key === 'Escape') onClose()
-      else if (e.key === 'ArrowRight' || e.key === 'l') setIdx(i => Math.min(i + 1, edits.length - 1))
-      else if (e.key === 'ArrowLeft'  || e.key === 'h') setIdx(i => Math.max(i - 1, 0))
-      else if (e.key === 'm') setMaximized(m => !m)
-      else if (e.key === 'w') setSoftWrap(w => !w)
+      else if (e.key === 'ArrowRight' || key === 'l') setIdx(i => Math.min(i + 1, edits.length - 1))
+      else if (e.key === 'ArrowLeft'  || key === 'h') setIdx(i => Math.max(i - 1, 0))
+      else if (key === 'm') setMaximized(m => !m)
+      else if (key === 'w') setSoftWrap(w => !w)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -366,6 +367,7 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
   const removeCount = diff.filter(d => d.kind === 'remove').length
   const addCount    = diff.filter(d => d.kind === 'add').length
   const lang = edit ? resolveLang(langForPath(edit.file_path)) : null
+  const shortcutHint = '快捷键：Esc 关闭 · ←/→ 或 H/L 切换编辑 · M 最大化 · W 换行'
 
   const modalStyle: React.CSSProperties = maximized
     ? { width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: pal.surface, border: 'none', borderRadius: 0, overflow: 'hidden' }
@@ -395,6 +397,23 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
                 <span style={{ color: pal.addSig }}>+{addCount}</span>
               </span>
             )}
+          </div>
+
+          {/* shortcut hint */}
+          <div
+            title={shortcutHint}
+            style={{
+              flex: '0 1 520px',
+              minWidth: 240,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              textAlign: 'right',
+              color: pal.muted,
+              fontSize: 12,
+            }}
+          >
+            {shortcutHint}
           </div>
 
           {/* navigation */}
@@ -458,7 +477,7 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 14px', background: pal.header, borderBottom: `1px solid ${pal.borderMuted}`, fontSize: 11, color: pal.muted, flexShrink: 0 }}>
             <span>Turn {edit.turn_index}{edit.replace_all ? ' · replace_all' : ''}</span>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Esc close · ←/→ or H/L switch edit · M maximize · W wrap
+              {shortcutHint}
             </span>
           </div>
         )}
