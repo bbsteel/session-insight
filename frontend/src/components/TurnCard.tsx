@@ -75,10 +75,18 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
           <div className="text-helper flex flex-col gap-0.5">
             {turn.tool_details.map((td, i) => (
               <div key={i} className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${td.exit_code === 0 ? 'bg-[var(--success)]' : 'bg-[var(--error)]'}`} />
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                  td.rejected ? 'bg-[var(--warning)]' :
+                  td.timed_out ? 'bg-[var(--error)]' :
+                  td.exit_code === 0 ? 'bg-[var(--success)]' : 'bg-[var(--error)]'
+                }`} />
                 <span className="text-[var(--text-primary)] text-meta">{td.name}</span>
+                {td.tool_kind && <span className="text-[var(--text-muted)] text-meta">[{td.tool_kind}]</span>}
                 {td.duration_ms > 0 && <span className="text-[var(--text-muted)] text-meta">{td.duration_ms}ms</span>}
-                {td.exit_code !== 0 && <span className="text-[var(--error)] text-meta">exit {td.exit_code}</span>}
+                {td.rejected && <span className="text-[var(--warning)] text-meta">rejected</span>}
+                {td.timed_out && <span className="text-[var(--error)] text-meta">timeout{td.timeout_seconds ? ` (${td.timeout_seconds}s)` : ''}</span>}
+                {td.exit_code !== 0 && !td.rejected && !td.timed_out && <span className="text-[var(--error)] text-meta">exit {td.exit_code}</span>}
+                {td.error_kind && td.error_kind !== 'failed' && !td.rejected && !td.timed_out && <span className="text-[var(--text-muted)] text-meta">{td.error_kind}</span>}
               </div>
             ))}
           </div>

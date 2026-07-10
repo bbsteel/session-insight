@@ -42,7 +42,7 @@ func TestChrysProfileLayout(t *testing.T) {
 		"╭── 看看目录 ",      // rounded box with promoted reason header
 		"╭── Output ",        // result box header
 		" Completed ──╯",     // success footer, right-aligned
-		" Failed ──╯",        // failure footer
+		" Failed (exit 1) ──╯", // failure footer with exit code
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chrys layout missing %q\n%s", want, out)

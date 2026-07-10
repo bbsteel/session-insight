@@ -150,9 +150,15 @@ type EventVM struct {
 }
 
 type ToolCallVM struct {
-	Name     string `json:"name"`
-	ExitCode int    `json:"exit_code"`
-	Duration int64  `json:"duration_ms"`
+	Name           string  `json:"name"`
+	ExitCode       int     `json:"exit_code"`
+	Duration       int64   `json:"duration_ms"`
+	ErrorKind      string  `json:"error_kind,omitempty"`
+	ErrorMessage   string  `json:"error_message,omitempty"`
+	TimedOut       bool    `json:"timed_out,omitempty"`
+	TimeoutSeconds float64 `json:"timeout_seconds,omitempty"`
+	Rejected       bool    `json:"rejected,omitempty"`
+	ToolKind       string  `json:"tool_kind,omitempty"`
 }
 type TurnVM struct {
 	TurnIndex        int        `json:"turn_index"`

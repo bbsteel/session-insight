@@ -209,6 +209,7 @@ func (rs *renderState) appendAssistantMessage(m chrysMessage, turnIdx, depth int
 				ToolName:   c.Name,
 				ToolCallID: c.CallID,
 				ToolInput:  normalizeToolInput(c.Name, c.argsMap()),
+				ToolKind:   c.toolKind(),
 			})
 		}
 	}
@@ -243,20 +244,37 @@ func (rs *renderState) appendToolMessage(m chrysMessage, turnIdx, depth int, spl
 
 		exitCode := 0
 		stderr := ""
+		var errorKind, toolKind string
+		timedOut := false
+		rejected := false
+		var timeoutSeconds float64
 		if c.failed() {
 			exitCode = 1
 			stderr = c.errorMessage()
 		}
+		if ec := c.exitCode(); ec >= 0 {
+			exitCode = ec
+		}
+		errorKind = c.errorKind()
+		toolKind = c.toolKind()
+		timedOut = c.timedOut()
+		rejected = c.rejected()
+		timeoutSeconds = c.timeoutSeconds()
 		rs.emit(model.RenderEvent{
-			ParentEventID: "call-" + c.CallID,
-			Type:          "ToolResult",
-			Timestamp:     ts,
-			TurnIndex:     turnIdx,
-			Depth:         depth,
-			ToolCallID:    c.CallID,
-			Stdout:        c.resultText(),
-			Stderr:        stderr,
-			ExitCode:      exitCode,
+			ParentEventID:  "call-" + c.CallID,
+			Type:           "ToolResult",
+			Timestamp:      ts,
+			TurnIndex:      turnIdx,
+			Depth:          depth,
+			ToolCallID:     c.CallID,
+			Stdout:         c.resultText(),
+			Stderr:         stderr,
+			ExitCode:       exitCode,
+			ErrorKind:      errorKind,
+			TimedOut:       timedOut,
+			TimeoutSeconds: timeoutSeconds,
+			Rejected:       rejected,
+			ToolKind:       toolKind,
 		})
 	}
 }

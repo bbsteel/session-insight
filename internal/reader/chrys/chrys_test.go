@@ -530,3 +530,227 @@ func TestFixtureShapes(t *testing.T) {
 		t.Fatalf("fixture messages = %d", len(sf.State.Messages))
 	}
 }
+
+// fixtureMetadata tests the new chrys _chrys_tool_result_metadata format:
+// shell exit codes, timeout, rejection, tool kind — plus backward compat
+// with the old top-level failed/tool_error_message fields.
+const fixtureMetadata = `{
+  "meta": {
+    "schema_version": 1,
+    "session_id": "meta-test",
+    "agent_profile": "Code",
+    "agent_display_name": "Code Agent",
+    "model_id": "deepseek-v4-pro",
+    "created_at": "2026-07-09T10:00:00+00:00",
+    "updated_at": "2026-07-09T10:05:00+00:00",
+    "message_count": 8,
+    "primary_cwd": "/tmp/proj"
+  },
+  "state": {
+    "messages": [
+      {"type": "message", "role": "user",
+       "contents": [{"type": "text", "text": "test metadata", "additional_properties": {}}],
+       "additional_properties": {"_chrys_created_at": "2026-07-09T10:00:00+00:00"}},
+      {"type": "message", "role": "assistant",
+       "contents": [
+         {"type": "function_call", "call_id": "c_ok", "name": "bash",
+          "arguments": "{\"command\": \"ls\"}", "additional_properties": {"_chrys_tool_kind": "shell"}}
+       ],
+       "additional_properties": {"_chrys_created_at": "2026-07-09T10:01:00+00:00"}},
+      {"type": "message", "role": "tool",
+       "contents": [
+         {"type": "function_result", "call_id": "c_ok", "result": "a.txt\nb.txt",
+          "additional_properties": {"_chrys_tool_result_metadata": {"shell_exit_code": 0, "failed": false}}}
+       ],
+       "additional_properties": {}},
+      {"type": "message", "role": "assistant",
+       "contents": [
+         {"type": "function_call", "call_id": "c_fail", "name": "bash",
+          "arguments": "{\"command\": \"false\"}", "additional_properties": {"_chrys_tool_kind": "shell"}}
+       ],
+       "additional_properties": {"_chrys_created_at": "2026-07-09T10:02:00+00:00"}},
+      {"type": "message", "role": "tool",
+       "contents": [
+         {"type": "function_result", "call_id": "c_fail", "result": "",
+          "additional_properties": {"_chrys_tool_result_metadata": {"shell_exit_code": 127, "failed": true, "tool_error_message": "command not found"}}}
+       ],
+       "additional_properties": {}},
+      {"type": "message", "role": "assistant",
+       "contents": [
+         {"type": "function_call", "call_id": "c_timeout", "name": "bash",
+          "arguments": "{\"command\": \"sleep 999\"}", "additional_properties": {"_chrys_tool_kind": "shell"}}
+       ],
+       "additional_properties": {"_chrys_created_at": "2026-07-09T10:03:00+00:00"}},
+      {"type": "message", "role": "tool",
+       "contents": [
+         {"type": "function_result", "call_id": "c_timeout", "result": "",
+          "additional_properties": {"_chrys_tool_result_metadata": {"shell_timed_out": true, "shell_timeout_seconds": 30, "failed": true}}}
+       ],
+       "additional_properties": {}},
+      {"type": "message", "role": "assistant",
+       "contents": [
+         {"type": "function_call", "call_id": "c_reject", "name": "edit_file",
+          "arguments": "{\"path\": \"/tmp/proj/a.txt\"}", "additional_properties": {"_chrys_tool_kind": "filesystem.write"}}
+       ],
+       "additional_properties": {"_chrys_created_at": "2026-07-09T10:04:00+00:00"}},
+      {"type": "message", "role": "tool",
+       "contents": [
+         {"type": "function_result", "call_id": "c_reject", "result": "Error: User rejected",
+          "additional_properties": {"_chrys_tool_result_metadata": {"approval": "user_rejected", "tool_error_kind": "approval_rejected", "tool_error_message": "User rejected", "failed": true}}}
+       ],
+       "additional_properties": {}},
+      {"type": "message", "role": "assistant",
+       "contents": [
+         {"type": "function_call", "call_id": "c_legacy", "name": "read_file",
+          "arguments": "{\"path\": \"/tmp/proj/a.txt\"}", "additional_properties": {"_chrys_tool_kind": "filesystem.read"}}
+       ],
+       "additional_properties": {"_chrys_created_at": "2026-07-09T10:04:30+00:00"}},
+      {"type": "message", "role": "tool",
+       "contents": [
+         {"type": "function_result", "call_id": "c_legacy", "result": "Error: File not found",
+          "additional_properties": {"failed": true, "tool_error_message": "File not found"}}
+       ],
+       "additional_properties": {}}
+    ],
+    "compressed_msgs": [], "turn_counter": 1
+  }
+}`
+
+func TestMetadataFields(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "metatest")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.json"), []byte(fixtureMetadata), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(root)
+	d, err := r.GetSession("metatest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Turns) != 1 {
+		t.Fatalf("want 1 turn, got %d", len(d.Turns))
+	}
+	turn := d.Turns[0]
+
+	// 5 tool calls: ok, fail(127), timeout, rejected, legacy-fail
+	if turn.ToolCallCount != 5 {
+		t.Fatalf("tool calls = %d", turn.ToolCallCount)
+	}
+	// 3 failures: exit-127, timeout, rejected; plus legacy-fail = 4
+	// (legacy fallback reads top-level "failed": true)
+	if turn.ErrorCount != 4 {
+		t.Errorf("errors = %d, want 4", turn.ErrorCount)
+	}
+
+	if len(turn.ToolDetails) != 5 {
+		t.Fatalf("tool details = %d", len(turn.ToolDetails))
+	}
+
+	td := turn.ToolDetails
+	// 0: bash ok — exit 0, no error kind, tool_kind shell
+	if td[0].ExitCode != 0 {
+		t.Errorf("td[0] exit = %d", td[0].ExitCode)
+	}
+	if td[0].ToolKind != "shell" {
+		t.Errorf("td[0] tool_kind = %q", td[0].ToolKind)
+	}
+	if td[0].ErrorKind != "" {
+		t.Errorf("td[0] error_kind = %q", td[0].ErrorKind)
+	}
+
+	// 1: bash fail — exit 127, error_kind "failed"
+	if td[1].ExitCode != 127 {
+		t.Errorf("td[1] exit = %d", td[1].ExitCode)
+	}
+	if td[1].ErrorMessage != "command not found" {
+		t.Errorf("td[1] error_message = %q", td[1].ErrorMessage)
+	}
+
+	// 2: bash timeout — timed_out, timeout_seconds 30, error_kind "timeout"
+	if !td[2].TimedOut {
+		t.Errorf("td[2] should be timed out")
+	}
+	if td[2].TimeoutSeconds != 30 {
+		t.Errorf("td[2] timeout_seconds = %v", td[2].TimeoutSeconds)
+	}
+	if td[2].ErrorKind != "timeout" {
+		t.Errorf("td[2] error_kind = %q", td[2].ErrorKind)
+	}
+
+	// 3: edit_file rejected — rejected, error_kind "approval_rejected"
+	if !td[3].Rejected {
+		t.Errorf("td[3] should be rejected")
+	}
+	if td[3].ErrorKind != "approval_rejected" {
+		t.Errorf("td[3] error_kind = %q", td[3].ErrorKind)
+	}
+	if td[3].ToolKind != "filesystem.write" {
+		t.Errorf("td[3] tool_kind = %q", td[3].ToolKind)
+	}
+
+	// 4: legacy read_file fail — backward compat, exit 1 (no metadata)
+	if td[4].ExitCode != 1 {
+		t.Errorf("td[4] exit = %d (legacy fallback)", td[4].ExitCode)
+	}
+	if td[4].ErrorMessage != "File not found" {
+		t.Errorf("td[4] error_message = %q (legacy fallback)", td[4].ErrorMessage)
+	}
+	if td[4].ToolKind != "filesystem.read" {
+		t.Errorf("td[4] tool_kind = %q", td[4].ToolKind)
+	}
+
+	// Render events should carry the new fields too.
+	events, err := r.GetRenderEvents("metatest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotTimeoutEvt, gotRejectedEvt, gotExitCodeEvt, gotToolKindEvt bool
+	for _, e := range events {
+		if e.Type == "ToolResult" {
+			if e.TimedOut && e.ToolCallID == "c_timeout" {
+				gotTimeoutEvt = true
+				if e.TimeoutSeconds != 30 {
+					t.Errorf("timeout event seconds = %v", e.TimeoutSeconds)
+				}
+			}
+			if e.Rejected && e.ToolCallID == "c_reject" {
+				gotRejectedEvt = true
+			}
+			if e.ExitCode == 127 && e.ToolCallID == "c_fail" {
+				gotExitCodeEvt = true
+			}
+		}
+		if e.Type == "ToolInvocation" && e.ToolKind != "" {
+			gotToolKindEvt = true
+		}
+	}
+	for name, ok := range map[string]bool{
+		"timeout event":   gotTimeoutEvt,
+		"rejected event":  gotRejectedEvt,
+		"exit-code event": gotExitCodeEvt,
+		"tool-kind event": gotToolKindEvt,
+	} {
+		if !ok {
+			t.Errorf("missing render event: %s", name)
+		}
+	}
+
+	// ANSI output should show timeout and rejection labels.
+	ansi, err := r.RenderANSI("metatest", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ansi, "Timeout") {
+		t.Errorf("ANSI missing timeout label")
+	}
+	if !strings.Contains(ansi, "Rejected") {
+		t.Errorf("ANSI missing rejected label")
+	}
+	if !strings.Contains(ansi, "exit 127") {
+		t.Errorf("ANSI missing exit code 127")
+	}
+}

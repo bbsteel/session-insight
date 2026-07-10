@@ -49,7 +49,7 @@ export interface TurnVM {
   error_count: number
   duration_ms: number
 tool_names?: string[]
-  tool_details?: { name: string; exit_code: number; duration_ms: number }[]
+  tool_details?: { name: string; exit_code: number; duration_ms: number; error_kind?: string; error_message?: string; timed_out?: boolean; timeout_seconds?: number; rejected?: boolean; tool_kind?: string }[]
   subagents?: string[]
   skills?: string[]
   anomalies?: string[]

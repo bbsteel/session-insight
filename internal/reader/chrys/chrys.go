@@ -168,20 +168,192 @@ func (m *chrysMessage) intermediateText() string {
 }
 
 func (c *chrysContent) failed() bool {
-	if c.Props == nil {
-		return false
+	// Top-level "failed" is checked first: some chrys sessions have a
+	// disagreement where the top-level failed=true (set by the tool wrapper
+	// for e.g. argument parsing errors) but _chrys_tool_result_metadata has
+	// failed=false or shell_exit_code=0 (set by the tool runtime which ran
+	// fine). The top-level field is the authoritative failure signal because
+	// it represents the user-visible result, not the internal execution state.
+	if c.Props != nil {
+		if b, _ := c.Props["failed"].(bool); b {
+			return true
+		}
 	}
-	b, _ := c.Props["failed"].(bool)
-	return b
+	// Structured metadata adds timeout/rejection/exit-code detection that
+	// the legacy top-level field cannot express.
+	if meta := c.toolResultMetadata(); meta != nil {
+		return toolResultMetadataFailureState(meta)
+	}
+	return false
 }
 
 func (c *chrysContent) errorMessage() string {
+	if meta := c.toolResultMetadata(); meta != nil {
+		if s, _ := meta["tool_error_message"].(string); s != "" {
+			return s
+		}
+	}
 	if c.Props != nil {
 		if s, _ := c.Props["tool_error_message"].(string); s != "" {
 			return s
 		}
 	}
 	return c.Exception
+}
+
+// toolResultMetadata returns the nested _chrys_tool_result_metadata dict
+// from function_result additional_properties, or nil when absent (old sessions).
+func (c *chrysContent) toolResultMetadata() map[string]any {
+	if c.Props == nil {
+		return nil
+	}
+	raw, _ := c.Props["_chrys_tool_result_metadata"].(map[string]any)
+	return raw
+}
+
+// toolKind returns the _chrys_tool_kind from function_call additional_properties.
+func (c *chrysContent) toolKind() string {
+	if c.Props == nil {
+		return ""
+	}
+	s, _ := c.Props["_chrys_tool_kind"].(string)
+	return s
+}
+
+// exitCode resolves the actual exit code from structured metadata, falling
+// back to -1 (unknown) when metadata is absent. Shell exit codes take
+// precedence over generic process exit codes.
+func (c *chrysContent) exitCode() int {
+	meta := c.toolResultMetadata()
+	if meta != nil {
+		if code := intFromMeta(meta, "shell_exit_code"); code != nil {
+			return *code
+		}
+		if code := intFromMeta(meta, "process_exit_code"); code != nil {
+			return *code
+		}
+	}
+	return -1
+}
+
+func (c *chrysContent) timedOut() bool {
+	meta := c.toolResultMetadata()
+	if meta == nil {
+		return false
+	}
+	if b, _ := meta["shell_timed_out"].(bool); b {
+		return true
+	}
+	if b, _ := meta["process_timed_out"].(bool); b {
+		return true
+	}
+	return false
+}
+
+func (c *chrysContent) timeoutSeconds() float64 {
+	meta := c.toolResultMetadata()
+	if meta == nil {
+		return 0
+	}
+	if v, ok := meta["shell_timeout_seconds"].(float64); ok {
+		return v
+	}
+	if v, ok := meta["process_timeout_seconds"].(float64); ok {
+		return v
+	}
+	return 0
+}
+
+// errorKind classifies the failure from structured metadata. Returns "" for
+// successful or metadata-less results.
+func (c *chrysContent) errorKind() string {
+	meta := c.toolResultMetadata()
+	if meta == nil {
+		if c.Props != nil {
+			if s, _ := c.Props["tool_error_kind"].(string); s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	if b, _ := meta["errored"].(bool); b {
+		return "errored"
+	}
+	if s, _ := meta["approval"].(string); s == "user_rejected" {
+		return "approval_rejected"
+	}
+	if s, _ := meta["tool_error_kind"].(string); s != "" {
+		return s
+	}
+	if c.timedOut() {
+		return "timeout"
+	}
+	if b, _ := meta["failed"].(bool); b {
+		return "failed"
+	}
+	return ""
+}
+
+func (c *chrysContent) rejected() bool {
+	kind := c.errorKind()
+	return kind == "approval_rejected" || kind == "hook_denied"
+}
+
+// toolResultMetadataFailureState mirrors chrys's
+// tool_result_metadata_failure_state() precedence: errored > rejected >
+// failed > timed_out > exit_code != 0.
+func toolResultMetadataFailureState(meta map[string]any) bool {
+	if meta == nil {
+		return false
+	}
+	if b, _ := meta["errored"].(bool); b {
+		return true
+	}
+	if s, _ := meta["approval"].(string); s == "user_rejected" {
+		return true
+	}
+	kind, _ := meta["tool_error_kind"].(string)
+	if kind == "approval_rejected" || kind == "hook_denied" {
+		return true
+	}
+	if b, _ := meta["failed"].(bool); b {
+		return true
+	}
+	if b, _ := meta["shell_timed_out"].(bool); b {
+		return true
+	}
+	if b, _ := meta["process_timed_out"].(bool); b {
+		return true
+	}
+	if code := intFromMeta(meta, "shell_exit_code"); code != nil {
+		return *code != 0
+	}
+	if code := intFromMeta(meta, "process_exit_code"); code != nil {
+		return *code != 0
+	}
+	if b, ok := meta["failed"].(bool); ok && !b {
+		return false
+	}
+	return false
+}
+
+func intFromMeta(meta map[string]any, key string) *int {
+	if meta == nil {
+		return nil
+	}
+	v, ok := meta[key]
+	if !ok {
+		return nil
+	}
+	switch n := v.(type) {
+	case float64:
+		i := int(n)
+		return &i
+	case int:
+		i := n
+		return &i
+	}
+	return nil
 }
 
 // resultText joins the textual payload of a function_result, replacing inline
@@ -461,7 +633,10 @@ func buildTurns(sf *sessionFile) []model.TurnVM {
 					currentTurn.ToolCallCount++
 					currentTurn.ToolNames = append(currentTurn.ToolNames, c.Name)
 					toolByCall[c.CallID] = len(currentTurn.ToolDetails)
-					currentTurn.ToolDetails = append(currentTurn.ToolDetails, model.ToolCallVM{Name: c.Name})
+					currentTurn.ToolDetails = append(currentTurn.ToolDetails, model.ToolCallVM{
+						Name:     c.Name,
+						ToolKind: c.toolKind(),
+					})
 					switch c.Name {
 					case "load_skill":
 						if skill := argString(&c, "skill_name"); skill != "" {
@@ -492,16 +667,43 @@ func buildTurns(sf *sessionFile) []model.TurnVM {
 					continue
 				}
 				failed := c.failed()
+				exitCode := c.exitCode()
+				if failed && exitCode < 0 {
+					exitCode = 1
+				}
+				if !failed && exitCode < 0 {
+					exitCode = 0
+				}
+				errorKind := c.errorKind()
 				if failed {
 					currentTurn.ErrorCount++
-					if idx, ok := toolByCall[c.CallID]; ok && idx < len(currentTurn.ToolDetails) {
-						currentTurn.ToolDetails[idx].ExitCode = 1
-					}
+				}
+				if idx, ok := toolByCall[c.CallID]; ok && idx < len(currentTurn.ToolDetails) {
+					td := &currentTurn.ToolDetails[idx]
+					td.ExitCode = exitCode
+					td.ErrorKind = errorKind
+					td.ErrorMessage = c.errorMessage()
+					td.TimedOut = c.timedOut()
+					td.TimeoutSeconds = c.timeoutSeconds()
+					td.Rejected = c.rejected()
+				}
+				eventData := map[string]any{"is_error": failed}
+				if exitCode >= 0 {
+					eventData["exit_code"] = exitCode
+				}
+				if errorKind != "" {
+					eventData["error_kind"] = errorKind
+				}
+				if c.timedOut() {
+					eventData["timed_out"] = true
+				}
+				if c.rejected() {
+					eventData["rejected"] = true
 				}
 				currentTurn.Events = append(currentTurn.Events, model.EventVM{
 					Type:      "tool_result",
 					Timestamp: m.createdAt().Format(time.RFC3339),
-					Data:      map[string]any{"is_error": failed},
+					Data:      eventData,
 				})
 			}
 		}

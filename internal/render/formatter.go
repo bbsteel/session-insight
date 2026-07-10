@@ -289,8 +289,12 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 				writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, false)
 			}
 		case "ToolResult":
-			if evt.ExitCode != 0 || evt.Stderr != "" {
-				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName})
+			if evt.Rejected {
+				emit("error", "工具被拒绝", "warning", evt.TurnIndex, map[string]any{"tool": evt.ToolName, "kind": evt.ErrorKind})
+			} else if evt.TimedOut {
+				emit("error", "工具超时", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName, "timeout_seconds": evt.TimeoutSeconds})
+			} else if evt.ExitCode != 0 || evt.Stderr != "" {
+				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName, "exit_code": evt.ExitCode, "kind": evt.ErrorKind})
 			}
 			writeToolResult(p, tb, evt, prefix, bWidth, makeOnTrunc(evt.TurnIndex))
 		case "CompactionBoundary":
@@ -322,7 +326,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 19
+const FormatVersion int64 = 20
 
 // pairToolRuns reorders each contiguous tool run so every depth-0
 // ToolInvocation is immediately followed by its matching ToolResult (and the
@@ -942,7 +946,7 @@ func shouldQuote(s string) bool {
 }
 
 func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onTrunc func()) {
-	ok := evt.ExitCode == 0 && evt.Stderr == ""
+	ok := evt.ExitCode == 0 && evt.Stderr == "" && !evt.TimedOut && !evt.Rejected
 
 	if p.ResultBox {
 		writeToolResultBox(p, sb, evt, prefix, bWidth, ok, onTrunc)
@@ -957,11 +961,8 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 	// "│ ✓ │ first output line" — the branch marker appearing twice on one
 	// visual line.
 	sb.WriteString(prefix)
-	if ok {
-		sb.WriteString(fgWrap("✓", ColSuccess))
-	} else {
-		sb.WriteString(fgWrap("✗", ColError))
-	}
+	label, color := toolResultStatus(evt, ok)
+	sb.WriteString(fgWrap(label, color))
 	sb.WriteString("\n")
 
 	if evt.Stdout != "" {
@@ -975,6 +976,31 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 	sb.WriteString("\n")
 }
 
+// toolResultStatus returns a display label and color for a tool result,
+// leveraging structured metadata (timeout, rejection, exit code) when
+// available, with a graceful fallback to the legacy ok/failed binary.
+func toolResultStatus(evt model.RenderEvent, ok bool) (string, Color) {
+	if evt.Rejected {
+		if evt.ErrorKind == "hook_denied" {
+			return "✗ Rejected (hook)", ColWarning
+		}
+		return "✗ Rejected", ColWarning
+	}
+	if evt.TimedOut {
+		if evt.TimeoutSeconds > 0 {
+			return fmt.Sprintf("✗ Timeout (%gs)", evt.TimeoutSeconds), ColError
+		}
+		return "✗ Timeout", ColError
+	}
+	if !ok {
+		if evt.ExitCode != 0 {
+			return fmt.Sprintf("✗ Failed (exit %d)", evt.ExitCode), ColError
+		}
+		return "✗ Failed", ColError
+	}
+	return "✓", ColSuccess
+}
+
 // writeToolResultBox renders a tool result as a bordered "Output" box with a
 // Completed/Failed footer (chrys-native layout). Output-less results collapse
 // to a single status line so the transcript doesn't fill with empty boxes.
@@ -984,6 +1010,23 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 	if !ok {
 		borderColor = ColError
 		footer = " Failed "
+		switch {
+		case evt.Rejected:
+			borderColor = ColWarning
+			if evt.ErrorKind == "hook_denied" {
+				footer = " Rejected (hook) "
+			} else {
+				footer = " Rejected "
+			}
+		case evt.TimedOut:
+			if evt.TimeoutSeconds > 0 {
+				footer = fmt.Sprintf(" Timeout (%gs) ", evt.TimeoutSeconds)
+			} else {
+				footer = " Timeout "
+			}
+		case evt.ExitCode != 0:
+			footer = fmt.Sprintf(" Failed (exit %d) ", evt.ExitCode)
+		}
 	}
 
 	if evt.Stdout == "" && evt.Stderr == "" {
@@ -991,7 +1034,8 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 		if ok {
 			sb.WriteString(fgWrap("✓ Completed", ColSuccess))
 		} else {
-			sb.WriteString(fgWrap("✗ Failed", ColError))
+			label, color := toolResultStatus(evt, ok)
+			sb.WriteString(fgWrap(label, color))
 		}
 		sb.WriteString("\n\n")
 		return

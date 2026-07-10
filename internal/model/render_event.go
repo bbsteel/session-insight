@@ -26,6 +26,14 @@ type RenderEvent struct {
 	DurationMs int64  `json:"duration_ms,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
 
+	// Structured tool-result status (chrys metadata). Populated from
+	// _chrys_tool_result_metadata; empty for agents/results without it.
+	ErrorKind      string  `json:"error_kind,omitempty"`
+	TimedOut       bool    `json:"timed_out,omitempty"`
+	TimeoutSeconds float64 `json:"timeout_seconds,omitempty"`
+	Rejected       bool    `json:"rejected,omitempty"`
+	ToolKind       string  `json:"tool_kind,omitempty"`
+
 	TokenUsage *RenderTokenUsage `json:"token_usage,omitempty"`
 
 	Subtype string         `json:"subtype,omitempty"`

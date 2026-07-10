@@ -32,6 +32,7 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 	subagents := 0
 	totalReq := 0
 	totalTools, totalErrors := 0, 0
+	totalTimeouts, totalRejected := 0, 0
 	for _, t := range detail.Turns {
 		if t.UserMessage != "" {
 			userMsgs++
@@ -40,6 +41,14 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 		totalReq += t.RequestCount
 		totalTools += t.ToolCallCount
 		totalErrors += t.ErrorCount
+		for _, td := range t.ToolDetails {
+			if td.TimedOut {
+				totalTimeouts++
+			}
+			if td.Rejected {
+				totalRejected++
+			}
+		}
 	}
 
 	// 1. Instruction amplification: few user messages driving many billed
@@ -146,6 +155,24 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 			Severity: sevWarn,
 			Title:    fmt.Sprintf("工具失败率 %.0f%%", float64(totalErrors)/float64(totalTools)*100),
 			Detail:   fmt.Sprintf("%d 次工具调用中 %d 次失败。失败与随后的重试消耗同样计费，反复失败通常意味着 agent 卡在同一个问题上。", totalTools, totalErrors),
+		})
+	}
+
+	// 7. Timeout churn: timed-out tool calls waste the full timeout duration.
+	if totalTimeouts >= 3 {
+		findings = append(findings, Finding{
+			Severity: sevWarn,
+			Title:    fmt.Sprintf("%d 次工具超时", totalTimeouts),
+			Detail:   fmt.Sprintf("会话中发生了 %d 次工具超时。超时的工具调用在等待期间占用 agent 循环且结果不可用，通常意味着命令执行时间过长或超时阈值设置过低。", totalTimeouts),
+		})
+	}
+
+	// 8. Rejection churn: user/hook rejected tool calls indicate friction.
+	if totalRejected >= 3 {
+		findings = append(findings, Finding{
+			Severity: sevInfo,
+			Title:    fmt.Sprintf("%d 次工具被拒绝", totalRejected),
+			Detail:   fmt.Sprintf("会话中 %d 次工具调用被用户或 hook 拒绝。频繁拒绝可能意味着 agent 倾向于执行需要审批的操作，或 hook 规则过于严格。", totalRejected),
 		})
 	}
 
