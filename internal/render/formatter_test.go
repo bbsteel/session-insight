@@ -190,7 +190,7 @@ func TestToolResultSuccess(t *testing.T) {
 	if !strings.Contains(result, "✓") {
 		t.Errorf("expected success check, got:\n%s", result)
 	}
-	if !hasFgColor(result, ColSuccess) {
+	if !hasFgColor(result, ColSuccessBright) {
 		t.Errorf("expected success color, got:\n%s", result)
 	}
 }
@@ -204,7 +204,7 @@ func TestToolResultError(t *testing.T) {
 	if !strings.Contains(result, "✗") {
 		t.Errorf("expected error cross, got:\n%s", result)
 	}
-	if !hasFgColor(result, ColError) {
+	if !hasFgColor(result, ColErrorBright) {
 		t.Errorf("expected error color, got:\n%s", result)
 	}
 }

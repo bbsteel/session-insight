@@ -514,7 +514,7 @@ func writeAssistantHeader(sb *trackingBuilder, label string) {
 	if label == "" {
 		label = "Agent"
 	}
-	sb.WriteString(styled("◇ "+sanitizeControlChars(label), ColSuccess, ColNone, false, false))
+	sb.WriteString(styled("◇ "+sanitizeControlChars(label), ColSuccessBright, ColNone, false, false))
 	sb.WriteString("\n")
 }
 
@@ -656,7 +656,6 @@ func writeBoxTop(p *Profile, sb *trackingBuilder, prefix, header string, bWidth 
 // footer label (e.g. " Completed ").
 func writeBoxBottom(p *Profile, sb *trackingBuilder, prefix, footer string, bWidth int, borderColor Color) {
 	inner := bWidth - 2
-	var body string
 	if footer != "" {
 		maxFooterWidth := inner - 4
 		if displayWidth(footer) > maxFooterWidth {
@@ -666,13 +665,19 @@ func writeBoxBottom(p *Profile, sb *trackingBuilder, prefix, footer string, bWid
 		if fillLen < 0 {
 			fillLen = 0
 		}
-		body = strings.Repeat(p.BoxH, fillLen) + footer + strings.Repeat(p.BoxH, 2)
+		left := strings.Repeat(p.BoxH, fillLen)
+		right := strings.Repeat(p.BoxH, 2)
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(p.BoxBL+left, borderColor))
+		sb.WriteString(styled(footer, borderColor, ColNone, true, false))
+		sb.WriteString(fgWrap(right+p.BoxBR, borderColor))
+		sb.WriteString("\n")
 	} else {
-		body = strings.Repeat(p.BoxH, inner)
+		body := strings.Repeat(p.BoxH, inner)
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(p.BoxBL+body+p.BoxBR, borderColor))
+		sb.WriteString("\n")
 	}
-	sb.WriteString(prefix)
-	sb.WriteString(fgWrap(p.BoxBL+body+p.BoxBR, borderColor))
-	sb.WriteString("\n")
 }
 
 // writeBoxRow draws one wrapped content row inside the box borders.
@@ -988,27 +993,27 @@ func toolResultStatus(evt model.RenderEvent, ok bool) (string, Color) {
 	}
 	if evt.TimedOut {
 		if evt.TimeoutSeconds > 0 {
-			return fmt.Sprintf("✗ Timeout (%gs)", evt.TimeoutSeconds), ColError
+			return fmt.Sprintf("✗ Timeout (%gs)", evt.TimeoutSeconds), ColErrorBright
 		}
-		return "✗ Timeout", ColError
+		return "✗ Timeout", ColErrorBright
 	}
 	if !ok {
 		if evt.ExitCode != 0 {
-			return fmt.Sprintf("✗ Failed (exit %d)", evt.ExitCode), ColError
+			return fmt.Sprintf("✗ Failed (exit %d)", evt.ExitCode), ColErrorBright
 		}
-		return "✗ Failed", ColError
+		return "✗ Failed", ColErrorBright
 	}
-	return "✓", ColSuccess
+	return "✓", ColSuccessBright
 }
 
 // writeToolResultBox renders a tool result as a bordered "Output" box with a
 // Completed/Failed footer (chrys-native layout). Output-less results collapse
 // to a single status line so the transcript doesn't fill with empty boxes.
 func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, ok bool, onTrunc func()) {
-	borderColor := ColSuccess
+	borderColor := ColSuccessBright
 	footer := " Completed "
 	if !ok {
-		borderColor = ColError
+		borderColor = ColErrorBright
 		footer = " Failed "
 		switch {
 		case evt.Rejected:
@@ -1032,10 +1037,10 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 	if evt.Stdout == "" && evt.Stderr == "" {
 		sb.WriteString(prefix)
 		if ok {
-			sb.WriteString(fgWrap("✓ Completed", ColSuccess))
+			sb.WriteString(styled("✓ Completed", ColSuccessBright, ColNone, true, false))
 		} else {
 			label, color := toolResultStatus(evt, ok)
-			sb.WriteString(fgWrap(label, color))
+			sb.WriteString(styled(label, color, ColNone, true, false))
 		}
 		sb.WriteString("\n\n")
 		return
@@ -1068,7 +1073,7 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 		writeLines(evt.Stdout, ColFg)
 	}
 	if evt.Stderr != "" {
-		writeLines(evt.Stderr, ColError)
+		writeLines(evt.Stderr, ColErrorBright)
 	}
 
 	writeBoxBottom(p, sb, prefix, footer, bWidth, borderColor)
@@ -1186,7 +1191,7 @@ func writeAgentSpecific(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 		sb.WriteString("\n")
 	case "interrupted":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 中断: %s", sanitizeControlChars(evt.Text)), ColError))
+		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 中断: %s", sanitizeControlChars(evt.Text)), ColErrorBright))
 		sb.WriteString("\n")
 	case "in_progress":
 		// A turn still running (chrys in-flight checkpoint). Neutral, not an

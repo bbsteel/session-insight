@@ -35,8 +35,10 @@ const (
 	ColSubagent Color = 6  // sub-agent / nested transcript (Claude terracotta)
 	ColFg       Color = 7  // default foreground text
 	ColMuted    Color = 8  // thinking, separators, blockquotes, dim text
-	ColDiffDel  Color = 9  // diff deleted line background
-	ColDiffAdd  Color = 10 // diff added line background
+	ColDiffDel  Color = 11 // diff deleted line background (brightYellow slot)
+	ColDiffAdd  Color = 14 // diff added line background (brightCyan slot)
+	ColSuccessBright Color = 10 // ✓ Completed, success borders (brightGreen slot)
+	ColErrorBright   Color = 9  // ✗ Failed, error borders (brightRed slot)
 	ColBanner   Color = 12 // turn banner accent; theme-resolved and user-customizable client-side
 )
 

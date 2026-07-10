@@ -558,7 +558,7 @@ func (c *mdCtx) renderInline(n ast.Node, st inlineStyle) {
 		c.emit(string(v.URL(c.source)), inlineStyle{fg: ColTool})
 	case *extast.TaskCheckBox:
 		if v.IsChecked {
-			c.emit("☑ ", inlineStyle{fg: ColSuccess})
+			c.emit("☑ ", inlineStyle{fg: ColSuccessBright})
 		} else {
 			c.emit("☐ ", inlineStyle{fg: ColMuted})
 		}

@@ -33,6 +33,7 @@ func chrysEvents() []model.RenderEvent {
 
 func TestChrysProfileLayout(t *testing.T) {
 	out := FormatEvents(chrysEvents(), 100)
+	plain := stripANSIForTest(out)
 
 	for _, want := range []string{
 		"❯ You",              // user header instead of "> "
@@ -44,8 +45,8 @@ func TestChrysProfileLayout(t *testing.T) {
 		" Completed ──╯",     // success footer, right-aligned
 		" Failed (exit 1) ──╯", // failure footer with exit code
 	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("chrys layout missing %q\n%s", want, out)
+		if !strings.Contains(plain, want) {
+			t.Errorf("chrys layout missing %q\n%s", want, plain)
 		}
 	}
 
