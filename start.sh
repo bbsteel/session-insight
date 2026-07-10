@@ -68,7 +68,7 @@ do_start() {
   echo "    Binary: $BIN_PATH"
   echo "    PID file: $PID_FILE"
   echo "    Log file: $LOG_FILE"
-  nohup env PORT="$PORT" "$BIN_PATH" >"$LOG_FILE" 2>&1 &
+  nohup setsid env PORT="$PORT" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
   echo $! >"$PID_FILE"
   echo "    PID: $(cat "$PID_FILE")"
 }
