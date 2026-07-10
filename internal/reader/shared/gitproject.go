@@ -55,15 +55,6 @@ func detectWorktreeLayout(path string) string {
 		}
 	}
 
-	// OpenClaw: .openclaw/workspace/projects/<group>/<project>[/subdir...]
-	const openClawMarker = "/.openclaw/workspace/projects/"
-	if idx := strings.Index(path, openClawMarker); idx >= 0 {
-		rest := strings.Trim(path[idx+len(openClawMarker):], string(filepath.Separator))
-		parts := strings.Split(rest, string(filepath.Separator))
-		if len(parts) >= 2 && parts[1] != "" {
-			return parts[1]
-		}
-	}
 	return ""
 }
 

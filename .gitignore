@@ -29,6 +29,9 @@ session-insight.pid
 .env
 .env.local
 
+# Local Claude Code settings (personal permissions, not project config)
+.claude/settings.local.json
+
 .superpowers/
 opencode.json
 thoughts.md
