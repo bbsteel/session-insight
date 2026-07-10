@@ -60,7 +60,18 @@ func main() {
 	go idx.RunBackground(context.Background())
 
 	srv := server.New(database, readers)
-	srv.Mux.Handle("/", http.FileServer(http.FS(frontendFS)))
+	fileServer := http.FileServer(http.FS(frontendFS))
+	srv.Mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if p == "/" || p == "/index.html" {
+			// index.html must revalidate so the browser picks up new asset hashes after a build.
+			w.Header().Set("Cache-Control", "no-cache")
+		} else {
+			// Vite content-hashes all JS/CSS/font filenames; safe to cache indefinitely.
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		fileServer.ServeHTTP(w, r)
+	}))
 
 	// Loopback only: the API exposes session contents and (via the editor
 	// command setting + open-file) command execution, so it must never be
