@@ -22,7 +22,6 @@ Session Insight 自动发现以下 Agent 的会话数据（持续新增中）：
 | [Codex](https://github.com/openai/codex) | `~/.codex/sessions/` |
 | [GitHub Copilot](https://github.com/features/copilot) | `~/.copilot/session-state/` |
 | [opencode](https://opencode.ai) | opencode SQLite 数据库（自动定位） |
-| [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
 
 ## 快速开始
 
@@ -43,7 +42,7 @@ bash start.sh all
 
 ### Windows
 
-参见 [BUILD_CN.md](BUILD_CN.md)，需要安装 MSYS2 + mingw-w64 以支持 CGO 编译。
+参见 [BUILD_ZH.md](BUILD_ZH.md)，需要安装 MSYS2 + mingw-w64 以支持 CGO 编译。
 
 ### 配置
 
