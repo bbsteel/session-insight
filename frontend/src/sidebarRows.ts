@@ -13,6 +13,26 @@ export function getAgentLabel(agent: string): string {
   return agent
 }
 
+export function formatRelativeTime(dateStr: string, now = Date.now()): string {
+  const timestamp = new Date(dateStr).getTime()
+  if (!Number.isFinite(timestamp)) return dateStr
+
+  const elapsedMinutes = Math.max(0, Math.floor((now - timestamp) / 60_000))
+  if (elapsedMinutes < 1) return '刚刚'
+  if (elapsedMinutes < 60) return `${elapsedMinutes}分钟前`
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60)
+  if (elapsedHours < 24) return `${elapsedHours}小时前`
+
+  const elapsedDays = Math.floor(elapsedHours / 24)
+  if (elapsedDays < 30) return `${elapsedDays}天前`
+
+  const elapsedMonths = Math.floor(elapsedDays / 30)
+  if (elapsedMonths < 12) return `${elapsedMonths}个月前`
+
+  return `${Math.floor(elapsedDays / 365)}年前`
+}
+
 export function buildSidebarRows(
   sessions: SessionSummary[],
   grouped: boolean,

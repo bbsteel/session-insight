@@ -7,18 +7,7 @@ import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import AgentIcon from './AgentIcon'
 import { Virtuoso } from 'react-virtuoso'
-import { getAgentLabel } from '../sidebarRows'
-
-function formatDateTime(dateStr: string): string {
-  const date = new Date(dateStr)
-  if (Number.isNaN(date.getTime())) return dateStr
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hour = String(date.getHours()).padStart(2, '0')
-  const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${year}-${month}-${day} ${hour}:${minute}`
-}
+import { formatRelativeTime, getAgentLabel } from '../sidebarRows'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 
@@ -77,6 +66,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange }: SidebarProps) {
+  const [now, setNow] = useState(Date.now())
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [bookmarks, setBookmarks] = useState<SessionSummary[]>([])
   const [bookmarksOpen, setBookmarksOpen] = useState(false)
@@ -88,6 +78,11 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
   const [width, setWidth] = useState(() => {
     const stored = Number(readStorage(SIDEBAR_WIDTH_KEY))
     return Number.isFinite(stored) && stored >= 160 && stored <= 400 ? stored : 260
@@ -421,7 +416,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
     parts.push(`${session.message_count || session.turn_count} msgs`)
     if (session.is_live) parts.push('活跃中')
     const metadata = parts.join(' · ')
-    const dateTime = formatDateTime(session.updated_at)
+    const relativeTime = formatRelativeTime(session.updated_at, now)
 
     return (
       <div className="group relative">
@@ -449,8 +444,8 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
               </div>
               <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
                 <span className="truncate min-w-0">{metadata}</span>
-                <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at}>
-                  {dateTime}
+                <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at} title={new Date(session.updated_at).toLocaleString()}>
+                  {relativeTime}
                 </time>
               </div>
             </div>
@@ -627,7 +622,7 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
                               <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{project}</span>
                             </span>
                             <span className="mt-0.5 block truncate text-helper text-[var(--text-muted)]">
-                              {formatDateTime(session.updated_at)}
+                              {formatRelativeTime(session.updated_at, now)}
                             </span>
                           </button>
                           <button
