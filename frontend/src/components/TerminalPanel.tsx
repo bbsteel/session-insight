@@ -73,6 +73,9 @@ interface Props {
   sessionId: string
   agentType?: string
   folds?: FoldRange[]
+  // Comma-separated message kinds that get an HH:MM:SS prefix (backend "ts"
+  // render option). Changing it re-renders the terminal from scratch.
+  tsKinds?: string
   onFoldChange?: () => void
   onContextMenu?: (e: TerminalContextMenuEvent) => void
   onScrollMetrics?: (m: ScrollMetrics) => void
@@ -100,7 +103,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, onFoldChange, onContextMenu, onScrollMetrics, onColsReady, controlRef }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', onFoldChange, onContextMenu, onScrollMetrics, onColsReady, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -754,7 +757,7 @@ const snapshotTerminal = () => {
       const queueMetrics = () => metricsBatcher?.push(getMetrics())
 
       const loadRender = (cols: number) => {
-        fetchRenderANSI(sessionId, cols)
+        fetchRenderANSI(sessionId, cols, tsKinds)
           .then(ansi => {
             if (disposed) return
             rawAnsi = ansi
@@ -837,7 +840,7 @@ const snapshotTerminal = () => {
           },
           refreshContent: async () => {
             if (!hasWrittenOnce || currentCols === 0) return 'unchanged'
-            const ansi = await fetchRenderANSI(sessionId, currentCols)
+            const ansi = await fetchRenderANSI(sessionId, currentCols, tsKinds)
             if (disposed || ansi === rawAnsi) return 'unchanged'
             const buf = term.buffer.active
             const atBottom = buf.viewportY >= buf.baseY
@@ -993,7 +996,7 @@ const snapshotTerminal = () => {
       termRef.current = null
       term.dispose()
     }
-  }, [sessionId])
+  }, [sessionId, tsKinds])
 
   useEffect(() => {
     if (termRef.current) {

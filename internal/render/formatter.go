@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/bbsteel/session-insight/internal/model"
@@ -38,10 +39,23 @@ func FormatEvents(events []model.RenderEvent, cols int) string {
 	return ansi
 }
 
+// FormatEventsOpts is FormatEvents with per-request render options.
+func FormatEventsOpts(events []model.RenderEvent, cols int, opts Options) string {
+	ansi, _ := FormatEventsWithPositionsOpts(events, cols, opts)
+	return ansi
+}
+
 // FormatEventsWithPositions renders events as ANSI text and simultaneously
 // records terminal line positions for each significant event kind.
 // Returns the ANSI string and a slice of positions ordered by line_start.
 func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []RenderPosition) {
+	return FormatEventsWithPositionsOpts(events, cols, Options{})
+}
+
+// FormatEventsWithPositionsOpts is FormatEventsWithPositions with per-request
+// render options. Options change line layout, so callers caching either
+// return value must include opts.Mask() in their cache key.
+func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Options) (string, []RenderPosition) {
 	if cols <= 0 {
 		cols = TermWidth
 	}
@@ -57,6 +71,16 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 		events = pairToolRuns(events)
 	}
 	groupStarts := computeToolRuns(p, events)
+	outcomes := computeToolOutcomes(events)
+
+	// tsFor formats an event's timestamp for inline display when the
+	// corresponding Options flag is on; "" means "don't render one".
+	tsFor := func(evt model.RenderEvent, enabled bool) string {
+		if !enabled || evt.Timestamp.IsZero() {
+			return ""
+		}
+		return evt.Timestamp.Local().Format("15:04:05")
+	}
 
 	tb := newTrackingBuilder(cols)
 	var positions []RenderPosition
@@ -237,7 +261,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			}
 		case "UserPrompt":
 			emit("user", "用户输入", "", evt.TurnIndex, nil)
-			writeUserPrompt(p, tb, evt, prefix)
+			writeUserPrompt(p, tb, evt, prefix, tsFor(evt, opts.TimestampUser))
 		case "ThinkingStart":
 			writeThinking(tb, evt, prefix)
 		case "ThinkingChunk":
@@ -248,7 +272,16 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 				if prevDepth0Type != "" {
 					tb.WriteString("\n")
 				}
-				writeAssistantHeader(tb, agentLabel)
+				writeAssistantHeader(tb, agentLabel, tsFor(evt, opts.TimestampAssistant))
+			} else if evt.Depth == 0 && prevDepth0Type != "TextChunk" {
+				// Profiles without an assistant header line get the timestamp
+				// as its own muted line: prefixing the first markdown line
+				// would overflow the wrap width computed without the prefix.
+				if ts := tsFor(evt, opts.TimestampAssistant); ts != "" {
+					tb.WriteString(prefix)
+					tb.WriteString(fgWrap(ts, ColMuted))
+					tb.WriteString("\n")
+				}
 			}
 			writeTextChunk(tb, evt, prefix, cols)
 		case "ToolInvocation":
@@ -256,6 +289,15 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 				seq := editSeqByTurn[evt.TurnIndex]
 				editSeqByTurn[evt.TurnIndex]++
 				emit("edit", filePath, "", evt.TurnIndex, map[string]any{"edit_seq": float64(seq)})
+			}
+			outcome := outcomes[evt.ToolCallID]
+			toolTS := tsFor(evt, opts.TimestampTool)
+			// Every depth-0 tool call gets a "tool" position anchored to its
+			// header line — the tool-call panel's data source. Nested
+			// (depth>0) subagent tools are skipped: their TurnIndex is local
+			// to the subagent transcript, not the parent session.
+			if evt.Depth == 0 {
+				emit("tool", evt.ToolName, "", evt.TurnIndex, toolPositionPayload(evt, outcome))
 			}
 			// Each non-edit tool inside a group folds independently: its compact
 			// "▼ • Name summary" line stays visible while the input/output boxes
@@ -274,7 +316,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 			if openFold != nil && evt.Depth == 0 && p.ToolBullet && !model.IsEditTool(evt.ToolName) {
 				headerDisplay := tb.CurrentLine()
 				headerLogical := tb.CurrentLogicalLine()
-				bodyD, bodyL, badgeOff := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true)
+				bodyD, bodyL, badgeOff := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true, outcome.durationMs, toolTS)
 				openToolFold = &toolFoldState{
 					turnIndex:     evt.TurnIndex,
 					key:           fmt.Sprintf("tfold:%d:%d", evt.TurnIndex, headerDisplay),
@@ -286,7 +328,7 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 					badgeOffset:   badgeOff,
 				}
 			} else {
-				writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, false)
+				writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, false, outcome.durationMs, toolTS)
 			}
 		case "ToolResult":
 			if evt.Rejected {
@@ -326,7 +368,128 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 20
+const FormatVersion int64 = 23
+
+// toolOutcome aggregates a tool call's result(s): merged status and best
+// available duration. status "" means no result was seen (still running or
+// transcript cut short).
+type toolOutcome struct {
+	durationMs int64
+	status     string // "" | "ok" | "error" | "timeout" | "rejected"
+}
+
+// computeToolOutcomes indexes results by ToolCallID. A call can have several
+// result events (e.g. embedded bash emits stdout and stderr separately), so
+// statuses merge worst-wins. Duration prefers the result's own DurationMs;
+// most readers don't populate it, so the invocation→result timestamp delta is
+// the fallback.
+func computeToolOutcomes(events []model.RenderEvent) map[string]toolOutcome {
+	rank := map[string]int{"": 0, "ok": 1, "error": 2, "timeout": 3, "rejected": 4}
+	invTS := make(map[string]time.Time)
+	out := make(map[string]toolOutcome)
+	for _, e := range events {
+		if e.ToolCallID == "" {
+			continue
+		}
+		switch e.Type {
+		case "ToolInvocation":
+			if _, seen := invTS[e.ToolCallID]; !seen && !e.Timestamp.IsZero() {
+				invTS[e.ToolCallID] = e.Timestamp
+			}
+		case "ToolResult":
+			o := out[e.ToolCallID]
+			status := "ok"
+			switch {
+			case e.Rejected:
+				status = "rejected"
+			case e.TimedOut:
+				status = "timeout"
+			case e.ExitCode != 0 || e.Stderr != "":
+				status = "error"
+			}
+			if rank[status] > rank[o.status] {
+				o.status = status
+			}
+			if e.DurationMs > o.durationMs {
+				o.durationMs = e.DurationMs
+			}
+			if o.durationMs == 0 && !e.Timestamp.IsZero() {
+				if ts, ok := invTS[e.ToolCallID]; ok {
+					if d := e.Timestamp.Sub(ts).Milliseconds(); d > 0 {
+						o.durationMs = d
+					}
+				}
+			}
+			out[e.ToolCallID] = o
+		}
+	}
+	return out
+}
+
+// toolPositionPayload builds the "tool" position's payload: everything the
+// tool-call panel shows without refetching the event stream.
+func toolPositionPayload(evt model.RenderEvent, outcome toolOutcome) map[string]any {
+	purpose, _ := promoteBoxHeader(evt.ToolInput)
+	payload := map[string]any{
+		"tool_name": evt.ToolName,
+		"category":  toolCategory(evt.ToolName),
+		"status":    outcome.status,
+	}
+	if evt.ToolCallID != "" {
+		payload["tool_call_id"] = evt.ToolCallID
+	}
+	if s := toolSummary(purpose, evt.ToolInput); s != "" {
+		payload["summary"] = truncateToWidth(s, 200)
+	}
+	if !evt.Timestamp.IsZero() {
+		payload["ts_ms"] = float64(evt.Timestamp.UnixMilli())
+	}
+	if outcome.durationMs > 0 {
+		payload["duration_ms"] = float64(outcome.durationMs)
+	}
+	if preview := toolInputPreview(evt.ToolInput); len(preview) > 0 {
+		payload["input_preview"] = preview
+	}
+	return payload
+}
+
+// toolInputPreview caps the "key: value" input lines for the tool-call
+// panel's expanded view — full values (whole file contents in a Write call)
+// stay in the terminal; the panel is for orientation, then jumping there.
+func toolInputPreview(input map[string]any) []string {
+	lines := formatToolInput(input)
+	if len(lines) == 0 {
+		return nil
+	}
+	const maxLines = 10
+	extra := 0
+	if len(lines) > maxLines {
+		extra = len(lines) - maxLines
+		lines = lines[:maxLines]
+	}
+	out := make([]string, 0, len(lines)+1)
+	for _, l := range lines {
+		out = append(out, truncateToWidth(l, 200))
+	}
+	if extra > 0 {
+		out = append(out, fmt.Sprintf("… 另有 %d 个参数", extra))
+	}
+	return out
+}
+
+// fmtDurationShort renders a tool-call duration for inline display.
+func fmtDurationShort(ms int64) string {
+	switch {
+	case ms < 1000:
+		return fmt.Sprintf("%dms", ms)
+	case ms < 60_000:
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	case ms < 3_600_000:
+		return fmt.Sprintf("%dm%02ds", ms/60_000, (ms%60_000)/1000)
+	default:
+		return fmt.Sprintf("%dh%02dm", ms/3_600_000, (ms%3_600_000)/60_000)
+	}
+}
 
 // pairToolRuns reorders each contiguous tool run so every depth-0
 // ToolInvocation is immediately followed by its matching ToolResult (and the
@@ -510,9 +673,12 @@ func writeToolGroupHeader(p *Profile, sb *trackingBuilder, g toolRun) {
 	sb.WriteString("\n")
 }
 
-func writeAssistantHeader(sb *trackingBuilder, label string) {
+func writeAssistantHeader(sb *trackingBuilder, label string, ts string) {
 	if label == "" {
 		label = "Agent"
+	}
+	if ts != "" {
+		sb.WriteString(fgWrap(ts+" ", ColMuted))
 	}
 	sb.WriteString(styled("◇ "+sanitizeControlChars(label), ColSuccessBright, ColNone, false, false))
 	sb.WriteString("\n")
@@ -537,9 +703,12 @@ func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	sb.WriteString("\n")
 }
 
-func writeUserPrompt(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+func writeUserPrompt(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, ts string) {
 	if p.UserHeader != "" {
 		sb.WriteString(prefix)
+		if ts != "" {
+			sb.WriteString(fgWrap(ts+" ", ColMuted))
+		}
 		sb.WriteString(styled(p.UserHeader, ColUser, ColNone, true, false))
 		sb.WriteString("\n")
 		for _, line := range strings.Split(sanitizeControlChars(evt.Text), "\n") {
@@ -550,8 +719,11 @@ func writeUserPrompt(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 		return
 	}
 	prompt := fgWrap("> ", ColUser) + fgWrap(sanitizeControlChars(evt.Text), ColFg)
-	for _, line := range strings.Split(prompt, "\n") {
+	for i, line := range strings.Split(prompt, "\n") {
 		sb.WriteString(prefix)
+		if i == 0 && ts != "" {
+			sb.WriteString(fgWrap(ts+" ", ColMuted))
+		}
 		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
@@ -717,7 +889,10 @@ func promoteBoxHeader(input map[string]any) (string, map[string]any) {
 // just past it — the caller folds [body … tool end) so only the header shows
 // when collapsed. Edit tools ignore asFoldHeader (they render diffs, no bullet)
 // and return (0, 0).
-func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool) (bodyDisplay, bodyLogical, headerBadgeOffset int) {
+// durationMs (0 = unknown) and ts ("" = disabled) enrich the header line so
+// the invocation's cost and wall-clock moment are readable without expanding
+// anything. Edit tools render as diffs and currently skip both.
+func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool, durationMs int64, ts string) (bodyDisplay, bodyLogical, headerBadgeOffset int) {
 	if model.IsEditTool(evt.ToolName) {
 		if evt.ToolName == "apply_patch" {
 			// apply_patch carries a raw patch string (under args/input/patch),
@@ -756,8 +931,8 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	}
 
 	toolName := sanitizeControlChars(evt.ToolName)
-	header := fmt.Sprintf(" Tool: %s ", toolName)
 	input := evt.ToolInput
+	var header string
 
 	if p.ToolBullet {
 		var purpose string
@@ -767,6 +942,11 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 			header = ""
 		}
 		sb.WriteString(prefix)
+		tsRun := ""
+		if ts != "" {
+			tsRun = fgWrap(ts+" ", ColMuted)
+			sb.WriteString(tsRun)
+		}
 		if asFoldHeader {
 			// Emit the name and the summary as two independent SGR runs so the
 			// client can splice the fold's "(N 行)" badge between them without any
@@ -778,14 +958,32 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 			// header ends"; the client stays profile-agnostic.
 			nameRun := styled("▼ • "+toolName, ColFg, ColNone, true, false)
 			sb.WriteString(nameRun)
-			headerBadgeOffset = utf16Len(prefix) + utf16Len(nameRun)
+			headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(nameRun)
 			if s := toolSummary(purpose, evt.ToolInput); s != "" {
 				sb.WriteString(styled("  "+s, ColFg, ColNone, true, false))
 			}
 		} else {
 			sb.WriteString(styled("• "+toolName, ColFg, ColNone, true, false))
 		}
+		if durationMs > 0 {
+			sb.WriteString(fgWrap(" · "+fmtDurationShort(durationMs), ColMuted))
+		}
 		sb.WriteString("\n")
+	} else {
+		// Box profiles carry the salient input arg, duration, and optional
+		// timestamp inside the top border's header: a prefix outside the box
+		// would misalign the border with the content rows beneath it.
+		parts := []string{fmt.Sprintf("Tool: %s", toolName)}
+		if s := toolSummary("", evt.ToolInput); s != "" {
+			parts = append(parts, truncateToWidth(s, 48))
+		}
+		if durationMs > 0 {
+			parts = append(parts, fmtDurationShort(durationMs))
+		}
+		if ts != "" {
+			parts = append(parts, ts)
+		}
+		header = " " + strings.Join(parts, " · ") + " "
 	}
 
 	// Body starts after the (possibly wrapped) header line: everything from
@@ -819,7 +1017,16 @@ func toolSummary(purpose string, input map[string]any) string {
 			}
 		}
 	}
-	return ""
+	// No purpose and no well-known key: synthesize a compact "k: v · k: v"
+	// from all params so simple tools (load_skill、自定义 MCP 工具等) read
+	// fully on the collapsed row instead of forcing an expand.
+	parts := make([]string, 0, len(input))
+	for _, l := range formatToolInput(input) {
+		if s := oneLine(l); s != "" {
+			parts = append(parts, truncateToWidth(s, 60))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // oneLine collapses s to its first non-empty line, trimmed.
@@ -927,10 +1134,7 @@ func truncateToWidth(s string, maxWidth int) string {
 	var sb strings.Builder
 	w := 0
 	for _, r := range s {
-		rw := 1
-		if isWideRune(r) {
-			rw = 2
-		}
+		rw := runeCellWidth(r)
 		if w+rw > budget {
 			break
 		}
@@ -1229,13 +1433,34 @@ func padRight(s string, width int) string {
 func displayWidth(s string) int {
 	w := 0
 	for _, r := range s {
-		if isWideRune(r) {
-			w += 2
-		} else {
-			w++
-		}
+		w += runeCellWidth(r)
 	}
 	return w
+}
+
+// runeCellWidth mirrors xterm.js's default (wcwidth-style) cell accounting:
+// zero-width marks occupy no cell even when they change the glyph. Without
+// this, "✏️" (U+270F + VS16) counts as 2 here but renders in 1 cell, so box
+// top borders drawn around it end one column short of the body rows.
+func runeCellWidth(r rune) int {
+	if isZeroWidthRune(r) {
+		return 0
+	}
+	if isWideRune(r) {
+		return 2
+	}
+	return 1
+}
+
+func isZeroWidthRune(r rune) bool {
+	switch {
+	case r >= 0xFE00 && r <= 0xFE0F, // variation selectors (VS16 emoji style)
+		r >= 0x200B && r <= 0x200F, // zero-width space/joiners, directional marks
+		r >= 0x0300 && r <= 0x036F, // combining diacritical marks
+		r == 0xFEFF: // BOM / zero-width no-break space
+		return true
+	}
+	return false
 }
 
 func isWideRune(r rune) bool {
@@ -1257,10 +1482,7 @@ func isWideRune(r rune) bool {
 func splitAtWidth(s string, maxWidth int) (string, string) {
 	w := 0
 	for i, r := range s {
-		rw := 1
-		if isWideRune(r) {
-			rw = 2
-		}
+		rw := runeCellWidth(r)
 		if w+rw > maxWidth {
 			return s[:i], s[i:]
 		}

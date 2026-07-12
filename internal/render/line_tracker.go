@@ -73,10 +73,7 @@ func (t *terminalLineTracker) Feed(s string) {
 		r, size := decodeRune(s, i)
 		i += size
 
-		rw := 1
-		if isWideRune(r) {
-			rw = 2
-		}
+		rw := runeCellWidth(r)
 
 		// Soft wrap when rune would overflow current line.
 		if t.col+rw > t.cols {

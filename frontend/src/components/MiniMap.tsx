@@ -67,6 +67,7 @@ const positionKindToEventKind: Record<MiniMapPosition['kind'], MiniMapEventKind 
   edit: null,
   fold: null,  // fold/trunc entries drive terminal interactions, not minimap markers
   trunc: null,
+  tool: null,  // tool entries feed the tool-call panel, not minimap markers
 }
 
 // Compute minimapContentHeight: at least visibleTrackHeight, at most 4×, scaled

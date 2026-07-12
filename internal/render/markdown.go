@@ -493,10 +493,7 @@ func wrapStyledToWidth(s string, maxWidth int) []string {
 			i = j
 			continue
 		}
-		rw := 1
-		if isWideRune(runes[i]) {
-			rw = 2
-		}
+		rw := runeCellWidth(runes[i])
 		if w+rw > maxWidth {
 			flush()
 		}

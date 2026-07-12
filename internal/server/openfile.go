@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 // Opening files in the user's editor. The command template lives server-side
@@ -23,6 +25,9 @@ const (
 	// Extension allowlist for the terminal file-open affordance; empty means
 	// the frontend's built-in default list, "*" means no restriction.
 	fileOpenExtsKey = "file_open_extensions"
+	// Which message kinds get an HH:MM:SS prefix in the terminal render;
+	// comma-separated subset of "user", "assistant", "tool". Empty = off.
+	timestampKindsKey = "timestamp_kinds"
 )
 
 // rejectUnsafeWrite guards the state-changing endpoints against cross-site
@@ -207,7 +212,7 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	editorCmd, fileExts := "", ""
+	editorCmd, fileExts, tsKinds := "", "", ""
 	if s.DB != nil {
 		if v, err := s.DB.GetSetting(editorCommandKey); err == nil {
 			editorCmd = v
@@ -215,12 +220,16 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		if v, err := s.DB.GetSetting(fileOpenExtsKey); err == nil {
 			fileExts = v
 		}
+		if v, err := s.DB.GetSetting(timestampKindsKey); err == nil {
+			tsKinds = v
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"editor_command":         editorCmd,
 		"editor_command_default": s.editorCommandTemplate(),
 		"file_open_extensions":   fileExts,
+		"timestamp_kinds":        tsKinds,
 	})
 }
 
@@ -235,6 +244,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EditorCommand      *string `json:"editor_command"`
 		FileOpenExtensions *string `json:"file_open_extensions"`
+		TimestampKinds     *string `json:"timestamp_kinds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -248,6 +258,14 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.FileOpenExtensions != nil {
 		if err := s.DB.SetSetting(fileOpenExtsKey, strings.TrimSpace(*req.FileOpenExtensions)); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if req.TimestampKinds != nil {
+		// Canonicalize through the parser so only known kinds are stored.
+		canonical := render.ParseTimestampKinds(*req.TimestampKinds).KindsString()
+		if err := s.DB.SetSetting(timestampKindsKey, canonical); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -154,6 +154,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
   const savedEditorCommandRef = useRef('')
   const [fileExts, setFileExts] = useState('')
   const savedFileExtsRef = useRef('')
+  // 终端消息时间戳前缀:哪些消息类型显示 HH:MM:SS(服务端渲染选项)。
+  const [tsKinds, setTsKinds] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -174,9 +176,18 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
         savedEditorCommandRef.current = s.editor_command
         setFileExts(s.file_open_extensions ?? '')
         savedFileExtsRef.current = s.file_open_extensions ?? ''
+        setTsKinds((s.timestamp_kinds ?? '').split(',').filter(Boolean))
       })
       .catch(() => {})
   }, [showSettings])
+
+  const toggleTsKind = (kind: string) => {
+    const next = tsKinds.includes(kind) ? tsKinds.filter(k => k !== kind) : [...tsKinds, kind]
+    setTsKinds(next)
+    void saveSettings({ timestamp_kinds: next.join(',') })
+      .then(() => window.dispatchEvent(new Event('si-settings-changed')))
+      .catch(() => setTsKinds(tsKinds))
+  }
 
   const persistEditorCommand = async () => {
     const value = editorCommand.trim()
@@ -486,6 +497,21 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
                 </span>
               </label>
               <div className="mt-1 text-meta text-[var(--text-muted)]">默认随深/浅主题，改动即时生效</div>
+              <div className="mt-3 text-helper text-[var(--text-primary)]">消息时间戳前缀</div>
+              <div className="mt-1 flex items-center gap-3">
+                {([['user', '用户输入'], ['assistant', '助手回复'], ['tool', '工具调用']] as const).map(([kind, label]) => (
+                  <label key={kind} className="flex cursor-pointer items-center gap-1.5 text-helper text-[var(--text-primary)]">
+                    <input
+                      type="checkbox"
+                      checked={tsKinds.includes(kind)}
+                      onChange={() => toggleTsKind(kind)}
+                      className="h-3.5 w-3.5 accent-[var(--accent-blue)]"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">勾选的消息类型在终端里显示 HH:MM:SS，保存后立即重渲染</div>
               <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
                 编辑器
               </div>

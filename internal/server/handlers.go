@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"net/http"
 	"sort"
@@ -285,14 +286,16 @@ func (s *Server) handleRenderSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
+	opts := render.ParseTimestampKinds(r.URL.Query().Get("ts"))
 
 	var lastErr error
 	for _, rd := range s.Readers {
-		ansi, err := rd.RenderANSI(id, cols)
+		events, err := rd.GetRenderEvents(id)
 		if err != nil {
 			lastErr = err
 			continue
 		}
+		ansi := render.FormatEventsOpts(events, cols, opts)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(ansi))
 		return
@@ -403,6 +406,16 @@ func positionCacheToResponse(c *db.PositionCache) positionsResponse {
 	}
 }
 
+// positionsRevision derives the position-cache key from session content,
+// renderer layout version, and render options. Hashed rather than additive:
+// SessionRevision is a UnixNano timestamp, so adding a small option mask
+// could collide with a genuinely newer revision of the same session.
+func positionsRevision(sess model.Session, opts render.Options) int64 {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%d|%d|%d", model.SessionRevision(sess), render.FormatVersion, opts.Mask())
+	return int64(h.Sum64() &^ (1 << 63))
+}
+
 func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -435,9 +448,12 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	opts := render.ParseTimestampKinds(r.URL.Query().Get("ts"))
+
 	// Renderer layout changes shift line numbers, so the cache key must
-	// change with FormatVersion as well as with session content.
-	revision := model.SessionRevision(*sess) + render.FormatVersion
+	// change with FormatVersion and render options as well as with session
+	// content.
+	revision := positionsRevision(*sess, opts)
 
 	// Cache hit: return immediately.
 	if cached, err := s.DB.GetPositionCache(sess.AgentType, id, revision, cols); err == nil && cached != nil {
@@ -463,7 +479,7 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 			ch <- buildResult{err: err}
 			return
 		}
-		_, rpositions := render.FormatEventsWithPositions(events, cols)
+		_, rpositions := render.FormatEventsWithPositionsOpts(events, cols, opts)
 
 		totalLines := 0
 		entries := make([]db.PositionEntry, 0, len(rpositions))

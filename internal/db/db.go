@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 type DB struct {
 	conn *sql.DB
@@ -145,7 +145,7 @@ func migrate(conn *sql.DB) error {
 	    revision     INTEGER NOT NULL,
 	    cols         INTEGER NOT NULL,
 	    position_key TEXT    NOT NULL,
-	    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'compaction', 'error', 'edit', 'fold', 'trunc')),
+	    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'compaction', 'error', 'edit', 'fold', 'trunc', 'tool')),
 	    turn_index   INTEGER NOT NULL,
 	    line_start   INTEGER NOT NULL,
 	    line_end     INTEGER,
@@ -245,6 +245,48 @@ func migrate(conn *sql.DB) error {
 		    cols         INTEGER NOT NULL,
 		    position_key TEXT    NOT NULL,
 		    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'compaction', 'error', 'edit', 'fold', 'trunc')),
+		    turn_index   INTEGER NOT NULL,
+		    line_start   INTEGER NOT NULL,
+		    line_end     INTEGER,
+		    label        TEXT    NOT NULL DEFAULT '',
+		    severity     TEXT    NOT NULL DEFAULT '',
+		    payload_json TEXT    NOT NULL DEFAULT '{}',
+		    PRIMARY KEY (agent_type, session_id, revision, cols, position_key),
+		    FOREIGN KEY (agent_type, session_id, revision, cols)
+		        REFERENCES session_position_caches(agent_type, session_id, revision, cols)
+		        ON DELETE CASCADE
+		)`)
+		conn.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_session_positions_lookup
+		    ON session_positions(agent_type, session_id, revision, cols, line_start)`)
+	}
+
+	// Version 9: 'tool' kind added to the position constraint (tool-call
+	// panel entries). Same pattern: pure caches, drop and rebuild on the
+	// next positions request with the widened CHECK. Runs after the v6
+	// block so any older DB (including fresh ones the v4/v6 blocks just
+	// rebuilt with the narrower CHECK) ends up with the current schema.
+	if maxVersion < 9 {
+		conn.Exec(`DROP TABLE IF EXISTS session_positions`)
+		conn.Exec(`DROP TABLE IF EXISTS session_position_caches`)
+		conn.Exec(`
+		CREATE TABLE IF NOT EXISTS session_position_caches (
+		    agent_type   TEXT    NOT NULL,
+		    session_id   TEXT    NOT NULL,
+		    revision     INTEGER NOT NULL,
+		    cols         INTEGER NOT NULL,
+		    total_lines  INTEGER NOT NULL,
+		    generated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+		    PRIMARY KEY (agent_type, session_id, revision, cols)
+		)`)
+		conn.Exec(`
+		CREATE TABLE IF NOT EXISTS session_positions (
+		    agent_type   TEXT    NOT NULL,
+		    session_id   TEXT    NOT NULL,
+		    revision     INTEGER NOT NULL,
+		    cols         INTEGER NOT NULL,
+		    position_key TEXT    NOT NULL,
+		    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'compaction', 'error', 'edit', 'fold', 'trunc', 'tool')),
 		    turn_index   INTEGER NOT NULL,
 		    line_start   INTEGER NOT NULL,
 		    line_end     INTEGER,

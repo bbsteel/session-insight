@@ -11,6 +11,7 @@ import DiffModal from './DiffModal'
 import OutputModal from './OutputModal'
 import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
+import ToolCallPanel from './ToolCallPanel'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
@@ -62,6 +63,10 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const [foldVersion, setFoldVersion] = useState(0)
   const [outputModalIdx, setOutputModalIdx] = useState<number | null>(null)
   const [edits, setEdits] = useState<EditCall[]>([])
+  const [showToolPanel, setShowToolPanel] = useState(false)
+  // 时间戳前缀设置(后端 ts 渲染参数);null = 设置未加载,先不挂终端,
+  // 避免渲染与 positions 用了不同的 ts 导致行号错位。
+  const [tsKinds, setTsKinds] = useState<string | null>(null)
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [bookmarkError, setBookmarkError] = useState<string | null>(null)
   const termControlRef = useRef<TerminalControl | null>(null)
@@ -86,9 +91,23 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   // all via '*'); rows whose tokens all fall outside it get no affordance.
   const fileExtsRef = useRef<Set<string> | null>(new Set(DEFAULT_FILE_OPEN_EXTS))
   useEffect(() => {
-    fetchSettings()
-      .then(s => { fileExtsRef.current = parseExtList(s.file_open_extensions ?? '') })
-      .catch(() => {})
+    let cancelled = false
+    const load = () => {
+      fetchSettings()
+        .then(s => {
+          if (cancelled) return
+          fileExtsRef.current = parseExtList(s.file_open_extensions ?? '')
+          setTsKinds(s.timestamp_kinds ?? '')
+        })
+        .catch(() => { if (!cancelled) setTsKinds('') })
+    }
+    load()
+    // 设置面板保存后广播;时间戳选项变化会触发终端重渲染。
+    window.addEventListener('si-settings-changed', load)
+    return () => {
+      cancelled = true
+      window.removeEventListener('si-settings-changed', load)
+    }
   }, [])
 
   // Resolve the first candidate on the row that exists on disk (cached).
@@ -179,9 +198,16 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     ])
   }, [openFilePopover])
 
+  // 列数没变时(例如「分析↔终端」来回切换导致的终端重挂载)必须保留现有
+  // positions:positions 拉取 effect 的依赖不会变化、不会重拉,这里若无条件
+  // 清空,工具列表/折叠/minimap 标记会永久丢失。
+  const lastColsRef = useRef<number | null>(null)
   const handleColsReady = useCallback((cols: number) => {
-    setTerminalCols(cols)
-    setPositionsData(null)
+    if (lastColsRef.current !== cols) {
+      lastColsRef.current = cols
+      setPositionsData(null)
+      setTerminalCols(cols)
+    }
     registerMatchers()
   }, [registerMatchers])
 
@@ -576,6 +602,20 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     setViewMode('terminal')
   }, [])
 
+  // 工具面板点击跳转:positions 行号是原始行,先换算折叠后的显示行。
+  const handleToolJump = useCallback((lineStart: number) => {
+    const ctrl = termControlRef.current
+    if (!ctrl) return
+    const line = Math.max(0, ctrl.toDisplayLine(lineStart))
+    ctrl.scrollToLine(line)
+    ctrl.flashLines(line, 1)
+  }, [])
+
+  const toolCallCount = useMemo(
+    () => (positionsData?.positions ?? []).filter(p => p.kind === 'tool').length,
+    [positionsData],
+  )
+
   // Keyboard navigation
   useEffect(() => {
     if (!sessionId || !session?.turns.length) return
@@ -593,6 +633,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     if (!sessionId) { setSession(null); setEdits([]); return }
     visibleRangeRef.current = undefined
     jumpBaseRef.current = 0
+    lastColsRef.current = null
     setTerminalCols(null)
     setPositionsData(null)
     setPositionsBuilding(false)
@@ -617,7 +658,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     let cancelled = false
 
     const poll = () => {
-      fetchPositions(sessionId, terminalCols)
+      fetchPositions(sessionId, terminalCols, tsKinds ?? '')
         .then(result => {
           if (cancelled) return
           if (result.status === 'building') {
@@ -643,7 +684,8 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     }
     // contentVersion: live tail grew the render → position cache rebuilds
     // under the new revision, so refetch (202-polling included).
-  }, [sessionId, terminalCols, contentVersion])
+    // tsKinds: 时间戳选项改变布局,渲染与 positions 必须成对刷新。
+  }, [sessionId, terminalCols, contentVersion, tsKinds])
 
   // Translate terminal scroll events into ScrollMetrics + visibleRange so that
   // MiniMap stays in sync even though there's no DOM scroller to observe.
@@ -788,6 +830,14 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
             分析
           </button>
           <span className="text-[var(--border-default)]">|</span>
+          <button
+            onClick={() => setShowToolPanel(v => !v)}
+            className={`h-7 rounded-md px-2 text-nav ${showToolPanel ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title="工具调用面板"
+          >
+            工具{toolCallCount > 0 ? ` ${toolCallCount}` : ''}
+          </button>
+          <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
         </div>
         <span className="text-[var(--border-default)] mx-1">|</span>
@@ -921,12 +971,13 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
             <Suspense fallback={<AnalyticsSkeleton />}>
               <AnalyticsView sessionId={session.id} agentType={session.agent_type} onJumpToTurn={handleJumpToTurn} />
             </Suspense>
-          ) : (
+          ) : tsKinds !== null && (
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
               <TerminalPanel
                 sessionId={session.id}
                 agentType={session.agent_type}
                 folds={folds}
+                tsKinds={tsKinds}
                 onFoldChange={handleFoldChange}
                 onContextMenu={handleTerminalContextMenu}
                 onScrollMetrics={handleTerminalScrollMetrics}
@@ -934,6 +985,16 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
                 controlRef={termControlRef}
               />
             </Suspense>
+          )}
+          {/* 浮层覆盖在终端右侧:不改变终端布局宽度,开关面板不会触发
+              列数变化 → 整屏重渲染 → minimap 闪烁。 */}
+          {viewMode === 'terminal' && showToolPanel && (
+            <ToolCallPanel
+              positions={positionsData}
+              building={positionsBuilding}
+              onJump={handleToolJump}
+              onClose={() => setShowToolPanel(false)}
+            />
           )}
         </div>
         <MiniMap

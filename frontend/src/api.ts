@@ -52,9 +52,12 @@ export async function fetchAgents(): Promise<AgentInfo[]> {
   return readJson<AgentInfo[]>(res, 'agents')
 }
 
-export async function fetchRenderANSI(id: string, cols?: number): Promise<string> {
-  const url = cols ? `/api/sessions/${id}/render?cols=${cols}` : `/api/sessions/${id}/render`
-  const res = await fetch(url)
+export async function fetchRenderANSI(id: string, cols?: number, ts?: string): Promise<string> {
+  const params = new URLSearchParams()
+  if (cols) params.set('cols', String(cols))
+  if (ts) params.set('ts', ts)
+  const q = params.toString()
+  const res = await fetch(q ? `/api/sessions/${id}/render?${q}` : `/api/sessions/${id}/render`)
   if (!res.ok) throw new Error(`Failed to fetch render: ${res.status}`)
   return res.text()
 }
@@ -68,8 +71,11 @@ export async function fetchSessionEdits(id: string): Promise<EditCall[]> {
 export async function fetchPositions(
   id: string,
   cols: number,
+  ts?: string,
 ): Promise<{ status: 'building' } | { status: 'ready'; data: PositionsResponse }> {
-  const res = await fetch(`/api/sessions/${id}/positions?cols=${cols}`)
+  const params = new URLSearchParams({ cols: String(cols) })
+  if (ts) params.set('ts', ts)
+  const res = await fetch(`/api/sessions/${id}/positions?${params}`)
   if (res.status === 202) return { status: 'building' }
   if (!res.ok) throw new Error(`Failed to fetch positions: ${res.status}`)
   const data = await res.json() as PositionsResponse
@@ -132,6 +138,7 @@ export interface AppSettings {
   editor_command: string
   editor_command_default: string
   file_open_extensions: string
+  timestamp_kinds: string
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
@@ -140,7 +147,7 @@ export async function fetchSettings(): Promise<AppSettings> {
   return res.json()
 }
 
-export async function saveSettings(settings: { editor_command?: string; file_open_extensions?: string }): Promise<void> {
+export async function saveSettings(settings: { editor_command?: string; file_open_extensions?: string; timestamp_kinds?: string }): Promise<void> {
   const res = await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

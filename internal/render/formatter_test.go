@@ -621,3 +621,146 @@ func stripANSIForTest(s string) string {
 	}
 	return sb.String()
 }
+
+// The edit-diff header embeds "✏️" (U+270F + VS16). xterm renders the
+// variation selector as zero-width, so our width math must too — otherwise
+// the box top border comes out one column short of the body rows and the ╗
+// corner visibly misaligns.
+func TestEditDiffBoxBordersAlign(t *testing.T) {
+	if got := displayWidth("✏️"); got != 1 {
+		t.Fatalf("displayWidth(✏️) = %d, want 1 (VS16 must be zero-width)", got)
+	}
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Depth: 0},
+		{Type: "ToolInvocation", TurnIndex: 0, Depth: 0,
+			ToolName: "Edit", ToolCallID: "e1",
+			ToolInput: map[string]any{
+				"file_path":  "/tmp/example.go",
+				"old_string": "a",
+				"new_string": "b",
+			}},
+	}
+	out := FormatEvents(events, 80)
+	var topWidth, bodyWidth int
+	for _, line := range strings.Split(out, "\n") {
+		plain := stripANSIForTest(line)
+		if strings.Contains(plain, "✏️") {
+			topWidth = displayWidth(plain)
+		}
+		if strings.Contains(plain, "-1 lines, +1 lines") {
+			bodyWidth = displayWidth(plain)
+		}
+	}
+	if topWidth == 0 || bodyWidth == 0 {
+		t.Fatalf("did not find edit box top/body lines in output:\n%s", out)
+	}
+	if topWidth != bodyWidth {
+		t.Errorf("edit box top border width %d != body row width %d", topWidth, bodyWidth)
+	}
+}
+
+func TestToolInvocationEmitsToolPosition(t *testing.T) {
+	start := time.Date(2026, 7, 11, 10, 0, 0, 0, time.Local)
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: start, Depth: 0},
+		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: start, Depth: 0,
+			ToolName: "Bash", ToolCallID: "call-1",
+			ToolInput: map[string]any{"command": "npm test"}},
+		{Type: "ToolResult", TurnIndex: 0, Timestamp: start.Add(3200 * time.Millisecond), Depth: 0,
+			ToolCallID: "call-1", Stdout: "ok"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 80)
+
+	var tool *RenderPosition
+	for i, pos := range positions {
+		if pos.Kind == "tool" {
+			tool = &positions[i]
+		}
+	}
+	if tool == nil {
+		t.Fatalf("expected a tool position, got %+v", positions)
+	}
+	if tool.Label != "Bash" {
+		t.Errorf("tool label: got %q, want Bash", tool.Label)
+	}
+	if got := tool.Payload["summary"]; got != "npm test" {
+		t.Errorf("payload summary: got %v, want npm test", got)
+	}
+	if got := tool.Payload["status"]; got != "ok" {
+		t.Errorf("payload status: got %v, want ok", got)
+	}
+	if got := tool.Payload["duration_ms"]; got != float64(3200) {
+		t.Errorf("payload duration_ms: got %v, want 3200", got)
+	}
+	if got := tool.Payload["ts_ms"]; got != float64(start.UnixMilli()) {
+		t.Errorf("payload ts_ms: got %v, want %d", got, start.UnixMilli())
+	}
+	// Default (box) profile: the header line carries the salient arg and the
+	// duration so the invocation is readable without opening anything.
+	if !strings.Contains(ansi, "Tool: Bash · npm test · 3.2s") {
+		t.Errorf("expected enriched box header, got:\n%s", ansi)
+	}
+}
+
+func TestNestedToolInvocationEmitsNoToolPosition(t *testing.T) {
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
+		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 1,
+			ToolName: "Read", ToolCallID: "sub-1",
+			ToolInput: map[string]any{"file_path": "/tmp/x"}},
+	}
+	_, positions := FormatEventsWithPositions(events, 80)
+	for _, pos := range positions {
+		if pos.Kind == "tool" {
+			t.Fatalf("depth>0 invocation must not emit a tool position, got %+v", pos)
+		}
+	}
+}
+
+func TestToolOutcomeStatusMerge(t *testing.T) {
+	events := []model.RenderEvent{
+		{Type: "ToolInvocation", ToolCallID: "c1", ToolName: "Bash"},
+		{Type: "ToolResult", ToolCallID: "c1", Stdout: "partial"},
+		{Type: "ToolResult", ToolCallID: "c1", Stderr: "boom", ExitCode: 1},
+	}
+	out := computeToolOutcomes(events)
+	if got := out["c1"].status; got != "error" {
+		t.Errorf("merged status: got %q, want error (worst wins)", got)
+	}
+}
+
+func TestTimestampOptions(t *testing.T) {
+	ts := time.Date(2026, 7, 11, 9, 5, 7, 0, time.Local)
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, Depth: 0},
+		{Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: "hi"},
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts.Add(time.Second), Depth: 0, Text: "reply"},
+		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts.Add(2 * time.Second), Depth: 0,
+			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "ls"}},
+	}
+
+	plain := FormatEventsOpts(events, 80, Options{})
+	if strings.Contains(plain, "09:05:07") {
+		t.Errorf("timestamps must be off by default, got:\n%s", plain)
+	}
+
+	all := FormatEventsOpts(events, 80, Options{TimestampUser: true, TimestampAssistant: true, TimestampTool: true})
+	for _, want := range []string{"09:05:07", "09:05:08", "09:05:09"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("expected timestamp %s in output:\n%s", want, all)
+		}
+	}
+}
+
+func TestParseTimestampKinds(t *testing.T) {
+	o := ParseTimestampKinds("tool, user, bogus")
+	if !o.TimestampUser || !o.TimestampTool || o.TimestampAssistant {
+		t.Errorf("unexpected parse result: %+v", o)
+	}
+	if o.KindsString() != "user,tool" {
+		t.Errorf("canonical form: got %q, want user,tool", o.KindsString())
+	}
+	if o.Mask() != 5 {
+		t.Errorf("mask: got %d, want 5", o.Mask())
+	}
+}
