@@ -108,6 +108,15 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 		streamSeq   int
 		streamFirst string
 
+		// turnOpen tracks whether the last conversation entry leaves the
+		// turn unclosed: a user prompt or tool_result is always waiting on
+		// the assistant, and an assistant line closes the turn only with
+		// stop_reason "end_turn" ("tool_use" means a tool is running; empty
+		// means an older CLI that never recorded it — treated as open, the
+		// LiveWindow guard in shared.TrailingInProgress bounds the false
+		// positive).
+		turnOpen bool
+
 		// Two separate FIFO queues: Agent (subagent/Task) calls can run for
 		// a long time, so their ToolResult routinely arrives in the JSONL
 		// file AFTER results from other, faster tool calls issued later.
@@ -198,6 +207,7 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 		case evt.Type == "user" && evt.ToolUseResult == nil && evt.Message != nil:
 			flushStream()
 
+			turnOpen = true
 			turnIndex++
 
 			boundaryID := emit(model.RenderEvent{
@@ -282,6 +292,7 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 		case evt.Type == "user" && evt.ToolUseResult != nil:
 			flushStream()
 
+			turnOpen = true
 			toolCallID := ""
 			if evt.ToolUseResult.AgentID != "" {
 				if len(pendingAgentToolIDs) > 0 {
@@ -322,6 +333,8 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 		// ---- assistant message ----
 		case evt.Type == "assistant" && evt.Message != nil:
 			msg := evt.Message
+
+			turnOpen = msg.StopReason != "end_turn"
 
 			if foundModel == "" && msg.Model != "" {
 				foundModel = msg.Model
@@ -476,7 +489,24 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 
 	flushStream()
 
-	return shared.DropEmptyRenderTurns(events), foundModel, scanner.Err()
+	events = shared.DropEmptyRenderTurns(events)
+
+	// Trailing "推理中…" row. Only for the main transcript (baseDepth==0):
+	// a subagent file's unclosed tail already shows through the parent's
+	// still-pending Agent tool call, and two rows for one live session
+	// would double the hourglass. Runs after DropEmptyRenderTurns and only
+	// when the trailing turn survived it — an empty trailing turn is
+	// synthetic noise, and marking it in-progress would resurrect it.
+	if baseDepth == 0 && turnOpen && turnIndex > 0 &&
+		len(events) > 0 && events[len(events)-1].TurnIndex == turnIndex-1 {
+		if fi, statErr := f.Stat(); statErr == nil {
+			if evt, ok := shared.TrailingInProgress(true, fi.ModTime(), turnIndex-1); ok {
+				emit(evt)
+			}
+		}
+	}
+
+	return events, foundModel, scanner.Err()
 }
 
 // ---- subagent stitching ----

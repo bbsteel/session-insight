@@ -659,6 +659,12 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		turnIndex    int
 		pendingTools = make(map[string]string) // callID -> ToolInvocation EventID
 		completed    = make(map[string]bool)   // patch_apply_end already emitted the result
+
+		// Codex rollouts carry explicit turn brackets: task_started opens a
+		// turn, task_complete / turn_aborted closes it. An open bracket at
+		// EOF means the CLI is still working (or died mid-turn — the
+		// LiveWindow guard in shared.TrailingInProgress bounds that case).
+		turnOpen bool
 	)
 
 	currentTurnIndex := func() int {
@@ -699,12 +705,16 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 			}
 			switch p.Type {
 			case "task_started":
+				turnOpen = true
 				turnIndex++
 				emit(model.RenderEvent{
 					Type:      "TurnBoundary",
 					Timestamp: ts,
 					TurnIndex: turnIndex - 1,
 				})
+
+			case "task_complete", "turn_aborted":
+				turnOpen = false
 
 			case "user_message":
 				if p.Message != "" {
@@ -831,7 +841,22 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		}
 	}
 
-	return shared.DropEmptyRenderTurns(events), scanner.Err()
+	events = shared.DropEmptyRenderTurns(events)
+
+	// Trailing "推理中…" row for a turn still bracket-open at EOF. Runs
+	// after DropEmptyRenderTurns and only when the trailing turn survived
+	// it: a bare task_started with no user_message yet is an empty turn,
+	// and marking it in-progress would resurrect it.
+	if turnOpen && turnIndex > 0 &&
+		len(events) > 0 && events[len(events)-1].TurnIndex == turnIndex-1 {
+		if fi, statErr := f.Stat(); statErr == nil {
+			if evt, ok := shared.TrailingInProgress(true, fi.ModTime(), turnIndex-1); ok {
+				emit(evt)
+			}
+		}
+	}
+
+	return events, scanner.Err()
 }
 
 // parseArguments attempts to unmarshal a JSON string into map[string]any.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
 
@@ -51,6 +52,12 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 	userMap := make(map[string]msgRow)
 	assistantMap := make(map[string][]msgRow) // parentID → []assistant
 
+	// OpenCode's on-disk in-progress marker: an assistant message gets
+	// time.completed only when its run finishes (abort/error also close
+	// it). The messages are scanned in time order, so after the loop this
+	// holds the state of the newest assistant message.
+	lastAssistantOpen := false
+
 	for _, m := range msgs {
 		var base msgBase
 		if json.Unmarshal([]byte(m.data), &base) != nil {
@@ -64,6 +71,7 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 			var a assistantMsgData
 			if json.Unmarshal([]byte(m.data), &a) == nil {
 				assistantMap[a.ParentID] = append(assistantMap[a.ParentID], m)
+				lastAssistantOpen = a.Time != nil && a.Time.Completed == nil && a.Error == nil
 			}
 		}
 	}
@@ -171,6 +179,17 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 		}
 
 		turnIdx++
+	}
+
+	// Trailing "推理中…" row while the newest assistant message is still
+	// open. The store-wide write guard bounds the case where the whole
+	// OpenCode server died before writing time.completed.
+	if lastAssistantOpen && turnIdx > 0 {
+		if lastWrite, err := r.lastStoreWrite(); err == nil {
+			if evt, ok := shared.TrailingInProgress(true, lastWrite, turnIdx-1); ok {
+				emit(evt)
+			}
+		}
 	}
 
 	return events, nil

@@ -17,6 +17,11 @@ import (
 
 type OpenCodeReader struct {
 	db *sql.DB
+	// dbPath is kept for stat-level checks (LiveRevision, the trailing
+	// in-progress guard): OpenCode streams every part update into this
+	// SQLite store, so the db/WAL mtime is the cheapest "something is
+	// being written" signal.
+	dbPath string
 }
 
 func New(dbPath string) (*OpenCodeReader, error) {
@@ -38,7 +43,39 @@ func newReader(dbPath, extraParams string) (*OpenCodeReader, error) {
 		db.Close()
 		return nil, err
 	}
-	return &OpenCodeReader{db: db}, nil
+	return &OpenCodeReader{db: db, dbPath: dbPath}, nil
+}
+
+// lastStoreWrite returns the freshest mtime across the SQLite db and its
+// -wal sidecar. With WAL journaling, streaming writes land in the -wal file
+// long before a checkpoint touches the main db, so both must be considered.
+// Note this is store-wide, not per-session: any OpenCode session writing
+// keeps it fresh. That is acceptable for the uses here (a change marker for
+// polling, and a liveness bound on the in-progress row) — the per-session
+// truth comes from the unclosed time.completed marker, not from this.
+func (r *OpenCodeReader) lastStoreWrite() (time.Time, error) {
+	info, err := os.Stat(r.dbPath)
+	if err != nil {
+		return time.Time{}, err
+	}
+	latest := info.ModTime()
+	if wal, err := os.Stat(r.dbPath + "-wal"); err == nil && wal.ModTime().After(latest) {
+		latest = wal.ModTime()
+	}
+	return latest, nil
+}
+
+// LiveRevision is a stat-only change marker for live-tail polling.
+func (r *OpenCodeReader) LiveRevision(id string) (int64, error) {
+	var exists int
+	if err := r.db.QueryRow("SELECT 1 FROM session WHERE id = ?", id).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("opencode session not found: %s", id)
+	}
+	latest, err := r.lastStoreWrite()
+	if err != nil {
+		return 0, err
+	}
+	return latest.UnixNano(), nil
 }
 
 func (r *OpenCodeReader) AgentType() string   { return "opencode" }

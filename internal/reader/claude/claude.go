@@ -57,6 +57,11 @@ type claudeMessage struct {
 	Model   string           `json:"model"`
 	Content json.RawMessage  `json:"content"`
 	Usage   *claudeUsage     `json:"usage"`
+
+	// StopReason closes a turn: the CLI's final assistant line for a turn
+	// carries "end_turn", while mid-turn lines carry "tool_use" (or nothing
+	// on older versions). Used for the trailing in-progress detection.
+	StopReason string `json:"stop_reason"`
 }
 
 type claudeContentBlock struct {

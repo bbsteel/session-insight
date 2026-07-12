@@ -567,6 +567,13 @@ func parseCopilotRenderEvents(path string) ([]model.RenderEvent, error) {
 		eventCtr     int
 		turnIndex    int
 		pendingTools = make(map[string]string) // toolCallId -> ToolInvocation EventID
+
+		// Copilot events carry the most explicit turn brackets of any agent:
+		// assistant.turn_start / assistant.turn_end pairs, plus a
+		// session.shutdown on any orderly exit. An open bracket at EOF means
+		// the CLI is still working (or was killed mid-turn — the LiveWindow
+		// guard in shared.TrailingInProgress bounds that case).
+		turnOpen bool
 	)
 
 	currentTurnIndex := func() int {
@@ -600,6 +607,12 @@ func parseCopilotRenderEvents(path string) ([]model.RenderEvent, error) {
 		ts := parseCopilotTimestamp(jev.Timestamp)
 
 		switch jev.Type {
+		case "assistant.turn_start":
+			turnOpen = true
+
+		case "assistant.turn_end", "session.shutdown", "session.error":
+			turnOpen = false
+
 		case "user.message":
 			content, _ := extractString(jev.Data, "content")
 			if strings.TrimSpace(content) == "" {
@@ -720,6 +733,15 @@ func parseCopilotRenderEvents(path string) ([]model.RenderEvent, error) {
 					TurnIndex: currentTurnIndex(),
 					Text:      newModel,
 				})
+			}
+		}
+	}
+
+	// Trailing "推理中…" row for a turn still bracket-open at EOF.
+	if turnOpen && turnIndex > 0 {
+		if fi, statErr := f.Stat(); statErr == nil {
+			if evt, ok := shared.TrailingInProgress(true, fi.ModTime(), turnIndex-1); ok {
+				emit(evt)
 			}
 		}
 	}

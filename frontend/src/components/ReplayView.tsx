@@ -204,6 +204,15 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     if (!sessionId || viewMode !== 'terminal') return
     let stopped = false
     let lastRev: number | null = null
+    let lastRevChangeAt = Date.now()
+    // One-shot cleanup for the backend's "推理中…" row: that row is emitted
+    // only while the session file was written within the backend live window
+    // (model.LiveWindow, 5 min). A session interrupted/killed mid-turn stops
+    // writing, so the revision never changes again and no poll would ever
+    // redraw — this flag forces exactly one refresh after the window passes
+    // so the stale row disappears without a page reload.
+    let staleRowCleaned = false
+    const LIVE_WINDOW_MS = 5 * 60 * 1000
     let timer: ReturnType<typeof setTimeout>
     const tick = async () => {
       if (stopped) return
@@ -211,10 +220,15 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
       if (stopped) return
       if (rev === null) return // unsupported → no live tail for this agent
       if (lastRev !== null && rev !== lastRev) {
+        lastRevChangeAt = Date.now()
+        staleRowCleaned = false
         const result = await termControlRef.current?.refreshContent().catch(() => 'unchanged' as const)
         if (!stopped && result && result !== 'unchanged') {
           setContentVersion(v => v + 1)
         }
+      } else if (!staleRowCleaned && Date.now() - lastRevChangeAt > LIVE_WINDOW_MS) {
+        staleRowCleaned = true
+        await termControlRef.current?.refreshContent().catch(() => 'unchanged' as const)
       }
       lastRev = rev
       timer = setTimeout(tick, 3000)
