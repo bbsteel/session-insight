@@ -23,6 +23,8 @@ func New(projectsDir string) *ClaudeReader {
 	return &ClaudeReader{projectsDir: projectsDir}
 }
 
+func (r *ClaudeReader) WatchRoots() []string { return []string{r.projectsDir} }
+
 func (r *ClaudeReader) AgentType() string  { return "claude" }
 func (r *ClaudeReader) DisplayName() string { return "Claude Code" }
 

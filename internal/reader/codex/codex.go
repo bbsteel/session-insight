@@ -25,6 +25,8 @@ func New(sessionsDir string) *CodexReader {
 	return &CodexReader{sessionsDir: sessionsDir}
 }
 
+func (r *CodexReader) WatchRoots() []string { return []string{r.sessionsDir} }
+
 func (r *CodexReader) AgentType() string  { return "codex" }
 func (r *CodexReader) DisplayName() string { return "Codex" }
 

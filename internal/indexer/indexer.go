@@ -17,10 +17,21 @@ const IndexInterval = 3 * time.Minute
 type Indexer struct {
 	db      *db.DB
 	readers []reader.BaseSessionReader
+	kick    chan struct{}
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Indexer {
-	return &Indexer{db: database, readers: readers}
+	return &Indexer{db: database, readers: readers, kick: make(chan struct{}, 1)}
+}
+
+// Kick 请求 RunBackground 尽快跑一轮增量索引（文件监听器在会话文件变化时
+// 调用，让新会话秒级可搜，而不是等下一个 3 分钟周期）。非阻塞：索引正在
+// 跑时多次 Kick 合并为一次补跑。
+func (ix *Indexer) Kick() {
+	select {
+	case ix.kick <- struct{}{}:
+	default:
+	}
 }
 
 // RunOnce 执行一次完整的增量索引。
@@ -38,9 +49,10 @@ func (ix *Indexer) RunBackground(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := ix.indexOnce(ctx); err != nil {
-				log.Printf("[indexer] background cycle error: %v", err)
-			}
+		case <-ix.kick:
+		}
+		if err := ix.indexOnce(ctx); err != nil {
+			log.Printf("[indexer] background cycle error: %v", err)
 		}
 	}
 }

@@ -25,6 +25,8 @@ func New(sessionsDir string) *ChrysReader {
 	return &ChrysReader{sessionsDir: sessionsDir}
 }
 
+func (r *ChrysReader) WatchRoots() []string { return []string{r.sessionsDir} }
+
 func (r *ChrysReader) AgentType() string   { return "chrys" }
 func (r *ChrysReader) DisplayName() string { return "Chrys" }
 

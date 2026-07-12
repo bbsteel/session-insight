@@ -11,6 +11,7 @@ type Server struct {
 	DB      *db.DB
 	Readers []reader.BaseSessionReader
 	Mux     *http.ServeMux
+	events  *eventHub
 }
 
 type SessionSummary struct {
@@ -37,6 +38,7 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 		DB:      database,
 		Readers: readers,
 		Mux:     http.NewServeMux(),
+		events:  newEventHub(),
 	}
 	s.registerRoutes()
 	return s
@@ -44,6 +46,7 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 
 func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/bookmarks", s.handleListBookmarks)
+	s.Mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	s.Mux.HandleFunc("PUT /api/sessions/{id}/bookmark", s.handleAddBookmark)

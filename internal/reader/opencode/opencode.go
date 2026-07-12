@@ -78,6 +78,11 @@ func (r *OpenCodeReader) LiveRevision(id string) (int64, error) {
 	return latest.UnixNano(), nil
 }
 
+// WatchRoots returns the SQLite file path: the watcher watches its parent
+// directory non-recursively and only reacts to opencode.db and its -wal/-shm
+// derivatives (WAL mode means most writes land in -wal, not the db file).
+func (r *OpenCodeReader) WatchRoots() []string { return []string{r.dbPath} }
+
 func (r *OpenCodeReader) AgentType() string   { return "opencode" }
 func (r *OpenCodeReader) DisplayName() string { return "OpenCode" }
 

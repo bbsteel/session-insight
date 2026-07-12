@@ -23,6 +23,15 @@ type BaseSessionReader interface {
 	GetRenderEvents(id string) ([]model.RenderEvent, error)
 }
 
+// WatchRootProvider is an optional reader capability: the on-disk paths whose
+// changes mean "this agent's session list may have changed". Directories are
+// watched recursively; a file path (e.g. a SQLite database) means "watch this
+// file and its derivatives (-wal/-shm)". Readers without it simply don't
+// participate in live sidebar refresh.
+type WatchRootProvider interface {
+	WatchRoots() []string
+}
+
 // LiveRevisionProvider is an optional reader capability: a cheap, stat-level
 // (no parsing) revision of a session's on-disk source. Live-tail polling
 // hits this every few seconds, so implementations must not read file

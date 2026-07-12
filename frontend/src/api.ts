@@ -149,6 +149,16 @@ export async function saveSettings(settings: { editor_command?: string; file_ope
   if (!res.ok) throw new Error(`Failed to save settings: ${res.status}`)
 }
 
+// Subscribe to the backend's sessions_changed SSE stream (fed by the file
+// watcher). The event is a bare ping — callers refetch /api/sessions
+// themselves. EventSource auto-reconnects, so a backend restart self-heals.
+// Returns a disposer.
+export function watchSessionsChanged(onChange: () => void): () => void {
+  const es = new EventSource('/api/events')
+  es.addEventListener('sessions_changed', onChange)
+  return () => es.close()
+}
+
 async function readJson<T>(res: Response, label: string): Promise<T> {
   const contentType = res.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {

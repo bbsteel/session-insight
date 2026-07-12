@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { fetchAgents, fetchBookmarks, fetchSessions, removeBookmark } from '../api'
+import { fetchAgents, fetchBookmarks, fetchSessions, removeBookmark, watchSessionsChanged } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import { applyBookmarkChange, filterBookmarks, removeBookmarkFromList, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
@@ -146,6 +146,37 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
       .then(data => { setSessions(data); setError(null) })
       .catch(err => setError(err instanceof Error ? err.message : '会话列表加载失败'))
       .finally(() => setLoading(false))
+  }, [])
+
+  // Live refresh: the backend pings over SSE whenever any session file
+  // changes; refetch the list, throttled to one request per 2s — an active
+  // session appends to disk every second, and each refetch is a full disk
+  // scan server-side. Failed background refetches keep the current list
+  // (no error banner: the user didn't ask for this fetch).
+  useEffect(() => {
+    let disposed = false
+    let lastFetch = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const refetch = () => {
+      lastFetch = Date.now()
+      fetchSessions()
+        .then(data => {
+          if (disposed) return
+          setSessions(data)
+          setError(null)
+        })
+        .catch(() => {})
+    }
+    const dispose = watchSessionsChanged(() => {
+      if (timer) return
+      const wait = Math.max(0, lastFetch + 2000 - Date.now())
+      timer = setTimeout(() => { timer = undefined; refetch() }, wait)
+    })
+    return () => {
+      disposed = true
+      if (timer) clearTimeout(timer)
+      dispose()
+    }
   }, [])
 
   // Fetch agents on mount

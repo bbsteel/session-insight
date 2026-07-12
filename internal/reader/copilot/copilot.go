@@ -38,6 +38,8 @@ func New(sessionDir string) *CopilotReader {
 	return &CopilotReader{sessionDir: sessionDir}
 }
 
+func (r *CopilotReader) WatchRoots() []string { return []string{r.sessionDir} }
+
 func (r *CopilotReader) AgentType() string  { return "copilot" }
 func (r *CopilotReader) DisplayName() string { return "Copilot" }
 

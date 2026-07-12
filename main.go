@@ -14,6 +14,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/indexer"
 	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/server"
+	"github.com/bbsteel/session-insight/internal/watch"
 )
 
 //go:embed frontend/dist
@@ -60,6 +61,29 @@ func main() {
 	go idx.RunBackground(context.Background())
 
 	srv := server.New(database, readers)
+
+	// 文件监听：会话文件一变 → SSE 通知侧栏重拉 + 踢一轮增量索引（秒级可搜）。
+	// 监听器起不来只降级为"手动刷新页面"，不影响其他功能。
+	watcher, err := watch.New(500*time.Millisecond, func() {
+		srv.NotifySessionsChanged()
+		idx.Kick()
+	})
+	if err != nil {
+		log.Printf("file watcher unavailable, sidebar live refresh disabled: %v", err)
+	} else {
+		roots := 0
+		for _, r := range readers {
+			if p, ok := r.(reader.WatchRootProvider); ok {
+				for _, root := range p.WatchRoots() {
+					watcher.Add(root)
+					roots++
+				}
+			}
+		}
+		go watcher.Run()
+		log.Printf("Watching %d session root(s) for live sidebar refresh", roots)
+	}
+
 	fileServer := http.FileServer(http.FS(frontendFS))
 	srv.Mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
