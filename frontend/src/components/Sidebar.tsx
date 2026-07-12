@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { fetchAgents, fetchBookmarks, fetchSessions, removeBookmark, watchSessionsChanged } from '../api'
+import { addBookmark, fetchAgents, fetchBookmarks, fetchSessions, removeBookmark, watchSessionsChanged } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import { applyBookmarkChange, filterBookmarks, removeBookmarkFromList, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
@@ -248,6 +248,16 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
     }
   }, [showToast])
 
+  const copyAgentAndId = useCallback(async (session: SessionSummary) => {
+    const id = session.resume_id || session.id
+    try {
+      await navigator.clipboard.writeText(`agent: ${getAgentLabel(session.agent_type)}, id: ${id}`)
+      showToast('已复制 Agent 名称和会话 ID')
+    } catch {
+      showToast('复制失败')
+    }
+  }, [showToast])
+
   const copyResumeCmd = useCallback(async (session: SessionSummary) => {
     const cmd = getResumeCommand(session)
     if (!cmd) return
@@ -287,6 +297,21 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
       showToast('已取消收藏')
     } catch {
       showToast('取消收藏失败')
+    }
+  }, [onBookmarkChange, showToast])
+
+  const toggleSessionBookmark = useCallback(async (session: SessionSummary) => {
+    const bookmarked = !session.bookmarked
+    try {
+      if (bookmarked) await addBookmark(session)
+      else await removeBookmark(session)
+      const change = { agentType: session.agent_type, sessionId: session.id, bookmarked }
+      setSessions(prev => applyBookmarkChange(prev, change))
+      setBookmarks(prev => removeBookmarkFromList(applyBookmarkChange(prev, change), change))
+      onBookmarkChange?.(change)
+      showToast(bookmarked ? '已收藏' : '已取消收藏')
+    } catch {
+      showToast(bookmarked ? '收藏失败' : '取消收藏失败')
     }
   }, [onBookmarkChange, showToast])
 
@@ -757,9 +782,21 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
           >
             <button
               className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+              onClick={() => { void toggleSessionBookmark(contextMenu.session); setContextMenu(null) }}
+            >
+              {contextMenu.session.bookmarked ? '取消收藏' : '收藏'}
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
               onClick={() => { copyId(contextMenu.session); setContextMenu(null) }}
             >
               复制会话 ID
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+              onClick={() => { void copyAgentAndId(contextMenu.session); setContextMenu(null) }}
+            >
+              复制 Agent 名称 + 会话 ID
             </button>
             {(() => {
               const cmd = getResumeCommand(contextMenu.session)
