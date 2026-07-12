@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
 
 // 工具调用管理面板:按时序列出会话的所有工具调用(kind === 'tool' 的
@@ -23,6 +23,8 @@ interface ToolEntry {
 interface Props {
   positions: PositionsResponse | null
   building: boolean
+  // 外部筛选请求(分析页 Tool Usage chip):token 变化时应用 name 筛选。
+  filterRequest?: { name: string; token: number } | null
   onJump: (lineStart: number) => void
   onClose: () => void
 }
@@ -117,7 +119,7 @@ const summaryClampStyle: React.CSSProperties = {
 
 const WIDE_STORAGE_KEY = 'si-toolpanel-wide'
 
-export default function ToolCallPanel({ positions, building, onJump, onClose }: Props) {
+export default function ToolCallPanel({ positions, building, filterRequest, onJump, onClose }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   // 宽/标准两档宽度,记忆到本地;浮层不占终端布局,加宽零成本。
@@ -128,6 +130,13 @@ export default function ToolCallPanel({ positions, building, onJump, onClose }: 
   })
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+
+  // 应用来自分析页的筛选请求:只按该工具筛选,并清掉文字过滤避免叠加后空结果。
+  useEffect(() => {
+    if (!filterRequest) return
+    setSelected(new Set([filterRequest.name]))
+    setQuery('')
+  }, [filterRequest?.token])
 
   const entries = useMemo(
     () => (positions?.positions ?? []).filter(p => p.kind === 'tool').map((p, i) => toEntry(p, i + 1)),

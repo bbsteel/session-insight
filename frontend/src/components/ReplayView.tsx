@@ -616,6 +616,15 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     [positionsData],
   )
 
+  // 分析页 Tool Usage chip → 切回终端、打开工具面板并按该工具筛选。
+  // token 递增让重复点击同一工具也能重新触发筛选。
+  const [toolFilterRequest, setToolFilterRequest] = useState<{ name: string; token: number } | null>(null)
+  const handleJumpToTool = useCallback((name: string) => {
+    setToolFilterRequest(prev => ({ name, token: (prev?.token ?? 0) + 1 }))
+    setShowToolPanel(true)
+    setViewMode('terminal')
+  }, [])
+
   // Keyboard navigation
   useEffect(() => {
     if (!sessionId || !session?.turns.length) return
@@ -969,7 +978,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
           )}
           {viewMode === 'analytics' ? (
             <Suspense fallback={<AnalyticsSkeleton />}>
-              <AnalyticsView sessionId={session.id} agentType={session.agent_type} onJumpToTurn={handleJumpToTurn} />
+              <AnalyticsView sessionId={session.id} agentType={session.agent_type} onJumpToTurn={handleJumpToTurn} onJumpToTool={handleJumpToTool} />
             </Suspense>
           ) : tsKinds !== null && (
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
@@ -992,8 +1001,14 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
             <ToolCallPanel
               positions={positionsData}
               building={positionsBuilding}
+              filterRequest={toolFilterRequest}
               onJump={handleToolJump}
-              onClose={() => setShowToolPanel(false)}
+              onClose={() => {
+                setShowToolPanel(false)
+                // 面板生命周期结束,清掉分析页带来的筛选请求,
+                // 避免下次手动打开时又套用旧筛选。
+                setToolFilterRequest(null)
+              }}
             />
           )}
         </div>

@@ -86,6 +86,8 @@ interface Props {
   sessionId: string
   agentType?: string
   onJumpToTurn?: (turnIndex: number) => void
+  // 点击 Tool Usage 的工具 chip:切回终端并打开工具面板、按该工具筛选。
+  onJumpToTool?: (name: string) => void
 }
 
 interface AgentReference {
@@ -168,7 +170,7 @@ function bucketText(value: number, presence?: string): string {
   return presence === 'exact' ? fmtNumber(value) : '—'
 }
 
-export default function AnalyticsView({ sessionId, agentType, onJumpToTurn }: Props) {
+export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJumpToTool }: Props) {
   const [data, setData] = useState<AnalyticsData | null>(null)
 
   useEffect(() => {
@@ -359,8 +361,14 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn }: Pr
               const success = data.tool_success?.[name] || 0
               const total = data.tool_total?.[name] || 0
               const rate = total > 0 ? (success / total * 100) : 0
+              const baseTitle = total > 0 ? `调用 ${count} 次，${success}/${total} 次退出码为 0` : `调用 ${count} 次（该 agent 未记录退出码）`
               return (
-              <span key={name} className="bg-[var(--bg-surface)] px-2.5 py-1 rounded-sm text-body" title={total > 0 ? `调用 ${count} 次，${success}/${total} 次退出码为 0` : `调用 ${count} 次（该 agent 未记录退出码）`}>
+              <span
+                key={name}
+                className={`bg-[var(--bg-surface)] px-2.5 py-1 rounded-sm text-body ${onJumpToTool ? 'cursor-pointer hover:bg-[var(--bg-surface-hover)] hover:ring-1 hover:ring-[var(--accent-blue)]' : ''}`}
+                title={onJumpToTool ? `${baseTitle} · 点击在工具面板中查看` : baseTitle}
+                onClick={onJumpToTool ? () => onJumpToTool(name) : undefined}
+              >
                 <span className="text-[var(--text-primary)] font-medium">{name}</span>
                 <span className="text-[var(--text-secondary)] ml-1.5">×{count}</span>
                 {total > 0 && (
