@@ -61,6 +61,13 @@ const TERM_DEBUG = (() => {
   if (flag === '0') return false
   return TEMP_PLATFORM === 'win32'
 })()
+// 跳转落点高亮的闪烁次数：localStorage.setItem('si-jump-flash-pulses', 'N') 可配，默认 2 次。
+function getJumpFlashPulses(): number {
+  if (typeof localStorage === 'undefined') return 2
+  const n = parseInt(localStorage.getItem('si-jump-flash-pulses') ?? '', 10)
+  return Number.isFinite(n) && n >= 1 && n <= 10 ? n : 2
+}
+
 function dbg(tag: string, info?: Record<string, unknown>) {
   if (!TERM_DEBUG) return
   const t = (performance.now() / 1000).toFixed(3)
@@ -188,6 +195,16 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let foldView: FoldView | null = null
     const toDisplayLine = (n: number) => (foldView ? foldView.toDisplay(n) : n)
     const toOriginalLine = (n: number) => (foldView ? foldView.toOriginal(n) : n)
+    // Buffer row of each composed logical line, rebuilt after every rewrite
+    // from xterm's own isWrapped flags. Jump targets resolve through logical
+    // lines: display-row prediction drifts once the spliced fold badge makes
+    // collapsed headers soft-wrap, logical lines cannot.
+    let logicalRows: number[] = []
+    const logicalToDisplayLine = (orig: number): number => {
+      const composed = foldView ? foldView.toComposedLogical(orig) : orig
+      if (logicalRows.length === 0) return composed
+      return logicalRows[Math.max(0, Math.min(composed, logicalRows.length - 1))]
+    }
     let tooltipEl: HTMLDivElement | null = null
     let hoverDecoration: IDecoration | null = null
     let hoverMarker: IMarker | null = null
@@ -330,6 +347,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
 
       const flashLines = (startLine: number, count = 2) => {
         clearFlash()
+        const pulses = getJumpFlashPulses()
+        const pulseMs = 900
         for (let i = 0; i < count; i++) {
           const offset = getMarkerOffsetForBufferLine({
             bufferLine: startLine + i,
@@ -337,28 +356,30 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
             cursorY: term.buffer.active.cursorY,
           })
           const marker = term.registerMarker(offset)
+          dbg('flash-marker', { startLine, i, offset, baseY: term.buffer.active.baseY, cursorY: term.buffer.active.cursorY, markerLine: marker?.line, disposed: marker?.isDisposed })
           if (!marker) continue
           let decoration: IDecoration | undefined
           try {
             decoration = term.registerDecoration({ marker, width: term.cols, height: 1, layer: 'top' })
-          } catch {
+          } catch (e) {
+            dbg('flash-decoration-throw', { msg: String(e) })
             marker.dispose()
             continue
           }
+          dbg('flash-decoration', { created: !!decoration })
           if (!decoration) { marker.dispose(); continue }
           decoration.onRender(element => {
+            dbg('flash-render', { y: element.getBoundingClientRect().top })
             element.style.pointerEvents = 'none'
             element.style.left = '0'
             element.style.width = '100%'
             element.style.boxSizing = 'border-box'
-            element.style.background = 'rgba(37, 99, 235, 0.30)'
-            element.style.transition = 'background 1.2s ease-out 0.2s'
-            requestAnimationFrame(() => { element.style.background = 'rgba(37, 99, 235, 0)' })
+            element.style.animation = `si-jump-flash ${pulseMs}ms ease-out ${pulses}`
           })
           flashMarkers.push(marker)
           flashDecorations.push(decoration)
         }
-        flashTimer = setTimeout(clearFlash, 1600)
+        flashTimer = setTimeout(clearFlash, pulses * pulseMs + 200)
       }
 
       const hideHover = () => {
@@ -414,6 +435,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // Scan the xterm.js buffer for all registered matchers and populate interactionMap.
       // Called after every render so buffer lines are the source of truth (no Go lineStart dependency).
       const scanBuffer = () => {
+        {
+          const buf = term.buffer.active
+          const rows: number[] = []
+          for (let i = 0; i < buf.length; i++) {
+            if (!buf.getLine(i)?.isWrapped) rows.push(i)
+          }
+          logicalRows = rows
+        }
         interactionMap.clear()
         rowValidity.clear()
         if (lineMatchers.length === 0) return
@@ -453,7 +482,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           a.level === 'group' ? 1 : b.level === 'group' ? -1 : 0)
         const buf = term.buffer.active
         for (const f of sorted) {
-          const row = toDisplayLine(f.headerDisplay)
+          const row = logicalToDisplayLine(f.headerLogical)
           const entry = { matcher: foldToggleMatcher as TerminalLineMatcher<unknown>, data: f, matchIndex: 0 }
           interactionMap.set(row, entry)
           // An untruncated header ("▶ • Name  <full summary>") can soft-wrap over
@@ -807,6 +836,7 @@ const snapshotTerminal = () => {
       if (controlRef) {
         controlRef.current = {
           scrollToLine: (line) => term.scrollToLine(line),
+          scrollToLineCentered: (line) => term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2))),
           getMetrics,
           setLineMatchers: (matchers) => {
             lineMatchers = matchers
@@ -818,6 +848,7 @@ const snapshotTerminal = () => {
           },
           flashLines,
           toDisplayLine,
+          logicalToDisplayLine,
           toOriginalLine,
           hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
           setFoldsCollapsed,

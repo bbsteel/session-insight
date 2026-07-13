@@ -274,3 +274,11 @@ body {
 .si-search-active-only .xterm-find-result-decoration:not([style*="outline"]) {
   background: transparent;
 }
+
+/* Terminal jump-landing flash: one iteration = hold then fade, so the
+   animation iteration count is the user-visible pulse count
+   (si-jump-flash-pulses in localStorage, default 2). */
+@keyframes si-jump-flash {
+  0%, 40% { background-color: rgba(37, 99, 235, 0.32); }
+  100% { background-color: rgba(37, 99, 235, 0); }
+}

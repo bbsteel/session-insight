@@ -545,69 +545,109 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
         // Prefer the exact banner line from the positions cache; the ratio
         // estimate below drifts badly on sessions with uneven turn lengths.
         const turnPos = positionsData?.positions.find(p => p.kind === 'turn' && p.turn_index === index)
+        const jumpDbg = (info: Record<string, unknown>) => {
+          // eslint-disable-next-line no-console
+          if (localStorage.getItem('si-term-debug') === '1') console.log('[si-jump]', JSON.stringify(info))
+        }
         if (turnPos) {
-          const line = ctrl.toDisplayLine(turnPos.line_start)
-          ctrl.scrollToLine(Math.max(0, line))
+          // logical_start resolves through xterm's own wrap state and stays
+          // exact when collapsed-fold badges shift display rows; line_start
+          // is the fallback for position caches built by older binaries.
+          const logical = turnPos.payload?.logical_start
+          const line = typeof logical === 'number'
+            ? ctrl.logicalToDisplayLine(logical)
+            : Math.max(0, ctrl.toDisplayLine(turnPos.line_start))
+          jumpDbg({ index, via: typeof logical === 'number' ? 'logical' : 'positions', lineStart: turnPos.line_start, logical, line, hidden: ctrl.hiddenLineCount(), scrollHeight: ctrl.getMetrics().scrollHeight })
+          ctrl.scrollToLineCentered(line)
           ctrl.flashLines(line, 2)
           return
         }
         const metrics = ctrl.getMetrics()
         const totalLines = Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT)
-        const visibleLines = Math.floor(metrics.clientHeight / TERMINAL_LINE_HEIGHT)
         const barCount = turns.length
         const ratio = barCount > 1 ? index / (barCount - 1) : 0
-        const line = Math.floor(ratio * Math.max(0, totalLines - visibleLines))
-        ctrl.scrollToLine(line)
+        const line = Math.floor(ratio * Math.max(0, totalLines - 1))
+        jumpDbg({ index, via: 'fallback', line, totalLines, hidden: ctrl.hiddenLineCount() })
+        ctrl.scrollToLineCentered(line)
+        ctrl.flashLines(line, 2)
       }
     }
     if (scrollToTopRef) {
       scrollToTopRef.current = (top: number) => {
+        // eslint-disable-next-line no-console
+        if (localStorage.getItem('si-term-debug') === '1') console.log('[si-scroll-top]', JSON.stringify({ top, line: Math.floor(top / TERMINAL_LINE_HEIGHT) }))
         termControlRef.current?.scrollToLine(Math.floor(top / TERMINAL_LINE_HEIGHT))
       }
     }
   }, [scrollToIndexRef, scrollToTopRef, turns, positionsData])
 
   // Jump requested from AnalyticsView while the terminal was unmounted.
-  // The terminal re-renders its content asynchronously after remount, so wait
-  // until scrollHeight stabilizes before converting the turn index to a line.
+  // The terminal re-renders its content asynchronously after remount: first an
+  // (often empty) compose, then the real render arrives and a 1-3s fold
+  // rewrite replaces the whole buffer. A jump fired against any intermediate
+  // buffer lands pages away, and no single readiness signal covers all the
+  // intermediate states — so fire on each stable height and keep watching:
+  // if the buffer height changes after a fire, the landing was on a stale
+  // buffer and the jump re-fires against the new one. Done when the height is
+  // stable and the last fire happened at that height.
   const pendingJumpTurnRef = useRef<number | null>(null)
   useEffect(() => {
     if (viewMode !== 'terminal' || pendingJumpTurnRef.current == null) return
+    const needsFolds = folds.some(f => f.level === 'tool')
     let prevHeight = -1
+    let firedAtHeight = -1
     let tries = 0
     const timer = setInterval(() => {
       tries++
       const ctrl = termControlRef.current
       if (ctrl) {
         const h = ctrl.getMetrics().scrollHeight
-        if (h > 0 && h === prevHeight) {
+        const foldsApplied = !needsFolds || ctrl.hiddenLineCount() > 0
+        // The transitional buffer between remount and the real render is a
+        // few dozen rows; positions total_lines minus hidden rows says how
+        // many to expect. The 0.5 factor tolerates cols drift between the
+        // cached positions and the live terminal — this only needs to tell
+        // "placeholder" from "content", not be exact.
+        const expectedRows = positionsRef.current
+          ? positionsRef.current.total_lines - ctrl.hiddenLineCount()
+          : 0
+        const bufferReady = expectedRows <= 0 || h / TERMINAL_LINE_HEIGHT >= expectedRows * 0.5
+        if (h > 0 && h === prevHeight && foldsApplied && bufferReady) {
+          if (h === firedAtHeight) {
+            pendingJumpTurnRef.current = null
+            clearInterval(timer)
+            return
+          }
           const idx = pendingJumpTurnRef.current
-          pendingJumpTurnRef.current = null
-          clearInterval(timer)
           if (idx != null) scrollToIndexRef.current?.(idx)
-          return
+          firedAtHeight = h
         }
         prevHeight = h
       }
-      if (tries > 25) {
+      // Generous bail: a cold positions rebuild for a new cols plus a 2-3s
+      // fold rewrite can exceed 10s; giving up early strands the jump on the
+      // transitional buffer (the "flash lands pages away" bug).
+      if (tries > 150) {
         clearInterval(timer)
         pendingJumpTurnRef.current = null
       }
     }, 200)
     return () => clearInterval(timer)
-  }, [viewMode])
+  }, [viewMode, folds])
 
   const handleJumpToTurn = useCallback((index: number) => {
     pendingJumpTurnRef.current = index
     setViewMode('terminal')
   }, [])
 
-  // 工具面板点击跳转:positions 行号是原始行,先换算折叠后的显示行。
-  const handleToolJump = useCallback((lineStart: number) => {
+  // 工具面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
+  const handleToolJump = useCallback((lineStart: number, logicalStart?: number) => {
     const ctrl = termControlRef.current
     if (!ctrl) return
-    const line = Math.max(0, ctrl.toDisplayLine(lineStart))
-    ctrl.scrollToLine(line)
+    const line = typeof logicalStart === 'number'
+      ? ctrl.logicalToDisplayLine(logicalStart)
+      : Math.max(0, ctrl.toDisplayLine(lineStart))
+    ctrl.scrollToLineCentered(line)
     ctrl.flashLines(line, 1)
   }, [])
 
@@ -891,7 +931,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
             </button>
             {showAnomalyFilter && (
               <div className="absolute top-full left-0 mt-1 min-w-[150px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-md z-20">
-                {['tool_failure', 'duration_spike', 'missing_shutdown'].map(type => (
+                {['tool_failure', 'duration_spike', 'continuation_nudge', 'missing_shutdown'].map(type => (
                   <label key={type} className="flex cursor-pointer items-center gap-1.5 rounded-sm px-1 py-0.5 text-meta text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] whitespace-nowrap">
                     <input
                       type="checkbox"

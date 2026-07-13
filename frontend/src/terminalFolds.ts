@@ -81,6 +81,13 @@ export interface FoldView {
   toDisplay(orig: number): number
   /** Current display row → original display row. */
   toOriginal(display: number): number
+  /**
+   * Original logical line → composed logical line (collapsed bodies map to
+   * their header line). Pure '\n'-count bookkeeping — unlike display rows it
+   * cannot drift when the spliced fold badge makes a header soft-wrap, so
+   * jump targets should resolve through this and xterm's isWrapped state.
+   */
+  toComposedLogical(orig: number): number
 }
 
 export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: ReadonlySet<string>): FoldView {
@@ -136,6 +143,8 @@ export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: Rea
 
   const ranges = active.map(f => [f.displayStart, f.displayEnd] as const)
   const hiddenTotal = ranges.reduce((s, [a, b]) => s + (b - a), 0)
+  const logicalRanges = [...active].sort((a, b) => a.logicalStart - b.logicalStart)
+    .map(f => ({ start: f.logicalStart, end: f.logicalEnd, header: f.headerLogical }))
 
   const toDisplay = (orig: number): number => {
     let hidden = 0
@@ -160,5 +169,18 @@ export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: Rea
     return display + hidden
   }
 
-  return { text, hiddenTotal, toDisplay, toOriginal }
+  const toComposedLogical = (orig: number): number => {
+    let hidden = 0
+    for (const r of logicalRanges) {
+      if (orig >= r.end) {
+        hidden += r.end - r.start
+        continue
+      }
+      if (orig >= r.start) return Math.max(0, r.header - hidden) // inside a hidden body → its header line
+      break
+    }
+    return orig - hidden
+  }
+
+  return { text, hiddenTotal, toDisplay, toOriginal, toComposedLogical }
 }

@@ -10,6 +10,7 @@ interface ToolEntry {
   key: string
   seq: number // 全会话时序编号(1 起),筛选后仍保持原编号
   line: number
+  logical: number | null // 逻辑行(跳转首选,折叠 badge 不影响它)
   turn: number
   name: string
   category: string
@@ -25,7 +26,7 @@ interface Props {
   building: boolean
   // 外部筛选请求(分析页 Tool Usage chip):token 变化时应用 name 筛选。
   filterRequest?: { name: string; token: number } | null
-  onJump: (lineStart: number) => void
+  onJump: (lineStart: number, logicalStart?: number) => void
   onClose: () => void
 }
 
@@ -35,6 +36,7 @@ function toEntry(p: MiniMapPosition, seq: number): ToolEntry {
     key: p.position_key,
     seq,
     line: p.line_start,
+    logical: typeof pl.logical_start === 'number' ? pl.logical_start : null,
     turn: p.turn_index,
     name: typeof pl.tool_name === 'string' ? pl.tool_name : p.label,
     category: typeof pl.category === 'string' ? pl.category : 'tool',
@@ -175,7 +177,7 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
 
   const jump = (e: ToolEntry) => {
     setActiveKey(e.key)
-    onJump(e.line)
+    onJump(e.line, e.logical ?? undefined)
   }
 
   // 全部展开/收起作用于当前筛选可见且展开有增量内容的条目。

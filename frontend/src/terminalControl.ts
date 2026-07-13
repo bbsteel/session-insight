@@ -23,6 +23,9 @@ export interface TerminalLineMatcher<T = unknown> {
 
 export interface TerminalControl {
   scrollToLine: (line: number) => void
+  // Programmatic jumps land the target line at the vertical center of the
+  // viewport (top-anchored scrollToLine leaves it easy to miss).
+  scrollToLineCentered: (line: number) => void
   getMetrics: () => ScrollMetrics
   setLineMatchers: (matchers: TerminalLineMatcher<unknown>[]) => void
   // Briefly highlight buffer lines after a programmatic jump so the user can
@@ -34,6 +37,11 @@ export interface TerminalControl {
   // Identity when nothing is collapsed.
   toDisplayLine: (origLine: number) => number
   toOriginalLine: (displayLine: number) => number
+  // Original logical line ('\n'-split render) → current buffer row, resolved
+  // through xterm's own isWrapped state. Exact even when collapsed-fold
+  // badges change header wrap counts; prefer this for jump targets whenever
+  // the position carries payload.logical_start.
+  logicalToDisplayLine: (origLogical: number) => number
   hiddenLineCount: () => number
   // Batch collapse/expand fold groups in a single rewrite. anchorOriginalRow
   // (original render row, e.g. the right-clicked row) stays put on screen;

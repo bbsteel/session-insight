@@ -191,7 +191,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				TurnIndex:   turnIndex,
 				LineStart:   tb.CurrentLine(),
 				Label:       "输出截断",
-				Payload:     map[string]any{"output_index": float64(truncSeq)},
+				Payload:     map[string]any{"output_index": float64(truncSeq), "logical_start": float64(tb.CurrentLogicalLine())},
 			})
 			truncSeq++
 		}
@@ -200,6 +200,14 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	emit := func(kind, label, severity string, turnIndex int, payload map[string]any) {
 		lineStart := tb.CurrentLine()
 		key := fmt.Sprintf("%s:%d:%d", kind, turnIndex, lineStart)
+		// logical_start lets the client resolve the position to a buffer row
+		// via xterm's own wrap state (non-wrapped row count) instead of
+		// predicting soft wraps — display rows drift once fold badges change
+		// header widths, logical lines never do.
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		payload["logical_start"] = float64(tb.CurrentLogicalLine())
 		positions = append(positions, RenderPosition{
 			PositionKey: key,
 			Kind:        kind,
@@ -368,7 +376,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 23
+const FormatVersion int64 = 24
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
