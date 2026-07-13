@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/render"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 // RenderANSI implements reader.BaseSessionReader. It resolves the JSONL
@@ -203,6 +203,18 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 		}
 
 		switch {
+		// Claude Code writes this synthetic user message when the user
+		// interrupts/rejects a tool call. It ends the active turn; it is not
+		// a new prompt waiting for another assistant response. Handling it
+		// before the generic user branch prevents a phantom trailing turn and
+		// its "推理中…" row after the CLI has already stopped.
+		case evt.Type == "user" && evt.Message != nil &&
+			strings.TrimSpace(evt.Message.contentString()) == "[Request interrupted by user for tool use]":
+			flushStream()
+			turnOpen = false
+			pendingToolIDs = nil
+			pendingAgentToolIDs = nil
+
 		// ---- user message: new turn ----
 		case evt.Type == "user" && evt.ToolUseResult == nil && evt.Message != nil:
 			flushStream()
@@ -326,6 +338,7 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 				Stdout:        evt.ToolUseResult.Stdout,
 				Stderr:        evt.ToolUseResult.Stderr,
 				ExitCode:      exitCode,
+				Rejected:      evt.ToolUseResult.Rejected,
 				ToolCallID:    toolCallID,
 				Payload:       payload,
 			})

@@ -233,7 +233,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     if (!sessionId || viewMode !== 'terminal') return
     let stopped = false
     let lastRev: number | null = null
-    let lastRevChangeAt = Date.now()
+    // Anchor expiry to the source-backed session timestamp. Starting this at
+    // Date.now() makes a transcript that was already stale when opened wait a
+    // second full live window before its cached progress row is redrawn.
+    const sourceUpdatedAt = session?.id === sessionId
+      ? Date.parse(session.updated_at)
+      : Number.NaN
+    let lastRevChangeAt = Number.isFinite(sourceUpdatedAt) ? sourceUpdatedAt : Date.now()
     // One-shot cleanup for the backend's "推理中…" row: that row is emitted
     // only while the session file was written within the backend live window
     // (model.LiveWindow, 5 min). A session interrupted/killed mid-turn stops
@@ -255,16 +261,24 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         if (!stopped && result && result !== 'unchanged') {
           setContentVersion(v => v + 1)
         }
-      } else if (!staleRowCleaned && Date.now() - lastRevChangeAt > LIVE_WINDOW_MS) {
-        staleRowCleaned = true
-        await termControlRef.current?.refreshContent().catch(() => 'unchanged' as const)
+      } else if (!staleRowCleaned && Date.now() - lastRevChangeAt >= LIVE_WINDOW_MS) {
+        // TerminalPanel loads lazily. Do not consume the one-shot cleanup
+        // before its control exists, or a stale row can survive forever.
+        const control = termControlRef.current
+        if (control) {
+          const result = await control.refreshContent().catch(() => 'unchanged' as const)
+          if (!stopped) {
+            staleRowCleaned = true
+            if (result !== 'unchanged') setContentVersion(v => v + 1)
+          }
+        }
       }
       lastRev = rev
       timer = setTimeout(tick, 3000)
     }
     void tick()
     return () => { stopped = true; clearTimeout(timer) }
-  }, [sessionId, viewMode])
+  }, [sessionId, viewMode, session?.id, session?.updated_at])
 
   // Content grew: refresh the turn list / header stats (and the LIVE badge).
   useEffect(() => {

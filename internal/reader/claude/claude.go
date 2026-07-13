@@ -25,7 +25,7 @@ func New(projectsDir string) *ClaudeReader {
 
 func (r *ClaudeReader) WatchRoots() []string { return []string{r.projectsDir} }
 
-func (r *ClaudeReader) AgentType() string  { return "claude" }
+func (r *ClaudeReader) AgentType() string   { return "claude" }
 func (r *ClaudeReader) DisplayName() string { return "Claude Code" }
 
 // ---- JSONL event shapes ----
@@ -54,11 +54,11 @@ type claudeEvent struct {
 }
 
 type claudeMessage struct {
-	ID      string           `json:"id"`
-	Role    string           `json:"role"`
-	Model   string           `json:"model"`
-	Content json.RawMessage  `json:"content"`
-	Usage   *claudeUsage     `json:"usage"`
+	ID      string          `json:"id"`
+	Role    string          `json:"role"`
+	Model   string          `json:"model"`
+	Content json.RawMessage `json:"content"`
+	Usage   *claudeUsage    `json:"usage"`
 
 	// StopReason closes a turn: the CLI's final assistant line for a turn
 	// carries "end_turn", while mid-turn lines carry "tool_use" (or nothing
@@ -83,9 +83,10 @@ type claudeUsage struct {
 }
 
 type claudeToolResult struct {
-	Stdout  string `json:"stdout"`
-	Stderr  string `json:"stderr"`
-	IsError bool   `json:"is_error"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	IsError  bool   `json:"is_error"`
+	Rejected bool   `json:"-"`
 
 	// AgentID is only present when this ToolUseResult wraps an "Agent"
 	// (subagent/Task) tool call. It matches the <id> in the sibling
@@ -95,6 +96,29 @@ type claudeToolResult struct {
 	// field — does not change behavior for any existing consumer of this
 	// struct (parseClaudeEvents ignores fields it doesn't read).
 	AgentID string `json:"agentId"`
+}
+
+// UnmarshalJSON accepts both ToolUseResult shapes emitted by Claude Code.
+// Successful tool results are objects, while a user-declined tool can be the
+// literal string "User rejected tool use". Treating the field as object-only
+// makes json.Unmarshal reject the entire transcript line, which in turn loses
+// the only explicit cancellation signal before the synthetic interruption
+// message that follows it.
+func (r *claudeToolResult) UnmarshalJSON(data []byte) error {
+	var status string
+	if err := json.Unmarshal(data, &status); err == nil {
+		r.Rejected = strings.EqualFold(strings.TrimSpace(status), "User rejected tool use")
+		r.IsError = r.Rejected
+		return nil
+	}
+
+	type plain claudeToolResult
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*r = claudeToolResult(decoded)
+	return nil
 }
 
 // ---- Content helpers (handles both string and array content) ----

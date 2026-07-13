@@ -56,6 +56,43 @@ func TestNoTrailingInProgressWhenTurnClosed(t *testing.T) {
 	}
 }
 
+func TestNoTrailingInProgressWhenToolUseInterrupted(t *testing.T) {
+	// Real Claude Code cancellation sequence: the rejection result is a JSON
+	// string (not the usual object), followed by a synthetic user message.
+	// Neither record starts a new conversational turn, and together they close
+	// the assistant's pending tool-use turn immediately.
+	fixture := `{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"run it"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","model":"claude-x","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"sleep 10"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:02Z","toolUseResult":"User rejected tool use","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"tool_use_id":"t1"}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-01-01T00:00:03Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}
+`
+	path := writeTempJSONL(t, "interrupted_tool.jsonl", fixture)
+	events, _, err := ParseClaudeRenderEvents(path, 0, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	boundaries := 0
+	rejectedResults := 0
+	for _, e := range events {
+		if e.Type == "TurnBoundary" {
+			boundaries++
+		}
+		if e.Type == "ToolResult" && e.Rejected {
+			rejectedResults++
+		}
+		if e.Subtype == "in_progress" {
+			t.Errorf("interrupted tool use must not emit in_progress, got %+v", e)
+		}
+	}
+	if boundaries != 1 {
+		t.Fatalf("interruption created a phantom user turn: got %d boundaries, want 1", boundaries)
+	}
+	if rejectedResults != 1 {
+		t.Fatalf("string rejection result was not preserved: got %d rejected results, want 1", rejectedResults)
+	}
+}
+
 func TestNoTrailingInProgressWhenStale(t *testing.T) {
 	// Unclosed turn but the file went quiet past the live window — the
 	// session was interrupted/killed, not still running.
