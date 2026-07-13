@@ -18,11 +18,17 @@ function parseFileRoute(): { path: string; cwd: string } | null {
 export default function App() {
   const [fileRoute] = useState(parseFileRoute)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedAgentType, setSelectedAgentType] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
+  const [sidebarFocusTarget, setSidebarFocusTarget] = useState<{ id: string; agentType: string } | null>(null)
+  const [searchTarget, setSearchTarget] = useState<{ sessionId: string; agentType: string; query: string } | null>(null)
 
-  const selectSession = (id: string) => {
+  const selectSession = (id: string, agentType?: string, focusSidebar = false, searchQuery?: string) => {
     setSelectedId(id)
+    setSelectedAgentType(agentType ?? null)
+    setSidebarFocusTarget(focusSidebar && agentType ? { id, agentType } : null)
+    setSearchTarget(focusSidebar && agentType && searchQuery ? { sessionId: id, agentType, query: searchQuery } : null)
     setSidebarOpen(false)
   }
 
@@ -48,6 +54,8 @@ export default function App() {
       <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-[260] transition-transform duration-normal md:block`}>
         <Sidebar
           selectedId={selectedId}
+          selectedAgentType={selectedAgentType}
+          focusTarget={sidebarFocusTarget}
           onSelect={selectSession}
           drawer={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
@@ -58,6 +66,7 @@ export default function App() {
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ReplayView
           sessionId={selectedId}
+          searchTarget={searchTarget}
           onSelect={selectSession}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}

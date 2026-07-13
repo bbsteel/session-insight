@@ -847,6 +847,26 @@ const snapshotTerminal = () => {
             }
           },
           flashLines,
+          flashSearchMatch: (query) => {
+            if (!query || !hasWrittenOnce) return false
+            try {
+              const found = searchAddon.findNext(query, buildSearchOptions({
+                caseSensitive: false,
+                wholeWord: false,
+                regex: false,
+                highlightAll: false,
+              }))
+              const selection = term.getSelectionPosition()
+              if (found && selection) {
+                const line = selection.start.y
+                term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2)))
+                flashLines(line, 1)
+              }
+              return found
+            } catch {
+              return false
+            }
+          },
           toDisplayLine,
           logicalToDisplayLine,
           toOriginalLine,

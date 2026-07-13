@@ -139,7 +139,7 @@ function ClockIcon() {
   )
 }
 
-export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => void }) {
+export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
@@ -298,9 +298,11 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
     }
   }
 
-  const selectResult = (id: string) => {
+  const selectResult = (result: SearchResult) => {
     recordQuery(query)
-    onSelect?.(id)
+    // Include the agent because session IDs are only unique within an agent.
+    // It also lets the sidebar reveal and focus the exact result.
+    onSelect?.(result.session_id, result.agent_type, true, query.trim())
     setOpen(false)
     setQuery('')
   }
@@ -326,7 +328,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
     } else if (e.key === 'Enter' && activeIndex >= 0) {
       e.preventDefault()
       if (isHistoryMode) selectHistory(visibleHistory[activeIndex].query)
-      else selectResult(results[activeIndex].session_id)
+      else selectResult(results[activeIndex])
     }
   }
 
@@ -413,7 +415,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
                 {results.map((r, i) => (
                   <button
                     key={`${r.agent_type}-${r.session_id}`}
-                    onClick={() => selectResult(r.session_id)}
+                    onClick={() => selectResult(r)}
                     onMouseEnter={() => setActiveIndex(i)}
                     className={`w-full border-b border-[var(--border-muted)] px-3 py-2 text-left transition-colors duration-fast last:border-b-0 ${
                       i === activeIndex ? 'bg-[var(--accent-blue)]/10' : 'hover:bg-[var(--bg-surface-hover)]'

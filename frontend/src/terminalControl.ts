@@ -32,6 +32,9 @@ export interface TerminalControl {
   // see where they landed. Rendered via xterm marker/decoration (AGENTS.md:
   // no hand-rolled DOM coordinate math for terminal rows).
   flashLines: (startLine: number, count?: number) => void
+  // Find the first matching terminal row and flash it after a global search
+  // opens a session. Returns false while the terminal content is not ready.
+  flashSearchMatch: (query: string) => boolean
   // Fold mapping between original render rows (what the positions API uses)
   // and current buffer rows (after collapsed tool groups are hidden).
   // Identity when nothing is collapsed.

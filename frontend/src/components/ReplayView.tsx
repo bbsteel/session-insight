@@ -30,7 +30,8 @@ function hasCompaction(turn: TurnVM): boolean {
 
 interface Props {
   sessionId: string | null
-  onSelect?: (id: string) => void
+  searchTarget?: { sessionId: string; agentType: string; query: string } | null
+  onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
 }
@@ -48,7 +49,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBookmarkChange }: Props) {
+export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange }: Props) {
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
@@ -641,6 +642,21 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     pendingJumpTurnRef.current = index
     setViewMode('terminal')
   }, [])
+
+  // Global-search results carry the original query. Once the new terminal is
+  // ready, locate that exact text in xterm and flash the matched buffer row.
+  useEffect(() => {
+    if (!searchTarget || searchTarget.sessionId !== sessionId) return
+    setViewMode('terminal')
+    let attempts = 0
+    const timer = window.setInterval(() => {
+      attempts++
+      if (termControlRef.current?.flashSearchMatch(searchTarget.query) || attempts >= 30) {
+        window.clearInterval(timer)
+      }
+    }, 100)
+    return () => window.clearInterval(timer)
+  }, [searchTarget, sessionId])
 
   // 工具面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
   const handleToolJump = useCallback((lineStart: number, logicalStart?: number) => {
