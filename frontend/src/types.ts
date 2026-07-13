@@ -37,6 +37,7 @@ export interface SessionBillingSummary {
   precision: string
   billing_unit?: string
   billing_amount?: number
+  totals: TokenUsage
 }
 
 export interface TurnVM {

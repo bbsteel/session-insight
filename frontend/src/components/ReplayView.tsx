@@ -801,7 +801,12 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
     </main>
   )
 
-  const totalTokens = session.turns.reduce((sum, t) => sum + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
+  // Chrys reports exact usage only at session level, so its per-turn buckets
+  // are empty. Prefer the session bill when present and keep the turn sum as
+  // the fallback for readers that only expose per-turn usage.
+  const totalTokens = session.billing?.totals
+    ? session.billing.totals.prompt_tokens + session.billing.totals.completion_tokens
+    : session.turns.reduce((sum, t) => sum + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
   const modelName = session.model_name || session.agent_type || 'unknown'
   const sessionDuration = formatDuration(session.turns.reduce((sum, t) => sum + t.duration_ms, 0))
 
