@@ -8,6 +8,7 @@ import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import AgentIcon from './AgentIcon'
 import { Virtuoso } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel } from '../sidebarRows'
+import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeShell } from '../resumeCommands'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 
@@ -33,21 +34,8 @@ function getSessionName(s: SessionSummary): string {
   return s.id.slice(0, 8)
 }
 
-function getResumeCommand(session: SessionSummary): string | null {
-  const at = session.agent_type.toLowerCase()
-  const resumeId = session.resume_id || session.id
-  let agentCmd = ''
-  if (at.includes('claude')) agentCmd = `claude --resume ${resumeId}`
-  else if (at.includes('codex')) agentCmd = `codex resume ${resumeId}`
-  else if (at.includes('opencode')) agentCmd = `opencode -s ${resumeId}`
-  else if (at.includes('chrys')) agentCmd = `chrys -s ${resumeId}`
-  else return null
-
-  if (session.cwd) {
-    const dir = /\s/.test(session.cwd) ? `"${session.cwd}"` : session.cwd
-    return `cd ${dir} && ${agentCmd}`
-  }
-  return agentCmd
+function hostIsWindows(): boolean {
+  return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform)
 }
 
 interface ContextMenuState {
@@ -258,12 +246,13 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
     }
   }, [showToast])
 
-  const copyResumeCmd = useCallback(async (session: SessionSummary) => {
-    const cmd = getResumeCommand(session)
-    if (!cmd) return
+  const copyResumeCmd = useCallback(async (session: SessionSummary, shell: ResumeShell) => {
+    const option = getResumeCommandOptions(session).find(item => item.shell === shell)
+    if (!option) return
     try {
-      await navigator.clipboard.writeText(cmd)
-      showToast('已复制恢复命令')
+      await navigator.clipboard.writeText(option.command)
+      writeStorage(getResumePreferenceKey(session), shell)
+      showToast(`已复制${shell === 'powershell' ? ' PowerShell' : ' Git Bash'} 恢复命令`)
     } catch {
       showToast('复制失败')
     }
@@ -799,26 +788,29 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
               复制 Agent 名称 + 会话 ID
             </button>
             {(() => {
-              const cmd = getResumeCommand(contextMenu.session)
+              const session = contextMenu.session
+              const stored = readStorage(getResumePreferenceKey(session))
+              const preferred = stored === 'powershell' || stored === 'git-bash' ? stored : null
+              const options = getResumeCommandOptions(session, preferred)
               const isLive = contextMenu.session.is_live
-              const disabled = isLive || !cmd
-              const tooltip = isLive ? '活跃中会话不可恢复' : !cmd ? '此 Agent 暂不支持命令行恢复' : undefined
-              return (
-                <button
-                  className={`w-full text-left px-3 py-1.5 transition-colors duration-fast ${
-                    disabled
-                      ? 'text-[var(--text-muted)] cursor-not-allowed'
-                      : 'text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
-                  }`}
-                  disabled={disabled}
-                  title={tooltip}
-                  onClick={() => {
-                    if (!disabled) { copyResumeCmd(contextMenu.session); setContextMenu(null) }
-                  }}
-                >
-                  复制会话恢复命令
-                </button>
-              )
+              const windows = isWindowsSession(session, hostIsWindows())
+              const visibleOptions = windows ? options : options.filter(option => option.shell === 'git-bash')
+              const disabled = isLive || visibleOptions.length === 0
+              const tooltip = isLive ? '活跃中会话不可恢复' : !visibleOptions.length ? '此 Agent 暂不支持命令行恢复' : undefined
+              if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={tooltip}>复制会话恢复命令</button>
+              return visibleOptions.map(option => {
+                const shellLabel = option.shell === 'powershell' ? 'PowerShell' : windows ? 'Git Bash' : 'Shell'
+                const reason = option.reason === 'last-used' ? '，上次使用' : option.reason === 'recommended' ? '，推荐' : ''
+                return (
+                  <button
+                    key={option.shell}
+                    className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+                    onClick={() => { void copyResumeCmd(session, option.shell); setContextMenu(null) }}
+                  >
+                    复制恢复命令（{shellLabel}{reason}）
+                  </button>
+                )
+              })
             })()}
           </div>
         </>,

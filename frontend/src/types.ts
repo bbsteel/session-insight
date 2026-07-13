@@ -15,6 +15,8 @@ export interface SessionSummary {
   project: string
   cwd: string
   resume_id?: string
+  /** Present only when the session source explicitly records the launching shell. */
+  shell_kind?: 'powershell' | 'git-bash' | 'cmd' | 'wsl' | 'posix'
   preview_text: string
   turn_count: number
   message_count: number
