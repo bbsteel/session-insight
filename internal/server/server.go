@@ -66,4 +66,17 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("POST /api/open-file", s.handleOpenFile)
 	s.Mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.Mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
+
+	s.Mux.HandleFunc("GET /api/llm/providers", s.handleListLLMProviders)
+	s.Mux.HandleFunc("POST /api/llm/providers", s.handleAddLLMProvider)
+	s.Mux.HandleFunc("PUT /api/llm/providers/{id}", s.handleUpdateLLMProvider)
+	s.Mux.HandleFunc("DELETE /api/llm/providers/{id}", s.handleDeleteLLMProvider)
+	s.Mux.HandleFunc("POST /api/llm/providers/default", s.handleSetDefaultLLMProvider)
+	s.Mux.HandleFunc("POST /api/llm/providers/test", s.handleTestLLMProvider)
+	s.Mux.HandleFunc("POST /api/sessions/{id}/ai/{kind}", s.handleAIGenerate)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/ai/{kind}/latest", s.handleAILatest)
+	s.Mux.HandleFunc("GET /api/ai/generations", s.handleListAIGenerations)
+	s.Mux.HandleFunc("DELETE /api/ai/generations/{id}", s.handleDeleteAIGeneration)
+	s.Mux.HandleFunc("PUT /api/sessions/{id}/title", s.handleSetTitle)
+	s.Mux.HandleFunc("DELETE /api/sessions/{id}/title", s.handleRemoveTitle)
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchSearch, fetchSettings, saveSettings } from '../api'
 import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
+import AISettingsModal from './AISettingsModal'
 import ThemeToggle from './ThemeToggle'
 import {
   defaultBannerColor,
@@ -147,6 +148,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [historyLimit, setHistoryLimit] = useState(readHistoryLimit)
   const [showSettings, setShowSettings] = useState(false)
+  const [showAISettings, setShowAISettings] = useState(false)
   const isDark = useIsDark()
   const [bannerColor, setBannerColor] = useState<string | null>(getBannerColorOverride)
   const [editorCommand, setEditorCommand] = useState('')
@@ -160,6 +162,15 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
   const containerRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+
+  // Other views (e.g. the AI panel's "去配置模型源" guidance) open the AI
+  // provider modal through this window event — GlobalSearch is the one
+  // component mounted in every layout state.
+  useEffect(() => {
+    const open = () => setShowAISettings(true)
+    window.addEventListener('si-open-ai-settings', open)
+    return () => window.removeEventListener('si-open-ai-settings', open)
+  }, [])
 
   const isHistoryMode = !query.trim()
   const visibleHistory = sortAndTrim(history, historyLimit)
@@ -448,7 +459,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
             ⚙
           </button>
           {showSettings && (
-            <div className="absolute right-0 top-full z-30 mt-1 w-[240px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg">
+            <div className="absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[240px] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg">
               <div className="mb-2 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">搜索设置</div>
               <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
                 历史记录条数
@@ -543,10 +554,21 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
               <div className="mt-1 text-meta text-[var(--text-muted)]">
                 逗号分隔（如 go,ts,vue）；* 表示不限制。终端里只有这些类型的文件才会出现打开入口，改动刷新后生效
               </div>
+              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                AI
+              </div>
+              <button
+                onClick={() => { setShowSettings(false); setShowAISettings(true) }}
+                className="h-7 w-full rounded-md border border-[var(--border-default)] text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+              >
+                管理 AI 模型源…
+              </button>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">用于会话总结、AI 标题与交接提示词</div>
             </div>
           )}
         </div>
       </div>
+      {showAISettings && <AISettingsModal onClose={() => setShowAISettings(false)} />}
     </header>
   )
 }

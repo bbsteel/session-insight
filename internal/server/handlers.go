@@ -26,6 +26,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	overrides := s.titleOverrides()
 	var sessions []SessionSummary
 	for _, reader := range s.Readers {
 		if agentFilter != "" && reader.AgentType() != agentFilter {
@@ -40,6 +41,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 		for _, s := range list {
 			s.Bookmarked = bookmarkSet[db.BookmarkKey(s.AgentType, s.ID)]
+			if t, ok := overrides[db.BookmarkKey(s.AgentType, s.ID)]; ok {
+				s.Name = t
+			}
 			sessions = append(sessions, sessionToSummary(s))
 		}
 	}
@@ -83,6 +87,9 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			detail.Bookmarked = bookmarked
+			if t, _ := s.DB.TitleOverride(detail.AgentType, detail.ID); t != "" {
+				detail.Name = t
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -91,6 +98,20 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+// titleOverrides returns the display-title override map keyed by
+// db.BookmarkKey, or nil when unavailable — callers treat nil as "no
+// overrides" so a DB hiccup degrades to original names, never an error.
+func (s *Server) titleOverrides() map[string]string {
+	if s.DB == nil {
+		return nil
+	}
+	m, err := s.DB.TitleOverrides()
+	if err != nil {
+		return nil
+	}
+	return m
 }
 
 func sessionToSummary(s model.Session) SessionSummary {
@@ -154,8 +175,12 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	overrides := s.titleOverrides()
 	summaries := make([]SessionSummary, 0, len(sessions))
 	for _, bm := range sessions {
+		if t, ok := overrides[db.BookmarkKey(bm.AgentType, bm.SessionID)]; ok {
+			bm.Name = t
+		}
 		ss := SessionSummary{
 			ID:           bm.SessionID,
 			AgentType:    bm.AgentType,

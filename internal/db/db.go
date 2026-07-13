@@ -172,6 +172,42 @@ func migrate(conn *sql.DB) error {
 	    key TEXT PRIMARY KEY,
 	    value TEXT NOT NULL
 	);
+
+	-- LLM provider 配置（api 型 = OpenAI 兼容 HTTP；acp 型 = 本地 CLI 走 ACP 协议）
+	CREATE TABLE IF NOT EXISTS llm_providers (
+	    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	    name        TEXT NOT NULL,
+	    kind        TEXT NOT NULL CHECK (kind IN ('api', 'acp')),
+	    base_url    TEXT NOT NULL DEFAULT '',
+	    api_key     TEXT NOT NULL DEFAULT '',
+	    agent       TEXT NOT NULL DEFAULT '',
+	    model_id    TEXT NOT NULL,
+	    model_label TEXT NOT NULL DEFAULT '',
+	    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+
+	-- AI 生成历史（summary / title / handoff 共用一张表）
+	CREATE TABLE IF NOT EXISTS ai_generations (
+	    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	    kind          TEXT NOT NULL CHECK (kind IN ('summary', 'title', 'handoff')),
+	    agent_type    TEXT NOT NULL,
+	    session_id    TEXT NOT NULL,
+	    provider_name TEXT NOT NULL DEFAULT '',
+	    model_id      TEXT NOT NULL DEFAULT '',
+	    content       TEXT NOT NULL,
+	    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_ai_generations_session
+	    ON ai_generations(agent_type, session_id, kind);
+
+	-- LLM 生成的标题覆盖：只影响本应用显示，不碰 agent 原始日志文件
+	CREATE TABLE IF NOT EXISTS session_title_overrides (
+	    agent_type TEXT NOT NULL,
+	    session_id TEXT NOT NULL,
+	    title      TEXT NOT NULL,
+	    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	    PRIMARY KEY (agent_type, session_id)
+	);
 	`
 	_, err := conn.Exec(query)
 	if err != nil {
