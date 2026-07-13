@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
 
 // 工具调用管理面板:按时序列出会话的所有工具调用(kind === 'tool' 的
@@ -122,6 +122,7 @@ const summaryClampStyle: React.CSSProperties = {
 const WIDE_STORAGE_KEY = 'si-toolpanel-wide'
 
 export default function ToolCallPanel({ positions, building, filterRequest, onJump, onClose }: Props) {
+  const panelRef = useRef<HTMLElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   // 宽/标准两档宽度,记忆到本地;浮层不占终端布局,加宽零成本。
@@ -132,6 +133,18 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
   })
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+
+  // The panel is an in-terminal floating layer, so clicks outside it do not
+  // bubble through a shared modal backdrop. Listen at the document level and
+  // use the panel ref to keep all controls inside the panel interactive.
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && !panelRef.current?.contains(target)) onClose()
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [onClose])
 
   // 应用来自分析页的筛选请求:只按该工具筛选,并清掉文字过滤避免叠加后空结果。
   useEffect(() => {
@@ -195,7 +208,7 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
   }
 
   return (
-    <aside className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
+    <aside ref={panelRef} className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
       <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
         <span className="text-nav font-medium text-[var(--text-primary)]">工具调用</span>
         <span className="text-meta text-[var(--text-muted)]">
