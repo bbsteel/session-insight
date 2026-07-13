@@ -79,6 +79,49 @@ func TestFindingsContextReplay(t *testing.T) {
 	}
 }
 
+func TestFindingsContinuationNudge(t *testing.T) {
+	detail := &model.SessionDetail{
+		Turns: []model.TurnVM{
+			{TurnIndex: 0, UserMessage: "实现功能 X", RequestCount: 2},
+			{TurnIndex: 1, UserMessage: "继续", RequestCount: 2, Anomalies: []string{"continuation_nudge"}},
+			{TurnIndex: 2, UserMessage: "ok", RequestCount: 2, Anomalies: []string{"continuation_nudge"}},
+		},
+	}
+
+	res := Compute(detail)
+	var nudge *Finding
+	for i, f := range res.Findings {
+		if f.Title == "需要人工续跑 2 次" {
+			nudge = &res.Findings[i]
+		}
+	}
+	if nudge == nil {
+		t.Fatalf("expected continuation-nudge finding, got %+v", res.Findings)
+	}
+	if nudge.Severity != "warn" {
+		t.Errorf("nudge finding severity = %s, want warn", nudge.Severity)
+	}
+	if nudge.TurnIndex == nil || *nudge.TurnIndex != 1 {
+		t.Errorf("nudge finding must point at first nudge turn 1, got %+v", nudge.TurnIndex)
+	}
+}
+
+func TestFindingsSingleNudgeIsQuiet(t *testing.T) {
+	detail := &model.SessionDetail{
+		Turns: []model.TurnVM{
+			{TurnIndex: 0, UserMessage: "实现功能 X", RequestCount: 2},
+			{TurnIndex: 1, UserMessage: "继续", RequestCount: 2, Anomalies: []string{"continuation_nudge"}},
+		},
+	}
+
+	res := Compute(detail)
+	for _, f := range res.Findings {
+		if f.Title == "需要人工续跑 1 次" {
+			t.Errorf("single nudge must not produce a finding: %+v", f)
+		}
+	}
+}
+
 func TestFindingsQuietOnHealthySession(t *testing.T) {
 	exact := model.TokenPresence{Input: model.PresenceExact, Output: model.PresenceExact}
 	detail := &model.SessionDetail{

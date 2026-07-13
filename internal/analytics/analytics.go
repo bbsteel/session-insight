@@ -35,8 +35,6 @@ type Result struct {
 	TotalTools       int                   `json:"total_tools"`
 	TotalErrors      int                   `json:"total_errors"`
 	AnomalyCount     int                   `json:"anomaly_count"`
-	HealthScore      int                   `json:"health_score"`
-	HealthGrade      string                `json:"health_grade"`
 	TurnCount        int                   `json:"turn_count"`
 	TokenEfficiency  float64               `json:"token_efficiency"`
 	Timeline         []TurnToken           `json:"timeline"`
@@ -126,29 +124,6 @@ func Compute(detail *model.SessionDetail) Result {
 		pressurePct = float64(maxCumulative) / float64(ctxWindow) * 100
 	}
 
-	healthScore := 100
-	healthScore -= detail.AnomalySummary.ToolFailures * 5
-	healthScore -= detail.AnomalySummary.DurationSpikes * 5
-	if detail.AnomalySummary.MissingShutdown {
-		healthScore -= 20
-	}
-	if healthScore < 0 {
-		healthScore = 0
-	}
-	healthGrade := "A"
-	switch {
-	case healthScore > 90:
-		healthGrade = "A"
-	case healthScore > 75:
-		healthGrade = "B"
-	case healthScore > 60:
-		healthGrade = "C"
-	case healthScore > 40:
-		healthGrade = "D"
-	default:
-		healthGrade = "F"
-	}
-
 	totalTokens := headline.PromptTokens + headline.CompletionTokens
 	tokenEfficiency := 0.0
 	if totalTokens > 0 && len(detail.Turns) > 0 {
@@ -164,8 +139,6 @@ func Compute(detail *model.SessionDetail) Result {
 		TotalTools:       totalTools,
 		TotalErrors:      totalErrors,
 		AnomalyCount:     detail.AnomalySummary.TotalAnomalies,
-		HealthScore:      healthScore,
-		HealthGrade:      healthGrade,
 		TurnCount:        len(detail.Turns),
 		TokenEfficiency:  tokenEfficiency,
 		Timeline:         timeline,

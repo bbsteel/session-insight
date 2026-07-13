@@ -75,8 +75,6 @@ interface AnalyticsData {
   context_window: number
   context_peak: number
   pressure_pct: number
-  health_score: number
-  health_grade: string
   skill_freq: Record<string, number>
   tool_success: Record<string, number>
   tool_total: Record<string, number>
@@ -272,7 +270,6 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
           ['Avg Tokens/Turn', present?.input === 'exact' ? fmtNumber(Math.round(data.token_efficiency)) : '—'],
           ['Context Peak', fmtNumber(data.context_peak)],
           ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
-          ['Health', `${data.health_score} (${data.health_grade})`],
           ['Prompt Tokens', bucketText(data.prompt_tokens, present?.input)],
 ['Todos', data.todo_count > 0 ? `${data.todo_done}/${data.todo_count}` : '-'],
         ].map(([label, value]) => (

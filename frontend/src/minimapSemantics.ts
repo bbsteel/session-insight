@@ -17,7 +17,9 @@ export function getTokenPressureTone(ratio: number): TokenPressureTone {
 
 export function getMiniMapEventKind(turn: TurnVM): MiniMapEventKind | null {
   if (hasCompaction(turn)) return 'compaction'
-  if ((turn.anomalies?.length ?? 0) > 0 || turn.error_count > 0) return 'anomaly'
+  // 续跑是行为质量标记而非技术故障，不占用红色异常点位
+  const hasFailure = turn.anomalies?.some(a => a !== 'continuation_nudge') ?? false
+  if (hasFailure || turn.error_count > 0) return 'anomaly'
   if (turn.user_message) return 'user'
   return null
 }

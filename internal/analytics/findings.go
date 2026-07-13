@@ -33,6 +33,8 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 	totalReq := 0
 	totalTools, totalErrors := 0, 0
 	totalTimeouts, totalRejected := 0, 0
+	nudges := 0
+	var firstNudgeTurn int
 	for _, t := range detail.Turns {
 		if t.UserMessage != "" {
 			userMsgs++
@@ -47,6 +49,14 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 			}
 			if td.Rejected {
 				totalRejected++
+			}
+		}
+		for _, a := range t.Anomalies {
+			if a == "continuation_nudge" {
+				if nudges == 0 {
+					firstNudgeTurn = t.TurnIndex
+				}
+				nudges++
 			}
 		}
 	}
@@ -173,6 +183,18 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 			Severity: sevInfo,
 			Title:    fmt.Sprintf("%d 次工具被拒绝", totalRejected),
 			Detail:   fmt.Sprintf("会话中 %d 次工具调用被用户或 hook 拒绝。频繁拒绝可能意味着 agent 倾向于执行需要审批的操作，或 hook 规则过于严格。", totalRejected),
+		})
+	}
+
+	// 9. Continuation pressure: the agent keeps stopping at intermediate
+	// output and the user has to push it forward with "继续"/"ok".
+	if nudges >= 2 {
+		idx := firstNudgeTurn
+		findings = append(findings, Finding{
+			Severity:  sevWarn,
+			Title:     fmt.Sprintf("需要人工续跑 %d 次", nudges),
+			Detail:    fmt.Sprintf("助手 %d 次在阶段性输出后结束，用户需发「继续」/「ok」推动任务继续。这通常表示 agent 将中间步骤当作了最终交付，或缺少完成性校验。点击跳转到第一次续跑。", nudges),
+			TurnIndex: &idx,
 		})
 	}
 

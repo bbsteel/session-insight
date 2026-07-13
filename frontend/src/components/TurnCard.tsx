@@ -28,13 +28,16 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
   const isDigest = mode === 'digest'
   const totalTokens = turn.token_usage.prompt_tokens + turn.token_usage.completion_tokens
   const hasAnomaly = turn.anomalies && turn.anomalies.length > 0
+  const hasNudge = turn.anomalies?.includes('continuation_nudge') ?? false
+  // 红 = 技术故障，黄 = 行为质量问题；同时存在时故障优先
+  const hasError = turn.anomalies?.some(a => a !== 'continuation_nudge') ?? false
   const [showTools, setShowTools] = useState(false)
   const [showTokens, setShowTokens] = useState(false)
 
   return (
     <div
       id={`turn-${turn.turn_index}`}
-      className={`border-b border-[var(--border-muted)] bg-[var(--bg-surface)] ${hasAnomaly ? 'border-l-2 border-l-[var(--error)]' : ''}`}
+      className={`border-b border-[var(--border-muted)] bg-[var(--bg-surface)] ${hasError ? 'border-l-2 border-l-[var(--error)]' : hasNudge ? 'border-l-2 border-l-[var(--warning)]' : ''}`}
     >
       {/* Badge bar */}
       <div role="list" className={`flex items-center gap-1.5 flex-wrap ${isTight ? 'px-2 py-1' : 'px-4 py-2'} bg-[var(--bg-inset)] border-b border-[var(--border-muted)]`} style={agentStyle ? { borderLeft: `2px solid ${agentStyle.accent}` } : undefined}>
@@ -49,6 +52,7 @@ export default function TurnCard({ turn, mode = 'full', density = 'standard', cu
           </button>
         )}
         {turn.error_count > 0 && <Badge label="Err" value={String(turn.error_count)} intent="error" />}
+        {hasNudge && <Badge label="续跑" value="↻" intent="warning" />}
         {turn.duration_ms > 0 && <Badge label="Duration" value={fmtDuration(turn.duration_ms)} />}
       </div>
 

@@ -192,6 +192,7 @@ type EditCall struct {
 type AnomalySummary struct {
 	ToolFailures    int  `json:"tool_failures"`
 	DurationSpikes  int  `json:"duration_spikes"`
+	NudgeCount      int  `json:"nudge_count"`
 	MissingShutdown bool `json:"missing_shutdown"`
 	TotalAnomalies  int  `json:"total_anomalies"`
 }
