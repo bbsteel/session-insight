@@ -269,11 +269,11 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
           ['Anomalies', String(data.anomaly_count)],
           ['Turn Count', String(data.turn_count)],
           ['Errors', String(data.total_errors)],
-          ['Avg Tok/Turn', present?.input === 'exact' ? fmtNumber(Math.round(data.token_efficiency)) : '—'],
+          ['Avg Tokens/Turn', present?.input === 'exact' ? fmtNumber(Math.round(data.token_efficiency)) : '—'],
           ['Context Peak', fmtNumber(data.context_peak)],
           ['Pressure', `${data.pressure_pct.toFixed(1)}%`],
           ['Health', `${data.health_score} (${data.health_grade})`],
-          ['Prompt Tok', bucketText(data.prompt_tokens, present?.input)],
+          ['Prompt Tokens', bucketText(data.prompt_tokens, present?.input)],
 ['Todos', data.todo_count > 0 ? `${data.todo_done}/${data.todo_count}` : '-'],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2.5 text-center">
@@ -467,7 +467,7 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
                 className="bg-[var(--bg-inset)] rounded-md p-3 text-left hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 <div className="text-card text-[var(--text-primary)]">
-                  {hasCost ? fmtBillingAmount(t.est_cost ?? 0, costUnit) : `${fmtNumber(t.tokens)} tok`}
+                  {hasCost ? fmtBillingAmount(t.est_cost ?? 0, costUnit) : `${fmtNumber(t.tokens)} tokens`}
                 </div>
                 <div className="text-body text-[var(--text-secondary)] mt-1">
                   Turn {t.turn_index} · {t.requests} requests · {t.tool_count} tools

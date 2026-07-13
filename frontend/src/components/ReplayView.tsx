@@ -916,7 +916,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />LIVE
             </span>
           )}
-          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tok · {session.turn_count} turns · {sessionDuration}
+          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tokens · {session.turn_count} turns · {sessionDuration}
           {session.repository && <span className="text-[var(--text-muted)]"> · {session.repository.split('/').pop()}</span>}
           {session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>}
           {session.created_at && (

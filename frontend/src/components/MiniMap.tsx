@@ -111,7 +111,7 @@ function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit?: 
   if (!turn) return ''
   const parts = [`Turn ${turn.turn_index}`]
   if (tw?.estCost != null) parts.push(`~${fmtCost(tw.estCost, unit)}（估算）`)
-  parts.push(`${getTotalTokens(turn).toLocaleString()} tok`)
+  parts.push(`${getTotalTokens(turn).toLocaleString()} tokens`)
   if ((turn.request_count ?? 0) > 0) parts.push(`${turn.request_count} req`)
   return parts.join(' · ')
 }
