@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/reader"
@@ -12,6 +14,12 @@ type Server struct {
 	Readers []reader.BaseSessionReader
 	Mux     *http.ServeMux
 	events  *eventHub
+
+	// listRev 是会话列表的修订号，作为 /api/sessions 的 ETag：索引轮落库、
+	// 书签/标题变更都会 bump，内容没变的重拉直接 304。startNano 隔离进程
+	// 重启，避免新进程撞上浏览器缓存的旧 ETag。
+	listRev   atomic.Int64
+	startNano int64
 }
 
 type SessionSummary struct {
@@ -24,7 +32,6 @@ type SessionSummary struct {
 	Project      string `json:"project"`
 	CWD          string `json:"cwd"`
 	ResumeID     string `json:"resume_id,omitempty"`
-	PreviewText  string `json:"preview_text"`
 	TurnCount    int    `json:"turn_count"`
 	MessageCount int    `json:"message_count"`
 	IsLive       bool   `json:"is_live"`
@@ -35,10 +42,11 @@ type SessionSummary struct {
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 	s := &Server{
-		DB:      database,
-		Readers: readers,
-		Mux:     http.NewServeMux(),
-		events:  newEventHub(),
+		DB:        database,
+		Readers:   readers,
+		Mux:       http.NewServeMux(),
+		events:    newEventHub(),
+		startNano: time.Now().UnixNano(),
 	}
 	s.registerRoutes()
 	return s

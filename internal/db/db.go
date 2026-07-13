@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 
 type DB struct {
 	conn *sql.DB
@@ -384,6 +384,15 @@ func migrate(conn *sql.DB) error {
 		conn.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC)`)
 		// Clear watermarks so the indexer backfills session metadata.
 		conn.Exec(`DELETE FROM index_watermarks`)
+	}
+
+	// Version 10: sessions gains resume_id so /api/sessions can be served
+	// entirely from SQLite. Clear codex watermarks to backfill the column
+	// (codex is the only reader that populates ResumeID today).
+	if maxVersion < 10 {
+		conn.Exec(`ALTER TABLE sessions ADD COLUMN resume_id TEXT NOT NULL DEFAULT ''`)
+		conn.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)`)
+		conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`)
 	}
 
 	_, err = conn.Exec(

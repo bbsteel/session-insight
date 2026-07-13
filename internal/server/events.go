@@ -46,10 +46,19 @@ func (h *eventHub) broadcast() {
 	}
 }
 
-// NotifySessionsChanged pushes a sessions_changed event to every connected
-// client. Called by the file watcher wiring in main.
+// NotifySessionsChanged bumps the list revision (invalidating /api/sessions
+// ETags) and pushes a sessions_changed event to every connected client.
+// Called after an index round that actually changed data (wired in main).
 func (s *Server) NotifySessionsChanged() {
+	s.listRev.Add(1)
 	s.events.broadcast()
+}
+
+// bumpListRev invalidates /api/sessions ETags without broadcasting — for
+// serve-path mutations (bookmark/title) where the acting client already
+// updates its own state.
+func (s *Server) bumpListRev() {
+	s.listRev.Add(1)
 }
 
 // handleEvents streams sessions_changed pings over SSE. The browser-side

@@ -92,24 +92,28 @@ func (db *DB) GetWatermark(agentType, sessionID string) (int64, bool, error) {
 // DeleteOrphansByAgent 删除该 agent 已知 session 集合之外的 turn_texts、FTS 条目和 watermark。
 // 仅在该 agent 的 ListSessions() 完整成功后调用。
 // knownSessionIDs 为空时（该 agent 无会话），删除该 agent 的全部旧索引数据。
-func (db *DB) DeleteOrphansByAgent(agentType string, knownSessionIDs []string) error {
+// DeleteOrphansByAgent 清理该 agent 下已从磁盘消失的会话，返回删除的会话数
+// （供调用方判断是否需要广播列表变更）。
+func (db *DB) DeleteOrphansByAgent(agentType string, knownSessionIDs []string) (int, error) {
 	// 查询该 agent 下所有已有的 session ID（同时查 turn_texts 和 index_watermarks，
 	// 防止空内容会话的 watermark 永久泄露）
 	rows, err := db.conn.Query(
 		`SELECT DISTINCT session_id FROM turn_texts WHERE agent_type = ?
 		 UNION
-		 SELECT DISTINCT session_id FROM index_watermarks WHERE agent_type = ?`,
-		agentType, agentType,
+		 SELECT DISTINCT session_id FROM index_watermarks WHERE agent_type = ?
+		 UNION
+		 SELECT DISTINCT id FROM sessions WHERE agent_type = ?`,
+		agentType, agentType, agentType,
 	)
 	if err != nil {
-		return fmt.Errorf("query existing sessions: %w", err)
+		return 0, fmt.Errorf("query existing sessions: %w", err)
 	}
 	var existingIDs []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		existingIDs = append(existingIDs, id)
 	}
@@ -127,14 +131,14 @@ func (db *DB) DeleteOrphansByAgent(agentType string, knownSessionIDs []string) e
 		}
 	}
 	if len(orphans) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// 分批删除孤儿（每批最多 100 个 ID，避免参数爆炸）
 	const batchSize = 100
 	tx, err := db.conn.Begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 
@@ -158,17 +162,26 @@ func (db *DB) DeleteOrphansByAgent(agentType string, knownSessionIDs []string) e
 			`DELETE FROM turn_texts WHERE agent_type = ? AND session_id IN (`+inClause+`)`,
 			args...,
 		); err != nil {
-			return fmt.Errorf("delete orphan turns batch: %w", err)
+			return 0, fmt.Errorf("delete orphan turns batch: %w", err)
 		}
 		if _, err := tx.Exec(
 			`DELETE FROM index_watermarks WHERE agent_type = ? AND session_id IN (`+inClause+`)`,
 			args...,
 		); err != nil {
-			return fmt.Errorf("delete orphan watermarks batch: %w", err)
+			return 0, fmt.Errorf("delete orphan watermarks batch: %w", err)
+		}
+		if _, err := tx.Exec(
+			`DELETE FROM sessions WHERE agent_type = ? AND id IN (`+inClause+`)`,
+			args...,
+		); err != nil {
+			return 0, fmt.Errorf("delete orphan sessions batch: %w", err)
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(orphans), nil
 }
 
 // snippetAround 在 content 中找到 query 的第一次出现（大小写无关），

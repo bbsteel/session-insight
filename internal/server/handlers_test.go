@@ -14,11 +14,12 @@ import (
 )
 
 func TestHandleListSessionsEmpty(t *testing.T) {
-	srv := &Server{
-		Readers: nil,
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open db: %v", err)
 	}
-	srv.Mux = http.NewServeMux()
-	srv.registerRoutes()
+	defer database.Close()
+	srv := New(database, nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions", nil)
 	w := httptest.NewRecorder()
@@ -39,6 +40,41 @@ func TestHandleListSessionsEmpty(t *testing.T) {
 
 	if w.Header().Get("X-Total-Count") != "0" {
 		t.Errorf("expected X-Total-Count 0, got %s", w.Header().Get("X-Total-Count"))
+	}
+}
+
+// 列表 ETag：修订未变的重拉 304；NotifySessionsChanged 后失效回 200。
+func TestHandleListSessionsETag(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open db: %v", err)
+	}
+	defer database.Close()
+	srv := New(database, nil)
+
+	req := httptest.NewRequest("GET", "/api/sessions", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	etag := w.Header().Get("ETag")
+	if w.Code != http.StatusOK || etag == "" {
+		t.Fatalf("first GET: code %d, etag %q", w.Code, etag)
+	}
+
+	req = httptest.NewRequest("GET", "/api/sessions", nil)
+	req.Header.Set("If-None-Match", etag)
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("unchanged revision expected 304, got %d", w.Code)
+	}
+
+	srv.NotifySessionsChanged()
+	req = httptest.NewRequest("GET", "/api/sessions", nil)
+	req.Header.Set("If-None-Match", etag)
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bumped revision expected 200, got %d", w.Code)
 	}
 }
 
@@ -165,6 +201,17 @@ func TestBookmarkHandlersAnnotateSessionsAndListBookmarks(t *testing.T) {
 		},
 	}
 	srv := New(database, []reader.BaseSessionReader{rd})
+
+	// /api/sessions 现在从 SQLite 出——把 stub 会话像索引器那样落库
+	for _, sess := range rd.sessions {
+		if err := database.UpsertSessionMeta(
+			sess.AgentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
+			sess.Project, sess.Name, sess.ModelName, sess.ResumeID,
+			sess.TurnCount, sess.MessageCount, sess.CreatedAt, sess.UpdatedAt,
+		); err != nil {
+			t.Fatalf("UpsertSessionMeta %s: %v", sess.ID, err)
+		}
+	}
 
 	req := httptest.NewRequest("PUT", "/api/sessions/sess-1/bookmark?agent=claude", nil)
 	w := httptest.NewRecorder()

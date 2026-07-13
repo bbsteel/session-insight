@@ -2,20 +2,36 @@ import type { SessionSummary } from './types'
 
 export type ResumeShell = 'powershell' | 'git-bash'
 export type ResumeShellReason = 'last-used' | 'recommended' | null
+export type ResumeCommandMode = 'standard' | 'skip-permissions'
 
 export interface ResumeCommandOption {
   shell: ResumeShell
   command: string
   reason: ResumeShellReason
+  mode: ResumeCommandMode
 }
 
-function agentResumeArgs(session: SessionSummary): string[] | null {
+interface AgentResumeArgs {
+  standard: string[]
+  skipPermissions?: string[]
+}
+
+function agentResumeArgs(session: SessionSummary): AgentResumeArgs | null {
   const agent = session.agent_type.toLowerCase()
   const id = session.resume_id || session.id
-  if (agent.includes('claude')) return ['claude', '--resume', id]
-  if (agent.includes('codex')) return ['codex', 'resume', id]
-  if (agent.includes('opencode')) return ['opencode', '-s', id]
-  if (agent.includes('chrys')) return ['chrys', '-s', id]
+  if (agent.includes('claude')) return {
+    standard: ['claude', '--resume', id],
+    skipPermissions: ['claude', '--dangerously-skip-permissions', '--resume', id],
+  }
+  if (agent.includes('codex')) return {
+    standard: ['codex', 'resume', id],
+    skipPermissions: ['codex', '--dangerously-bypass-approvals-and-sandbox', 'resume', id],
+  }
+  if (agent.includes('opencode')) return {
+    standard: ['opencode', '-s', id],
+    skipPermissions: ['opencode', '--auto', '-s', id],
+  }
+  if (agent.includes('chrys')) return { standard: ['chrys', '-s', id] }
   return null
 }
 
@@ -47,19 +63,8 @@ export function getResumeCommandOptions(
   session: SessionSummary,
   preferredShell: ResumeShell | null = null,
 ): ResumeCommandOption[] {
-  const args = agentResumeArgs(session)
-  if (!args) return []
-
-  const powershellCommand = `& ${args.map(quotePowerShell).join(' ')}`
-  const bashCommand = args.map(quoteBash).join(' ')
-  const commands: Record<ResumeShell, string> = {
-    powershell: session.cwd
-      ? `Set-Location -LiteralPath ${quotePowerShell(session.cwd)}; ${powershellCommand}`
-      : powershellCommand,
-    'git-bash': session.cwd
-      ? `cd ${quoteBash(toGitBashPath(session.cwd))} && ${bashCommand}`
-      : bashCommand,
-  }
+  const resumeArgs = agentResumeArgs(session)
+  if (!resumeArgs) return []
 
   const recordedShell = session.shell_kind === 'powershell' || session.shell_kind === 'git-bash'
     ? session.shell_kind
@@ -67,9 +72,20 @@ export function getResumeCommandOptions(
   const primary = recordedShell ?? preferredShell ?? 'powershell'
   const shells: ResumeShell[] = primary === 'powershell' ? ['powershell', 'git-bash'] : ['git-bash', 'powershell']
 
-  return shells.map(shell => ({
-    shell,
-    command: commands[shell],
-    reason: shell === recordedShell ? 'last-used' : !recordedShell && shell === primary ? 'recommended' : null,
-  }))
+  return shells.flatMap(shell => {
+    const reason = shell === recordedShell ? 'last-used' : !recordedShell && shell === primary ? 'recommended' : null
+    const variants: [ResumeCommandMode, string[]][] = [['standard', resumeArgs.standard]]
+    if (resumeArgs.skipPermissions) variants.push(['skip-permissions', resumeArgs.skipPermissions])
+    return variants.map(([mode, args]) => {
+      const agentCommand = shell === 'powershell'
+        ? `& ${args.map(quotePowerShell).join(' ')}`
+        : args.map(quoteBash).join(' ')
+      const command = !session.cwd
+        ? agentCommand
+        : shell === 'powershell'
+          ? `Set-Location -LiteralPath ${quotePowerShell(session.cwd)}; ${agentCommand}`
+          : `cd ${quoteBash(toGitBashPath(session.cwd))} && ${agentCommand}`
+      return { shell, command, reason, mode }
+    })
+  })
 }

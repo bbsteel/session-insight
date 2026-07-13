@@ -238,8 +238,12 @@ func TestDeleteOrphansByAgent(t *testing.T) {
 	insert("session-B")
 	insert("session-C")
 
-	if err := database.DeleteOrphansByAgent("test", []string{"session-A", "session-B"}); err != nil {
+	removed, err := database.DeleteOrphansByAgent("test", []string{"session-A", "session-B"})
+	if err != nil {
 		t.Fatalf("DeleteOrphansByAgent: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("expected 1 orphan removed, got %d", removed)
 	}
 
 	// A and B remain
@@ -300,8 +304,12 @@ func TestDeleteOrphansByAgent_EmptyKnown(t *testing.T) {
 		t.Fatalf("UpsertTurns B: %v", err)
 	}
 
-	if err := database.DeleteOrphansByAgent("test", nil); err != nil {
+	removed, err := database.DeleteOrphansByAgent("test", nil)
+	if err != nil {
 		t.Fatalf("DeleteOrphansByAgent empty: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 orphans removed, got %d", removed)
 	}
 
 	// All turns deleted

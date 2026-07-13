@@ -49,6 +49,11 @@ func main() {
 	}
 
 	idx := indexer.New(database, readers)
+	srv := server.New(database, readers)
+
+	// 索引轮产生实际变更后才通知：SSE 发出时数据已落库，侧栏重拉读到的
+	// 就是新数据（/api/sessions 直接从 SQLite 出），也不会跟索引轮抢 CPU。
+	idx.OnChanged = srv.NotifySessionsChanged
 
 	// 首次索引同步完成（10s 超时），保证服务启动时已有基础索引
 	initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -60,12 +65,12 @@ func main() {
 	// 后台增量更新
 	go idx.RunBackground(context.Background())
 
-	srv := server.New(database, readers)
-
-	// 文件监听：会话文件一变 → SSE 通知侧栏重拉 + 踢一轮增量索引（秒级可搜）。
+	// 文件监听：会话文件一变 → 踢一轮增量索引（落库后由 OnChanged 通知侧栏）。
+	// 追加写走 5s 慢窗口——活跃会话的持续写入不再每 500ms 全量重索引，
+	// 代价只是侧栏计数/搜索晚几秒；新会话 Create 走 500ms 快窗口，秒级出现。
+	// 打开中的会话走 revision 轮询直读文件，不经过这条索引管道，不受影响。
 	// 监听器起不来只降级为"手动刷新页面"，不影响其他功能。
-	watcher, err := watch.New(500*time.Millisecond, func() {
-		srv.NotifySessionsChanged()
+	watcher, err := watch.New(500*time.Millisecond, 5*time.Second, func() {
 		idx.Kick()
 	})
 	if err != nil {

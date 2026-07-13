@@ -14,15 +14,21 @@ import (
 )
 
 // Watcher 用 fsnotify 递归监听目录（或单个文件），并以节流方式触发 onChange。
-// 节流语义：一段事件风暴内，从第一个事件起 debounce 后触发一次——持续写入
+// 节流语义：一段事件风暴内，从第一个事件起若干时间后触发一次——持续写入
 // 不会饿死回调（区别于"尾随防抖"）。
+//
+// 双档窗口：追加写等常规事件走 slow 窗口（活跃会话的持续写入不至于高频
+// 触发全量重索引）；递归根下的 Create（新会话文件、codex 日期目录等）走
+// fast 窗口，且允许把已排队的慢触发拉前，保住"新会话秒级出现"。
 type Watcher struct {
 	fsw      *fsnotify.Watcher
-	debounce time.Duration
+	fast     time.Duration
+	slow     time.Duration
 	onChange func()
 
-	mu        sync.Mutex
-	scheduled bool
+	mu       sync.Mutex
+	timer    *time.Timer
+	deadline time.Time
 	// recursiveDirs 记录以递归语义监听的目录：其下新建的子目录要动态补挂监听
 	// （codex 按日期建目录、claude 按项目建目录，漏挂会导致新会话不触发）。
 	recursiveDirs map[string]bool
@@ -32,14 +38,15 @@ type Watcher struct {
 	filePrefixes map[string][]string
 }
 
-func New(debounce time.Duration, onChange func()) (*Watcher, error) {
+func New(fast, slow time.Duration, onChange func()) (*Watcher, error) {
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 	return &Watcher{
 		fsw:           fsw,
-		debounce:      debounce,
+		fast:          fast,
+		slow:          slow,
 		onChange:      onChange,
 		recursiveDirs: make(map[string]bool),
 		filePrefixes:  make(map[string][]string),
@@ -139,22 +146,35 @@ func (w *Watcher) handleEvent(ev fsnotify.Event) {
 		}
 	}
 
-	w.trigger()
+	// 递归根下的 Create 是"新会话出现"信号，走快窗口；其余（追加写、
+	// 单文件源的 -wal 等）走慢窗口。非递归根的 Create 不豁免——opencode
+	// 的 -wal/-shm 在 checkpoint 时反复创建，属于写入噪音。
+	if ev.Op.Has(fsnotify.Create) && parentRecursive {
+		w.trigger(w.fast)
+	} else {
+		w.trigger(w.slow)
+	}
 }
 
-// trigger 节流触发：首个事件起 debounce 后回调一次，风暴期间最多每 debounce 一次。
-func (w *Watcher) trigger() {
+// trigger 节流触发：首个事件起 d 后回调一次，风暴期间最多每 d 一次。
+// 已有待触发回调时只允许把它拉前（fast 路径），不允许推后——保证持续
+// 写入不会饿死回调。
+func (w *Watcher) trigger(d time.Duration) {
 	w.mu.Lock()
-	if w.scheduled {
-		w.mu.Unlock()
+	defer w.mu.Unlock()
+
+	target := time.Now().Add(d)
+	if w.timer != nil {
+		// Reset 失败说明回调正在触发中，新事件很快就会被那次回调覆盖到
+		if target.Before(w.deadline) && w.timer.Reset(d) {
+			w.deadline = target
+		}
 		return
 	}
-	w.scheduled = true
-	w.mu.Unlock()
-
-	time.AfterFunc(w.debounce, func() {
+	w.deadline = target
+	w.timer = time.AfterFunc(d, func() {
 		w.mu.Lock()
-		w.scheduled = false
+		w.timer = nil
 		w.mu.Unlock()
 		w.onChange()
 	})

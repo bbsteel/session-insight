@@ -18,6 +18,11 @@ type Indexer struct {
 	db      *db.DB
 	readers []reader.BaseSessionReader
 	kick    chan struct{}
+
+	// OnChanged（可选）在一轮索引产生实际变更（会话新增/更新/删除）后调用。
+	// SSE 通知挂在这里而不是文件监听回调上：等数据落库后再让侧栏重拉，
+	// 既不会读到旧数据，也不会跟正在跑的索引轮抢 CPU。
+	OnChanged func()
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Indexer {
@@ -59,13 +64,19 @@ func (ix *Indexer) RunBackground(ctx context.Context) {
 
 func (ix *Indexer) indexOnce(ctx context.Context) error {
 	var errs []string
+	changed := 0
 	for _, r := range ix.readers {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err := ix.indexReader(ctx, r); err != nil {
+		n, err := ix.indexReader(ctx, r)
+		changed += n
+		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", r.AgentType(), err))
 		}
+	}
+	if changed > 0 && ix.OnChanged != nil {
+		ix.OnChanged()
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("index once errors:\n%s", strings.Join(errs, "\n"))
@@ -73,64 +84,76 @@ func (ix *Indexer) indexOnce(ctx context.Context) error {
 	return nil
 }
 
-func (ix *Indexer) indexReader(ctx context.Context, r reader.BaseSessionReader) error {
+// indexReader 返回本轮该 reader 实际变更的会话数（新增/更新/删除）。
+func (ix *Indexer) indexReader(ctx context.Context, r reader.BaseSessionReader) (int, error) {
 	sessions, err := r.ListSessions()
 	if err != nil {
 		log.Printf("[indexer] %s: ListSessions error: %v", r.AgentType(), err)
-		return err
+		return 0, err
 	}
 
+	changed := 0
 	knownIDs := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return changed, ctx.Err()
 		}
 		knownIDs = append(knownIDs, sess.ID)
-		if err := ix.indexSession(r, sess); err != nil {
+		did, err := ix.indexSession(r, sess)
+		if err != nil {
 			log.Printf("[indexer] %s/%s: index error: %v", r.AgentType(), sess.ID, err)
+		}
+		if did {
+			changed++
 		}
 	}
 
 	// 清理该 agent 下已消失的会话（删除不在 knownIDs 中的旧数据）
 	// 注意：GetSession 失败的会话仍在 knownIDs 中，保留其旧索引不删除。
-	if err := ix.db.DeleteOrphansByAgent(r.AgentType(), knownIDs); err != nil {
+	removed, err := ix.db.DeleteOrphansByAgent(r.AgentType(), knownIDs)
+	if err != nil {
 		log.Printf("[indexer] %s: orphan cleanup error: %v", r.AgentType(), err)
 		// 孤儿清理失败不阻止其他 reader
 	}
-	return nil
+	return changed + removed, nil
 }
 
-func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) error {
+// indexSession 返回是否发生了实际写入（watermark 未变时跳过并返回 false）。
+func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) (bool, error) {
 	agentType := r.AgentType()
 	revision := sess.UpdatedAt.UnixNano()
 
 	storedRev, exists, err := ix.db.GetWatermark(agentType, sess.ID)
 	if err != nil {
-		return fmt.Errorf("get watermark: %w", err)
+		return false, fmt.Errorf("get watermark: %w", err)
 	}
 	if exists && storedRev == revision {
-		return nil // 未变化，跳过
+		return false, nil // 未变化，跳过
 	}
 
 	detail, err := r.GetSession(sess.ID)
 	if err != nil {
-		return fmt.Errorf("get session: %w", err)
+		return false, fmt.Errorf("get session: %w", err)
 	}
 	if detail == nil {
-		return fmt.Errorf("get session %s: reader returned nil detail", sess.ID)
+		return false, fmt.Errorf("get session %s: reader returned nil detail", sess.ID)
 	}
 
 	turns := buildTurnTexts(sess, detail)
 	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
-		return fmt.Errorf("upsert turns: %w", err)
+		return false, fmt.Errorf("upsert turns: %w", err)
 	}
-	// Also persist session metadata so search enrichment is a pure SQL query.
-	return ix.db.UpsertSessionMeta(
+	// Also persist session metadata so the sidebar list and search enrichment
+	// are pure SQL queries.
+	if err := ix.db.UpsertSessionMeta(
 		agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
-		sess.Project, sess.Name, sess.ModelName,
+		sess.Project, sess.Name, sess.ModelName, sess.ResumeID,
 		sess.TurnCount, sess.MessageCount,
 		sess.CreatedAt, sess.UpdatedAt,
-	)
+	); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // buildTurnTexts 从 SessionDetail 构造待索引行列表：

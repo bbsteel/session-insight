@@ -1,12 +1,12 @@
 package server
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,8 +18,33 @@ import (
 	"github.com/bbsteel/session-insight/internal/render"
 )
 
+// handleListSessions serves the sidebar list straight from the SQLite index
+// (populated by the background indexer) — no per-request disk scan. Freshness
+// lags at most one index round; the indexer bumps the list revision and pings
+// SSE after each round that changed data, so clients refetch right after new
+// data lands.
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	agentFilter := r.URL.Query().Get("agent")
+
+	// 内容修订没变的重拉直接 304（浏览器 HTTP 缓存自动带 If-None-Match）。
+	etag := fmt.Sprintf(`"sessions-%d-%d"`, s.startNano, s.listRev.Load())
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Vary", "Accept-Encoding")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	if s.DB == nil {
+		http.Error(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+	list, err := s.DB.ListSessionSummaries(agentFilter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	bookmarkSet, err := s.bookmarkSet()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -27,38 +52,31 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	overrides := s.titleOverrides()
-	var sessions []SessionSummary
-	for _, reader := range s.Readers {
-		if agentFilter != "" && reader.AgentType() != agentFilter {
-			continue
+	sessions := make([]SessionSummary, 0, len(list))
+	for _, sess := range list {
+		sess.Bookmarked = bookmarkSet[db.BookmarkKey(sess.AgentType, sess.ID)]
+		if t, ok := overrides[db.BookmarkKey(sess.AgentType, sess.ID)]; ok {
+			sess.Name = t
 		}
-
-		list, err := reader.ListSessions()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		for _, s := range list {
-			s.Bookmarked = bookmarkSet[db.BookmarkKey(s.AgentType, s.ID)]
-			if t, ok := overrides[db.BookmarkKey(s.AgentType, s.ID)]; ok {
-				s.Name = t
-			}
-			sessions = append(sessions, sessionToSummary(s))
-		}
-	}
-
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].UpdatedAt > sessions[j].UpdatedAt
-	})
-
-	if sessions == nil {
-		sessions = []SessionSummary{}
+		sessions = append(sessions, sessionToSummary(sess))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Total-Count", fmt.Sprintf("%d", len(sessions)))
-	json.NewEncoder(w).Encode(sessions)
+	writeJSONMaybeGzip(w, r, sessions)
+}
+
+// writeJSONMaybeGzip 编码 JSON；客户端支持时 gzip 压缩（几百 KB 的列表
+// payload 压到几十 KB）。
+func writeJSONMaybeGzip(w http.ResponseWriter, r *http.Request, v any) {
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		json.NewEncoder(gz).Encode(v) //nolint:errcheck // 网络写失败无从补救
+		return
+	}
+	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +143,6 @@ func sessionToSummary(s model.Session) SessionSummary {
 		Project:      s.Project,
 		CWD:          s.CWD,
 		ResumeID:     s.ResumeID,
-		PreviewText:  s.PreviewText,
 		TurnCount:    s.TurnCount,
 		MessageCount: s.MessageCount,
 		IsLive:       model.IsSessionLive(s.UpdatedAt),
@@ -189,7 +206,6 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 			Repository:   bm.Repository,
 			Project:      bm.Project,
 			CWD:          bm.CWD,
-			PreviewText:  bm.PreviewText,
 			TurnCount:    bm.TurnCount,
 			MessageCount: bm.MessageCount,
 			Branch:       bm.Branch,
@@ -216,7 +232,7 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 						Repository:       ss.Repository,
 						Project:          ss.Project,
 						CWD:              ss.CWD,
-						PreviewText:      ss.PreviewText,
+						PreviewText:      detail.Session.PreviewText,
 						TurnCount:        ss.TurnCount,
 						MessageCount:     ss.MessageCount,
 						Branch:           ss.Branch,
@@ -275,7 +291,7 @@ func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add
 						Repository:       ss.Repository,
 						Project:          ss.Project,
 						CWD:              ss.CWD,
-						PreviewText:      ss.PreviewText,
+						PreviewText:      detail.Session.PreviewText,
 						TurnCount:        ss.TurnCount,
 						MessageCount:     ss.MessageCount,
 						Branch:           ss.Branch,
@@ -292,6 +308,7 @@ func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.bumpListRev()
 	w.WriteHeader(http.StatusNoContent)
 }
 
