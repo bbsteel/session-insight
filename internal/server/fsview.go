@@ -13,7 +13,7 @@ import (
 // listing for the tree pane and capped file content for the code pane. Both
 // run with the server user's OS permissions on a loopback-only listener.
 
-const fsReadLimit = 1 << 20 // 1 MiB is plenty for a code viewer
+const fsReadLimit = 2 << 20 // files above 2 MiB remain virtual plain-text previews
 
 type fsEntry struct {
 	Name  string `json:"name"`
@@ -60,6 +60,11 @@ func (s *Server) handleFsRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		http.Error(w, "cannot stat file", http.StatusInternalServerError)
+		return
+	}
 
 	buf := make([]byte, fsReadLimit+1)
 	n, _ := f.Read(buf)
@@ -77,5 +82,6 @@ func (s *Server) handleFsRead(w http.ResponseWriter, r *http.Request) {
 		"path":      path,
 		"content":   string(content),
 		"truncated": truncated,
+		"size":      info.Size(),
 	})
 }

@@ -128,7 +128,7 @@ export async function fsList(dir: string): Promise<FsEntry[]> {
   return res.json()
 }
 
-export async function fsRead(path: string): Promise<{ path: string; content: string; truncated: boolean }> {
+export async function fsRead(path: string): Promise<{ path: string; content: string; truncated: boolean; size: number }> {
   const res = await fetch(`/api/fs/read?${new URLSearchParams({ path })}`)
   if (!res.ok) throw new Error(res.status === 415 ? '二进制文件无法预览' : `读取失败: ${res.status}`)
   return res.json()
