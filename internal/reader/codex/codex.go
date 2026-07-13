@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/render"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 type CodexReader struct {
@@ -27,7 +27,7 @@ func New(sessionsDir string) *CodexReader {
 
 func (r *CodexReader) WatchRoots() []string { return []string{r.sessionsDir} }
 
-func (r *CodexReader) AgentType() string  { return "codex" }
+func (r *CodexReader) AgentType() string   { return "codex" }
 func (r *CodexReader) DisplayName() string { return "Codex" }
 
 // RenderANSI implements reader.BaseSessionReader.
@@ -71,10 +71,10 @@ type codexSessionMeta struct {
 }
 
 type codexPayload struct {
-	Type    string `json:"type"`
-	TurnID  string `json:"turn_id"`
-	Message string `json:"message"`
-	Role    string `json:"role"`
+	Type    string          `json:"type"`
+	TurnID  string          `json:"turn_id"`
+	Message string          `json:"message"`
+	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
 	// function_call / custom_tool_call
 	Name           string `json:"name"`
@@ -286,10 +286,13 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 					modelName = extractModelName(&m)
 				}
 				if nativeID == "" {
-					if m.SessionID != "" {
-						nativeID = m.SessionID
-					} else if m.ID != "" {
+					// Codex resume resolves the rollout's own payload.id. For
+					// subagent rollouts, session_id points at the parent thread and
+					// must not replace the child rollout's resumable UUID.
+					if m.ID != "" {
 						nativeID = m.ID
+					} else if m.SessionID != "" {
+						nativeID = m.SessionID
 					}
 				}
 			}

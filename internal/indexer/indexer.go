@@ -128,7 +128,9 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 		return false, fmt.Errorf("get watermark: %w", err)
 	}
 	if exists && storedRev == revision {
-		return false, nil // 未变化，跳过
+		// Turn content is unchanged, but lightweight metadata may need a
+		// migration backfill (notably Codex resume_id).
+		return ix.db.UpdateSessionResumeID(agentType, sess.ID, sess.ResumeID)
 	}
 
 	detail, err := r.GetSession(sess.ID)
@@ -139,12 +141,9 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 		return false, fmt.Errorf("get session %s: reader returned nil detail", sess.ID)
 	}
 
-	turns := buildTurnTexts(sess, detail)
-	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
-		return false, fmt.Errorf("upsert turns: %w", err)
-	}
-	// Also persist session metadata so the sidebar list and search enrichment
-	// are pure SQL queries.
+	// Persist metadata before UpsertTurns commits the watermark. If metadata
+	// fails after a watermark write, the next cycle would otherwise treat the
+	// session as unchanged and permanently skip the resume_id backfill.
 	if err := ix.db.UpsertSessionMeta(
 		agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
 		sess.Project, sess.Name, sess.ModelName, sess.ResumeID,
@@ -152,6 +151,11 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 		sess.CreatedAt, sess.UpdatedAt,
 	); err != nil {
 		return false, err
+	}
+
+	turns := buildTurnTexts(sess, detail)
+	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
+		return false, fmt.Errorf("upsert turns: %w", err)
 	}
 	return true, nil
 }

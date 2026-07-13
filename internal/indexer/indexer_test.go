@@ -121,6 +121,10 @@ func TestIndexer_UnchangedSkip(t *testing.T) {
 	if n := atomic.LoadInt32(&getSessionCalls); n != 1 {
 		t.Fatalf("expected 1 GetSession call after first run, got %d", n)
 	}
+	if _, err := database.Conn().Exec(`UPDATE sessions SET resume_id='parent-id' WHERE agent_type='test' AND id='s1'`); err != nil {
+		t.Fatal(err)
+	}
+	mr.sessions[0].ResumeID = "child-id"
 
 	if err := ix.RunOnce(context.Background()); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
@@ -128,6 +132,10 @@ func TestIndexer_UnchangedSkip(t *testing.T) {
 
 	if n := atomic.LoadInt32(&getSessionCalls); n != 1 {
 		t.Fatalf("expected GetSession not called on second run (same revision), got %d calls", n)
+	}
+	summaries, err := database.ListSessionSummaries("test")
+	if err != nil || len(summaries) != 1 || summaries[0].ResumeID != "child-id" {
+		t.Fatalf("resume id metadata sync failed: summaries=%+v err=%v", summaries, err)
 	}
 }
 

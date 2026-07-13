@@ -18,6 +18,9 @@ interface AgentResumeArgs {
 
 function agentResumeArgs(session: SessionSummary): AgentResumeArgs | null {
   const agent = session.agent_type.toLowerCase()
+  // A Codex session's UI id is the rollout filename stem, which the CLI does
+  // not accept. Never fall back to it while the native UUID is being indexed.
+  if (agent.includes('codex') && !session.resume_id) return null
   const id = session.resume_id || session.id
   if (agent.includes('claude')) return {
     standard: ['claude', '--resume', id],

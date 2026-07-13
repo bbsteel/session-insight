@@ -9,7 +9,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 10
+const currentSchemaVersion = 13
 
 type DB struct {
 	conn *sql.DB

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { getResumeCommandOptions, isWindowsSession, toGitBashPath } from '/tmp/session-insight-resume-commands/resumeCommands.js'
 
 const session = {
-  id: 'abc-123', agent_type: 'codex', name: '', model_name: '', repository: '', branch: '',
+  id: 'rollout-date-abc-123', resume_id: 'abc-123', agent_type: 'codex', name: '', model_name: '', repository: '', branch: '',
   project: 'demo', cwd: "C:\\work\\John's project", preview_text: '', turn_count: 0,
   message_count: 0, is_live: false, bookmarked: false, created_at: '', updated_at: '',
 }
@@ -18,6 +18,9 @@ assert.equal(defaults[0].command, "Set-Location -LiteralPath 'C:\\work\\John''s 
 assert.equal(defaults[1].mode, 'skip-permissions')
 assert.equal(defaults[1].command, "Set-Location -LiteralPath 'C:\\work\\John''s project'; & 'codex' '--dangerously-bypass-approvals-and-sandbox' 'resume' 'abc-123'")
 assert.equal(defaults[2].command, "cd '/c/work/John'\"'\"'s project' && 'codex' 'resume' 'abc-123'")
+
+const codexWithoutNativeId = getResumeCommandOptions({ ...session, resume_id: '' })
+assert.deepEqual(codexWithoutNativeId, [])
 
 const preferred = getResumeCommandOptions(session, 'git-bash')
 assert.equal(preferred[0].shell, 'git-bash')

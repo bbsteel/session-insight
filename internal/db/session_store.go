@@ -39,6 +39,28 @@ func (db *DB) UpsertSessionMeta(agentType, id, cwd, repository, branch, project,
 	return err
 }
 
+// UpdateSessionResumeID synchronizes a reader-provided native resume ID
+// without rebuilding the session's turn index. It repairs historical empty
+// IDs and Codex subagent rows that previously stored their parent thread ID.
+func (db *DB) UpdateSessionResumeID(agentType, sessionID, resumeID string) (bool, error) {
+	if resumeID == "" {
+		return false, nil
+	}
+	result, err := db.conn.Exec(
+		`UPDATE sessions SET resume_id = ?
+		 WHERE agent_type = ? AND id = ? AND resume_id <> ?`,
+		resumeID, agentType, sessionID, resumeID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("update session resume id: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("resume id rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
 // ListSessionSummaries returns every indexed session (optionally filtered by
 // agent type) ordered by updated_at descending — the sidebar list is served
 // straight from this query instead of re-scanning session files on disk.
