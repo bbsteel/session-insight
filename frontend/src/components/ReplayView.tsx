@@ -7,6 +7,7 @@ import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
+import AIPanel from './AIPanel'
 import DiffModal from './DiffModal'
 import OutputModal from './OutputModal'
 import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContextMenu'
@@ -64,6 +65,7 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
   const [outputModalIdx, setOutputModalIdx] = useState<number | null>(null)
   const [edits, setEdits] = useState<EditCall[]>([])
   const [showToolPanel, setShowToolPanel] = useState(false)
+  const [showAIPanel, setShowAIPanel] = useState(false)
   // 时间戳前缀设置(后端 ts 渲染参数);null = 设置未加载,先不挂终端,
   // 避免渲染与 positions 用了不同的 ts 导致行号错位。
   const [tsKinds, setTsKinds] = useState<string | null>(null)
@@ -893,6 +895,14 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
           </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
+          <span className="text-[var(--border-default)]">|</span>
+          <button
+            onClick={() => setShowAIPanel(true)}
+            className={`h-7 rounded-md px-2 text-nav ${showAIPanel ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title="AI 总结 / 标题 / 交接"
+          >
+            AI
+          </button>
         </div>
         <span className="text-[var(--border-default)] mx-1">|</span>
         <div className="flex items-center gap-1">
@@ -1000,6 +1010,21 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
 
       {outputModalIdx !== null && session && (
         <OutputModal sessionId={session.id} outputIndex={outputModalIdx} onClose={() => setOutputModalIdx(null)} />
+      )}
+
+      {showAIPanel && session && (
+        <AIPanel
+          sessionId={session.id}
+          agentType={session.agent_type}
+          sessionName={session.name || session.id}
+          onClose={() => setShowAIPanel(false)}
+          onTitleApplied={title => {
+            // Apply: reflect the new display name immediately. Remove: the
+            // original name only lives in the agent log, so refetch.
+            if (title !== null) setSession(prev => prev ? { ...prev, name: title } : prev)
+            else void fetchSession(session.id).then(d => setSession(prev => (prev && prev.id === d.id ? { ...prev, name: d.name } : prev))).catch(() => {})
+          }}
+        />
       )}
 
       {ctxMenu && (

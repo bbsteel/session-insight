@@ -156,6 +156,175 @@ export async function saveSettings(settings: { editor_command?: string; file_ope
   if (!res.ok) throw new Error(`Failed to save settings: ${res.status}`)
 }
 
+export interface LLMModel {
+  id: string
+  label: string
+  description?: string
+}
+
+export interface LLMProvider {
+  id: number
+  name: string
+  kind: 'api' | 'acp'
+  base_url: string
+  has_api_key: boolean
+  agent: string
+  model_id: string
+  model_label: string
+  is_default: boolean
+  created_at: string
+}
+
+export interface LLMProviderInput {
+  name: string
+  kind: 'api' | 'acp'
+  base_url?: string
+  api_key?: string
+  agent?: string
+  model_id: string
+  model_label?: string
+}
+
+export interface AIGeneration {
+  id: number
+  kind: string
+  agent_type: string
+  session_id: string
+  provider_name: string
+  model_id: string
+  content: string
+  created_at: string
+}
+
+export type AIKind = 'summary' | 'title' | 'handoff'
+
+export async function fetchLLMProviders(): Promise<{ providers: LLMProvider[]; acp_agents: string[] }> {
+  const res = await fetch('/api/llm/providers')
+  if (!res.ok) throw new Error(`获取模型源失败: ${res.status}`)
+  return res.json()
+}
+
+export async function addLLMProvider(input: LLMProviderInput): Promise<number> {
+  const res = await fetch('/api/llm/providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  const data = await res.json() as { id: number }
+  return data.id
+}
+
+export async function updateLLMProvider(id: number, input: LLMProviderInput): Promise<void> {
+  const res = await fetch(`/api/llm/providers/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function deleteLLMProvider(id: number): Promise<void> {
+  const res = await fetch(`/api/llm/providers/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function setDefaultLLMProvider(id: number): Promise<void> {
+  const res = await fetch('/api/llm/providers/default', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider_id: id }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+// Validates a (possibly unsaved) provider config by fetching its model list.
+// provider_id lets a saved provider refresh models without re-entering the key.
+export async function testLLMProvider(input: Partial<LLMProviderInput> & { provider_id?: number }): Promise<LLMModel[]> {
+  const res = await fetch('/api/llm/providers/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  const data = await res.json() as { models: LLMModel[] }
+  return data.models
+}
+
+export async function fetchLatestGeneration(kind: AIKind, sessionId: string, agent: string): Promise<AIGeneration | null> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${sessionId}/ai/${kind}/latest?${params}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`获取生成记录失败: ${res.status}`)
+  return res.json()
+}
+
+// Thrown when generation is attempted with no provider configured (HTTP 412):
+// callers show the "去配置模型" guidance instead of a plain error.
+export class NoProviderError extends Error {}
+
+// Runs one generation over SSE (POST + streamed response body — EventSource
+// can't POST, so the stream is parsed by hand). onStatus receives coarse
+// stage strings ("启动 ACP 适配器", "请求模型", ...).
+export async function generateAI(
+  sessionId: string,
+  kind: AIKind,
+  onStatus: (stage: string) => void,
+  signal?: AbortSignal,
+): Promise<AIGeneration> {
+  const res = await fetch(`/api/sessions/${sessionId}/ai/${kind}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+    signal,
+  })
+  if (res.status === 412) throw new NoProviderError(await res.text())
+  if (!res.ok || !res.body) throw new Error(await res.text() || `生成失败: ${res.status}`)
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let result: AIGeneration | null = null
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (value) buf += decoder.decode(value, { stream: true })
+    // SSE frames are separated by a blank line; parse every complete frame.
+    for (let idx = buf.indexOf('\n\n'); idx >= 0; idx = buf.indexOf('\n\n')) {
+      const frame = buf.slice(0, idx)
+      buf = buf.slice(idx + 2)
+      let event = ''
+      let data = ''
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim()
+        else if (line.startsWith('data: ')) data += line.slice(6)
+      }
+      if (!event || !data) continue
+      if (event === 'status') onStatus((JSON.parse(data) as { stage: string }).stage)
+      else if (event === 'error') throw new Error((JSON.parse(data) as { message: string }).message)
+      else if (event === 'done') result = JSON.parse(data) as AIGeneration
+    }
+    if (done) break
+  }
+  if (!result) throw new Error('生成中断：服务未返回结果')
+  return result
+}
+
+export async function setSessionTitle(sessionId: string, agent: string, title: string): Promise<void> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${sessionId}/title?${params}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function removeSessionTitle(sessionId: string, agent: string): Promise<void> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${sessionId}/title?${params}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
 // Subscribe to the backend's sessions_changed SSE stream (fed by the file
 // watcher). The event is a bare ping — callers refetch /api/sessions
 // themselves. EventSource auto-reconnects, so a backend restart self-heals.
