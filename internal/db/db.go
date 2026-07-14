@@ -6,11 +6,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 14
+const currentSchemaVersion = 16
 
 type DB struct {
 	conn *sql.DB
@@ -420,6 +421,36 @@ func migrate(conn *sql.DB) error {
 	if maxVersion < 10 {
 		conn.Exec(`ALTER TABLE sessions ADD COLUMN resume_id TEXT NOT NULL DEFAULT ''`)
 		conn.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)`)
+		conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`)
+	}
+
+	// Version 15: distinguish the active resumable turn count from turns that
+	// remain in an append-only transcript after an explicit rollback.
+	if maxVersion < 15 {
+		for _, col := range []string{
+			`historical_turn_count INTEGER NOT NULL DEFAULT 0`,
+			`rolled_back_turn_count INTEGER NOT NULL DEFAULT 0`,
+		} {
+			if _, err := conn.Exec(`ALTER TABLE sessions ADD COLUMN ` + col); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("add sessions rollback count: %w", err)
+			}
+		}
+		conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`)
+	}
+
+	// Version 16: preserve Codex collaborative-agent lineage. Child rollout
+	// files remain indexed/searchable but no longer masquerade as duplicate
+	// root sessions in the sidebar.
+	if maxVersion < 16 {
+		for _, col := range []string{
+			`parent_session_id TEXT NOT NULL DEFAULT ''`,
+			`agent_path TEXT NOT NULL DEFAULT ''`,
+			`is_subagent INTEGER NOT NULL DEFAULT 0`,
+		} {
+			if _, err := conn.Exec(`ALTER TABLE sessions ADD COLUMN ` + col); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("add sessions lineage column: %w", err)
+			}
+		}
 		conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`)
 	}
 

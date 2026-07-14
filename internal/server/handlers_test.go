@@ -43,6 +43,43 @@ func TestHandleListSessionsEmpty(t *testing.T) {
 	}
 }
 
+func TestHandleListSessionsHidesSubagentsFromRootList(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	now := time.Now()
+	root := model.Session{ID: "root", AgentType: "codex", Name: "same title", UpdatedAt: now, CreatedAt: now}
+	child := model.Session{ID: "child", AgentType: "codex", Name: "same title", ParentSessionID: "root", AgentPath: "/root/audit", IsSubagent: true, UpdatedAt: now, CreatedAt: now}
+	for _, sess := range []model.Session{root, child} {
+		if err := database.UpsertSessionMetaWithHistoryAndLineage(
+			sess.AgentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
+			sess.Project, sess.Name, sess.ModelName, sess.ResumeID,
+			sess.ParentSessionID, sess.AgentPath, sess.IsSubagent,
+			0, 0, 0, 0, sess.CreatedAt, sess.UpdatedAt,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	srv := New(database, nil)
+	req := httptest.NewRequest("GET", "/api/sessions?agent=codex", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var sessions []SessionSummary
+	if err := json.NewDecoder(w.Body).Decode(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "root" {
+		t.Fatalf("root sessions = %+v", sessions)
+	}
+}
+
 // 列表 ETag：修订未变的重拉 304；NotifySessionsChanged 后失效回 200。
 func TestHandleListSessionsETag(t *testing.T) {
 	database, err := db.Open(t.TempDir())

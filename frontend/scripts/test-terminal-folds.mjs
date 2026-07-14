@@ -37,6 +37,17 @@ const positions = [
 const folds = foldsFromPositions(positions)
 assertEq(folds.length, 2, 'foldsFromPositions extracts fold kinds only')
 
+const rollbackLines = ['active', '▼ ↩ 已回滚 2 个 turn', 'old1', 'old2', 'tail']
+const rollbackFolds = foldsFromPositions([{
+  kind: 'fold', position_key: 'rollback:0:1', turn_index: 0, line_start: 1, label: '已回滚 2 turns',
+  payload: { level: 'rollback', display_start: 2, display_end: 4, logical_start: 2, logical_end: 4, header_logical: 1 },
+}])
+assertEq(rollbackFolds[0]?.level, 'rollback', 'rollback fold level preserved')
+const rollbackCollapsed = composeFoldView(rollbackLines.join('\n'), rollbackFolds, new Set(['rollback:0:1']))
+assertEq(rollbackCollapsed.text.split('\n'), [
+  'active', '▶ ↩ 已回滚 2 个 turn\x1b[2m (2 行)\x1b[0m', 'tail',
+], 'rollback fold hides abandoned turns')
+
 // Nothing collapsed → identity.
 const open = composeFoldView(ansi, folds, new Set())
 assertEq(open.text === ansi, true, 'no collapse → text unchanged')

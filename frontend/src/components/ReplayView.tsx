@@ -563,6 +563,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   }, [bookmarkBusy, onBookmarkChange, session])
 
   const turns = session?.turns ?? []
+  const rolledBackTurns = useMemo(
+    () => session?.rollback_groups?.flatMap(group => group.turns) ?? [],
+    [session?.rollback_groups],
+  )
 
   // Wire scrollToIndexRef and scrollToTopRef to the terminal control.
   // When analytics is shown the terminal is unmounted so these become no-ops.
@@ -579,6 +583,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           if (localStorage.getItem('si-term-debug') === '1') console.log('[si-jump]', JSON.stringify(info))
         }
         if (turnPos) {
+          const jumpToPosition = () => {
           // logical_start resolves through xterm's own wrap state and stays
           // exact when collapsed-fold badges shift display rows; line_start
           // is the fallback for position caches built by older binaries.
@@ -589,6 +594,17 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           jumpDbg({ index, via: typeof logical === 'number' ? 'logical' : 'positions', lineStart: turnPos.line_start, logical, line, hidden: ctrl.hiddenLineCount(), scrollHeight: ctrl.getMetrics().scrollHeight })
           ctrl.scrollToLineCentered(line)
           ctrl.flashLines(line, 2)
+          }
+          if (index < 0) {
+            const rollbackFold = folds.find(f =>
+              f.level === 'rollback' && turnPos.line_start >= f.displayStart && turnPos.line_start < f.displayEnd)
+            if (rollbackFold && ctrl.getCollapsedFoldKeys().includes(rollbackFold.key)) {
+              ctrl.setFoldsCollapsed([rollbackFold.key], false, rollbackFold.headerDisplay)
+              requestAnimationFrame(() => requestAnimationFrame(jumpToPosition))
+              return
+            }
+          }
+          jumpToPosition()
           return
         }
         const metrics = ctrl.getMetrics()
@@ -608,7 +624,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         termControlRef.current?.scrollToLine(Math.floor(top / TERMINAL_LINE_HEIGHT))
       }
     }
-  }, [scrollToIndexRef, scrollToTopRef, turns, positionsData])
+  }, [scrollToIndexRef, scrollToTopRef, turns, positionsData, folds])
 
   // Jump requested from AnalyticsView while the terminal was unmounted.
   // The terminal re-renders its content asynchronously after remount: first an
@@ -677,12 +693,17 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     let attempts = 0
     const timer = window.setInterval(() => {
       attempts++
-      if (termControlRef.current?.flashSearchMatch(searchTarget.query) || attempts >= 30) {
+      const ctrl = termControlRef.current
+      if (attempts === 5 && ctrl) {
+        const rollbackKeys = folds.filter(f => f.level === 'rollback').map(f => f.key)
+        if (rollbackKeys.length > 0) ctrl.setFoldsCollapsed(rollbackKeys, false)
+      }
+      if (ctrl?.flashSearchMatch(searchTarget.query) || attempts >= 30) {
         window.clearInterval(timer)
       }
     }, 100)
     return () => window.clearInterval(timer)
-  }, [searchTarget, sessionId])
+  }, [searchTarget, sessionId, folds])
 
   // 工具面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
   const handleToolJump = useCallback((lineStart: number, logicalStart?: number) => {
@@ -890,7 +911,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // the fallback for readers that only expose per-turn usage.
   const totalTokens = session.billing?.totals
     ? session.billing.totals.prompt_tokens + session.billing.totals.completion_tokens
-    : session.turns.reduce((sum, t) => sum + t.token_usage.prompt_tokens + t.token_usage.completion_tokens, 0)
+    : [...session.turns, ...rolledBackTurns].reduce(
+      (sum, t) => sum + t.token_usage.prompt_tokens + t.token_usage.completion_tokens,
+      0,
+    )
   const modelName = session.model_name || session.agent_type || 'unknown'
   const sessionDuration = formatDuration(session.turns.reduce((sum, t) => sum + t.duration_ms, 0))
 
@@ -1012,7 +1036,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />活跃中
             </span>
           )}
-          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tokens · {session.turn_count} turns · {sessionDuration}
+          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tokens · {session.turn_count} 活动 turns
+          {(session.rolled_back_turn_count ?? 0) > 0 && (
+            <span className="text-[var(--warning)]"> · +{session.rolled_back_turn_count} 已回滚</span>
+          )}
+          {' · '}{sessionDuration}
           {session.repository && <span className="text-[var(--text-muted)]"> · {session.repository.split('/').pop()}</span>}
           {session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>}
           {session.created_at && (

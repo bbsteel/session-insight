@@ -20,6 +20,8 @@ export interface SessionSummary {
   /** Present only when the session source explicitly records the launching shell. */
   shell_kind?: 'powershell' | 'git-bash' | 'cmd' | 'wsl' | 'posix'
   turn_count: number
+  historical_turn_count?: number
+  rolled_back_turn_count?: number
   message_count: number
   is_live: boolean
   bookmarked: boolean
@@ -57,6 +59,14 @@ tool_names?: string[]
   subagents?: string[]
   skills?: string[]
   anomalies?: string[]
+  rolled_back?: boolean
+  original_turn_index?: number
+}
+
+export interface RollbackGroupVM {
+  after_turn_index: number
+  timestamp: string
+  turns: TurnVM[]
 }
 
 export interface EditCall {
@@ -111,6 +121,9 @@ export interface SessionDetail {
   updated_at: string
   model_name: string
   turns: TurnVM[]
+  historical_turn_count?: number
+  rolled_back_turn_count?: number
+  rollback_groups?: RollbackGroupVM[]
   todos?: { id: string; title: string; description: string; status: string; deps?: string[] }[]
   billing?: SessionBillingSummary
 }

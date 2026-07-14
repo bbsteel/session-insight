@@ -144,10 +144,11 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 	// Persist metadata before UpsertTurns commits the watermark. If metadata
 	// fails after a watermark write, the next cycle would otherwise treat the
 	// session as unchanged and permanently skip the resume_id backfill.
-	if err := ix.db.UpsertSessionMeta(
+	if err := ix.db.UpsertSessionMetaWithHistoryAndLineage(
 		agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
 		sess.Project, sess.Name, sess.ModelName, sess.ResumeID,
-		sess.TurnCount, sess.MessageCount,
+		sess.ParentSessionID, sess.AgentPath, sess.IsSubagent,
+		detail.TurnCount, detail.HistoricalTurnCount, detail.RolledBackTurnCount, sess.MessageCount,
 		sess.CreatedAt, sess.UpdatedAt,
 	); err != nil {
 		return false, err
@@ -187,6 +188,18 @@ func buildTurnTexts(sess model.Session, detail *model.SessionDetail) []db.TurnTe
 				TurnIndex: t.TurnIndex,
 				Role:      "user",
 				Content:   t.UserMessage,
+			})
+		}
+	}
+	for _, group := range detail.RollbackGroups {
+		for _, t := range group.Turns {
+			if t.UserMessage == "" {
+				continue
+			}
+			texts = append(texts, db.TurnText{
+				TurnIndex: -(t.OriginalTurnIndex + 1),
+				Role:      "user",
+				Content:   "[已回滚] " + t.UserMessage,
 			})
 		}
 	}

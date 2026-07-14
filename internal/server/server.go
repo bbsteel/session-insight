@@ -23,21 +23,23 @@ type Server struct {
 }
 
 type SessionSummary struct {
-	ID           string `json:"id"`
-	AgentType    string `json:"agent_type"`
-	Name         string `json:"name"`
-	ModelName    string `json:"model_name"`
-	Repository   string `json:"repository"`
-	Branch       string `json:"branch"`
-	Project      string `json:"project"`
-	CWD          string `json:"cwd"`
-	ResumeID     string `json:"resume_id,omitempty"`
-	TurnCount    int    `json:"turn_count"`
-	MessageCount int    `json:"message_count"`
-	IsLive       bool   `json:"is_live"`
-	Bookmarked   bool   `json:"bookmarked"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID                  string `json:"id"`
+	AgentType           string `json:"agent_type"`
+	Name                string `json:"name"`
+	ModelName           string `json:"model_name"`
+	Repository          string `json:"repository"`
+	Branch              string `json:"branch"`
+	Project             string `json:"project"`
+	CWD                 string `json:"cwd"`
+	ResumeID            string `json:"resume_id,omitempty"`
+	TurnCount           int    `json:"turn_count"`
+	HistoricalTurnCount int    `json:"historical_turn_count,omitempty"`
+	RolledBackTurnCount int    `json:"rolled_back_turn_count,omitempty"`
+	MessageCount        int    `json:"message_count"`
+	IsLive              bool   `json:"is_live"`
+	Bookmarked          bool   `json:"bookmarked"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at"`
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Server {

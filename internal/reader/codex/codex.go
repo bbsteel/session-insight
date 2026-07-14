@@ -62,6 +62,10 @@ type codexEvent struct {
 type codexSessionMeta struct {
 	ID               string `json:"id"`
 	SessionID        string `json:"session_id"`
+	ParentThreadID   string `json:"parent_thread_id"`
+	ForkedFromID     string `json:"forked_from_id"`
+	ThreadSource     string `json:"thread_source"`
+	AgentPath        string `json:"agent_path"`
 	Timestamp        string `json:"timestamp"`
 	CWD              string `json:"cwd"`
 	ModelProvider    string `json:"model_provider"`
@@ -91,6 +95,8 @@ type codexPayload struct {
 	DurationMs int64 `json:"duration_ms"`
 	// turn_aborted reason
 	Reason string `json:"reason"`
+	// thread_rolled_back
+	NumTurns int `json:"num_turns"`
 	// function_call arguments (JSON string)
 	Arguments string `json:"arguments"`
 	// custom_tool_call input (raw string)
@@ -242,6 +248,9 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 	var (
 		cwd          string
 		nativeID     string
+		parentID     string
+		agentPath    string
+		isSubagent   bool
 		modelName    string
 		firstUserMsg string
 		userMessages []string
@@ -293,6 +302,18 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 						nativeID = m.ID
 					} else if m.SessionID != "" {
 						nativeID = m.SessionID
+					}
+				}
+				if m.ThreadSource == "subagent" {
+					isSubagent = true
+					if parentID == "" {
+						parentID = m.ParentThreadID
+						if parentID == "" {
+							parentID = m.ForkedFromID
+						}
+					}
+					if agentPath == "" {
+						agentPath = m.AgentPath
 					}
 				}
 			}
@@ -358,17 +379,20 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 	}
 
 	return model.Session{
-		ID:           sessionID,
-		AgentType:    "codex",
-		CWD:          cwd,
-		Project:      shared.ResolveProject(cwd, ""),
-		Name:         name,
-		ModelName:    modelName,
-		ResumeID:     nativeID,
-		PreviewText:  previewText,
-		MessageCount: msgCount,
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
+		ID:              sessionID,
+		AgentType:       "codex",
+		CWD:             cwd,
+		Project:         shared.ResolveProject(cwd, ""),
+		Name:            name,
+		ModelName:       modelName,
+		ResumeID:        nativeID,
+		ParentSessionID: parentID,
+		AgentPath:       agentPath,
+		IsSubagent:      isSubagent,
+		PreviewText:     previewText,
+		MessageCount:    msgCount,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
 	}, true
 }
 
@@ -395,15 +419,19 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 		return nil, fmt.Errorf("failed to read codex session: %s", id)
 	}
 
-	turns, modelName := parseCodexEvents(jsonlPath)
+	parsed, modelName := parseCodexEvents(jsonlPath)
 	if modelName != "" {
 		session.ModelName = modelName
 	}
-	session.TurnCount = len(turns)
+	session.TurnCount = len(parsed.Active)
+	session.HistoricalTurnCount = parsed.Historical
+	for _, group := range parsed.RollbackGroups {
+		session.RolledBackTurnCount += len(group.Turns)
+	}
 
-	detail := &model.SessionDetail{Session: session, Turns: turns}
+	detail := &model.SessionDetail{Session: session, Turns: parsed.Active, RollbackGroups: parsed.RollbackGroups}
 
-	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	detail.AnomalySummary = shared.RunAnomalyDetection(parsed.Active)
 
 	return detail, nil
 }
@@ -424,17 +452,36 @@ func (r *CodexReader) findSessionFile(sessionID string) string {
 
 // ---- Event parsing ----
 
-func parseCodexEvents(path string) ([]model.TurnVM, string) {
+type codexParsedTurns struct {
+	Active         []model.TurnVM
+	RollbackGroups []model.RollbackGroupVM
+	Historical     int
+}
+
+type codexTurnAttempt struct {
+	turn          model.TurnVM
+	originalIndex int
+}
+
+type codexRollbackAttempt struct {
+	after     *codexTurnAttempt
+	timestamp string
+	removed   []*codexTurnAttempt
+}
+
+func parseCodexEvents(path string) (codexParsedTurns, string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, ""
+		return codexParsedTurns{}, ""
 	}
 	defer f.Close()
 
 	var (
-		turns       []model.TurnVM
+		attempts    []*codexTurnAttempt
+		active      []*codexTurnAttempt
+		rollbacks   []codexRollbackAttempt
 		foundModel  string
-		currentTurn *model.TurnVM
+		current     *codexTurnAttempt
 		turnStartTS string
 	)
 
@@ -463,33 +510,50 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 			}
 			switch p.Type {
 			case "task_started":
-				if currentTurn != nil {
-					turns = append(turns, *currentTurn)
-				}
-				currentTurn = &model.TurnVM{
-					TurnIndex: len(turns),
+				current = &codexTurnAttempt{turn: model.TurnVM{
+					TurnIndex: len(attempts),
 					Events:    []model.EventVM{},
-				}
+				}}
+				attempts = append(attempts, current)
+				active = append(active, current)
 				turnStartTS = evt.Timestamp
 
+			case "thread_rolled_back":
+				n := p.NumTurns
+				if n < 0 {
+					n = 0
+				}
+				if n > len(active) {
+					n = len(active)
+				}
+				removed := append([]*codexTurnAttempt(nil), active[len(active)-n:]...)
+				active = active[:len(active)-n]
+				var after *codexTurnAttempt
+				if len(active) > 0 {
+					after = active[len(active)-1]
+				}
+				rollbacks = append(rollbacks, codexRollbackAttempt{after: after, timestamp: evt.Timestamp, removed: removed})
+				current = nil
+				turnStartTS = ""
+
 			case "user_message":
-				if currentTurn != nil && p.Message != "" {
-					currentTurn.UserMessage = p.Message
+				if current != nil && p.Message != "" {
+					current.turn.UserMessage = p.Message
 				}
 				// user_message before any task_started: record for session name but don't create turn
-				if currentTurn == nil {
+				if current == nil {
 					continue
 				}
 
 			case "agent_message":
-				if currentTurn != nil && p.Message != "" {
-					currentTurn.AssistantMessage += p.Message
+				if current != nil && p.Message != "" {
+					current.turn.AssistantMessage += p.Message
 				}
 
 			case "token_count":
-				if currentTurn != nil && p.Info != nil {
-					currentTurn.RequestCount++
-					u := &currentTurn.TokenUsage
+				if current != nil && p.Info != nil {
+					current.turn.RequestCount++
+					u := &current.turn.TokenUsage
 					last := p.Info.LastTokenUsage
 					// Codex uses inclusive semantics: cached_input_tokens is a
 					// subset of input_tokens, and reasoning_output_tokens a
@@ -514,21 +578,21 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 				}
 
 			case "patch_apply_end":
-				if currentTurn != nil {
-					currentTurn.Events = append(currentTurn.Events, model.EventVM{
+				if current != nil {
+					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "patch_apply_end",
 						Timestamp: evt.Timestamp,
 						Data:      map[string]any{"success": p.Success, "stdout": p.Stdout, "stderr": p.Stderr},
 					})
 					if !p.Success {
-						currentTurn.ErrorCount++
+						current.turn.ErrorCount++
 					}
 				}
 
 			case "task_complete":
 				// turn boundary marker — keep turn open but record completion
-				if currentTurn != nil {
-					currentTurn.Events = append(currentTurn.Events, model.EventVM{
+				if current != nil {
+					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "task_complete",
 						Timestamp: evt.Timestamp,
 						Data:      map[string]any{},
@@ -536,8 +600,8 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 				}
 
 			case "turn_aborted":
-				if currentTurn != nil {
-					currentTurn.DurationMs = p.DurationMs
+				if current != nil {
+					current.turn.DurationMs = p.DurationMs
 				}
 			}
 
@@ -548,13 +612,13 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 			}
 			switch p.Type {
 			case "message":
-				if currentTurn == nil {
+				if current == nil {
 					continue
 				}
 				text := extractContentText(p.Content)
 				switch p.Role {
 				case "assistant":
-					currentTurn.AssistantMessage += text
+					current.turn.AssistantMessage += text
 				case "user":
 					// system-context user message, not the actual user prompt
 					// skip to avoid overwriting user_message
@@ -564,12 +628,12 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 				// reasoning may be encrypted; skip text extraction
 
 			case "function_call":
-				if currentTurn != nil {
-					currentTurn.ToolCallCount++
+				if current != nil {
+					current.turn.ToolCallCount++
 					if p.Name != "" {
-						currentTurn.ToolNames = append(currentTurn.ToolNames, p.Name)
+						current.turn.ToolNames = append(current.turn.ToolNames, p.Name)
 					}
-					currentTurn.Events = append(currentTurn.Events, model.EventVM{
+					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "function_call",
 						Timestamp: evt.Timestamp,
 						Data:      map[string]any{"name": p.Name, "call_id": p.CallID},
@@ -577,30 +641,30 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 				}
 
 			case "function_call_output":
-				if currentTurn != nil {
+				if current != nil {
 					exitCode := extractExitCode(p.Output)
 					isErr := exitCode != 0
-					currentTurn.Events = append(currentTurn.Events, model.EventVM{
+					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "function_call_output",
 						Timestamp: evt.Timestamp,
 						Data:      map[string]any{"call_id": p.CallID, "exit_code": exitCode},
 					})
 					if isErr {
-						currentTurn.ErrorCount++
+						current.turn.ErrorCount++
 					}
 				}
 
 			case "custom_tool_call":
-				if currentTurn != nil {
-					currentTurn.ToolCallCount++
+				if current != nil {
+					current.turn.ToolCallCount++
 					name := p.Name
 					if name == "" {
 						name = p.CustomToolName
 					}
 					if name != "" {
-						currentTurn.ToolNames = append(currentTurn.ToolNames, name)
+						current.turn.ToolNames = append(current.turn.ToolNames, name)
 					}
-					currentTurn.Events = append(currentTurn.Events, model.EventVM{
+					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "custom_tool_call",
 						Timestamp: evt.Timestamp,
 						Data:      map[string]any{"name": name, "call_id": p.CallID, "status": p.Status},
@@ -608,45 +672,118 @@ func parseCodexEvents(path string) ([]model.TurnVM, string) {
 				}
 
 			case "custom_tool_call_output":
-				if currentTurn != nil {
+				if current != nil {
 					exitCode := extractExitCode(p.Output)
 					isErr := exitCode != 0
-					currentTurn.Events = append(currentTurn.Events, model.EventVM{
+					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "custom_tool_call_output",
 						Timestamp: evt.Timestamp,
 						Data:      map[string]any{"call_id": p.CallID, "exit_code": exitCode},
 					})
 					if isErr {
-						currentTurn.ErrorCount++
+						current.turn.ErrorCount++
 					}
 				}
 			}
 		}
 
 		// Track duration from turn start to latest event
-		if currentTurn != nil && turnStartTS != "" && evt.Timestamp != "" {
+		if current != nil && turnStartTS != "" && evt.Timestamp != "" {
 			if t1 := parseTimestamp(turnStartTS); !t1.IsZero() {
 				if t2 := parseTimestamp(evt.Timestamp); !t2.IsZero() {
 					dur := t2.Sub(t1).Milliseconds()
-					if dur > currentTurn.DurationMs {
-						currentTurn.DurationMs = dur
+					if dur > current.turn.DurationMs {
+						current.turn.DurationMs = dur
 					}
 				}
 			}
 		}
 	}
 
-	if currentTurn != nil {
-		turns = append(turns, *currentTurn)
+	// Rollback counts operate on raw task attempts. Only after replaying them
+	// may empty/noise turns be removed; doing this earlier would make an
+	// interrupted empty task's rollback delete the preceding real turn.
+	visible := make(map[*codexTurnAttempt]bool, len(attempts))
+	original := 0
+	for _, a := range attempts {
+		filtered := shared.FilterEmptyTurns([]model.TurnVM{a.turn})
+		if len(filtered) == 0 {
+			continue
+		}
+		a.turn = filtered[0]
+		a.originalIndex = original
+		original++
+		visible[a] = true
 	}
 
-	// Filter empty turns
-	turns = shared.FilterEmptyTurns(turns)
+	result := codexParsedTurns{Historical: original}
+	activeIndex := make(map[*codexTurnAttempt]int)
+	for _, a := range active {
+		if !visible[a] {
+			continue
+		}
+		a.turn.TurnIndex = len(result.Active)
+		a.turn.OriginalTurnIndex = a.originalIndex
+		activeIndex[a] = a.turn.TurnIndex
+		result.Active = append(result.Active, a.turn)
+	}
+	for _, rb := range rollbacks {
+		group := model.RollbackGroupVM{AfterTurnIndex: -1, Timestamp: rb.timestamp}
+		if idx, ok := activeIndex[rb.after]; ok {
+			group.AfterTurnIndex = idx
+		}
+		for _, a := range rb.removed {
+			if !visible[a] {
+				continue
+			}
+			t := a.turn
+			t.TurnIndex = a.originalIndex
+			t.OriginalTurnIndex = a.originalIndex
+			t.RolledBack = true
+			group.Turns = append(group.Turns, t)
+		}
+		if len(group.Turns) > 0 {
+			result.RollbackGroups = append(result.RollbackGroups, group)
+		}
+	}
 
-	return turns, foundModel
+	return result, foundModel
 }
 
 // ---- RenderEvent adapter ----
+
+type codexRenderAttempt struct {
+	events        []model.RenderEvent
+	groups        []*codexRenderRollback
+	originalIndex int
+}
+
+type codexRenderRollback struct {
+	timestamp time.Time
+	removed   []*codexRenderAttempt
+}
+
+func codexRenderAttemptVisible(a *codexRenderAttempt) bool {
+	if a == nil {
+		return false
+	}
+	for _, evt := range a.events {
+		switch evt.Type {
+		case "TurnBoundary":
+		case "UserPrompt":
+			if strings.TrimSpace(evt.Text) != "" {
+				return true
+			}
+		case "AgentSpecific":
+			if evt.Subtype != "turn_duration" {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
+}
 
 // codexToRenderEvents parses a Codex JSONL session file into a flat
 // []model.RenderEvent stream suitable for render.FormatEvents.
@@ -658,10 +795,12 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 	defer f.Close()
 
 	var (
-		events       []model.RenderEvent
+		attempts     []*codexRenderAttempt
+		active       []*codexRenderAttempt
+		rootGroups   []*codexRenderRollback
+		current      *codexRenderAttempt
 		fileTag      = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 		eventCtr     int
-		turnIndex    int
 		pendingTools = make(map[string]string) // callID -> ToolInvocation EventID
 		completed    = make(map[string]bool)   // patch_apply_end already emitted the result
 
@@ -672,14 +811,10 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		turnOpen bool
 	)
 
-	currentTurnIndex := func() int {
-		if turnIndex == 0 {
-			return 0
-		}
-		return turnIndex - 1
-	}
-
 	emit := func(evt model.RenderEvent) string {
+		if current == nil {
+			return ""
+		}
 		if evt.EventID == "" {
 			evt.EventID = fmt.Sprintf("evt-%s-%04d", fileTag, eventCtr)
 			eventCtr++
@@ -687,7 +822,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		if evt.AgentType == "" {
 			evt.AgentType = "codex"
 		}
-		events = append(events, evt)
+		current.events = append(current.events, evt)
 		return evt.EventID
 	}
 
@@ -711,14 +846,40 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 			switch p.Type {
 			case "task_started":
 				turnOpen = true
-				turnIndex++
+				current = &codexRenderAttempt{}
+				attempts = append(attempts, current)
+				active = append(active, current)
 				emit(model.RenderEvent{
 					Type:      "TurnBoundary",
 					Timestamp: ts,
-					TurnIndex: turnIndex - 1,
+					TurnIndex: len(attempts) - 1,
 				})
 
 			case "task_complete", "turn_aborted":
+				turnOpen = false
+
+			case "thread_rolled_back":
+				n := p.NumTurns
+				if n < 0 {
+					n = 0
+				}
+				if n > len(active) {
+					n = len(active)
+				}
+				if n > 0 {
+					group := &codexRenderRollback{
+						timestamp: ts,
+						removed:   append([]*codexRenderAttempt(nil), active[len(active)-n:]...),
+					}
+					active = active[:len(active)-n]
+					if len(active) == 0 {
+						rootGroups = append(rootGroups, group)
+					} else {
+						target := active[len(active)-1]
+						target.groups = append(target.groups, group)
+					}
+				}
+				current = nil
 				turnOpen = false
 
 			case "user_message":
@@ -726,7 +887,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 					emit(model.RenderEvent{
 						Type:      "UserPrompt",
 						Timestamp: ts,
-						TurnIndex: currentTurnIndex(),
+						TurnIndex: len(attempts) - 1,
 						Text:      p.Message,
 					})
 				}
@@ -736,7 +897,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 					emit(model.RenderEvent{
 						Type:      "TextChunk",
 						Timestamp: ts,
-						TurnIndex: currentTurnIndex(),
+						TurnIndex: len(attempts) - 1,
 						Text:      p.Message,
 					})
 				}
@@ -755,7 +916,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				emit(model.RenderEvent{
 					Type:          "ToolResult",
 					Timestamp:     ts,
-					TurnIndex:     currentTurnIndex(),
+					TurnIndex:     len(attempts) - 1,
 					ToolCallID:    p.CallID,
 					Stdout:        p.Stdout,
 					Stderr:        p.Stderr,
@@ -777,7 +938,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				invID := emit(model.RenderEvent{
 					Type:       "ToolInvocation",
 					Timestamp:  ts,
-					TurnIndex:  currentTurnIndex(),
+					TurnIndex:  len(attempts) - 1,
 					ToolName:   p.Name,
 					ToolCallID: p.CallID,
 					ToolInput:  parseArguments(p.Arguments),
@@ -795,7 +956,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				emit(model.RenderEvent{
 					Type:          "ToolResult",
 					Timestamp:     ts,
-					TurnIndex:     currentTurnIndex(),
+					TurnIndex:     len(attempts) - 1,
 					ToolCallID:    p.CallID,
 					Stdout:        p.Output,
 					ExitCode:      extractExitCode(p.Output),
@@ -814,7 +975,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				invID := emit(model.RenderEvent{
 					Type:       "ToolInvocation",
 					Timestamp:  ts,
-					TurnIndex:  currentTurnIndex(),
+					TurnIndex:  len(attempts) - 1,
 					ToolName:   name,
 					ToolCallID: p.CallID,
 					ToolInput:  parseArguments(input),
@@ -836,7 +997,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				emit(model.RenderEvent{
 					Type:          "ToolResult",
 					Timestamp:     ts,
-					TurnIndex:     currentTurnIndex(),
+					TurnIndex:     len(attempts) - 1,
 					ToolCallID:    p.CallID,
 					Stdout:        p.Output,
 					ExitCode:      extractExitCode(p.Output),
@@ -846,22 +1007,116 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		}
 	}
 
-	events = shared.DropEmptyRenderTurns(events)
-
 	// Trailing "推理中…" row for a turn still bracket-open at EOF. Runs
-	// after DropEmptyRenderTurns and only when the trailing turn survived
-	// it: a bare task_started with no user_message yet is an empty turn,
-	// and marking it in-progress would resurrect it.
-	if turnOpen && turnIndex > 0 &&
-		len(events) > 0 && events[len(events)-1].TurnIndex == turnIndex-1 {
+	// only when the trailing turn already has visible content: a bare
+	// task_started must not be resurrected by the progress marker.
+	if turnOpen && current != nil && codexRenderAttemptVisible(current) {
 		if fi, statErr := f.Stat(); statErr == nil {
-			if evt, ok := shared.TrailingInProgress(true, fi.ModTime(), turnIndex-1); ok {
+			if evt, ok := shared.TrailingInProgress(true, fi.ModTime(), len(attempts)-1); ok {
 				emit(evt)
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
-	return events, scanner.Err()
+	visible := make(map[*codexRenderAttempt]bool, len(attempts))
+	original := 0
+	for _, attempt := range attempts {
+		if !codexRenderAttemptVisible(attempt) {
+			continue
+		}
+		attempt.originalIndex = original
+		original++
+		visible[attempt] = true
+	}
+	activeIndex := make(map[*codexRenderAttempt]int, len(active))
+	for _, attempt := range active {
+		if visible[attempt] {
+			activeIndex[attempt] = len(activeIndex)
+		}
+	}
+
+	var events []model.RenderEvent
+	var appendAttempt func(*codexRenderAttempt, bool)
+	appendGroup := func(group *codexRenderRollback, target *codexRenderAttempt, rolledBackTarget bool) {}
+	appendAttempt = func(attempt *codexRenderAttempt, rolledBack bool) {
+		if !visible[attempt] {
+			return
+		}
+		idx := activeIndex[attempt]
+		if rolledBack {
+			idx = -(attempt.originalIndex + 1)
+		}
+		for i, evt := range attempt.events {
+			evt.TurnIndex = idx
+			if i == 0 && evt.Type == "TurnBoundary" {
+				if evt.Metadata == nil {
+					evt.Metadata = map[string]any{}
+				}
+				evt.Metadata["original_turn_index"] = attempt.originalIndex
+				if rolledBack {
+					evt.Metadata["rolled_back"] = true
+				}
+			}
+			events = append(events, evt)
+		}
+		for _, group := range attempt.groups {
+			appendGroup(group, attempt, rolledBack)
+		}
+	}
+	appendGroup = func(group *codexRenderRollback, target *codexRenderAttempt, rolledBackTarget bool) {
+		visibleRemoved := make([]*codexRenderAttempt, 0, len(group.removed))
+		for _, attempt := range group.removed {
+			if visible[attempt] {
+				visibleRemoved = append(visibleRemoved, attempt)
+			}
+		}
+		if len(visibleRemoved) == 0 {
+			return
+		}
+		targetIndex := -1
+		resumeTurn := 0
+		if target != nil {
+			resumeTurn = target.originalIndex + 1
+			if rolledBackTarget {
+				targetIndex = -(target.originalIndex + 1)
+			} else {
+				targetIndex = activeIndex[target]
+			}
+		}
+		meta := map[string]any{
+			"count":       len(visibleRemoved),
+			"resume_turn": resumeTurn,
+		}
+		events = append(events, model.RenderEvent{
+			Type:      "RollbackStart",
+			Timestamp: group.timestamp,
+			TurnIndex: targetIndex,
+			AgentType: "codex",
+			Metadata:  meta,
+		})
+		for _, attempt := range visibleRemoved {
+			appendAttempt(attempt, true)
+		}
+		events = append(events, model.RenderEvent{
+			Type:      "RollbackEnd",
+			Timestamp: group.timestamp,
+			TurnIndex: targetIndex,
+			AgentType: "codex",
+			Metadata:  meta,
+		})
+	}
+
+	for _, group := range rootGroups {
+		appendGroup(group, nil, false)
+	}
+	for _, attempt := range active {
+		appendAttempt(attempt, false)
+	}
+
+	return events, nil
 }
 
 // parseArguments attempts to unmarshal a JSON string into map[string]any.

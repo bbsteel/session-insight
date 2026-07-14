@@ -96,13 +96,13 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	// line extent (display rows AND logical lines, both needed by the
 	// client-side fold composition) can be recorded when the run ends.
 	type openFoldState struct {
-		run            toolRun
-		turnIndex      int
-		key            string
-		headerDisplay  int
-		headerLogical  int
-		bodyDisplay    int
-		bodyLogical    int
+		run           toolRun
+		turnIndex     int
+		key           string
+		headerDisplay int
+		headerLogical int
+		bodyDisplay   int
+		bodyLogical   int
 	}
 	var openFold *openFoldState
 	closeFold := func() {
@@ -128,6 +128,48 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				"display_end":    float64(tb.CurrentLine()), // exclusive
 				"logical_start":  float64(f.bodyLogical),
 				"logical_end":    float64(tb.CurrentLogicalLine()), // exclusive
+				"header_logical": float64(f.headerLogical),
+			},
+		})
+	}
+
+	// Rollback folds surround turns that remain in Codex's append-only log but
+	// were removed from the resumable conversation. Unlike tool folds these
+	// may contain whole turns (and, after repeated rewinds, nested rollback
+	// folds), so keep a stack and let the frontend de-nest collapsed ranges.
+	type rollbackFoldState struct {
+		turnIndex     int
+		key           string
+		headerDisplay int
+		headerLogical int
+		bodyDisplay   int
+		bodyLogical   int
+		count         int
+	}
+	var rollbackFolds []rollbackFoldState
+	closeRollbackFold := func() {
+		if len(rollbackFolds) == 0 {
+			return
+		}
+		f := rollbackFolds[len(rollbackFolds)-1]
+		rollbackFolds = rollbackFolds[:len(rollbackFolds)-1]
+		if tb.CurrentLine() <= f.bodyDisplay {
+			return
+		}
+		endIncl := tb.CurrentLine() - 1
+		positions = append(positions, RenderPosition{
+			PositionKey: f.key,
+			Kind:        "fold",
+			TurnIndex:   f.turnIndex,
+			LineStart:   f.headerDisplay,
+			LineEnd:     &endIncl,
+			Label:       fmt.Sprintf("已回滚 %d turns", f.count),
+			Payload: map[string]any{
+				"level":          "rollback",
+				"display_start":  float64(f.bodyDisplay),
+				"display_end":    float64(tb.CurrentLine()),
+				"logical_start":  float64(f.bodyLogical),
+				"logical_end":    float64(tb.CurrentLogicalLine()),
 				"header_logical": float64(f.headerLogical),
 			},
 		})
@@ -225,10 +267,46 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			closeFold()
 		}
 
+		if evt.Type == "RollbackStart" {
+			closeToolFold()
+			closeFold()
+			count := metadataInt(evt.Metadata, "count")
+			resumeTurn := metadataInt(evt.Metadata, "resume_turn")
+			headerDisplay := tb.CurrentLine()
+			headerLogical := tb.CurrentLogicalLine()
+			writeRollbackHeader(tb, count, resumeTurn)
+			rollbackFolds = append(rollbackFolds, rollbackFoldState{
+				turnIndex:     evt.TurnIndex,
+				key:           fmt.Sprintf("rollback:%d:%d", evt.TurnIndex, headerDisplay),
+				headerDisplay: headerDisplay,
+				headerLogical: headerLogical,
+				bodyDisplay:   tb.CurrentLine(),
+				bodyLogical:   tb.CurrentLogicalLine(),
+				count:         count,
+			})
+			prevDepth0Type = ""
+			continue
+		}
+		if evt.Type == "RollbackEnd" {
+			closeToolFold()
+			closeFold()
+			closeRollbackFold()
+			prevTurnIndex = evt.TurnIndex
+			prevDepth0Type = ""
+			continue
+		}
+
 		if evt.TurnIndex != prevTurnIndex {
 			closeToolFold() // never let a tool fold span a turn boundary
-			emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
-			writeSeparator(tb, evt.TurnIndex, cols)
+			rolledBack := evt.Type == "TurnBoundary" && metadataBool(evt.Metadata, "rolled_back")
+			if rolledBack {
+				original := metadataInt(evt.Metadata, "original_turn_index")
+				emit("turn", fmt.Sprintf("已回滚 · 原 Turn %d", original+1), "", evt.TurnIndex, map[string]any{"rolled_back": true, "original_turn_index": original})
+				writeRollbackSeparator(tb, original, cols)
+			} else {
+				emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
+				writeSeparator(tb, evt.TurnIndex, cols)
+			}
 			prevTurnIndex = evt.TurnIndex
 			prevDepth0Type = ""
 		}
@@ -359,6 +437,9 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	}
 	closeToolFold()
 	closeFold()
+	for len(rollbackFolds) > 0 {
+		closeRollbackFold()
+	}
 
 	// Deduplicate: if two positions share the same position_key, keep first.
 	seen := make(map[string]struct{}, len(positions))
@@ -376,7 +457,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 24
+const FormatVersion int64 = 25
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
@@ -709,6 +790,52 @@ func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	sb.WriteString(styled(label, ColBg, ColBanner, false, false))
 	sb.WriteString(fgWrap(strings.Repeat("━", rest), ColBanner))
 	sb.WriteString("\n")
+}
+
+func writeRollbackHeader(sb *trackingBuilder, count, resumeTurn int) {
+	label := fmt.Sprintf("▼ ↩ 已回滚 %d 个 turn", count)
+	if resumeTurn > 0 {
+		label += fmt.Sprintf(" · CLI 从第 %d 轮恢复", resumeTurn)
+	}
+	sb.WriteString("\n")
+	sb.WriteString(styled(label, ColWarning, ColNone, true, false))
+	sb.WriteString("\n")
+}
+
+func writeRollbackSeparator(sb *trackingBuilder, originalTurnIdx int, termWidth int) {
+	label := fmt.Sprintf(" 已回滚 · 原第 %d 轮 ", originalTurnIdx+1)
+	rest := termWidth - displayWidth(label)
+	if rest < 1 {
+		rest = 1
+	}
+	sb.WriteString("\n")
+	sb.WriteString(styled(label, ColMuted, ColNone, false, false))
+	sb.WriteString(fgWrap(strings.Repeat("╌", rest), ColMuted))
+	sb.WriteString("\n")
+}
+
+func metadataInt(metadata map[string]any, key string) int {
+	if metadata == nil {
+		return 0
+	}
+	switch v := metadata[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func metadataBool(metadata map[string]any, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	v, _ := metadata[key].(bool)
+	return v
 }
 
 func writeUserPrompt(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, ts string) {

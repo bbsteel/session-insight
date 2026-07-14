@@ -1,7 +1,7 @@
 import type { TurnVM } from './types'
 
 export type TokenPressureTone = 'empty' | 'low' | 'medium' | 'high' | 'critical'
-export type MiniMapEventKind = 'anomaly' | 'compaction' | 'user'
+export type MiniMapEventKind = 'anomaly' | 'compaction' | 'rollback' | 'user'
 
 export function hasCompaction(turn: TurnVM): boolean {
   return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false

@@ -22,11 +22,11 @@ func TestParseCodexEventsCanonicalTokenBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	turns, _ := parseCodexEvents(path)
-	if len(turns) == 0 {
+	parsed, _ := parseCodexEvents(path)
+	if len(parsed.Active) == 0 {
 		t.Fatal("expected at least one turn")
 	}
-	u := turns[0].TokenUsage
+	u := parsed.Active[0].TokenUsage
 	if u.PromptTokens != 200 {
 		t.Errorf("prompt must be input−cached (200), got %d", u.PromptTokens)
 	}

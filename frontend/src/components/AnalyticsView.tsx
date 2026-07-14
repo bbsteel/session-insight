@@ -54,6 +54,9 @@ interface AnalyticsData {
   total_errors: number
   anomaly_count: number
   turn_count: number
+  historical_turn_count?: number
+  rolled_back_turn_count?: number
+  rolled_back_tokens?: number
   token_efficiency: number
   timeline: {
     turn_index: number
@@ -63,6 +66,8 @@ interface AnalyticsData {
     error_count: number
     requests: number
     est_cost?: number
+    rolled_back?: boolean
+    original_turn_index?: number
   }[]
   cost_precision?: string
   findings?: {
@@ -201,11 +206,12 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
   const costUnit = data.billing?.billing_unit
   const costName = `Cost(${costUnit ?? ''}·估算)`
   const accentOrange = styles.getPropertyValue('--accent-orange').trim()
+  const mutedColor = styles.getPropertyValue('--text-muted').trim()
 
   const tokenTimeline = {
     tooltip: { trigger: 'axis' as const },
     grid: { left: 40, right: 48, top: 24, bottom: 24 },
-    xAxis: { type: 'category' as const, data: data.timeline.map(t => `T${t.turn_index}`), axisLabel: { fontSize: 11, color: textColor } },
+    xAxis: { type: 'category' as const, data: data.timeline.map(t => t.rolled_back ? `R${(t.original_turn_index ?? 0) + 1}` : `T${t.turn_index}`), axisLabel: { fontSize: 11, color: textColor } },
     yAxis: [
       { type: 'value' as const, axisLabel: { fontSize: 11, color: textColor, formatter: (v: number) => fmtNumber(v) }, splitLine: { lineStyle: { color: gridColor } } },
       ...(hasCost ? [{ type: 'value' as const, axisLabel: { fontSize: 11, color: textColor }, splitLine: { show: false } }] : []),
@@ -213,7 +219,9 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
     series: [{
       name: 'Tokens',
       type: 'bar',
-      data: data.timeline.map(t => t.tokens),
+      data: data.timeline.map(t => t.rolled_back
+        ? { value: t.tokens, itemStyle: { color: mutedColor, borderRadius: [2, 2, 0, 0], opacity: 0.65 } }
+        : { value: t.tokens, itemStyle: { color: accentBlue, borderRadius: [2, 2, 0, 0] } }),
       itemStyle: { color: accentBlue, borderRadius: [2, 2, 0, 0] },
     }, {
       name: 'Cumulative',
@@ -265,7 +273,7 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
           ['Cache Rate', cacheKnown ? `${data.cache_hit_rate.toFixed(1)}%` : '—'],
           ['Tools Used', String(data.total_tools)],
           ['Anomalies', String(data.anomaly_count)],
-          ['Turn Count', String(data.turn_count)],
+          ['Turn Count', (data.rolled_back_turn_count ?? 0) > 0 ? `${data.turn_count} 活动 / ${data.rolled_back_turn_count} 回滚` : String(data.turn_count)],
           ['Errors', String(data.total_errors)],
           ['Avg Tokens/Turn', present?.input === 'exact' ? fmtNumber(Math.round(data.token_efficiency)) : '—'],
           ['Context Peak', fmtNumber(data.context_peak)],
@@ -467,7 +475,7 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
                   {hasCost ? fmtBillingAmount(t.est_cost ?? 0, costUnit) : `${fmtNumber(t.tokens)} tokens`}
                 </div>
                 <div className="text-body text-[var(--text-secondary)] mt-1">
-                  Turn {t.turn_index} · {t.requests} requests · {t.tool_count} tools
+                  {t.rolled_back ? `已回滚 · 原第 ${(t.original_turn_index ?? 0) + 1} 轮` : `Turn ${t.turn_index}`} · {t.requests} requests · {t.tool_count} tools
                   {t.error_count > 0 && <span className="text-[var(--error)]"> · {t.error_count} errors</span>}
                 </div>
               </button>

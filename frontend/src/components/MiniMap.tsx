@@ -44,19 +44,27 @@ const pressureColors: Record<TokenPressureTone, string> = {
 const eventLabels: Record<MiniMapEventKind, string> = {
   anomaly: '异常',
   compaction: '压缩',
+  rollback: '回滚',
   user: '用户输入',
 }
 
 const eventShortLabels: Record<MiniMapEventKind, string> = {
   anomaly: '!',
   compaction: 'C',
+  rollback: '↩',
   user: 'U',
 }
 
 const eventClassNames: Record<MiniMapEventKind, string> = {
   anomaly: 'border-[var(--error)] bg-[var(--error)] text-white',
   compaction: 'border-[var(--accent-blue)] bg-[var(--accent-blue)] text-white',
+  rollback: 'border-[var(--warning)] bg-[var(--warning)] text-white',
   user: 'border-[var(--success)] bg-[var(--success)] text-white',
+}
+
+function positionEventKind(position: MiniMapPosition): MiniMapEventKind | null {
+  if (position.kind === 'fold' && position.payload?.level === 'rollback') return 'rollback'
+  return positionKindToEventKind[position.kind]
 }
 
 const positionKindToEventKind: Record<MiniMapPosition['kind'], MiniMapEventKind | null> = {
@@ -145,8 +153,8 @@ function PositionModeContent({
   const contentHeight = computeContentHeight(totalLines, visibleTrackHeight)
 
   // Filter to non-turn events with visible marker kinds.
-  const markerItems = items.filter(p => positionKindToEventKind[p.kind] !== null)
-  const turnItems = items.filter(p => p.kind === 'turn')
+  const markerItems = items.filter(p => positionEventKind(p) !== null)
+  const turnItems = items.filter(p => p.kind === 'turn' && p.turn_index >= 0)
   const maxShare = Math.max(...[...weights.values()].map(w => w.share), 0.0001)
 
   return (
@@ -197,7 +205,7 @@ function PositionModeContent({
         })}
 
         {markerItems.map(pos => {
-          const eventKind = positionKindToEventKind[pos.kind]!
+          const eventKind = positionEventKind(pos)!
           const markerY = (pos.line_start / totalLines) * contentHeight
           const isActive = pos.position_key === activeKey
 
@@ -213,7 +221,7 @@ function PositionModeContent({
                   eventClassNames[eventKind]
                 } ${isActive ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
                 style={{ minWidth: '16px', minHeight: '16px' }}
-                title={`${eventLabels[eventKind]} · Turn ${pos.turn_index} · line ${pos.line_start}`}
+                title={`${eventLabels[eventKind]} · line ${pos.line_start}`}
                 aria-label={`${eventLabels[eventKind]} · 跳转`}
                 onPointerDown={e => e.stopPropagation()}
                 onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}

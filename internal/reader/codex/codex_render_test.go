@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 func TestCodexToRenderEventsCustomToolInputAndSingleResult(t *testing.T) {
@@ -51,5 +53,53 @@ func TestCodexToRenderEventsCustomToolInputAndSingleResult(t *testing.T) {
 	}
 	if boundaries != 1 {
 		t.Fatalf("expected trailing empty turn to be dropped, got %d boundaries", boundaries)
+	}
+}
+
+func TestCodexRenderRollbackCreatesFoldAndActivePath(t *testing.T) {
+	path := writeCodexRollbackFixture(t,
+		`{"timestamp":"2026-07-14T10:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"one"}}`,
+		`{"timestamp":"2026-07-14T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"active one"}}`,
+		`{"timestamp":"2026-07-14T10:00:02Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"one"}}`,
+		`{"timestamp":"2026-07-14T10:01:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"old"}}`,
+		`{"timestamp":"2026-07-14T10:01:01Z","type":"event_msg","payload":{"type":"user_message","message":"old branch"}}`,
+		`{"timestamp":"2026-07-14T10:01:02Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"old"}}`,
+		`{"timestamp":"2026-07-14T10:02:00Z","type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}}`,
+		`{"timestamp":"2026-07-14T10:03:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"new"}}`,
+		`{"timestamp":"2026-07-14T10:03:01Z","type":"event_msg","payload":{"type":"user_message","message":"new branch"}}`,
+		`{"timestamp":"2026-07-14T10:03:02Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"new"}}`,
+	)
+
+	events, err := codexToRenderEvents(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, event := range events {
+		kinds = append(kinds, event.Type)
+	}
+	joined := strings.Join(kinds, ",")
+	if !strings.Contains(joined, "RollbackStart,TurnBoundary,UserPrompt,RollbackEnd,TurnBoundary,UserPrompt") {
+		t.Fatalf("rollback segment order = %s", joined)
+	}
+	if got := events[len(events)-2].TurnIndex; got != 1 {
+		t.Fatalf("new active branch index = %d, want 1", got)
+	}
+
+	ansi, positions := render.FormatEventsWithPositions(events, 100)
+	if !strings.Contains(ansi, "已回滚 1 个 turn") || !strings.Contains(ansi, "old branch") {
+		t.Fatalf("rollback transcript missing from render:\n%s", ansi)
+	}
+	var rollbackFold bool
+	for _, position := range positions {
+		if position.Kind == "fold" && position.Payload["level"] == "rollback" {
+			rollbackFold = true
+			if position.LineEnd == nil || *position.LineEnd <= position.LineStart {
+				t.Errorf("invalid rollback fold extent: %+v", position)
+			}
+		}
+	}
+	if !rollbackFold {
+		t.Fatalf("rollback fold position missing: %+v", positions)
 	}
 }

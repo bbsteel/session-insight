@@ -14,8 +14,8 @@ import (
 	"github.com/bbsteel/session-insight/internal/analytics"
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/llm"
-	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/render"
 )
 
@@ -58,6 +58,12 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		// AI generations drive local agent CLIs from a scratch temp dir;
 		// those CLIs log their own sessions, which are noise in this list.
 		if llm.IsScratchCWD(sess.CWD) {
+			continue
+		}
+		// Collaborative Codex children inherit the parent's conversation and
+		// therefore look like same-title duplicates. They remain indexed for
+		// global search and future parent/child navigation, but are not roots.
+		if sess.IsSubagent {
 			continue
 		}
 		sess.Bookmarked = bookmarkSet[db.BookmarkKey(sess.AgentType, sess.ID)]
@@ -140,21 +146,23 @@ func (s *Server) titleOverrides() map[string]string {
 
 func sessionToSummary(s model.Session) SessionSummary {
 	return SessionSummary{
-		ID:           s.ID,
-		AgentType:    s.AgentType,
-		Name:         s.Name,
-		ModelName:    s.ModelName,
-		Repository:   s.Repository,
-		Branch:       s.Branch,
-		Project:      s.Project,
-		CWD:          s.CWD,
-		ResumeID:     s.ResumeID,
-		TurnCount:    s.TurnCount,
-		MessageCount: s.MessageCount,
-		IsLive:       model.IsSessionLive(s.UpdatedAt),
-		Bookmarked:   s.Bookmarked,
-		CreatedAt:    model.FormatTime(s.CreatedAt),
-		UpdatedAt:    model.FormatTime(s.UpdatedAt),
+		ID:                  s.ID,
+		AgentType:           s.AgentType,
+		Name:                s.Name,
+		ModelName:           s.ModelName,
+		Repository:          s.Repository,
+		Branch:              s.Branch,
+		Project:             s.Project,
+		CWD:                 s.CWD,
+		ResumeID:            s.ResumeID,
+		TurnCount:           s.TurnCount,
+		HistoricalTurnCount: s.HistoricalTurnCount,
+		RolledBackTurnCount: s.RolledBackTurnCount,
+		MessageCount:        s.MessageCount,
+		IsLive:              model.IsSessionLive(s.UpdatedAt),
+		Bookmarked:          s.Bookmarked,
+		CreatedAt:           model.FormatTime(s.CreatedAt),
+		UpdatedAt:           model.FormatTime(s.UpdatedAt),
 	}
 }
 
@@ -609,7 +617,11 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		sessions, _ := rd.ListSessions()
 		count := 0
 		if sessions != nil {
-			count = len(sessions)
+			for _, sess := range sessions {
+				if !sess.IsSubagent {
+					count++
+				}
+			}
 		}
 		_, canDelete := rd.(reader.SessionDeleter)
 		agents = append(agents, AgentInfo{

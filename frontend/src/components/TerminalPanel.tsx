@@ -468,7 +468,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // Injected after every scanBuffer so a rewrite can't leave stale rows.
       const foldToggleMatcher: TerminalLineMatcher<FoldRange> = {
         match: () => null, // rows come from fold geometry, not text scanning
-        tooltip: '收起/展开 Tools',
+        tooltip: '收起/展开内容',
         onActivate: (_bufLine, fold) => toggleFold(fold),
       }
       const injectFoldRows = () => {
@@ -660,7 +660,7 @@ const snapshotTerminal = () => {
         // Default each newly-seen tool fold to collapsed.
         let addedDefault = false
         for (const f of next) {
-          if (f.level === 'tool' && !defaultedKeys.has(f.key)) {
+          if ((f.level === 'tool' || f.level === 'rollback') && !defaultedKeys.has(f.key)) {
             defaultedKeys.add(f.key)
             collapsedKeys.add(f.key)
             addedDefault = true

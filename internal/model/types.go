@@ -23,22 +23,33 @@ func IsSessionLive(updatedAt time.Time) bool {
 }
 
 type Session struct {
-	ID           string    `json:"id"`
-	AgentType    string    `json:"agent_type"`
-	CWD          string    `json:"cwd"`
-	Repository   string    `json:"repository"`
-	Branch       string    `json:"branch"`
-	Project      string    `json:"project"`
-	Name         string    `json:"name"`
-	ModelName    string    `json:"model_name"`
-	ResumeID     string    `json:"resume_id,omitempty"`
-	PreviewText  string    `json:"preview_text"`
-	TurnCount    int       `json:"turn_count"`
-	MessageCount int       `json:"message_count"`
-	IsLive       bool      `json:"is_live"`
-	Bookmarked   bool      `json:"bookmarked"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID         string `json:"id"`
+	AgentType  string `json:"agent_type"`
+	CWD        string `json:"cwd"`
+	Repository string `json:"repository"`
+	Branch     string `json:"branch"`
+	Project    string `json:"project"`
+	Name       string `json:"name"`
+	ModelName  string `json:"model_name"`
+	ResumeID   string `json:"resume_id,omitempty"`
+	// Codex records collaborative child agents as standalone rollout files
+	// whose inherited parent history looks like a duplicate user session.
+	// Keep the lineage so list surfaces can show only roots without losing the
+	// child transcript from the index.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	AgentPath       string `json:"agent_path,omitempty"`
+	IsSubagent      bool   `json:"is_subagent,omitempty"`
+	PreviewText     string `json:"preview_text"`
+	TurnCount       int    `json:"turn_count"`
+	// HistoricalTurnCount includes completed turns that were later removed
+	// from the agent's active conversation by an explicit rollback.
+	HistoricalTurnCount int       `json:"historical_turn_count,omitempty"`
+	RolledBackTurnCount int       `json:"rolled_back_turn_count,omitempty"`
+	MessageCount        int       `json:"message_count"`
+	IsLive              bool      `json:"is_live"`
+	Bookmarked          bool      `json:"bookmarked"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // Presence marks whether a token bucket was actually reported by the agent.
@@ -179,6 +190,20 @@ type TurnVM struct {
 	Subagents     []string     `json:"subagents,omitempty"`
 	ToolDetails   []ToolCallVM `json:"tool_details,omitempty"`
 	Skills        []string     `json:"skills,omitempty"`
+	// RolledBack is true when the turn remains in the append-only transcript
+	// but is no longer part of the agent's resumable conversation path.
+	RolledBack        bool `json:"rolled_back,omitempty"`
+	OriginalTurnIndex int  `json:"original_turn_index,omitempty"`
+}
+
+// RollbackGroupVM preserves one explicit rollback operation and the visible
+// turns it removed. Turns remains the active path; rollback groups are kept
+// separately so existing navigation and LLM consumers cannot accidentally
+// treat abandoned context as current context.
+type RollbackGroupVM struct {
+	AfterTurnIndex int      `json:"after_turn_index"`
+	Timestamp      string   `json:"timestamp"`
+	Turns          []TurnVM `json:"turns"`
 }
 
 type EditCall struct {
@@ -199,10 +224,11 @@ type AnomalySummary struct {
 
 type SessionDetail struct {
 	Session
-	Turns          []TurnVM        `json:"turns"`
-	AnomalySummary AnomalySummary  `json:"anomaly_summary"`
-	Todos          []Todo          `json:"todos,omitempty"`
-	Billing        *SessionBilling `json:"billing,omitempty"`
+	Turns          []TurnVM          `json:"turns"`
+	AnomalySummary AnomalySummary    `json:"anomaly_summary"`
+	Todos          []Todo            `json:"todos,omitempty"`
+	Billing        *SessionBilling   `json:"billing,omitempty"`
+	RollbackGroups []RollbackGroupVM `json:"rollback_groups,omitempty"`
 }
 
 type Todo struct {

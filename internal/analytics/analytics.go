@@ -6,6 +6,7 @@
 package analytics
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/bbsteel/session-insight/internal/model"
@@ -21,34 +22,39 @@ type TurnToken struct {
 	// EstCost is this turn's estimated share of the session bill, in the
 	// bill's billing_unit. Always an estimate (see attributeCostToTurns);
 	// zero when the session has no billed amount to attribute.
-	EstCost float64 `json:"est_cost,omitempty"`
+	EstCost           float64 `json:"est_cost,omitempty"`
+	RolledBack        bool    `json:"rolled_back,omitempty"`
+	OriginalTurnIndex int     `json:"original_turn_index,omitempty"`
 }
 
 // Result keeps the JSON contract previously served inline by the API layer,
 // extended with the session bill.
 type Result struct {
-	TotalTokens      int64                 `json:"total_tokens"`
-	PromptTokens     int64                 `json:"prompt_tokens"`
-	CompletionTokens int64                 `json:"completion_tokens"`
-	CacheReadTokens  int64                 `json:"cache_read_tokens"`
-	CacheHitRate     float64               `json:"cache_hit_rate"`
-	TotalTools       int                   `json:"total_tools"`
-	TotalErrors      int                   `json:"total_errors"`
-	AnomalyCount     int                   `json:"anomaly_count"`
-	TurnCount        int                   `json:"turn_count"`
-	TokenEfficiency  float64               `json:"token_efficiency"`
-	Timeline         []TurnToken           `json:"timeline"`
-	ToolFreq         map[string]int        `json:"tool_freq"`
-	ToolSuccess      map[string]int        `json:"tool_success"`
-	ToolTotal        map[string]int        `json:"tool_total"`
-	SkillFreq        map[string]int        `json:"skill_freq"`
-	TodoCount        int                   `json:"todo_count"`
-	Todos            []model.Todo          `json:"todos"`
-	TodoDone         int                   `json:"todo_done"`
-	ContextWindow    int                   `json:"context_window"`
-	ContextPeak      int64                 `json:"context_peak"`
-	PressurePct      float64               `json:"pressure_pct"`
-	Billing          *model.SessionBilling `json:"billing,omitempty"`
+	TotalTokens         int64                 `json:"total_tokens"`
+	PromptTokens        int64                 `json:"prompt_tokens"`
+	CompletionTokens    int64                 `json:"completion_tokens"`
+	CacheReadTokens     int64                 `json:"cache_read_tokens"`
+	CacheHitRate        float64               `json:"cache_hit_rate"`
+	TotalTools          int                   `json:"total_tools"`
+	TotalErrors         int                   `json:"total_errors"`
+	AnomalyCount        int                   `json:"anomaly_count"`
+	TurnCount           int                   `json:"turn_count"`
+	HistoricalTurnCount int                   `json:"historical_turn_count,omitempty"`
+	RolledBackTurnCount int                   `json:"rolled_back_turn_count,omitempty"`
+	RolledBackTokens    int64                 `json:"rolled_back_tokens,omitempty"`
+	TokenEfficiency     float64               `json:"token_efficiency"`
+	Timeline            []TurnToken           `json:"timeline"`
+	ToolFreq            map[string]int        `json:"tool_freq"`
+	ToolSuccess         map[string]int        `json:"tool_success"`
+	ToolTotal           map[string]int        `json:"tool_total"`
+	SkillFreq           map[string]int        `json:"skill_freq"`
+	TodoCount           int                   `json:"todo_count"`
+	Todos               []model.Todo          `json:"todos"`
+	TodoDone            int                   `json:"todo_done"`
+	ContextWindow       int                   `json:"context_window"`
+	ContextPeak         int64                 `json:"context_peak"`
+	PressurePct         float64               `json:"pressure_pct"`
+	Billing             *model.SessionBilling `json:"billing,omitempty"`
 	// CostPrecision qualifies the per-turn EstCost values: "estimated" when
 	// a session bill was spread over turns, "" when no attribution happened.
 	CostPrecision string    `json:"cost_precision,omitempty"`
@@ -57,7 +63,7 @@ type Result struct {
 
 // Compute derives all session analytics from a SessionDetail.
 func Compute(detail *model.SessionDetail) Result {
-	var turnTotals model.TokenUsage
+	var turnTotals, activeTotals model.TokenUsage
 	var maxCumulative, cumul int64
 	var totalTools, totalErrors int
 	timeline := make([]TurnToken, 0, len(detail.Turns))
@@ -68,6 +74,7 @@ func Compute(detail *model.SessionDetail) Result {
 
 	for _, t := range detail.Turns {
 		turnTotals.AddUsage(t.TokenUsage)
+		activeTotals.AddUsage(t.TokenUsage)
 		tok := t.TokenUsage.PromptTokens + t.TokenUsage.CompletionTokens
 		totalTools += t.ToolCallCount
 		totalErrors += t.ErrorCount
@@ -77,12 +84,13 @@ func Compute(detail *model.SessionDetail) Result {
 		}
 
 		timeline = append(timeline, TurnToken{
-			TurnIndex:  t.TurnIndex,
-			Tokens:     tok,
-			Duration:   t.DurationMs,
-			ToolCount:  t.ToolCallCount,
-			ErrorCount: t.ErrorCount,
-			Requests:   t.RequestCount,
+			TurnIndex:         t.TurnIndex,
+			Tokens:            tok,
+			Duration:          t.DurationMs,
+			ToolCount:         t.ToolCallCount,
+			ErrorCount:        t.ErrorCount,
+			Requests:          t.RequestCount,
+			OriginalTurnIndex: t.OriginalTurnIndex,
 		})
 
 		for _, name := range t.ToolNames {
@@ -99,9 +107,39 @@ func Compute(detail *model.SessionDetail) Result {
 		}
 	}
 
+	var rolledBackTokens int64
+	for _, group := range detail.RollbackGroups {
+		for _, t := range group.Turns {
+			turnTotals.AddUsage(t.TokenUsage)
+			tok := t.TokenUsage.PromptTokens + t.TokenUsage.CompletionTokens
+			rolledBackTokens += tok
+			timeline = append(timeline, TurnToken{
+				TurnIndex:         -(t.OriginalTurnIndex + 1),
+				OriginalTurnIndex: t.OriginalTurnIndex,
+				RolledBack:        true,
+				Tokens:            tok,
+				Duration:          t.DurationMs,
+				ToolCount:         t.ToolCallCount,
+				ErrorCount:        t.ErrorCount,
+				Requests:          t.RequestCount,
+			})
+		}
+	}
+	if len(detail.RollbackGroups) > 0 {
+		sort.SliceStable(timeline, func(i, j int) bool {
+			return timeline[i].OriginalTurnIndex < timeline[j].OriginalTurnIndex
+		})
+	}
+
 	billing := resolveBilling(detail, turnTotals)
 	costPrecision := attributeCostToTurns(timeline, billing)
-	findings := detectFindings(detail, timeline, billing, costPrecision == model.PrecisionEstimated)
+	activeTimeline := make([]TurnToken, 0, len(detail.Turns))
+	for _, turn := range timeline {
+		if !turn.RolledBack {
+			activeTimeline = append(activeTimeline, turn)
+		}
+	}
+	findings := detectFindings(detail, activeTimeline, billing, costPrecision == model.PrecisionEstimated)
 
 	// Headline token numbers come from the bill when the agent reported one
 	// (session-level aggregates are authoritative for agents like Copilot
@@ -126,35 +164,39 @@ func Compute(detail *model.SessionDetail) Result {
 
 	totalTokens := headline.PromptTokens + headline.CompletionTokens
 	tokenEfficiency := 0.0
-	if totalTokens > 0 && len(detail.Turns) > 0 {
-		tokenEfficiency = float64(totalTokens) / float64(len(detail.Turns))
+	activeTokens := activeTotals.PromptTokens + activeTotals.CompletionTokens
+	if activeTokens > 0 && len(detail.Turns) > 0 {
+		tokenEfficiency = float64(activeTokens) / float64(len(detail.Turns))
 	}
 
 	return Result{
-		TotalTokens:      totalTokens,
-		PromptTokens:     headline.PromptTokens,
-		CompletionTokens: headline.CompletionTokens,
-		CacheReadTokens:  headline.CacheReadTokens,
-		CacheHitRate:     cacheRate,
-		TotalTools:       totalTools,
-		TotalErrors:      totalErrors,
-		AnomalyCount:     detail.AnomalySummary.TotalAnomalies,
-		TurnCount:        len(detail.Turns),
-		TokenEfficiency:  tokenEfficiency,
-		Timeline:         timeline,
-		ToolFreq:         toolFreq,
-		ToolSuccess:      toolSuccess,
-		ToolTotal:        toolTotal,
-		SkillFreq:        skillFreq,
-		TodoCount:        len(detail.Todos),
-		Todos:            detail.Todos,
-		TodoDone:         countDone(detail.Todos),
-		ContextWindow:    estimateContext(detail.ModelName),
-		ContextPeak:      maxCumulative,
-		PressurePct:      pressurePct,
-		Billing:          billing,
-		CostPrecision:    costPrecision,
-		Findings:         findings,
+		TotalTokens:         totalTokens,
+		PromptTokens:        headline.PromptTokens,
+		CompletionTokens:    headline.CompletionTokens,
+		CacheReadTokens:     headline.CacheReadTokens,
+		CacheHitRate:        cacheRate,
+		TotalTools:          totalTools,
+		TotalErrors:         totalErrors,
+		AnomalyCount:        detail.AnomalySummary.TotalAnomalies,
+		TurnCount:           len(detail.Turns),
+		HistoricalTurnCount: detail.HistoricalTurnCount,
+		RolledBackTurnCount: detail.RolledBackTurnCount,
+		RolledBackTokens:    rolledBackTokens,
+		TokenEfficiency:     tokenEfficiency,
+		Timeline:            timeline,
+		ToolFreq:            toolFreq,
+		ToolSuccess:         toolSuccess,
+		ToolTotal:           toolTotal,
+		SkillFreq:           skillFreq,
+		TodoCount:           len(detail.Todos),
+		Todos:               detail.Todos,
+		TodoDone:            countDone(detail.Todos),
+		ContextWindow:       estimateContext(detail.ModelName),
+		ContextPeak:         maxCumulative,
+		PressurePct:         pressurePct,
+		Billing:             billing,
+		CostPrecision:       costPrecision,
+		Findings:            findings,
 	}
 }
 

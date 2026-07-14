@@ -576,7 +576,11 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       parts.push(shortRepo)
     }
     if (branch) parts.push(branch)
-    parts.push(`${session.message_count || session.turn_count} msgs`)
+    if ((session.rolled_back_turn_count ?? 0) > 0) {
+      parts.push(`${session.turn_count} turns · +${session.rolled_back_turn_count} 已回滚`)
+    } else {
+      parts.push(`${session.message_count || session.turn_count} msgs`)
+    }
     const live = isSessionLive(session, now)
     if (live) parts.push('活跃中')
     const metadata = parts.join(' · ')
@@ -955,7 +959,16 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               const visibleOptions = windows ? options : options.filter(option => option.shell === 'git-bash')
               const disabled = visibleOptions.length === 0
               if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title="此 Agent 暂不支持命令行恢复">复制会话恢复命令</button>
-              return visibleOptions.map(option => {
+              const rollbackInfo = (session.rolled_back_turn_count ?? 0) > 0
+                ? `${session.rolled_back_turn_count} 个 turn 已回滚；CLI 将从第 ${session.turn_count} 轮恢复`
+                : ''
+              return <>
+                {rollbackInfo && (
+                  <div className="px-3 py-1.5 text-meta text-[var(--warning)] border-y border-[var(--border-muted)]">
+                    ↩ {rollbackInfo}
+                  </div>
+                )}
+                {visibleOptions.map(option => {
                 const shellLabel = windows ? option.shell === 'powershell' ? 'PowerShell' : 'Git Bash' : ''
                 const reason = option.reason === 'last-used' ? '，上次使用' : windows && option.reason === 'recommended' ? '，推荐' : ''
                 const dangerous = option.mode === 'skip-permissions'
@@ -963,7 +976,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   <button
                     key={`${option.shell}:${option.mode}`}
                     className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
-                    title={dangerous ? '跳过权限检查并允许执行危险命令' : undefined}
+                    title={dangerous ? `跳过权限检查并允许执行危险命令${rollbackInfo ? `；${rollbackInfo}` : ''}` : rollbackInfo || undefined}
                     onClick={() => {
                       if (isLive) setResumeConfirm({ session, shell: option.shell, mode: option.mode })
                       else void copyResumeCmd(session, option.shell, option.mode)
@@ -976,7 +989,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                     )}
                   </button>
                 )
-              })
+                })}
+              </>
             })()}
             {deletableAgents.has(contextMenu.session.agent_type) && (
               <>
@@ -1025,6 +1039,11 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               该会话仍在运行（活跃中）。在另一个终端恢复它，可能与正在写入的
               CLI 实例产生双写冲突。确定要复制恢复命令吗？
             </p>
+            {(resumeConfirm.session.rolled_back_turn_count ?? 0) > 0 && (
+              <p className="mt-2 text-body text-[var(--warning)]">
+                ↩ 已回滚 {resumeConfirm.session.rolled_back_turn_count} 个 turn；CLI 将从第 {resumeConfirm.session.turn_count} 轮恢复。
+              </p>
+            )}
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 onClick={() => setResumeConfirm(null)}

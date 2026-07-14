@@ -12,7 +12,7 @@ import type { MiniMapPosition } from './types'
 export interface FoldRange {
   key: string
   label: string
-  level: 'group' | 'tool' // group = whole "▼ Tools (n/m)" run; tool = one tool's body
+  level: 'group' | 'tool' | 'rollback' // rollback = abandoned Codex turn segment
   headerDisplay: number // display row of the "▼ …" header line
   headerLogical: number
   displayStart: number // body extent, display rows [start, end)
@@ -36,7 +36,7 @@ export function foldsFromPositions(positions: MiniMapPosition[] | undefined | nu
     const headerLogical = num('header_logical')
     if (displayStart === null || displayEnd === null || logicalStart === null || logicalEnd === null || headerLogical === null) continue
     if (displayEnd <= displayStart || logicalEnd <= logicalStart) continue
-    const level = pl['level'] === 'tool' ? 'tool' : 'group'
+    const level = pl['level'] === 'tool' ? 'tool' : pl['level'] === 'rollback' ? 'rollback' : 'group'
     folds.push({
       key: p.position_key,
       label: p.label,
