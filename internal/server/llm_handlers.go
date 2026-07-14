@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -249,6 +250,7 @@ func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		providerRequest
 		ProviderID int64 `json:"provider_id"`
+		Force      bool  `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -259,6 +261,25 @@ func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 			req.APIKey = p.APIKey
 		}
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), testProviderTimeout)
+	defer cancel()
+
+	// ACP model lists are expensive (npx adapter spawn) and only change when
+	// the CLI updates — serve them from a TTL cache unless force is set.
+	if req.Kind == "acp" {
+		if llm.AgentBinary(req.Agent) == "" {
+			http.Error(w, "agent must be one of claude, codex, gemini", http.StatusBadRequest)
+			return
+		}
+		models, err := llm.ListACPModelsCached(ctx, req.Agent, req.Force)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"models": models})
+		return
+	}
+
 	cfg := llm.Config{
 		Kind: req.Kind, BaseURL: strings.TrimSpace(req.BaseURL),
 		APIKey: req.APIKey, Agent: req.Agent,
@@ -268,8 +289,6 @@ func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), testProviderTimeout)
-	defer cancel()
 	models, err := client.ListModels(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -337,7 +356,11 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt, err := llm.BuildPrompt(llm.GenerationKind(kind), detail)
+	var candidates []string
+	if kind == string(llm.KindHandoff) {
+		candidates = s.handoffCandidates()
+	}
+	prompt, err := llm.BuildPrompt(llm.GenerationKind(kind), detail, candidates)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -383,6 +406,10 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	metadata := ""
+	if kind == string(llm.KindHandoff) {
+		content, metadata = llm.ParseHandoffOutput(content)
+	}
 
 	gen := db.AIGeneration{
 		Kind:         kind,
@@ -391,6 +418,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		ProviderName: provider.Name,
 		ModelID:      provider.ModelID,
 		Content:      content,
+		Metadata:     metadata,
 	}
 	genID, err := s.DB.AddAIGeneration(gen)
 	if err != nil {
@@ -400,6 +428,54 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	gen.ID = genID
 	gen.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
 	sendEvent("done", gen)
+}
+
+// handoffCandidates assembles the executor candidates offered to the
+// handoff recommendation: agent CLIs present on this machine plus models
+// actually seen in recent sessions — grounded in what the user can run,
+// not a hardcoded market survey.
+func (s *Server) handoffCandidates() []string {
+	agentLabels := map[string]string{
+		"claude": "Claude Code CLI", "codex": "Codex CLI", "gemini": "Gemini CLI",
+	}
+	var out []string
+	for _, agent := range llm.DetectACPAgents() {
+		label := agentLabels[agent]
+		if label == "" {
+			label = agent
+		}
+		out = append(out, label+"（本机已安装）")
+	}
+
+	// Distinct models from recent sessions, most recently used first.
+	latest := map[string]time.Time{} // model name -> newest updated_at
+	for _, rd := range s.Readers {
+		list, err := rd.ListSessions()
+		if err != nil {
+			continue
+		}
+		for _, sess := range list {
+			if sess.ModelName == "" {
+				continue
+			}
+			if cur, ok := latest[sess.ModelName]; !ok || sess.UpdatedAt.After(cur) {
+				latest[sess.ModelName] = sess.UpdatedAt
+			}
+		}
+	}
+	names := make([]string, 0, len(latest))
+	for name := range latest {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool { return latest[names[i]].After(latest[names[j]]) })
+	const maxRecentModels = 8
+	if len(names) > maxRecentModels {
+		names = names[:maxRecentModels]
+	}
+	for _, name := range names {
+		out = append(out, name+"（用户最近使用过的模型）")
+	}
+	return out
 }
 
 // handleAILatest returns the newest saved generation of a kind for a

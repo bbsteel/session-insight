@@ -13,6 +13,7 @@ import (
 
 	"github.com/bbsteel/session-insight/internal/analytics"
 	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/render"
@@ -54,6 +55,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	overrides := s.titleOverrides()
 	sessions := make([]SessionSummary, 0, len(list))
 	for _, sess := range list {
+		// AI generations drive local agent CLIs from a scratch temp dir;
+		// those CLIs log their own sessions, which are noise in this list.
+		if llm.IsScratchCWD(sess.CWD) {
+			continue
+		}
 		sess.Bookmarked = bookmarkSet[db.BookmarkKey(sess.AgentType, sess.ID)]
 		if t, ok := overrides[db.BookmarkKey(sess.AgentType, sess.ID)]; ok {
 			sess.Name = t

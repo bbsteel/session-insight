@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -9,7 +10,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 13
+const currentSchemaVersion = 14
 
 type DB struct {
 	conn *sql.DB
@@ -195,6 +196,7 @@ func migrate(conn *sql.DB) error {
 	    provider_name TEXT NOT NULL DEFAULT '',
 	    model_id      TEXT NOT NULL DEFAULT '',
 	    content       TEXT NOT NULL,
+	    metadata      TEXT NOT NULL DEFAULT '',
 	    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 	CREATE INDEX IF NOT EXISTS idx_ai_generations_session
@@ -355,6 +357,32 @@ func migrate(conn *sql.DB) error {
 			`session_updated_at TEXT NOT NULL DEFAULT ''`,
 		} {
 			conn.Exec(`ALTER TABLE bookmarked_sessions ADD COLUMN ` + col)
+		}
+	}
+
+	// Version 14: structured metadata for AI generations (handoff difficulty
+	// assessment + recommended executor list, JSON text). The CREATE TABLE
+	// above already includes the column for fresh DBs. Gate on the actual
+	// column, not schema_migrations: the DB is shared with other running
+	// instances (main + worktree validation), and an ALTER can lose the lock
+	// race on one startup while the version row still gets written — checking
+	// the real schema makes the migration self-healing on the next start.
+	hasMetadata := false
+	if rows, err := conn.Query(`PRAGMA table_info(ai_generations)`); err == nil {
+		for rows.Next() {
+			var cid int
+			var name, typ string
+			var notnull, pk int
+			var dflt any
+			if rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk) == nil && name == "metadata" {
+				hasMetadata = true
+			}
+		}
+		rows.Close()
+	}
+	if !hasMetadata {
+		if _, err := conn.Exec(`ALTER TABLE ai_generations ADD COLUMN metadata TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add ai_generations.metadata column: %w", err)
 		}
 	}
 

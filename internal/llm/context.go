@@ -12,6 +12,11 @@ import (
 // enough for a safety cap.
 const (
 	contextBudgetRunes = 60000
+	// Handoff feeds smaller models a structured brief, not a replay — a
+	// full 60k-rune transcript reliably stalls cheap API models on the
+	// "请求模型" step, and the handoff template only needs task framing plus
+	// the recent tail.
+	handoffBudgetRunes = 24000
 	userMsgMaxRunes    = 2000
 	assistantMaxRunes  = 1200
 	lightUserMaxRunes  = 400
@@ -32,11 +37,23 @@ func truncateRunes(s string, max int) string {
 	return string(runes[:max]) + "…(截断)"
 }
 
-// BuildSessionContext renders a session transcript within the rune budget.
+// BuildSessionContext renders a session transcript within the default rune
+// budget. See buildSessionContext for the reduction strategy.
+func BuildSessionContext(detail *model.SessionDetail) string {
+	return buildSessionContext(detail, contextBudgetRunes)
+}
+
+// BuildHandoffContext renders the slimmer transcript used for handoff
+// prompts.
+func BuildHandoffContext(detail *model.SessionDetail) string {
+	return buildSessionContext(detail, handoffBudgetRunes)
+}
+
+// buildSessionContext renders a session transcript within budgetRunes.
 // Reduction order when over budget: middle turns lose assistant/tool detail
 // first, then middle turns are elided entirely (head+tail kept) with an
 // explicit "(中间 N 轮已省略)" marker so the model knows the gap exists.
-func BuildSessionContext(detail *model.SessionDetail) string {
+func buildSessionContext(detail *model.SessionDetail, budgetRunes int) string {
 	var header strings.Builder
 	fmt.Fprintf(&header, "# 会话记录\n\n")
 	fmt.Fprintf(&header, "- Agent: %s\n", detail.AgentType)
@@ -70,7 +87,7 @@ func BuildSessionContext(detail *model.SessionDetail) string {
 		full[i] = renderTurn(t, false)
 	}
 
-	budget := contextBudgetRunes - len([]rune(header.String()))
+	budget := budgetRunes - len([]rune(header.String()))
 	if total := runesLen(full); total <= budget {
 		return header.String() + strings.Join(full, "\n")
 	}

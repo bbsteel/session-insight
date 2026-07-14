@@ -193,7 +193,27 @@ export interface AIGeneration {
   provider_name: string
   model_id: string
   content: string
+  // Kind-specific structured extras as a JSON string (handoff: difficulty +
+  // recommended executors). Empty/absent when the model skipped it.
+  metadata?: string
   created_at: string
+}
+
+// HandoffMetadata is the parsed shape of AIGeneration.metadata for handoff.
+export interface HandoffMetadata {
+  difficulty?: string
+  difficulty_reason?: string
+  recommended?: { executor: string; reason?: string }[]
+}
+
+export function parseHandoffMetadata(raw: string | undefined): HandoffMetadata | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as HandoffMetadata
+    return typeof parsed === 'object' && parsed !== null ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 export type AIKind = 'summary' | 'title' | 'handoff'
@@ -239,8 +259,9 @@ export async function setDefaultLLMProvider(id: number): Promise<void> {
 }
 
 // Validates a (possibly unsaved) provider config by fetching its model list.
-// provider_id lets a saved provider refresh models without re-entering the key.
-export async function testLLMProvider(input: Partial<LLMProviderInput> & { provider_id?: number }): Promise<LLMModel[]> {
+// provider_id lets a saved provider refresh models without re-entering the
+// key. ACP model lists are served from a backend TTL cache; force bypasses it.
+export async function testLLMProvider(input: Partial<LLMProviderInput> & { provider_id?: number; force?: boolean }): Promise<LLMModel[]> {
   const res = await fetch('/api/llm/providers/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -265,17 +286,19 @@ export class NoProviderError extends Error {}
 
 // Runs one generation over SSE (POST + streamed response body — EventSource
 // can't POST, so the stream is parsed by hand). onStatus receives coarse
-// stage strings ("启动 ACP 适配器", "请求模型", ...).
+// stage strings ("启动适配器", "请求模型", ...). providerId 0/undefined means
+// the server-side default provider.
 export async function generateAI(
   sessionId: string,
   kind: AIKind,
   onStatus: (stage: string) => void,
   signal?: AbortSignal,
+  providerId?: number,
 ): Promise<AIGeneration> {
   const res = await fetch(`/api/sessions/${sessionId}/ai/${kind}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(providerId ? { provider_id: providerId } : {}),
     signal,
   })
   if (res.status === 412) throw new NoProviderError(await res.text())
