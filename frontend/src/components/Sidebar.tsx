@@ -49,7 +49,7 @@ interface SidebarProps {
   selectedId: string | null
   selectedAgentType?: string | null
   focusTarget?: { id: string; agentType: string } | null
-  onSelect: (id: string, agentType?: string) => void
+  onSelect: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
   drawer?: boolean
   onClose?: () => void
   bookmarkChange?: BookmarkChange | null
@@ -752,7 +752,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                       return (
                         <div key={`${session.agent_type}-${session.id}`} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--bg-surface-hover)]">
                           <button
-                            onClick={() => { onSelect(session.id); setBookmarksOpen(false) }}
+                            onClick={() => { onSelect(session.id, session.agent_type, true); setBookmarksOpen(false) }}
                             className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] rounded-sm"
                           >
                             <span className="block truncate text-body text-[var(--text-primary)]">{getSessionName(session)}</span>
