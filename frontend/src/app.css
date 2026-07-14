@@ -178,7 +178,7 @@
   padding: 0.125em 0.375em;
   border-radius: 3px;
   font-size: 0.9em;
-  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  font-family: 'JetBrains Mono', 'Consolas', 'Menlo', 'SF Mono', 'Fira Code', monospace;
   word-break: break-word;
 }
 
@@ -197,14 +197,19 @@
   color: inherit;
 }
 
-* {
+/*
+ * Font smoothing: antialiased looks good on macOS Retina, but on Windows it
+ * disables ClearType subpixel AA and makes UI text thin/fuzzy (especially CJK
+ * fallbacks like YaHei). Only force grayscale AA when main.tsx marks Apple.
+ */
+html.platform-apple * {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* Inter for Latin; Windows CJK prefers YaHei UI over legacy YaHei */
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-primary);

@@ -11,7 +11,7 @@ import { TERMINAL_LINE_HEIGHT, type TerminalContextMenuEvent, type TerminalContr
 import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 
-const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "Menlo", monospace'
+const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "Consolas", "Menlo", "SF Mono", monospace'
 const TERMINAL_FONT_SIZE = 13
 // Text the backend renders for a chrys turn still in progress; the frontend
 // finds this row and overlays a spinning hourglass. Keep in sync with the

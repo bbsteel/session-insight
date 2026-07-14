@@ -10,6 +10,11 @@ import '@xterm/xterm/css/xterm.css'
 import App from './App'
 import './app.css'
 
+// macOS/iOS: enable grayscale font smoothing (ClearType on Windows must stay default)
+if (typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+  document.documentElement.classList.add('platform-apple')
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />

@@ -162,7 +162,7 @@ interface ViewProps { diff: DiffOp[]; pal: Palette; lang: string | null; tokens:
 function InlineDiff({ diff, pal, lang, tokens }: ViewProps) {
   const lines = numberOps(diff)
   return (
-    <table className="w-full border-collapse" style={{ fontFamily: '"JetBrains Mono", "Menlo", monospace', fontSize: 12 }}>
+    <table className="w-full border-collapse" style={{ fontFamily: '"JetBrains Mono", "Consolas", "Menlo", monospace', fontSize: 12 }}>
       <tbody>
         {lines.map((row, i) => {
           const bg = row.kind === 'remove' ? pal.removeBg : row.kind === 'add' ? pal.addBg : 'transparent'
@@ -293,7 +293,7 @@ function SplitDiff({ diff, pal, lang, tokens, softWrap, resetKey }: ViewProps & 
   }, [resetKey, softWrap])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, background: pal.surface, fontFamily: '"JetBrains Mono", "Menlo", monospace', fontSize: 12 }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, background: pal.surface, fontFamily: '"JetBrains Mono", "Consolas", "Menlo", monospace', fontSize: 12 }}>
       <div ref={verticalRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
         {rows.map((row, i) => {
           return (
@@ -387,7 +387,7 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
           {/* file path */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
             <span style={{ color: pal.accent, fontSize: 13 }}>✎</span>
-            <span style={{ color: pal.text, fontSize: 13, fontFamily: '"JetBrains Mono", monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: pal.text, fontSize: 13, fontFamily: '"JetBrains Mono", "Consolas", "Menlo", monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {edit?.file_path ?? '—'}
             </span>
             {edit && (

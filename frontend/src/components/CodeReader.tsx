@@ -71,7 +71,7 @@ const readerTheme = EditorView.theme({
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
-    fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+    fontFamily: "'JetBrains Mono', 'Consolas', 'Menlo', 'SF Mono', 'Fira Code', monospace",
     lineHeight: '1.55',
     overflow: 'auto',
   },

@@ -57,8 +57,8 @@ export default {
         'slow': '150ms',
       },
       fontFamily: {
-        sans: ["'Inter'", '-apple-system', 'BlinkMacSystemFont', "'Segoe UI'", "'PingFang SC'", "'Microsoft YaHei'", 'sans-serif'],
-        mono: ["'JetBrains Mono'", "'SF Mono'", "'Fira Code'", "'Menlo'", "'Consolas'", 'monospace'],
+        sans: ["'Inter'", 'system-ui', '-apple-system', 'BlinkMacSystemFont', "'Segoe UI'", "'Microsoft YaHei UI'", "'Microsoft YaHei'", "'PingFang SC'", 'sans-serif'],
+        mono: ["'JetBrains Mono'", "'Consolas'", "'Menlo'", "'SF Mono'", "'Fira Code'", 'monospace'],
       },
     },
   },
