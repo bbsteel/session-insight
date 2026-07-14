@@ -853,10 +853,14 @@ export default function ReplayView({ sessionId, onSelect, bookmarkChange, onBook
           <span className="text-[var(--border-default)]">|</span>
           <button
             onClick={() => setShowAIPanel(true)}
-            className={`h-7 rounded-md px-2 text-nav ${showAIPanel ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            className={`h-7 rounded-md border px-2 text-nav font-medium ${
+              showAIPanel
+                ? 'border-[var(--accent-blue)] bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] text-[var(--accent-blue)]'
+                : 'border-[color-mix(in_srgb,var(--accent-blue)_45%,transparent)] text-[var(--accent-blue)]'
+            } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title="AI 总结 / 标题 / 交接"
           >
-            AI
+            ✨ AI
           </button>
         </div>
         <span className="text-[var(--border-default)] mx-1">|</span>

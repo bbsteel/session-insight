@@ -25,15 +25,28 @@ type acpClient struct {
 // on first use and caches after); gemini ships ACP in the CLI itself.
 func acpCommand(agent string) ([]string, error) {
 	switch agent {
+	// @latest pins force npx to re-resolve the registry instead of serving a
+	// stale cache entry — the adapters bundle their own agent core, so an old
+	// cached adapter silently means an old model list.
 	case "claude":
-		return []string{"npx", "-y", "@agentclientprotocol/claude-agent-acp"}, nil
+		return []string{"npx", "-y", "@agentclientprotocol/claude-agent-acp@latest"}, nil
 	case "codex":
-		return []string{"npx", "-y", "@zed-industries/codex-acp"}, nil
+		return []string{"npx", "-y", "@zed-industries/codex-acp@latest"}, nil
 	case "gemini":
 		return []string{"gemini", "--experimental-acp"}, nil
 	default:
 		return nil, fmt.Errorf("unsupported acp agent %q", agent)
 	}
+}
+
+// scratchDirPrefix names the throwaway temp dirs used as ACP session cwd.
+const scratchDirPrefix = "session-insight-llm-"
+
+// IsScratchCWD reports whether cwd is one of this package's scratch temp
+// dirs. Agent CLIs log their own session files for work done there, and
+// those generation byproducts must not surface as user sessions.
+func IsScratchCWD(cwd string) bool {
+	return strings.Contains(cwd, scratchDirPrefix)
 }
 
 // AgentBinary is the executable whose presence gates showing an ACP agent
@@ -139,7 +152,7 @@ func dialACP(ctx context.Context, agent string) (*acpConn, error) {
 	}
 	// Empty scratch cwd: generation is text-only, the agent has no business
 	// reading whatever directory the server happens to run from.
-	tmpDir, err := os.MkdirTemp("", "session-insight-llm-")
+	tmpDir, err := os.MkdirTemp("", scratchDirPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +422,7 @@ func (s *acpSession) safestModeID() string {
 
 func (c *acpClient) open(ctx context.Context, onStatus StatusFunc) (*acpConn, *acpSession, error) {
 	if onStatus != nil {
-		onStatus("启动 ACP 适配器")
+		onStatus("启动适配器")
 	}
 	conn, err := dialACP(ctx, c.cfg.Agent)
 	if err != nil {

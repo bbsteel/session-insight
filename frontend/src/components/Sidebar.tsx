@@ -174,6 +174,27 @@ export default function Sidebar({ selectedId, onSelect, drawer, onClose, bookmar
     }
   }, [])
 
+  // Instant rename when the AI panel applies a title override: patch local
+  // state directly instead of waiting for the SSE ping + throttled refetch.
+  // Restoring (title=null) needs the original name we no longer have, so
+  // that path refetches immediately.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { agentType, sessionId, title } =
+        (e as CustomEvent).detail as { agentType: string; sessionId: string; title: string | null }
+      if (title) {
+        const rename = (list: SessionSummary[]) =>
+          list.map(s => (s.agent_type === agentType && s.id === sessionId ? { ...s, name: title } : s))
+        setSessions(rename)
+        setBookmarks(rename)
+      } else {
+        fetchSessions().then(setSessions).catch(() => {})
+      }
+    }
+    window.addEventListener('si-title-override', handler)
+    return () => window.removeEventListener('si-title-override', handler)
+  }, [])
+
   // Fetch agents on mount
   useEffect(() => {
     fetchAgents()

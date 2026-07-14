@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  fetchLatestGeneration, generateAI, NoProviderError, removeSessionTitle, setSessionTitle,
-  type AIGeneration, type AIKind,
+  fetchLatestGeneration, fetchLLMProviders, generateAI, NoProviderError,
+  parseHandoffMetadata, removeSessionTitle, setSessionTitle,
+  type AIGeneration, type AIKind, type LLMProvider,
 } from '../api'
 import MarkdownRenderer from './MarkdownRenderer'
 
@@ -16,21 +17,38 @@ interface Props {
 }
 
 const TABS: { kind: AIKind; label: string }[] = [
-  { kind: 'summary', label: '总结' },
-  { kind: 'title', label: '标题' },
-  { kind: 'handoff', label: '交接' },
+  { kind: 'summary', label: '会话总结' },
+  { kind: 'title', label: 'AI 标题' },
+  { kind: 'handoff', label: '任务交接' },
 ]
+
+// One line of the generation progress log: ms is null while the step is
+// still running.
+interface StageLine {
+  text: string
+  ms: number | null
+}
 
 interface TabState {
   generation: AIGeneration | null
   loaded: boolean // latest-generation cache fetch finished
   busy: boolean
-  stage: string
+  stages: StageLine[]
   error: string | null
   noProvider: boolean
 }
 
-const emptyTab: TabState = { generation: null, loaded: false, busy: false, stage: '', error: null, noProvider: false }
+const emptyTab: TabState = { generation: null, loaded: false, busy: false, stages: [], error: null, noProvider: false }
+
+// AnimatedDots cycles 1→2→3 dots for the in-flight stage line.
+function AnimatedDots() {
+  const [n, setN] = useState(1)
+  useEffect(() => {
+    const timer = window.setInterval(() => setN(v => (v % 3) + 1), 400)
+    return () => window.clearInterval(timer)
+  }, [])
+  return <span>{'.'.repeat(n)}</span>
+}
 
 // AIPanel drives the three phase-1 generations for one session. Summary and
 // handoff open on the last saved result (regenerate on demand); title
@@ -43,6 +61,9 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
   })
   const [copied, setCopied] = useState(false)
   const [titleApplied, setTitleApplied] = useState(false)
+  const [providers, setProviders] = useState<LLMProvider[]>([])
+  // 0 = use the server-side default provider.
+  const [providerId, setProviderId] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
 
   const patch = (kind: AIKind, p: Partial<TabState>) =>
@@ -55,6 +76,19 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
   }, [onClose])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Provider list for the generation model picker; kept fresh after the
+  // settings modal saves changes.
+  useEffect(() => {
+    const load = () => {
+      fetchLLMProviders()
+        .then(data => setProviders(data.providers))
+        .catch(() => {})
+    }
+    load()
+    window.addEventListener('si-ai-providers-changed', load)
+    return () => window.removeEventListener('si-ai-providers-changed', load)
+  }, [])
 
   // Lazily load the cached latest generation the first time a tab is shown.
   useEffect(() => {
@@ -71,15 +105,30 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
   const generate = async (kind: AIKind) => {
     const ac = new AbortController()
     abortRef.current = ac
-    patch(kind, { busy: true, stage: '准备中…', error: null, noProvider: false })
+    let lines: StageLine[] = []
+    let lastAt = performance.now()
+    const finalize = () => {
+      if (lines.length > 0 && lines[lines.length - 1].ms == null) {
+        lines = [...lines]
+        lines[lines.length - 1] = { ...lines[lines.length - 1], ms: performance.now() - lastAt }
+      }
+      return lines
+    }
+    const onStage = (stage: string) => {
+      finalize()
+      lines = [...lines, { text: stage, ms: null }]
+      lastAt = performance.now()
+      patch(kind, { stages: lines })
+    }
+    patch(kind, { busy: true, stages: [], error: null, noProvider: false })
     setTitleApplied(false)
     try {
-      const gen = await generateAI(sessionId, kind, stage => patch(kind, { stage }), ac.signal)
-      patch(kind, { generation: gen, busy: false, loaded: true })
+      const gen = await generateAI(sessionId, kind, onStage, ac.signal, providerId)
+      patch(kind, { generation: gen, busy: false, loaded: true, stages: finalize() })
     } catch (err) {
       if (ac.signal.aborted) return
       if (err instanceof NoProviderError) patch(kind, { busy: false, noProvider: true })
-      else patch(kind, { busy: false, error: err instanceof Error ? err.message : String(err) })
+      else patch(kind, { busy: false, stages: finalize(), error: err instanceof Error ? err.message : String(err) })
     }
   }
 
@@ -89,11 +138,20 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
     window.setTimeout(() => setCopied(false), 1500)
   }
 
+  // Broadcast a title override so the sidebar renames the session instantly
+  // (optimistic local patch) instead of waiting for the SSE-triggered refetch.
+  const broadcastTitle = (title: string | null) => {
+    window.dispatchEvent(new CustomEvent('si-title-override', {
+      detail: { agentType, sessionId, title },
+    }))
+  }
+
   const applyTitle = async (title: string) => {
     try {
       await setSessionTitle(sessionId, agentType, title)
       setTitleApplied(true)
       onTitleApplied(title)
+      broadcastTitle(title)
     } catch (err) {
       patch('title', { error: err instanceof Error ? err.message : String(err) })
     }
@@ -104,6 +162,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
       await removeSessionTitle(sessionId, agentType)
       setTitleApplied(false)
       onTitleApplied(null)
+      broadcastTitle(null)
     } catch (err) {
       patch('title', { error: err instanceof Error ? err.message : String(err) })
     }
@@ -120,7 +179,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
       >
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-default)]">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="text-sm font-medium text-[var(--text-primary)]">AI</span>
+            <span className="text-sm font-medium text-[var(--text-primary)]">✨ AI</span>
             <div className="flex items-center gap-1">
               {TABS.map(t => (
                 <button
@@ -128,7 +187,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                   onClick={() => setTab(t.kind)}
                   className={`h-7 rounded-md px-2.5 text-helper ${
                     tab === t.kind
-                      ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                      ? 'bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] text-[var(--accent-blue)]'
                       : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
                   }`}
                 >
@@ -138,14 +197,36 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
             </div>
             <span className="truncate text-meta text-[var(--text-muted)]">{sessionName}</span>
           </div>
-          <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none px-1">✕</button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))}
+              className="h-7 rounded-md px-2 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+              title="配置模型源"
+            >
+              ⚙ 模型源
+            </button>
+            <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none px-1">✕</button>
+          </div>
         </div>
 
         <div className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-4 py-2">
           <button className={btnCls} disabled={st.busy} onClick={() => void generate(tab)}>
             {st.busy ? '生成中…' : st.generation ? '重新生成' : (tab === 'summary' ? '生成总结' : tab === 'title' ? '生成标题' : '生成交接提示词')}
           </button>
-          {st.busy && <span className="text-meta text-[var(--text-muted)]" role="status">{st.stage}</span>}
+          {providers.length > 0 && (
+            <select
+              value={providerId}
+              onChange={e => setProviderId(Number(e.target.value))}
+              disabled={st.busy}
+              className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
+              title="用哪个模型源生成"
+            >
+              <option value={0}>默认模型源</option>
+              {providers.map(p => (
+                <option key={p.id} value={p.id}>{p.name}{p.is_default ? '（默认）' : ''}</option>
+              ))}
+            </select>
+          )}
           {!st.busy && st.generation && (
             <>
               {tab !== 'title' && (
@@ -173,17 +254,36 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
               </button>
             </div>
           )}
+
+          {(st.busy || (st.error && st.stages.length > 0)) && (
+            <div className="mb-3 rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] px-3 py-2 font-mono text-helper text-[var(--text-secondary)]">
+              {st.stages.map((line, i) => (
+                <div key={i} className="leading-6">
+                  {line.ms != null ? (
+                    <>
+                      <span className="text-[var(--success)]">✓</span> {line.text}...
+                      <span className="ml-1 text-meta text-[var(--text-muted)]">{(line.ms / 1000).toFixed(1)}s</span>
+                    </>
+                  ) : (
+                    <span className="text-[var(--text-primary)]">
+                      <span className="text-[var(--accent-blue)]">›</span> {line.text}<AnimatedDots />
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {st.error && <div className="mb-3 whitespace-pre-wrap break-all text-helper text-[var(--error)]">{st.error}</div>}
 
           {!st.noProvider && !st.generation && !st.busy && st.loaded && !st.error && (
             <div className="pt-8 text-center text-helper text-[var(--text-muted)]">
               {tab === 'summary' && '为这个会话生成一份 markdown 总结：做了什么、关键结论与决策、遗留问题。'}
               {tab === 'title' && '为这个会话生成一个简短中文标题，确认后替换侧边栏的显示名（不改动 agent 原始日志）。'}
-              {tab === 'handoff' && '生成一段自包含的交接提示词，粘贴给新会话即可无缝接手这里的工作。'}
+              {tab === 'handoff' && '生成一段自包含的交接提示词，并附难度评估与建议执行模型。'}
             </div>
           )}
 
-          {st.generation && tab === 'title' && (
+          {!st.busy && st.generation && tab === 'title' && (
             <div className="mx-auto max-w-[480px] pt-6 text-center">
               <div className="text-meta text-[var(--text-muted)]">标题草稿</div>
               <div className="mt-2 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-4 py-3 text-body font-medium text-[var(--text-primary)]">
@@ -203,8 +303,45 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
             </div>
           )}
 
-          {st.generation && tab !== 'title' && (
-            <MarkdownRenderer content={st.generation.content} />
+          {!st.busy && st.generation && tab !== 'title' && (
+            <>
+              {tab === 'handoff' && (() => {
+                const meta = parseHandoffMetadata(st.generation!.metadata)
+                if (!meta) return null
+                return (
+                  <div className="mb-3 rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] px-3 py-2">
+                    {meta.difficulty && (
+                      <div className="flex items-center gap-2 text-helper">
+                        <span className={`rounded px-1.5 py-px text-meta font-medium text-[var(--text-inverse)] ${
+                          meta.difficulty === '困难' ? 'bg-[var(--error)]'
+                            : meta.difficulty === '中等' ? 'bg-[var(--warning)]'
+                            : 'bg-[var(--success)]'
+                        }`}>
+                          难度 · {meta.difficulty}
+                        </span>
+                        {meta.difficulty_reason && <span className="text-[var(--text-secondary)]">{meta.difficulty_reason}</span>}
+                      </div>
+                    )}
+                    {meta.recommended && meta.recommended.length > 0 && (
+                      <div className="mt-1.5 space-y-0.5">
+                        <div className="text-meta text-[var(--text-muted)]">建议执行者（按优先级）</div>
+                        {meta.recommended.map((r, i) => (
+                          <div key={i} className="flex items-baseline gap-2 text-helper">
+                            <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">{i + 1}.</span>
+                            <span className="font-medium text-[var(--text-primary)]">{r.executor}</span>
+                            {r.reason && <span className="text-meta text-[var(--text-secondary)]">{r.reason}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-1.5 text-meta text-[var(--text-muted)]">以上评估不包含在交接提示词里，「复制」只复制正文</div>
+                  </div>
+                )
+              })()}
+              <div className="prose-custom min-w-0 text-helper text-[var(--text-primary)]">
+                <MarkdownRenderer content={st.generation.content} />
+              </div>
+            </>
           )}
         </div>
       </div>
