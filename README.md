@@ -2,20 +2,32 @@
 
 A local web app for browsing and replaying AI coding agent sessions. Session discovery, indexing, search, and replay run on your machine. AI generation is opt-in and may send selected session context to a provider you configure.
 
-## Features
+[中文](README_ZH.md)
 
-- **Terminal replay** — re-watch any session as an ANSI terminal with tool-call folding, syntax-highlighted code blocks, and live tail for active sessions
-- **Full-text search** — search across all sessions with regex support and per-turn highlighting
-- **Diff viewer** — side-by-side or inline file diffs with syntax highlighting and soft-wrap
-- **Bookmarks** — save sessions with notes; filter by agent or model
-- **Analytics** — token usage, cost breakdown, and anomaly detection per session
-- **File viewer** — open any file path mentioned in a session, with syntax highlighting and tree navigation
-- **AI assistance** — generate session summaries, titles, and handoff prompts through a configured OpenAI-compatible API or local ACP agent
-- **Dark / light theme**
+![Session replay with tool calls and semantic minimap](assets/screenshots/replay.png)
+
+<p align="center"><sub>Real development session shown with personal paths and contact details sanitized.</sub></p>
+
+## Highlights
+
+- **Multi-agent session library** — auto-discover and index sessions from five coding agents, with live list refresh and live tail for active sessions
+- **Terminal replay and navigation** — replay ANSI output, fold tool calls, highlight code, use the semantic minimap, and jump between user messages, turns, anomalies, and compaction points
+- **Search and organization** — full-text search across sessions, in-terminal regex/case/whole-word search, project and agent filters, plus bookmarks with notes
+- **Tool, diff, and code inspection** — filter tool calls and jump to their source turn; inspect inline or side-by-side diffs; open referenced files in the structured code reader or your editor
+- **Usage analytics** — inspect prompt, output, and cache tokens, cost estimates, tool usage, errors, anomalies, continuation pressure, and per-turn trends
+- **Session lifecycle tools** — export sessions, copy shell-specific resume commands, and safely delete sessions with running-process protection and supported force-stop flows
+- **Optional AI assistance** — generate summaries, titles, and handoff prompts through a configured OpenAI-compatible API or local ACP agent
+- **Desktop-friendly UI** — resizable panels and dark/light themes for a local developer workflow
+
+## More Screenshots
+
+| Session analytics | Structured code reader |
+|:--:|:--:|
+| ![Token, cache, tool usage, and anomaly analytics](assets/screenshots/analytics.png) | ![File tree, code view, search, and document outline](assets/screenshots/code-reader.png) |
 
 ## Supported Agents
 
-Session Insight auto-discovers sessions from the following agents (more coming):
+Session Insight auto-discovers sessions from the following agents:
 
 | Agent | Session location (auto-detected) |
 |-------|----------------------------------|
