@@ -63,6 +63,26 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Agents without an exact process↔session mapping (opencode, chrys;
+	// copilot as fallback behind its fd probe) can still report "this
+	// session looks live" from their own turn markers. No PIDs means no
+	// force-stop offer — the frontend tells the user to stop it themselves.
+	if checker, ok := rd.(reader.SessionLivenessChecker); ok {
+		running, err := checker.SessionRunning(id)
+		if err != nil {
+			http.Error(w, "check session liveness: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if running {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "session is running", "running": true, "pids": []int{},
+			})
+			return
+		}
+	}
+
 	if err := deleter.DeleteSession(id); err != nil {
 		http.Error(w, "delete session: "+err.Error(), http.StatusInternalServerError)
 		return

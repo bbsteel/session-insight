@@ -64,3 +64,18 @@ func DropEmptyRenderTurns(events []model.RenderEvent) []model.RenderEvent {
 	}
 	return filtered
 }
+
+// HasTrailingInProgress reports whether a render event stream ends on the
+// "推理中…" marker — the shared signal that the session's last turn never
+// closed. Backs reader.SessionLivenessChecker for agents without an exact
+// PID source. Callers whose in_progress emission is not already bounded by
+// model.LiveWindow (chrys emits it from the raw checkpoint marker) must
+// AND this with a source-mtime freshness check, or a killed session would
+// count as running forever.
+func HasTrailingInProgress(events []model.RenderEvent) bool {
+	if len(events) == 0 {
+		return false
+	}
+	last := events[len(events)-1]
+	return last.Type == "AgentSpecific" && last.Subtype == "in_progress"
+}

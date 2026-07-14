@@ -89,7 +89,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
         {(phase === 'running' || phase === 'stopping') && (
           <p className="mt-3 text-body text-[var(--text-secondary)]">
             该会话正在运行
-            {pids.length > 0 && (
+            {pids.length > 0 ? (
               <>
                 （PID{' '}
                 {pids.map((pid, i) => (
@@ -105,9 +105,13 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
                   </span>
                 ))}
                 ）
+                ，无法直接删除。请先在对应终端结束它，或点击"强制停止"结束该进程后再删除。
               </>
+            ) : (
+              // 无精确 PID 的 agent（opencode/chrys）：只能拦截，
+              // 不能替用户杀进程，请求用户自行结束后重试。
+              <>，无法直接删除。该类 agent 无法定位具体进程，请在对应工具中结束该会话后点击"重试删除"。</>
             )}
-            ，无法直接删除。请先在对应终端结束它，或点击"强制停止"结束该进程后再删除。
           </p>
         )}
         {phase === 'stopped' && (
@@ -129,7 +133,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
           >
             取消
           </button>
-          {(phase === 'running' || phase === 'stopping') ? (
+          {(phase === 'running' || phase === 'stopping') && pids.length > 0 ? (
             <button
               onClick={doStop}
               disabled={busy}
@@ -143,7 +147,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
               disabled={busy}
               className="h-7 px-3 rounded-md bg-[var(--error)] text-nav text-white hover:opacity-90 disabled:opacity-50 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)]"
             >
-              {phase === 'deleting' ? '正在删除…' : '永久删除'}
+              {phase === 'deleting' ? '正在删除…' : phase === 'running' ? '重试删除' : '永久删除'}
             </button>
           )}
         </div>
