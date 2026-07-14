@@ -53,8 +53,8 @@
   /* Role backgrounds */
   --user-bg: #eef2ff;
   --assistant-bg: #faf9ff;
-  --code-bg: #1e1e2e;
-  --code-text: #e4e6eb;
+  --code-bg: #e6e8ed;
+  --code-text: #303847;
 
   /* Shadow */
   --shadow-sm: 0 1px 2px rgba(0,0,0,.04);
@@ -93,6 +93,7 @@
 
   --user-bg: #1a1e30;
   --assistant-bg: #1e1b2e;
+  --code-bg: #1e1e2e;
   --code-text: #e4e6eb;
 
   --shadow-sm: 0 1px 2px rgba(0,0,0,.2);
