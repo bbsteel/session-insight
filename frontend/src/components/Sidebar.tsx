@@ -113,6 +113,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
+  // 活跃会话点「复制恢复命令」不直接复制，先弹窗确认——对同一会话开第二个
+  // CLI 实例可能与正在写入的进程双写冲突。
+  const [resumeConfirm, setResumeConfirm] = useState<{ session: SessionSummary; shell: ResumeShell; mode: ResumeCommandMode } | null>(null)
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   )
@@ -950,9 +953,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               const isLive = isSessionLive(contextMenu.session, now)
               const windows = isWindowsSession(session, hostIsWindows())
               const visibleOptions = windows ? options : options.filter(option => option.shell === 'git-bash')
-              const disabled = isLive || visibleOptions.length === 0
-              const tooltip = isLive ? '活跃中会话不可恢复' : !visibleOptions.length ? '此 Agent 暂不支持命令行恢复' : undefined
-              if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={tooltip}>复制会话恢复命令</button>
+              const disabled = visibleOptions.length === 0
+              if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title="此 Agent 暂不支持命令行恢复">复制会话恢复命令</button>
               return visibleOptions.map(option => {
                 const shellLabel = windows ? option.shell === 'powershell' ? 'PowerShell' : 'Git Bash' : ''
                 const reason = option.reason === 'last-used' ? '，上次使用' : windows && option.reason === 'recommended' ? '，推荐' : ''
@@ -961,8 +963,12 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   <button
                     key={`${option.shell}:${option.mode}`}
                     className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
-                    title={option.mode === 'skip-permissions' ? '跳过权限检查并允许执行危险命令' : undefined}
-                    onClick={() => { void copyResumeCmd(session, option.shell, option.mode); setContextMenu(null) }}
+                    title={dangerous ? '跳过权限检查并允许执行危险命令' : undefined}
+                    onClick={() => {
+                      if (isLive) setResumeConfirm({ session, shell: option.shell, mode: option.mode })
+                      else void copyResumeCmd(session, option.shell, option.mode)
+                      setContextMenu(null)
+                    }}
                   >
                     {dangerous ? '复制免确认执行恢复命令' : '复制恢复命令'}
                     {(shellLabel || dangerous) && (
@@ -995,6 +1001,51 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           onClose={() => setDeleteTarget(null)}
           onDeleted={handleSessionDeleted}
         />
+      )}
+
+      {/* 活跃会话复制恢复命令的再确认弹窗 */}
+      {resumeConfirm && createPortal(
+        <>
+          <div
+            className="fixed inset-0 z-[calc(var(--z-toast,50)+1)] bg-[rgba(0,0,0,var(--opacity-overlay,0.4))]"
+            onClick={() => setResumeConfirm(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="复制恢复命令"
+            className="fixed left-1/2 top-1/3 z-[calc(var(--z-toast,50)+2)] w-[420px] -translate-x-1/2 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 shadow-lg"
+          >
+            <h3 className="text-nav font-semibold text-[var(--text-primary)]">复制恢复命令</h3>
+            <div className="mt-2 text-body text-[var(--text-secondary)] break-all">
+              <span className="text-[var(--text-primary)]">{getSessionName(resumeConfirm.session)}</span>
+              <span className="ml-1.5 text-meta text-[var(--text-muted)]">{getAgentLabel(resumeConfirm.session.agent_type)}</span>
+            </div>
+            <p className="mt-3 text-body text-[var(--text-secondary)]">
+              该会话仍在运行（活跃中）。在另一个终端恢复它，可能与正在写入的
+              CLI 实例产生双写冲突。确定要复制恢复命令吗？
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setResumeConfirm(null)}
+                className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  const target = resumeConfirm
+                  setResumeConfirm(null)
+                  void copyResumeCmd(target.session, target.shell, target.mode)
+                }}
+                className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white hover:opacity-90 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              >
+                仍要复制
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body
       )}
 
       {/* Toast */}
