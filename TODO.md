@@ -18,9 +18,9 @@
 
 ### 待决策 / 附注
 
-- TurnCard / MarkdownRenderer 已无引用（卡片视图移除后的死代码），是否删除待定
+- [x] TurnCard 死代码已删（连带只被它引用的 Badge）；MarkdownRenderer 已被 AIPanel 复用，保留
 - 行上下文类右键菜单项（edit 行→Diff、截断行→展开）已否决：与左键直达重复
-- test:minimap 存量失败（e2e2b2 改 48px 后期望值未更新 16.25 vs 22.5）待单独修
+- [x] test:minimap 期望值已随后续提交修正；test:folds 折叠头「(N 行)」徽标期望值补齐，全量 npm test 通过
 
 ## MiniMap
 
