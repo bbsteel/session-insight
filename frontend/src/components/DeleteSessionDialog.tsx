@@ -18,6 +18,17 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
   const [phase, setPhase] = useState<Phase>('confirm')
   const [pids, setPids] = useState<number[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [copiedPid, setCopiedPid] = useState<number | null>(null)
+
+  const copyPid = async (pid: number) => {
+    try {
+      await navigator.clipboard.writeText(String(pid))
+      setCopiedPid(pid)
+      setTimeout(() => setCopiedPid(current => (current === pid ? null : current)), 1500)
+    } catch {
+      // Clipboard is optional; the pid is still visible to copy manually.
+    }
+  }
 
   const busy = phase === 'deleting' || phase === 'stopping'
   const sessionName = session.name || session.repository || session.id.slice(0, 8)
@@ -77,8 +88,27 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
         )}
         {(phase === 'running' || phase === 'stopping') && (
           <p className="mt-3 text-body text-[var(--text-secondary)]">
-            该会话正在运行{pids.length > 0 && <>（PID {pids.join(', ')}）</>}，无法直接删除。
-            请先在对应终端结束它，或点击"强制停止"结束该进程后再删除。
+            该会话正在运行
+            {pids.length > 0 && (
+              <>
+                （PID{' '}
+                {pids.map((pid, i) => (
+                  <span key={pid}>
+                    {i > 0 && '、'}
+                    <button
+                      onClick={() => copyPid(pid)}
+                      title="点击复制 PID"
+                      className="font-mono font-semibold text-[var(--error)] hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)] rounded-sm"
+                    >
+                      {pid}
+                    </button>
+                    {copiedPid === pid && <span className="ml-1 text-meta text-[var(--success)]">已复制</span>}
+                  </span>
+                ))}
+                ）
+              </>
+            )}
+            ，无法直接删除。请先在对应终端结束它，或点击"强制停止"结束该进程后再删除。
           </p>
         )}
         {phase === 'stopped' && (
