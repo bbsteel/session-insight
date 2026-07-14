@@ -102,7 +102,6 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
                     >
                       {pid}
                     </button>
-                    {copiedPid === pid && <span className="ml-1 text-meta text-[var(--success)]">已复制</span>}
                   </span>
                 ))}
                 ）
@@ -118,7 +117,11 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
         )}
         {error && <p className="mt-2 text-meta text-[var(--error)] break-all">{error}</p>}
 
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex items-center justify-end gap-2">
+          {/* 复制反馈固定在底部按钮行左侧，不插入正文，避免文字被推挤 */}
+          {copiedPid !== null && (
+            <span className="mr-auto text-meta text-[var(--success)]">已复制 PID {copiedPid}</span>
+          )}
           <button
             onClick={onClose}
             disabled={busy}
