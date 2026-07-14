@@ -390,7 +390,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     }
     const openInNewTab = () => {
       if (!fileTarget) return
-      window.open(`#/file?${new URLSearchParams({ path: fileTarget.path, cwd: sessionCwd })}`, '_blank')
+      const params = new URLSearchParams({ path: fileTarget.path, cwd: sessionCwd })
+      if (fileTarget.line) params.set('line', String(fileTarget.line))
+      window.open(`#/file?${params}`, '_blank')
       setCtxMenu(null)
     }
     const fileItems = () => [

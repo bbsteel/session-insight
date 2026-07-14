@@ -6,13 +6,14 @@ import type { BookmarkChange } from './bookmarkState'
 
 // Hash route for the new-tab file viewer (#/file?path=…&cwd=…): the Go embed
 // file server only knows "/", so client-side hash routing keeps it zero-config.
-function parseFileRoute(): { path: string; cwd: string } | null {
+function parseFileRoute(): { path: string; cwd: string; line?: number } | null {
   const hash = window.location.hash
   if (!hash.startsWith('#/file?')) return null
   const params = new URLSearchParams(hash.slice('#/file?'.length))
   const path = params.get('path')
   if (!path) return null
-  return { path, cwd: params.get('cwd') ?? '' }
+  const rawLine = Number(params.get('line'))
+  return { path, cwd: params.get('cwd') ?? '', line: Number.isInteger(rawLine) && rawLine > 0 ? rawLine : undefined }
 }
 
 export default function App() {
@@ -33,7 +34,7 @@ export default function App() {
   }
 
   if (fileRoute) {
-    return <FileViewer path={fileRoute.path} cwd={fileRoute.cwd} />
+    return <FileViewer path={fileRoute.path} cwd={fileRoute.cwd} line={fileRoute.line} />
   }
 
   return (

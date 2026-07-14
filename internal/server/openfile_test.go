@@ -107,10 +107,31 @@ func TestFsEndpoints(t *testing.T) {
 	var body struct {
 		Content   string `json:"content"`
 		Truncated bool   `json:"truncated"`
+		Size      int64  `json:"size"`
 	}
 	json.NewDecoder(w.Body).Decode(&body)
-	if body.Content != "package a\n" || body.Truncated {
+	if body.Content != "package a\n" || body.Truncated || body.Size != int64(len("package a\n")) {
 		t.Fatalf("fs/read body: %+v", body)
+	}
+
+	largePath := filepath.Join(dir, "large.go")
+	largeContent := strings.Repeat("x", fsReadLimit+10)
+	if err := os.WriteFile(largePath, []byte(largeContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/read?path="+largePath, nil))
+	if w.Code != 200 {
+		t.Fatalf("fs/read large: %d", w.Code)
+	}
+	body = struct {
+		Content   string `json:"content"`
+		Truncated bool   `json:"truncated"`
+		Size      int64  `json:"size"`
+	}{}
+	json.NewDecoder(w.Body).Decode(&body)
+	if len(body.Content) != fsReadLimit || !body.Truncated || body.Size != int64(fsReadLimit+10) {
+		t.Fatalf("fs/read large body: content=%d truncated=%v size=%d", len(body.Content), body.Truncated, body.Size)
 	}
 
 	w = httptest.NewRecorder()
