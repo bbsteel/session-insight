@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/db"
@@ -374,7 +375,13 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
+	var streamMu sync.Mutex
 	sendEvent := func(event string, v any) {
+		// ACP output notifications arrive from its stdout reader goroutine.
+		// Serialize SSE writes so a status sent for the first output cannot
+		// interleave with the handler's final done/error event.
+		streamMu.Lock()
+		defer streamMu.Unlock()
 		payload, _ := json.Marshal(v)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
 		flusher.Flush()

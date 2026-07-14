@@ -98,7 +98,7 @@ func (c *openAIClient) Generate(ctx context.Context, prompt string, onStatus Sta
 		return "", fmt.Errorf("no model selected for this provider")
 	}
 	if onStatus != nil {
-		onStatus("请求模型")
+		onStatus("准备模型请求")
 	}
 	body := map[string]any{
 		"model": c.cfg.ModelID,
@@ -107,9 +107,16 @@ func (c *openAIClient) Generate(ctx context.Context, prompt string, onStatus Sta
 		},
 		"stream": false,
 	}
+	if onStatus != nil {
+		onStatus("等待模型响应")
+	}
 	data, err := c.do(ctx, http.MethodPost, "/chat/completions", body)
 	if err != nil {
 		return "", err
+	}
+	if onStatus != nil {
+		onStatus("接收模型响应")
+		onStatus("整理模型结果")
 	}
 	var parsed struct {
 		Choices []struct {

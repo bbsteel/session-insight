@@ -428,6 +428,9 @@ func (c *acpClient) open(ctx context.Context, onStatus StatusFunc) (*acpConn, *a
 	if err != nil {
 		return nil, nil, err
 	}
+	if onStatus != nil {
+		onStatus("初始化适配器")
+	}
 
 	initParams := map[string]any{
 		"protocolVersion": 1,
@@ -441,7 +444,7 @@ func (c *acpClient) open(ctx context.Context, onStatus StatusFunc) (*acpConn, *a
 	}
 
 	if onStatus != nil {
-		onStatus("创建会话")
+		onStatus("创建模型会话")
 	}
 	var sess acpSession
 	newParams := map[string]any{"cwd": conn.tmpDir, "mcpServers": []any{}}
@@ -477,20 +480,33 @@ func (c *acpClient) Generate(ctx context.Context, prompt string, onStatus Status
 	defer conn.close()
 
 	if mode := sess.safestModeID(); mode != "" && sess.Modes != nil && sess.Modes.CurrentModeID != mode {
+		if onStatus != nil {
+			onStatus("设置安全执行模式")
+		}
 		conn.call(ctx, "session/set_mode",
 			map[string]any{"sessionId": sess.SessionID, "modeId": mode}, nil)
 	}
 
+	if onStatus != nil {
+		onStatus("选择模型")
+	}
 	if err := c.applyModel(ctx, conn, sess); err != nil {
 		return "", err
 	}
 
 	if onStatus != nil {
-		onStatus("请求模型")
+		onStatus("提交生成请求")
 	}
 	var text strings.Builder
+	var receivedOutput bool
 	conn.chunkMu.Lock()
 	conn.onChunk = func(chunk string) {
+		if !receivedOutput && chunk != "" {
+			receivedOutput = true
+			if onStatus != nil {
+				onStatus("接收模型输出")
+			}
+		}
 		text.WriteString(chunk)
 	}
 	conn.chunkMu.Unlock()
@@ -504,6 +520,9 @@ func (c *acpClient) Generate(ctx context.Context, prompt string, onStatus Status
 	}
 	if err := conn.call(ctx, "session/prompt", promptParams, &result); err != nil {
 		return "", err
+	}
+	if onStatus != nil {
+		onStatus("整理模型结果")
 	}
 
 	output := strings.TrimSpace(text.String())
