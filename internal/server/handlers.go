@@ -601,19 +601,22 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		Type         string `json:"type"`
 		DisplayName  string `json:"display_name"`
 		SessionCount int    `json:"session_count"`
+		CanDelete    bool   `json:"can_delete"`
 	}
 
 	var agents []AgentInfo
-	for _, reader := range s.Readers {
-		sessions, _ := reader.ListSessions()
+	for _, rd := range s.Readers {
+		sessions, _ := rd.ListSessions()
 		count := 0
 		if sessions != nil {
 			count = len(sessions)
 		}
+		_, canDelete := rd.(reader.SessionDeleter)
 		agents = append(agents, AgentInfo{
-			Type:         reader.AgentType(),
-			DisplayName:  reader.DisplayName(),
+			Type:         rd.AgentType(),
+			DisplayName:  rd.DisplayName(),
 			SessionCount: count,
+			CanDelete:    canDelete,
 		})
 	}
 

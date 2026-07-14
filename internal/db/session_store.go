@@ -97,6 +97,35 @@ func (db *DB) ListSessionSummaries(agentType string) ([]model.Session, error) {
 	return sessions, rows.Err()
 }
 
+// DeleteSessionData removes every trace of a session from the index DB in one
+// transaction: search index, watermark, session row, position caches,
+// bookmark, AI generations and title override. Called after the reader has
+// deleted the session's source files, so a stale row can't resurrect it.
+func (db *DB) DeleteSessionData(agentType, sessionID string) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("delete session data: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`DELETE FROM turn_texts WHERE agent_type = ? AND session_id = ?`,
+		`DELETE FROM index_watermarks WHERE agent_type = ? AND session_id = ?`,
+		`DELETE FROM sessions WHERE agent_type = ? AND id = ?`,
+		`DELETE FROM session_positions WHERE agent_type = ? AND session_id = ?`,
+		`DELETE FROM session_position_caches WHERE agent_type = ? AND session_id = ?`,
+		`DELETE FROM bookmarked_sessions WHERE agent_type = ? AND session_id = ?`,
+		`DELETE FROM ai_generations WHERE agent_type = ? AND session_id = ?`,
+		`DELETE FROM session_title_overrides WHERE agent_type = ? AND session_id = ?`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt, agentType, sessionID); err != nil {
+			return fmt.Errorf("delete session data: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 func (db *DB) GetSessionMetas(keys []struct{ AgentType, SessionID string }) (map[string]SessionMeta, error) {
 	if len(keys) == 0 {
 		return map[string]SessionMeta{}, nil

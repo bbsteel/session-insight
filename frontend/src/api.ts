@@ -46,6 +46,31 @@ export async function removeBookmark(session: Pick<SessionSummary, 'id' | 'agent
   if (!res.ok) throw new Error(`Failed to remove bookmark: ${res.status}`)
 }
 
+/** Thrown by deleteSession when the session's agent process is still running. */
+export class SessionRunningError extends Error {
+  pids: number[]
+  constructor(pids: number[]) {
+    super('session is running')
+    this.pids = pids
+  }
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({ pids: [] }))
+    throw new SessionRunningError(Array.isArray(body.pids) ? body.pids : [])
+  }
+  if (!res.ok) throw new Error(await res.text().catch(() => `Failed to delete session: ${res.status}`))
+}
+
+export async function stopSession(id: string): Promise<number> {
+  const res = await fetch(`/api/sessions/${id}/stop`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text().catch(() => `Failed to stop session: ${res.status}`))
+  const body = await res.json()
+  return typeof body.stopped === 'number' ? body.stopped : 0
+}
+
 export async function fetchAgents(): Promise<AgentInfo[]> {
   const res = await fetch('/api/agents')
   if (!res.ok) throw new Error(`Failed to fetch agents: ${res.status}`)

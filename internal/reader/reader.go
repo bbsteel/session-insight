@@ -32,6 +32,23 @@ type WatchRootProvider interface {
 	WatchRoots() []string
 }
 
+// SessionDeleter is an optional reader capability: permanently remove a
+// session's data from the agent's own storage (the session file plus any
+// agent-side records like global history entries). It does not touch this
+// app's index — the server clears that separately — and it does not check
+// whether the session is running: liveness gating is the server's job via
+// SessionProcessFinder. Agents without it simply can't be deleted from the UI.
+type SessionDeleter interface {
+	DeleteSession(id string) error
+}
+
+// SessionProcessFinder is an optional reader capability: the PIDs of running
+// agent processes that own a session (e.g. hold its log file open). Used to
+// refuse deleting a live session and to offer force-stop with an exact PID.
+type SessionProcessFinder interface {
+	SessionProcesses(id string) ([]int, error)
+}
+
 // LiveRevisionProvider is an optional reader capability: a cheap, stat-level
 // (no parsing) revision of a session's on-disk source. Live-tail polling
 // hits this every few seconds, so implementations must not read file

@@ -3,6 +3,8 @@ export interface AgentInfo {
   display_name: string
   session_count: number
   live_count?: number
+  /** Whether the backend reader supports permanently deleting sessions of this agent. */
+  can_delete?: boolean
 }
 
 export interface SessionSummary {

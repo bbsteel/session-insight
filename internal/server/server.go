@@ -57,6 +57,8 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	s.Mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	s.Mux.HandleFunc("POST /api/sessions/{id}/stop", s.handleStopSession)
 	s.Mux.HandleFunc("PUT /api/sessions/{id}/bookmark", s.handleAddBookmark)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}/bookmark", s.handleRemoveBookmark)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/analytics", s.handleSessionAnalytics)

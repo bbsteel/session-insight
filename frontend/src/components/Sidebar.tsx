@@ -6,6 +6,7 @@ import { applyBookmarkChange, filterBookmarks, removeBookmarkFromList, type Book
 import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import AgentIcon from './AgentIcon'
+import DeleteSessionDialog from './DeleteSessionDialog'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel } from '../sidebarRows'
 import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
@@ -53,9 +54,10 @@ interface SidebarProps {
   onClose?: () => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
+  onSessionDeleted?: (session: SessionSummary) => void
 }
 
-export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange }: SidebarProps) {
+export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
   const [now, setNow] = useState(Date.now())
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [bookmarks, setBookmarks] = useState<SessionSummary[]>([])
@@ -109,6 +111,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   )
@@ -467,6 +470,22 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     () => filterBookmarks(bookmarks, { agentType: bookmarkAgentFilter, project: bookmarkProjectFilter, modelName: bookmarkModelFilter }),
     [bookmarks, bookmarkAgentFilter, bookmarkProjectFilter, bookmarkModelFilter],
   )
+
+  // 只有后端 reader 声明了删除能力（can_delete）的 agent 才显示删除入口。
+  const deletableAgents = useMemo(
+    () => new Set((agents ?? []).filter(a => a.can_delete).map(a => a.type)),
+    [agents],
+  )
+
+  const handleSessionDeleted = useCallback((session: SessionSummary) => {
+    setDeleteTarget(null)
+    const drop = (list: SessionSummary[]) =>
+      list.filter(s => !(s.id === session.id && s.agent_type === session.agent_type))
+    setSessions(drop)
+    setBookmarks(drop)
+    onSessionDeleted?.(session)
+    showToast('会话已删除')
+  }, [onSessionDeleted, showToast])
 
   const liveCount = useMemo(() => sessions.filter(s => s.is_live).length, [sessions])
 
@@ -928,9 +947,29 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 )
               })
             })()}
+            {deletableAgents.has(contextMenu.session.agent_type) && (
+              <>
+                <div className="my-1 border-t border-[var(--border-default)]" />
+                <button
+                  className="w-full text-left px-3 py-1.5 text-[var(--error)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+                  onClick={() => { setDeleteTarget(contextMenu.session); setContextMenu(null) }}
+                >
+                  删除会话…
+                </button>
+              </>
+            )}
           </div>
         </>,
         document.body
+      )}
+
+      {/* Delete confirmation dialog */}
+      {deleteTarget && (
+        <DeleteSessionDialog
+          session={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={handleSessionDeleted}
+        />
       )}
 
       {/* Toast */}

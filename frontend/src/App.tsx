@@ -62,6 +62,12 @@ export default function App() {
           onClose={() => setSidebarOpen(false)}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
+          onSessionDeleted={(session) => {
+            if (session.id === selectedId) {
+              setSelectedId(null)
+              setSelectedAgentType(null)
+            }
+          }}
         />
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
