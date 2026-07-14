@@ -563,7 +563,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string) => 
               >
                 管理 AI 模型源…
               </button>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">用于会话总结、AI 标题与交接提示词</div>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">用于会话总结、会话标题与会话交接</div>
             </div>
           )}
         </div>

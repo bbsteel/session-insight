@@ -16,10 +16,10 @@ interface Props {
   onTitleApplied: (title: string | null) => void
 }
 
-const TABS: { kind: AIKind; label: string }[] = [
-  { kind: 'summary', label: '会话总结' },
-  { kind: 'title', label: 'AI 标题' },
-  { kind: 'handoff', label: '任务交接' },
+const TABS: { kind: AIKind; label: string; scenario: string }[] = [
+  { kind: 'summary', label: '会话总结', scenario: '适用场景：回顾复盘这个会话做了什么，或整理成日报 / 分享给他人。' },
+  { kind: 'title', label: '会话标题', scenario: '适用场景：侧边栏会话名不直观时，生成简短标题方便日后查找。' },
+  { kind: 'handoff', label: '会话交接', scenario: '适用场景：把任务交给新会话或另一个模型继续做，正文可直接粘贴。' },
 ]
 
 // One line of the generation progress log: ms is null while the step is
@@ -177,8 +177,21 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
         className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(760px,92vw)] h-[min(600px,84vh)] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-default)]">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="px-4 py-2.5 border-b border-[var(--border-default)]">
+          <div className="relative flex items-center justify-center">
+            <div className="max-w-[calc(100%-180px)] truncate text-center text-body font-bold text-[var(--text-primary)]" title={sessionName}>{sessionName}</div>
+            <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center gap-1">
+              <button
+                onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))}
+                className="h-7 rounded-md px-2 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+                title="配置模型源"
+              >
+                ⚙ 模型源
+              </button>
+              <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none px-1">✕</button>
+            </div>
+          </div>
+          <div className="mt-1.5 flex items-center gap-3">
             <span className="text-sm font-medium text-[var(--text-primary)]">✨ AI</span>
             <div className="flex items-center gap-1">
               {TABS.map(t => (
@@ -195,50 +208,44 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                 </button>
               ))}
             </div>
-            <span className="truncate text-meta text-[var(--text-muted)]">{sessionName}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))}
-              className="h-7 rounded-md px-2 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
-              title="配置模型源"
-            >
-              ⚙ 模型源
-            </button>
-            <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none px-1">✕</button>
           </div>
         </div>
 
-        <div className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-4 py-2">
-          <button className={btnCls} disabled={st.busy} onClick={() => void generate(tab)}>
-            {st.busy ? '生成中…' : st.generation ? '重新生成' : (tab === 'summary' ? '生成总结' : tab === 'title' ? '生成标题' : '生成交接提示词')}
-          </button>
-          {providers.length > 0 && (
-            <select
-              value={providerId}
-              onChange={e => setProviderId(Number(e.target.value))}
-              disabled={st.busy}
-              className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
-              title="用哪个模型源生成"
-            >
-              <option value={0}>默认模型源</option>
-              {providers.map(p => (
-                <option key={p.id} value={p.id}>{p.name}{p.is_default ? '（默认）' : ''}</option>
-              ))}
-            </select>
-          )}
-          {!st.busy && st.generation && (
-            <>
-              {tab !== 'title' && (
-                <button className={btnCls} onClick={() => copy(st.generation!.content)}>
-                  {copied ? '已复制 ✓' : '复制'}
-                </button>
-              )}
-              <span className="ml-auto text-meta text-[var(--text-muted)]">
-                {st.generation.model_id} · {st.generation.created_at}
-              </span>
-            </>
-          )}
+        <div className="flex-shrink-0 border-b border-[var(--border-muted)] px-4 py-2">
+          <div className="text-meta text-[var(--text-muted)]">
+            {TABS.find(t => t.kind === tab)!.scenario}
+          </div>
+          <div className="mt-1.5 flex items-center gap-2">
+            {providers.length > 0 && (
+              <select
+                value={providerId}
+                onChange={e => setProviderId(Number(e.target.value))}
+                disabled={st.busy}
+                className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
+                title="用哪个模型源生成"
+              >
+                <option value={0}>默认模型源</option>
+                {providers.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}{p.is_default ? '（默认）' : ''}</option>
+                ))}
+              </select>
+            )}
+            <button className={btnCls} disabled={st.busy} onClick={() => void generate(tab)}>
+              {st.busy ? '生成中…' : st.generation ? '重新生成' : (tab === 'summary' ? '生成总结' : tab === 'title' ? '生成标题' : '生成交接提示词')}
+            </button>
+            {!st.busy && st.generation && (
+              <>
+                {tab !== 'title' && (
+                  <button className={btnCls} onClick={() => copy(st.generation!.content)}>
+                    {copied ? '已复制 ✓' : '复制'}
+                  </button>
+                )}
+                <span className="ml-auto text-meta text-[var(--text-muted)]">
+                  <span className="font-semibold text-[var(--text-secondary)]">{st.generation.model_id}</span> generated at {st.generation.created_at}
+                </span>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto p-4">
@@ -310,27 +317,28 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                 if (!meta) return null
                 return (
                   <div className="mb-3 rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] px-3 py-2">
+                    <div className="text-helper font-semibold text-[var(--text-primary)]">会话评估</div>
                     {meta.difficulty && (
-                      <div className="flex items-center gap-2 text-helper">
-                        <span className={`rounded px-1.5 py-px text-meta font-medium text-[var(--text-inverse)] ${
-                          meta.difficulty === '困难' ? 'bg-[var(--error)]'
-                            : meta.difficulty === '中等' ? 'bg-[var(--warning)]'
-                            : 'bg-[var(--success)]'
+                      <div className="mt-1 flex items-baseline gap-1.5 text-helper text-[var(--text-secondary)]">
+                        <span>难度：</span>
+                        <span className={`font-medium ${
+                          meta.difficulty === '困难' ? 'text-[var(--error)]'
+                            : meta.difficulty === '中等' ? 'text-[var(--warning)]'
+                            : 'text-[var(--success)]'
                         }`}>
-                          难度 · {meta.difficulty}
+                          {meta.difficulty}
                         </span>
-                        {meta.difficulty_reason && <span className="text-[var(--text-secondary)]">{meta.difficulty_reason}</span>}
+                        {meta.difficulty_reason && <span className="text-meta text-[var(--text-muted)]">{meta.difficulty_reason}</span>}
                       </div>
                     )}
                     {meta.recommended && meta.recommended.length > 0 && (
-                      <div className="mt-1.5 space-y-0.5">
-                        <div className="text-meta text-[var(--text-muted)]">建议执行者（按优先级）</div>
+                      <div className="mt-1 text-helper text-[var(--text-secondary)]">
+                        推荐接手 agent：
                         {meta.recommended.map((r, i) => (
-                          <div key={i} className="flex items-baseline gap-2 text-helper">
-                            <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">{i + 1}.</span>
-                            <span className="font-medium text-[var(--text-primary)]">{r.executor}</span>
-                            {r.reason && <span className="text-meta text-[var(--text-secondary)]">{r.reason}</span>}
-                          </div>
+                          <span key={i}>
+                            {i > 0 && '，'}
+                            <span className="font-medium text-[var(--text-primary)]" title={r.reason || undefined}>{r.executor}</span>
+                          </span>
                         ))}
                       </div>
                     )}
