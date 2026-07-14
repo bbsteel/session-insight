@@ -171,6 +171,19 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
 
   useEffect(() => { load(path, line) }, [path, line, load])
 
+  // Match the terminal's find shortcut even when focus is on the file tree,
+  // header, or another control instead of CodeMirror's editor surface.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        readerRef.current?.search()
+      }
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [])
+
   // Scroll the highlighted file into view once the tree has expanded to it.
   useEffect(() => {
     const timer = setTimeout(() => targetRef.current?.scrollIntoView({ block: 'center' }), 600)

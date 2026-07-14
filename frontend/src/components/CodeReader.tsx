@@ -18,7 +18,17 @@ import {
   syntaxHighlighting,
   syntaxTree,
 } from '@codemirror/language'
-import { openSearchPanel, searchKeymap } from '@codemirror/search'
+import {
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  openSearchPanel,
+  SearchQuery,
+  search,
+  searchKeymap,
+  setSearchQuery,
+} from '@codemirror/search'
+import type { Panel, ViewUpdate } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { outlineFromTree, type OutlineItem, type OutlineLanguage } from '../codeOutline'
 import { useIsDark } from '../terminalTheme'
@@ -74,17 +84,212 @@ const readerTheme = EditorView.theme({
   },
   '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(37, 99, 235, 0.08)' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(37, 99, 235, 0.22) !important' },
-  '.cm-search': {
+  '.cm-panels.cm-panels-top': {
+    position: 'absolute',
+    inset: '0',
+    height: '0',
+    overflow: 'visible',
+    pointerEvents: 'none',
+  },
+  '.cm-panel.cm-search': {
+    position: 'absolute',
+    top: '8px',
+    right: '12px',
+    zIndex: '10',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    boxSizing: 'border-box',
+    padding: '4px 8px',
     backgroundColor: 'var(--bg-surface)',
     color: 'var(--text-primary)',
-    borderTop: '1px solid var(--border-default)',
+    border: '1px solid var(--border-default)',
+    borderRadius: '6px',
+    boxShadow: '0 4px 10px rgba(0, 0, 0, 0.24)',
+    pointerEvents: 'auto',
   },
   '.cm-search input': {
+    boxSizing: 'border-box',
+    width: '176px',
+    height: '24px',
+    padding: '0',
     backgroundColor: 'var(--bg-inset)',
     color: 'var(--text-primary)',
-    border: '1px solid var(--border-default)',
+    border: 'none',
+    font: 'inherit',
+    outline: 'none',
+  },
+  '.cm-search button': {
+    boxSizing: 'border-box',
+    minWidth: '24px',
+    height: '24px',
+    padding: '0 4px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    color: 'var(--text-secondary)',
+    font: 'inherit',
+    cursor: 'pointer',
+  },
+  '.cm-search button:hover': {
+    backgroundColor: 'var(--bg-surface-hover)',
+    color: 'var(--text-primary)',
+  },
+  '.cm-search button[data-active=true]': {
+    backgroundColor: 'var(--accent-blue)',
+    color: 'white',
+    boxShadow: 'inset 0 2px 3px rgba(0, 0, 0, 0.35)',
+  },
+  '.cm-search .cm-search-count': {
+    minWidth: '52px',
+    color: 'var(--text-muted)',
+    fontSize: '11px',
+    textAlign: 'right',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  '.cm-search .cm-search-count[data-invalid=true]': {
+    color: 'var(--error)',
+  },
+  '&.cm-search-hide-highlights .cm-searchMatch:not(.cm-searchMatch-selected)': {
+    backgroundColor: 'transparent !important',
   },
 })
+
+/** A CodeMirror search panel styled and operated like the terminal search bar. */
+class ReaderSearchPanel implements Panel {
+  dom: HTMLElement
+  private query: SearchQuery
+  private readonly input: HTMLInputElement
+  private readonly caseButton: HTMLButtonElement
+  private readonly wordButton: HTMLButtonElement
+  private readonly regexButton: HTMLButtonElement
+  private readonly highlightButton: HTMLButtonElement
+  private readonly count: HTMLSpanElement
+  private highlightAll = true
+
+  constructor(private readonly view: EditorView) {
+    this.query = new SearchQuery({ search: '' })
+    this.input = document.createElement('input')
+    this.input.placeholder = '在代码中查找'
+    this.input.setAttribute('aria-label', '在代码中查找')
+    this.input.setAttribute('main-field', 'true')
+    this.input.addEventListener('input', () => this.commit())
+
+    this.caseButton = this.optionButton('Aa', '区分大小写', () => ({ caseSensitive: !this.query.caseSensitive }))
+    this.wordButton = this.optionButton('wd', '全词匹配', () => ({ wholeWord: !this.query.wholeWord }))
+    this.wordButton.style.textDecoration = 'underline'
+    this.wordButton.style.textUnderlineOffset = '2px'
+    this.regexButton = this.optionButton('.*', '正则表达式', () => ({ regexp: !this.query.regexp }))
+    this.highlightButton = this.button('全亮', '高亮全部命中', () => {
+      this.highlightAll = !this.highlightAll
+      this.highlightButton.dataset.active = String(this.highlightAll)
+      this.view.dom.classList.toggle('cm-search-hide-highlights', !this.highlightAll)
+    })
+    this.highlightButton.dataset.active = 'true'
+    this.count = document.createElement('span')
+    this.count.className = 'cm-search-count'
+
+    const previous = this.button('↑', '上一个 (Shift+Enter)', () => findPrevious(this.view))
+    const next = this.button('↓', '下一个 (Enter)', () => findNext(this.view))
+    const close = this.button('✕', '关闭 (Esc)', () => closeSearchPanel(this.view))
+    this.dom = document.createElement('div')
+    this.dom.className = 'cm-search'
+    this.dom.append(this.input, this.caseButton, this.wordButton, this.regexButton, this.highlightButton, this.count, previous, next, close)
+    this.dom.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        ;(event.shiftKey ? findPrevious : findNext)(this.view)
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        closeSearchPanel(this.view)
+        this.view.focus()
+      }
+    })
+    this.sync(this.query)
+  }
+
+  private button(label: string, title: string, action: () => void): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = label
+    button.title = title
+    button.addEventListener('click', action)
+    return button
+  }
+
+  private optionButton(label: string, title: string, change: () => Partial<ConstructorParameters<typeof SearchQuery>[0]>): HTMLButtonElement {
+    return this.button(label, title, () => {
+      const next = new SearchQuery({
+        search: this.query.search,
+        caseSensitive: this.query.caseSensitive,
+        wholeWord: this.query.wholeWord,
+        regexp: this.query.regexp,
+        ...change(),
+      })
+      this.view.dispatch({ effects: setSearchQuery.of(next) })
+      if (next.valid) findNext(this.view)
+    })
+  }
+
+  private commit() {
+    const next = new SearchQuery({
+      search: this.input.value,
+      caseSensitive: this.query.caseSensitive,
+      wholeWord: this.query.wholeWord,
+      regexp: this.query.regexp,
+    })
+    if (!next.eq(this.query)) {
+      this.view.dispatch({ effects: setSearchQuery.of(next) })
+      if (next.valid) findNext(this.view)
+    }
+  }
+
+  private sync(query: SearchQuery) {
+    this.query = query
+    this.input.value = query.search
+    this.caseButton.dataset.active = String(query.caseSensitive)
+    this.wordButton.dataset.active = String(query.wholeWord)
+    this.regexButton.dataset.active = String(query.regexp)
+    this.updateCount()
+  }
+
+  private updateCount() {
+    if (!this.query.search) {
+      this.count.textContent = ''
+      this.count.dataset.invalid = 'false'
+      return
+    }
+    if (!this.query.valid) {
+      this.count.textContent = '无效正则'
+      this.count.dataset.invalid = 'true'
+      return
+    }
+    let index = -1
+    let total = 0
+    const selection = this.view.state.selection.main
+    const cursor = this.query.getCursor(this.view.state)
+    for (let next = cursor.next(); !next.done; next = cursor.next()) {
+      const match = next.value
+      if (match.from === selection.from && match.to === selection.to) index = total
+      total++
+    }
+    this.count.dataset.invalid = 'false'
+    this.count.textContent = total ? `${index >= 0 ? index + 1 : 0}/${total}` : '无结果'
+  }
+
+  update(update: ViewUpdate) {
+    for (const transaction of update.transactions) {
+      for (const effect of transaction.effects) {
+        if (effect.is(setSearchQuery) && !effect.value.eq(this.query)) this.sync(effect.value)
+      }
+    }
+    if (update.selectionSet || update.docChanged) this.updateCount()
+  }
+
+  mount() { this.input.select() }
+  destroy() { this.view.dom.classList.remove('cm-search-hide-highlights') }
+  get top() { return true }
+}
 
 interface Props {
   path: string
@@ -121,7 +326,11 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
     },
     search() {
       const view = viewRef.current
-      if (view) openSearchPanel(view)
+      if (view) {
+        // searchKeymap's Mod+F command opens this same custom panel.
+        // Calling it here keeps the header button and keyboard shortcut aligned.
+        openSearchPanel(view)
+      }
     },
   }), [])
 
@@ -142,6 +351,7 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
         highlightActiveLineGutter(),
         bracketMatching(),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        search({ top: true, createPanel: view => new ReaderSearchPanel(view) }),
         keymap.of([...searchKeymap, ...foldKeymap]),
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
