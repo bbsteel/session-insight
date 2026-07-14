@@ -393,9 +393,13 @@ func TestFencedCodeBlockHighlight(t *testing.T) {
 			emptyIdx = lines[i] // keep the compiler happy about usage
 		}
 	}
-	// Theme slots are 0-15; chroma emits 256-cube indexes (≥16).
-	if !regexp.MustCompile(`\x1b\[38;5;(1[6-9]|[2-9][0-9]|1[0-9][0-9]|2[0-5][0-9])m`).MatchString(pkgLine) {
-		t.Errorf("go code line should carry a 256-cube color, got %q", pkgLine)
+	// Syntax colours stay in theme-remapped slots 0-15 so they remain legible
+	// when xterm switches between the dark and light palettes.
+	if !regexp.MustCompile(`\x1b\[38;5;([0-9]|1[0-5])m`).MatchString(pkgLine) {
+		t.Errorf("go code line should carry a theme-remapped color, got %q", pkgLine)
+	}
+	if regexp.MustCompile(`\x1b\[38;5;(1[6-9]|[2-9][0-9]|1[0-9][0-9]|2[0-5][0-9])m`).MatchString(pkgLine) {
+		t.Errorf("go code line must not carry a fixed 256-cube color, got %q", pkgLine)
 	}
 	if !strings.HasSuffix(strings.TrimRight(pkgLine, "\r"), "\x1b[0m") {
 		t.Errorf("highlighted line must end with a reset, got %q", pkgLine)
@@ -426,5 +430,31 @@ func TestFencedCodeBlockHighlight(t *testing.T) {
 	highlightedCount := len(strings.Split(FormatEvents(events, 120), "\n"))
 	if plain != highlightedCount {
 		t.Errorf("line count drift: plain %d vs highlighted %d", plain, highlightedCount)
+	}
+}
+
+func TestFencedPythonCodeUsesThemeForegroundForNames(t *testing.T) {
+	text := "```python\nNON_OFFICIAL_SET_PREFIX = \"DATABASE-\"\n\ndef public_set_clause():\n    return ~Set.set_num.ilike(f\"{NON_OFFICIAL_SET_PREFIX}%\")\n```"
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), AgentType: "codex"},
+		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), AgentType: "codex", Text: text},
+	}
+	out := FormatEvents(events, 120)
+
+	constantLine := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "NON_OFFICIAL_SET_PREFIX") {
+			constantLine = line
+			break
+		}
+	}
+	if constantLine == "" {
+		t.Fatalf("missing Python constant line in render:\n%s", out)
+	}
+	if !strings.Contains(constantLine, "\x1b[38;5;7mNON_OFFICIAL_SET_PREFIX") {
+		t.Errorf("ordinary Python names should use theme foreground slot 7, got %q", constantLine)
+	}
+	if regexp.MustCompile(`\x1b\[38;5;(1[6-9]|[2-9][0-9]|1[0-9][0-9]|2[0-5][0-9])m`).MatchString(out) {
+		t.Errorf("Python code must not contain fixed 256-cube foregrounds:\n%q", out)
 	}
 }
