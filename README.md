@@ -1,6 +1,6 @@
 # Session Insight
 
-A local web app for browsing and replaying AI coding agent sessions. Runs entirely on your machine — no data leaves your device.
+A local web app for browsing and replaying AI coding agent sessions. Session discovery, indexing, search, and replay run on your machine. AI generation is opt-in and may send selected session context to a provider you configure.
 
 ## Features
 
@@ -10,6 +10,7 @@ A local web app for browsing and replaying AI coding agent sessions. Runs entire
 - **Bookmarks** — save sessions with notes; filter by agent or model
 - **Analytics** — token usage, cost breakdown, and anomaly detection per session
 - **File viewer** — open any file path mentioned in a session, with syntax highlighting and tree navigation
+- **AI assistance** — generate session summaries, titles, and handoff prompts through a configured OpenAI-compatible API or local ACP agent
 - **Dark / light theme**
 
 ## Supported Agents
@@ -51,6 +52,12 @@ See [BUILD.md](BUILD.md) for the full Windows build guide (requires MSYS2 + ming
 |----------------------|---------|-------------|
 | `PORT` | `8080` | HTTP port |
 | `CHRYS_SESSION_ROOT_DIR` | — | Override Chrys session root directory |
+
+## Privacy
+
+Core browsing features operate locally. AI features remain disabled until you configure a model provider and explicitly request a generation. A generation sends a bounded excerpt of the selected session to the configured OpenAI-compatible endpoint or ACP agent; an ACP agent may in turn contact its own model provider.
+
+API credentials are stored locally in the Session Insight SQLite database and are not returned to the browser after saving. Treat that local database as sensitive data.
 
 ## Pre-compiled Binaries
 

@@ -1,6 +1,6 @@
 # Session Insight
 
-本地 AI 编程 Agent 会话浏览与回放工具。完全在本机运行，数据不离开设备。
+本地 AI 编程 Agent 会话浏览与回放工具。会话发现、索引、搜索和回放均在本机运行；AI 生成功能需主动启用，并可能向你配置的模型服务发送选定的会话上下文。
 
 ## 功能
 
@@ -10,6 +10,7 @@
 - **收藏夹** — 为会话添加备注，按 Agent 或模型筛选
 - **分析面板** — 每个会话的 Token 用量、费用明细和异常检测
 - **文件查看器** — 直接打开会话中提到的任意文件路径，含语法高亮和目录树定位
+- **AI 辅助** — 通过配置的 OpenAI 兼容 API 或本机 ACP Agent 生成会话总结、标题和交接提示词
 - **深色 / 浅色主题**
 
 ## 支持的 Agent
@@ -22,6 +23,7 @@ Session Insight 自动发现以下 Agent 的会话数据（持续新增中）：
 | [Codex](https://github.com/openai/codex) | `~/.codex/sessions/` |
 | [GitHub Copilot](https://github.com/features/copilot) | `~/.copilot/session-state/` |
 | [opencode](https://opencode.ai) | opencode SQLite 数据库（自动定位） |
+| [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
 
 ## 快速开始
 
@@ -50,6 +52,12 @@ bash start.sh all
 |----------|--------|------|
 | `PORT` | `8080` | HTTP 监听端口 |
 | `CHRYS_SESSION_ROOT_DIR` | — | 覆盖 Chrys 会话根目录 |
+
+## 隐私说明
+
+核心浏览功能均在本机运行。AI 功能在你配置模型源并主动发起生成前不会启用。生成时，应用会把所选会话的一段受长度限制的上下文发送给配置的 OpenAI 兼容接口或 ACP Agent；ACP Agent 可能继续访问其自身的模型服务。
+
+API 凭据保存在本机 Session Insight SQLite 数据库中，保存后不会再返回给浏览器。请将该本地数据库视为敏感数据妥善保护。
 
 ## 预编译二进制
 

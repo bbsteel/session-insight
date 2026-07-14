@@ -32,8 +32,13 @@ func ResolveProject(cwd, repo string) string {
 		return p
 	}
 
-	if root := gitRootOf(cleaned); root != "" {
-		return filepath.Base(root)
+	// A stale session may point at a workspace that no longer exists. Do not
+	// walk upward from that missing path: an unrelated ancestor repository
+	// (for example /tmp/.git in a sandbox) would otherwise claim the session.
+	if _, err := os.Stat(cleaned); err == nil {
+		if root := gitRootOf(cleaned); root != "" {
+			return filepath.Base(root)
+		}
 	}
 
 	base := filepath.Base(cleaned)
