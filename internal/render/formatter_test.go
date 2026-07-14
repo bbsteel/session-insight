@@ -142,6 +142,38 @@ func TestCompactionBoundaryEmitsPosition(t *testing.T) {
 	}
 }
 
+func TestRollbackFoldPositionUsesVisibleHeaderLine(t *testing.T) {
+	events := []model.RenderEvent{
+		{Type: "RollbackStart", TurnIndex: 1, Metadata: map[string]any{"count": 2, "resume_turn": 1}},
+		{Type: "TurnBoundary", TurnIndex: 1, Metadata: map[string]any{"rolled_back": true, "original_turn_index": 1}},
+		{Type: "UserPrompt", TurnIndex: 1, Text: "abandoned prompt"},
+		{Type: "RollbackEnd", TurnIndex: 1},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 100)
+	lines := strings.Split(ansi, "\n")
+
+	var fold *RenderPosition
+	for i := range positions {
+		if positions[i].Kind == "fold" && positions[i].Payload["level"] == "rollback" {
+			fold = &positions[i]
+			break
+		}
+	}
+	if fold == nil {
+		t.Fatalf("expected rollback fold position, got %+v", positions)
+	}
+	if got := stripANSIForTest(lines[fold.LineStart]); !strings.Contains(got, "已回滚 2 个 turn") {
+		t.Fatalf("rollback fold display header points at %q, want the visible rollback row", got)
+	}
+	headerLogical := int(fold.Payload["header_logical"].(float64))
+	if got := stripANSIForTest(lines[headerLogical]); !strings.Contains(got, "已回滚 2 个 turn") {
+		t.Fatalf("rollback fold logical header points at %q, want the visible rollback row", got)
+	}
+	if headerLogical != fold.LineStart {
+		t.Fatalf("no-wrap fixture should share display/logical header row: display=%d logical=%d", fold.LineStart, headerLogical)
+	}
+}
+
 func TestToolInvocationBox(t *testing.T) {
 	events := []model.RenderEvent{
 		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: time.Now(), Depth: 0,

@@ -272,9 +272,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			closeFold()
 			count := metadataInt(evt.Metadata, "count")
 			resumeTurn := metadataInt(evt.Metadata, "resume_turn")
-			headerDisplay := tb.CurrentLine()
-			headerLogical := tb.CurrentLogicalLine()
-			writeRollbackHeader(tb, count, resumeTurn)
+			headerDisplay, headerLogical := writeRollbackHeader(tb, count, resumeTurn)
 			rollbackFolds = append(rollbackFolds, rollbackFoldState{
 				turnIndex:     evt.TurnIndex,
 				key:           fmt.Sprintf("rollback:%d:%d", evt.TurnIndex, headerDisplay),
@@ -457,7 +455,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 25
+const FormatVersion int64 = 26
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
@@ -792,14 +790,17 @@ func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	sb.WriteString("\n")
 }
 
-func writeRollbackHeader(sb *trackingBuilder, count, resumeTurn int) {
+func writeRollbackHeader(sb *trackingBuilder, count, resumeTurn int) (headerDisplay, headerLogical int) {
 	label := fmt.Sprintf("▼ ↩ 已回滚 %d 个 turn", count)
 	if resumeTurn > 0 {
 		label += fmt.Sprintf(" · CLI 从第 %d 轮恢复", resumeTurn)
 	}
 	sb.WriteString("\n")
+	headerDisplay = sb.CurrentLine()
+	headerLogical = sb.CurrentLogicalLine()
 	sb.WriteString(styled(label, ColWarning, ColNone, true, false))
 	sb.WriteString("\n")
+	return headerDisplay, headerLogical
 }
 
 func writeRollbackSeparator(sb *trackingBuilder, originalTurnIdx int, termWidth int) {
