@@ -13,6 +13,16 @@ export function getAgentLabel(agent: string): string {
   return agent
 }
 
+// 与后端 model.LiveWindow 对齐：最近 5 分钟内有更新才算活跃。
+export const LIVE_WINDOW_MS = 5 * 60_000
+
+// is_live 是服务端在响应时刻算好的快照，列表不重拉它就不会变。客户端用
+// updated_at 对当前时间做衰减——只熄灭过期徽标、绝不点亮新徽标，这样
+// 客户端与服务端的时钟偏差最多让徽标晚灭，不会把闲置会话误标成活跃。
+export function isSessionLive(session: Pick<SessionSummary, 'is_live' | 'updated_at'>, now: number): boolean {
+  return session.is_live && now - new Date(session.updated_at).getTime() < LIVE_WINDOW_MS
+}
+
 export function formatRelativeTime(dateStr: string, now = Date.now()): string {
   const timestamp = new Date(dateStr).getTime()
   if (!Number.isFinite(timestamp)) return dateStr

@@ -377,9 +377,16 @@ export async function removeSessionTitle(sessionId: string, agent: string): Prom
 // watcher). The event is a bare ping — callers refetch /api/sessions
 // themselves. EventSource auto-reconnects, so a backend restart self-heals.
 // Returns a disposer.
-export function watchSessionsChanged(onChange: () => void): () => void {
+export function watchSessionsChanged(
+  onChange: () => void,
+  onConnectionChange?: (connected: boolean) => void,
+): () => void {
   const es = new EventSource('/api/events')
   es.addEventListener('sessions_changed', onChange)
+  // onopen 在首连和每次自动重连成功时触发，onerror 在断开/重试期间触发；
+  // 调用方据此展示断连提示，并在重连后补拉断线期间可能错过的 ping。
+  es.onopen = () => onConnectionChange?.(true)
+  es.onerror = () => onConnectionChange?.(false)
   return () => es.close()
 }
 

@@ -8,7 +8,7 @@ import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import AgentIcon from './AgentIcon'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { formatRelativeTime, getAgentLabel } from '../sidebarRows'
+import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
 import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
@@ -69,6 +69,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [bookmarkAgentDropdownOpen, setBookmarkAgentDropdownOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [disconnected, setDisconnected] = useState(false)
   const [query, setQuery] = useState('')
   // 消息内容命中的会话集合（服务端 FTS）。列表 payload 不再携带 preview
   // 文本，内容匹配交给已有的 /api/search；null 表示无内容搜索结果可用，
@@ -210,12 +211,30 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         refetch()
       }, wait)
     }
+    // 断连期间后端的 ping 会整段丢失，重连成功后必须补拉一次，否则
+    // 断线窗口里的所有变化（包括活跃徽标该熄灭）都不会反映到列表。
+    let everDisconnected = false
     const dispose = watchSessionsChanged(() => {
       if (inFlight) {
         pendingPing = true
         return
       }
       schedule()
+    }, connected => {
+      if (disposed) return
+      setDisconnected(!connected)
+      if (!connected) {
+        everDisconnected = true
+        return
+      }
+      if (everDisconnected) {
+        everDisconnected = false
+        if (inFlight) {
+          pendingPing = true
+        } else {
+          schedule()
+        }
+      }
     })
     return () => {
       disposed = true
@@ -487,15 +506,15 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     showToast('会话已删除')
   }, [onSessionDeleted, showToast])
 
-  const liveCount = useMemo(() => sessions.filter(s => s.is_live).length, [sessions])
+  const liveCount = useMemo(() => sessions.filter(s => isSessionLive(s, now)).length, [sessions, now])
 
   const liveCountByAgent = useMemo(() => {
     const map = new Map<string, number>()
     for (const s of sessions) {
-      if (s.is_live && s.agent_type) map.set(s.agent_type, (map.get(s.agent_type) ?? 0) + 1)
+      if (isSessionLive(s, now) && s.agent_type) map.set(s.agent_type, (map.get(s.agent_type) ?? 0) + 1)
     }
     return map
-  }, [sessions])
+  }, [sessions, now])
 
   const effectiveAgents = useMemo<AgentInfo[]>(() => {
     if (agents && agents.length > 0) {
@@ -555,7 +574,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
     if (branch) parts.push(branch)
     parts.push(`${session.message_count || session.turn_count} msgs`)
-    if (session.is_live) parts.push('活跃中')
+    const live = isSessionLive(session, now)
+    if (live) parts.push('活跃中')
     const metadata = parts.join(' · ')
     const relativeTime = formatRelativeTime(session.updated_at, now)
 
@@ -577,7 +597,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <AgentIcon agentType={session.agent_type} size={20} className="mt-0.5" />
             <div className="min-w-0 flex-1">
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
-                {session.is_live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
+                {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
                 {session.bookmarked && (
                   <span className="text-meta text-[var(--accent-blue)] flex-shrink-0" title="已收藏" aria-label="已收藏">
                     已收藏
@@ -647,6 +667,11 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <span className="text-helper text-[var(--success)] flex-shrink-0 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] animate-pulse" />
               {liveCount} 活跃中
+            </span>
+          )}
+          {disconnected && (
+            <span className="text-helper text-[var(--warning)] flex-shrink-0" title="与后端的实时连接已断开，列表可能不是最新，恢复后会自动刷新">
+              连接已断开
             </span>
           )}
         </div>
@@ -922,7 +947,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               const stored = readStorage(getResumePreferenceKey(session))
               const preferred = stored === 'powershell' || stored === 'git-bash' ? stored : null
               const options = getResumeCommandOptions(session, preferred)
-              const isLive = contextMenu.session.is_live
+              const isLive = isSessionLive(contextMenu.session, now)
               const windows = isWindowsSession(session, hostIsWindows())
               const visibleOptions = windows ? options : options.filter(option => option.shell === 'git-bash')
               const disabled = isLive || visibleOptions.length === 0

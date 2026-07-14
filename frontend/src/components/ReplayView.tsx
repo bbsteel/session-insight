@@ -16,6 +16,7 @@ import ToolCallPanel from './ToolCallPanel'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
+import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -247,7 +248,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     // redraw — this flag forces exactly one refresh after the window passes
     // so the stale row disappears without a page reload.
     let staleRowCleaned = false
-    const LIVE_WINDOW_MS = 5 * 60 * 1000
     let timer: ReturnType<typeof setTimeout>
     const tick = async () => {
       if (stopped) return
@@ -280,11 +280,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     return () => { stopped = true; clearTimeout(timer) }
   }, [sessionId, viewMode, session?.id, session?.updated_at])
 
-  // Content grew: refresh the turn list / header stats (and the LIVE badge).
+  // Content grew: refresh the turn list / header stats (and the live badge).
   useEffect(() => {
     if (contentVersion === 0 || !sessionId) return
     fetchSession(sessionId).then(setSession).catch(() => {})
   }, [contentVersion, sessionId])
+
+  // 活跃徽标的客户端衰减时钟（与 Sidebar 同一套 isSessionLive 判定）。
+  // 只在快照仍为活跃时才 tick——停在旧会话上不必每分钟重渲染整棵树。
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!session?.is_live) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [session?.is_live, session?.id])
 
   // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
   // helper textarea, which stops keydown propagation before the bubble phase.
@@ -997,9 +1007,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           </div>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
-          {session.is_live && (
-            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[var(--accent-green)]/15 px-1.5 text-meta font-medium text-[var(--accent-green)]">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />LIVE
+          {isSessionLive(session, now) && (
+            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" aria-label="活跃中">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />活跃中
             </span>
           )}
           {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tokens · {session.turn_count} turns · {sessionDuration}
