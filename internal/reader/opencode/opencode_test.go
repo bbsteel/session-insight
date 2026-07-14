@@ -112,7 +112,7 @@ func TestGetSessionResolvesProject(t *testing.T) {
 	reader, db, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	seedSession(t, db, "ses_project", "/tmp/nonexistent/.openclaw/workspace/projects/collab/lego-lookup", "Project test", "deepseek-v4-pro")
+	seedSession(t, db, "ses_project", "/tmp/nonexistent/workspace/projects/collab/lego-lookup", "Project test", "deepseek-v4-pro")
 
 	detail, err := reader.GetSession("ses_project")
 	if err != nil {

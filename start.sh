@@ -30,8 +30,9 @@ do_build() {
 
   # Go toolchain 未在系统 PATH 时，自动查找 module cache 中的版本
   if ! command -v go &>/dev/null; then
-    local go_toolchain
-    go_toolchain=$(find /home/user/go/pkg/mod/golang.org -maxdepth 3 -name "go" -path "*/bin/go" 2>/dev/null | sort -V | tail -1)
+    local go_toolchain go_path
+    go_path="${GOPATH:-$HOME/go}"
+    go_toolchain=$(find "$go_path/pkg/mod/golang.org" -maxdepth 3 -name "go" -path "*/bin/go" 2>/dev/null | sort -V | tail -1)
     if [[ -n "$go_toolchain" ]]; then
       export PATH="$(dirname "$go_toolchain"):$PATH"
     else

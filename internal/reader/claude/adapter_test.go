@@ -3,19 +3,24 @@ package claude
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
-// These tests read real Claude Code session files from the local
-// ~/.claude/projects directory to eyeball ParseClaudeRenderEvents output
-// against actual data shapes. They're skipped if the files aren't present
-// (e.g. CI, other machines).
+// These tests use optional, anonymized fixtures. They are skipped until the
+// corresponding fixture is added, so clones never depend on a local session.
+
+func claudeFixturePath(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("fixture not present: %v", err)
+	}
+	return path
+}
 
 func TestParseClaudeRenderEvents_MainSessionWithBashEmbeds(t *testing.T) {
-	path := os.ExpandEnv("$HOME/.claude/projects/-home-deck--openclaw-workspace-projects-collab-lego-lookup/b3596f7c-569b-458e-99c5-48469b6b9a7a.jsonl")
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("sample file not present: %v", err)
-	}
+	path := claudeFixturePath(t, "main-session-with-bash-embeds.jsonl")
 
 	events, modelName, err := ParseClaudeRenderEvents(path, 0, "")
 	if err != nil {
@@ -71,11 +76,7 @@ func TestParseClaudeRenderEvents_MainSessionWithBashEmbeds(t *testing.T) {
 }
 
 func TestParseClaudeRenderEvents_SubagentFileAsBaseDepth1(t *testing.T) {
-	dir := os.ExpandEnv("$HOME/.claude/projects/-home-deck--openclaw-workspace-projects-external-superpowers/70c07299-f3f8-472b-8a2d-2feeb58d979f/subagents")
-	path := dir + "/agent-aa59445d1a24db82b.jsonl"
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("sample subagent file not present: %v", err)
-	}
+	path := claudeFixturePath(t, "subagent-base-depth-1.jsonl")
 
 	events, _, err := ParseClaudeRenderEvents(path, 1, "main-agent-tool-invocation-evt-id")
 	if err != nil {
@@ -113,10 +114,7 @@ func TestParseClaudeRenderEvents_SubagentFileAsBaseDepth1(t *testing.T) {
 // message-level TokenUsage to every content block of an assistant message,
 // which would multiply-count tokens when summed by the Token Analysis panel.
 func TestTokenUsageAttachedOncePerAssistantMessage(t *testing.T) {
-	path := os.ExpandEnv("$HOME/.claude/projects/-home-deck--openclaw-workspace-projects-collab-session-insight/c85f64a3-9821-472d-95a8-c2a82e393cf8.jsonl")
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("sample file not present: %v", err)
-	}
+	path := claudeFixturePath(t, "token-usage-once-per-message.jsonl")
 
 	events, _, err := ParseClaudeRenderEvents(path, 0, "")
 	if err != nil {

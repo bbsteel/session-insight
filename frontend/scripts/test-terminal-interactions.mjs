@@ -58,10 +58,10 @@ assert.equal(
 )
 
 assert.deepEqual(
-  parseEditHeaderLine('╔══ ✏️ Edit: /home/user/.claude/skills/git-commit-with-context/SKILL.md'),
+  parseEditHeaderLine('╔══ ✏️ Edit: /home/user/.claude/skills/example/SKILL.md'),
   {
     toolName: 'Edit',
-    filePath: '/home/user/.claude/skills/git-commit-with-context/SKILL.md',
+    filePath: '/home/user/.claude/skills/example/SKILL.md',
   },
 )
 

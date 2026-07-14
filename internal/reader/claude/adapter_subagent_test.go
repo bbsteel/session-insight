@@ -2,17 +2,13 @@ package claude
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/bbsteel/session-insight/internal/model"
 )
 
 func TestParseClaudeRenderEventsWithSubagents(t *testing.T) {
-	mainPath := os.ExpandEnv("$HOME/.claude/projects/-home-deck--openclaw-workspace-projects-external-superpowers/70c07299-f3f8-472b-8a2d-2feeb58d979f.jsonl")
-	if _, err := os.Stat(mainPath); err != nil {
-		t.Skipf("sample file not present: %v", err)
-	}
+	mainPath := claudeFixturePath(t, "main-session-with-subagents.jsonl")
 
 	events, modelName, err := ParseClaudeRenderEventsWithSubagents(mainPath)
 	if err != nil {
