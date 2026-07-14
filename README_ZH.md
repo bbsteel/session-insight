@@ -51,7 +51,7 @@ Session Insight 自动发现以下 Agent 的会话数据：
 ```bash
 git clone https://github.com/bbsteel/session-insight.git
 cd session-insight
-bash start.sh all
+bash run.sh all
 ```
 
 启动后访问 **http://127.0.0.1:8080**，浏览器会自动打开。

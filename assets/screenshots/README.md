@@ -19,7 +19,7 @@ Three images are enough to cover the main workflow without turning the project R
 Start the full application first, then install Playwright's Chromium build once and run the capture command with an exact local session title:
 
 ```bash
-./start.sh all
+./run.sh all
 npm --prefix frontend exec -- playwright install chromium
 npm --prefix frontend run capture:screenshots -- --session-title "<exact session title>"
 ```

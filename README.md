@@ -51,7 +51,7 @@ Session Insight auto-discovers sessions from the following agents:
 ```bash
 git clone https://github.com/bbsteel/session-insight.git
 cd session-insight
-bash start.sh all
+bash run.sh all
 ```
 
 The app starts at **http://127.0.0.1:8080** and opens automatically in your browser.
