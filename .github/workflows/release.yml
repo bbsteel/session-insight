@@ -1,0 +1,184 @@
+name: Release
+run-name: Release ${{ inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to build or republish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            os: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - target: darwin-amd64
+            os: macos-15-intel
+            goos: darwin
+            goarch: amd64
+          - target: darwin-arm64
+            os: macos-15
+            goos: darwin
+            goarch: arm64
+          - target: windows-amd64
+            os: windows-2022
+            goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Verify Windows C compiler
+        if: runner.os == 'Windows'
+        run: gcc --version
+
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build and package Linux archive
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          CC: musl-gcc
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          package="session-insight-${version}-${TARGET}"
+          package_dir="dist/${package}"
+          mkdir -p "${package_dir}"
+          go build -trimpath \
+            -tags "sqlite_fts5 netgo osusergo" \
+            -ldflags='-s -w -linkmode external -extldflags "-static"' \
+            -o "${package_dir}/session-insight" .
+          cp README.md README_ZH.md LICENSE "${package_dir}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+
+      - name: Build and package macOS archive
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          package="session-insight-${version}-${TARGET}"
+          package_dir="dist/${package}"
+          mkdir -p "${package_dir}"
+          go build -trimpath -tags sqlite_fts5 -ldflags="-s -w" -o "${package_dir}/session-insight" .
+          cp README.md README_ZH.md LICENSE "${package_dir}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+
+      - name: Build and package Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          $package = "session-insight-$version-$env:TARGET"
+          $packageDir = Join-Path dist $package
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          go build -trimpath -tags sqlite_fts5 -ldflags="-s -w" -o "$packageDir/session-insight.exe" .
+          Copy-Item README.md, README_ZH.md, LICENSE -Destination $packageDir
+          Compress-Archive -Path $packageDir -DestinationPath "dist/$package.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download platform archives
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        working-directory: dist
+        run: sha256sum session-insight-* > checksums.txt
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/* --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${RELEASE_TAG}" dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "Session Insight ${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}"
+          fi

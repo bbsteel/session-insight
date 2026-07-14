@@ -1,5 +1,7 @@
 # Session Insight
 
+[![CI](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml/badge.svg)](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml)
+
 A local web app for browsing and replaying AI coding agent sessions. Session discovery, indexing, search, and replay run on your machine. AI generation is opt-in and may send selected session context to a provider you configure.
 
 [中文](README_ZH.md)
@@ -73,7 +75,13 @@ API credentials are stored locally in the Session Insight SQLite database and ar
 
 ## Pre-compiled Binaries
 
-Pre-compiled binaries for macOS, Linux, and Windows are planned. Watch the releases page.
+Versioned archives are published on the [GitHub Releases](https://github.com/bbsteel/session-insight/releases) page for:
+
+- Linux x86-64 and arm64
+- macOS Intel and Apple Silicon
+- Windows x86-64
+
+Each archive contains the executable, both READMEs, and the license. Download `checksums.txt` from the same release, then compare its matching entry with `sha256sum <archive>` on Linux/macOS or `Get-FileHash <archive> -Algorithm SHA256` in PowerShell.
 
 ## License
 
