@@ -13,6 +13,24 @@ const ICON_BTN = 30
 const GAP = 4
 const STEP = ICON_BTN + GAP
 
+/** Leading "All agents" mark — 2×2 tiles = every source, not a globe. */
+function AllAgentsIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="3.5" width="7" height="7" rx="2" stroke="currentColor" strokeWidth="1.75" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="2" stroke="currentColor" strokeWidth="1.75" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="2" stroke="currentColor" strokeWidth="1.75" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="2" stroke="currentColor" strokeWidth="1.75" />
+    </svg>
+  )
+}
+
 export default function AgentFilter({ agents, selected, onSelect }: AgentFilterProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const overflowRef = useRef<HTMLDivElement>(null)
@@ -105,10 +123,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
           }`}
           style={{ width: ICON_BTN, height: ICON_BTN }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
-          </svg>
+          <AllAgentsIcon size={20} />
         </button>
 
         {visibleAgents.map(agent => {
