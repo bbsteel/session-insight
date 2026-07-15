@@ -174,11 +174,11 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 				Detail:    fmt.Sprintf("该 turn 占本场消耗的 %.0f%%，约 %s，包含 %d 次请求、%d 次工具调用。点击跳转查看它当时在做什么。", share*100, amount, top.Requests, top.ToolCount),
 				TurnIndex: &idx,
 				Metrics: map[string]any{
-					"turn_index":    top.TurnIndex,
-					"share":         share,
-					"requests":      top.Requests,
-					"tool_count":    top.ToolCount,
-					"cost_by_bill":  hasCost,
+					"turn_index":   top.TurnIndex,
+					"share":        share,
+					"requests":     top.Requests,
+					"tool_count":   top.ToolCount,
+					"cost_by_bill": hasCost,
 				},
 				EvidenceRefs: []EvidenceRef{turnRef(top.TurnIndex, "占本场消耗最高的 turn")},
 			})
@@ -261,9 +261,9 @@ func detectFindings(detail *model.SessionDetail, timeline []TurnToken, billing *
 			Title:    fmt.Sprintf("工具失败率 %.0f%%", rate*100),
 			Detail:   fmt.Sprintf("%d 次工具调用中 %d 次失败。失败与随后的重试消耗同样计费。", totalTools, totalErrors),
 			Metrics: map[string]any{
-				"total_tools":   totalTools,
-				"total_errors":  totalErrors,
-				"failure_rate":  rate,
+				"total_tools":  totalTools,
+				"total_errors": totalErrors,
+				"failure_rate": rate,
 			},
 			EvidenceRefs: []EvidenceRef{sessionRef("工具调用总数与失败数")},
 		})

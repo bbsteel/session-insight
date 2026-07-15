@@ -89,7 +89,7 @@ func TestDeleteSessionMissingSidecarsIsFine(t *testing.T) {
 	if err := r.DeleteSession(delSessionID); err != nil {
 		t.Fatalf("DeleteSession with no sidecars: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(projDir, delSessionID + ".jsonl")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(projDir, delSessionID+".jsonl")); !os.IsNotExist(err) {
 		t.Error("transcript not removed")
 	}
 }

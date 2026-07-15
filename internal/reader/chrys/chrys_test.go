@@ -436,12 +436,12 @@ func makeRecovery(t *testing.T, updatedAt string) []byte {
 	msgs := state["messages"].([]any)
 	extra := map[string]any{
 		"type": "message", "role": "user",
-		"contents": []any{map[string]any{"type": "text", "text": "中断后继续的新一轮", "additional_properties": map[string]any{}}},
+		"contents":              []any{map[string]any{"type": "text", "text": "中断后继续的新一轮", "additional_properties": map[string]any{}}},
 		"additional_properties": map[string]any{"_chrys_created_at": "2026-07-06T06:20:00+00:00"},
 	}
 	reply := map[string]any{
 		"type": "message", "role": "assistant",
-		"contents": []any{map[string]any{"type": "text", "text": "恢复副本里的回复", "additional_properties": map[string]any{}}},
+		"contents":              []any{map[string]any{"type": "text", "text": "恢复副本里的回复", "additional_properties": map[string]any{}}},
 		"additional_properties": map[string]any{"_chrys_created_at": "2026-07-06T06:21:00+00:00"},
 	}
 	state["messages"] = append(msgs, extra, reply)

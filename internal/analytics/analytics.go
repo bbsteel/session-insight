@@ -12,6 +12,12 @@ import (
 	"github.com/bbsteel/session-insight/internal/model"
 )
 
+// FindingsVersion is the stable version of the deterministic finding rule set.
+// It participates in an Insight's source fingerprint: changing rule semantics
+// (thresholds, codes, evidence) must bump this so old Insights are marked
+// stale, since the model saw a different first layer.
+const FindingsVersion = 1
+
 type TurnToken struct {
 	TurnIndex  int   `json:"turn_index"`
 	Tokens     int64 `json:"tokens"`

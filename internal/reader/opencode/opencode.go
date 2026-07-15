@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type OpenCodeReader struct {

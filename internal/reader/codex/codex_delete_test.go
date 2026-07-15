@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	delUUID   = "019f5416-399c-7ff1-b016-ca888adbb3b5"
-	keepUUID  = "019eb7de-3c42-7730-a273-8055f8b48520"
-	delID     = "rollout-2026-07-12T10-09-30-" + delUUID
-	keepID    = "rollout-2026-07-13T14-59-00-" + keepUUID
+	delUUID  = "019f5416-399c-7ff1-b016-ca888adbb3b5"
+	keepUUID = "019eb7de-3c42-7730-a273-8055f8b48520"
+	delID    = "rollout-2026-07-12T10-09-30-" + delUUID
+	keepID   = "rollout-2026-07-13T14-59-00-" + keepUUID
 )
 
 // writeDeleteFixture builds a fake ~/.codex: sessions/<date>/ with two

@@ -91,4 +91,5 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("DELETE /api/ai/generations/{id}", s.handleDeleteAIGeneration)
 	s.Mux.HandleFunc("PUT /api/sessions/{id}/title", s.handleSetTitle)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}/title", s.handleRemoveTitle)
+	s.Mux.HandleFunc("POST /api/insight/targets/revoke", s.handleRevokeInsightTargets)
 }
