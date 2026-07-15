@@ -431,23 +431,11 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
         </div>
       )}
 
-      {/* Deep Insight (原因洞察) — the model-driven second layer, shown above
-          the local findings so cause explanation sits over the raw facts. */}
-      {data.findings && data.findings.length > 0 && (
-        <DeepInsightSection
-          sessionId={sessionId}
-          agentType={agentType ?? ''}
-          isLive={!!isLive}
-          findingsCount={data.findings.length}
-          onJumpToTurn={onJumpToTurn}
-        />
-      )}
-
       {/* Preliminary findings (local, deterministic first layer) */}
       {data.findings && data.findings.length > 0 && (
         <div className="px-4 pb-4">
           <h3 className="text-body font-semibold text-[var(--text-primary)] mb-2">
-            初步 Findings
+            初步发现
             <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">本地规则从消耗数据中提炼的事实</span>
           </h3>
           <div className="space-y-2">
@@ -469,6 +457,18 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
             })}
           </div>
         </div>
+      )}
+
+      {/* Deep Insight (根因分析) — the model-driven second layer, shown below
+          the local findings so its cause explanation reads over the raw facts. */}
+      {data.findings && data.findings.length > 0 && (
+        <DeepInsightSection
+          sessionId={sessionId}
+          agentType={agentType ?? ''}
+          isLive={!!isLive}
+          findingsCount={data.findings.length}
+          onJumpToTurn={onJumpToTurn}
+        />
       )}
 
       {/* Top expensive turns */}
