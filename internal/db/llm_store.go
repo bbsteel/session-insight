@@ -21,19 +21,26 @@ type LLMProvider struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-// AIGeneration is one saved AI output (summary / title / handoff).
+// AIGeneration is one saved AI output (summary / title / handoff / insight).
 // Metadata is a JSON string of kind-specific structured extras (handoff:
-// difficulty assessment + recommended executor list); empty when absent.
+// difficulty assessment + recommended executor list; insight: the validated
+// structured Deep Insight plus its minimal cited-evidence projection); empty
+// when absent. SourceRevision/PromptVersion/SourceFingerprint are populated for
+// insight generations to drive freshness/staleness; other kinds leave them
+// zero-valued for backward compatibility.
 type AIGeneration struct {
-	ID           int64  `json:"id"`
-	Kind         string `json:"kind"`
-	AgentType    string `json:"agent_type"`
-	SessionID    string `json:"session_id"`
-	ProviderName string `json:"provider_name"`
-	ModelID      string `json:"model_id"`
-	Content      string `json:"content"`
-	Metadata     string `json:"metadata,omitempty"`
-	CreatedAt    string `json:"created_at"`
+	ID                int64  `json:"id"`
+	Kind              string `json:"kind"`
+	AgentType         string `json:"agent_type"`
+	SessionID         string `json:"session_id"`
+	ProviderName      string `json:"provider_name"`
+	ModelID           string `json:"model_id"`
+	Content           string `json:"content"`
+	Metadata          string `json:"metadata,omitempty"`
+	SourceRevision    int64  `json:"source_revision,omitempty"`
+	PromptVersion     string `json:"prompt_version,omitempty"`
+	SourceFingerprint string `json:"source_fingerprint,omitempty"`
+	CreatedAt         string `json:"created_at"`
 }
 
 const llmDefaultProviderKey = "llm_default_provider_id"
@@ -125,9 +132,10 @@ func (db *DB) SetDefaultLLMProviderID(id int64) error {
 
 func (db *DB) AddAIGeneration(g AIGeneration) (int64, error) {
 	res, err := db.conn.Exec(
-		`INSERT INTO ai_generations(kind, agent_type, session_id, provider_name, model_id, content, metadata)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO ai_generations(kind, agent_type, session_id, provider_name, model_id, content, metadata, source_revision, prompt_version, source_fingerprint)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		g.Kind, g.AgentType, g.SessionID, g.ProviderName, g.ModelID, g.Content, g.Metadata,
+		g.SourceRevision, g.PromptVersion, g.SourceFingerprint,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("add ai generation: %w", err)
@@ -140,7 +148,7 @@ func (db *DB) ListAIGenerations(kind, agentType, sessionID string, limit int) ([
 	if limit <= 0 {
 		limit = 200
 	}
-	q := `SELECT id, kind, agent_type, session_id, provider_name, model_id, content, metadata, created_at
+	q := `SELECT id, kind, agent_type, session_id, provider_name, model_id, content, metadata, source_revision, prompt_version, source_fingerprint, created_at
 	      FROM ai_generations WHERE 1=1`
 	var args []any
 	if kind != "" {
@@ -163,7 +171,8 @@ func (db *DB) ListAIGenerations(kind, agentType, sessionID string, limit int) ([
 	for rows.Next() {
 		var g AIGeneration
 		if err := rows.Scan(&g.ID, &g.Kind, &g.AgentType, &g.SessionID,
-			&g.ProviderName, &g.ModelID, &g.Content, &g.Metadata, &g.CreatedAt); err != nil {
+			&g.ProviderName, &g.ModelID, &g.Content, &g.Metadata,
+			&g.SourceRevision, &g.PromptVersion, &g.SourceFingerprint, &g.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan ai generation: %w", err)
 		}
 		out = append(out, g)
@@ -176,12 +185,13 @@ func (db *DB) ListAIGenerations(kind, agentType, sessionID string, limit int) ([
 func (db *DB) LatestAIGeneration(kind, agentType, sessionID string) (*AIGeneration, error) {
 	var g AIGeneration
 	err := db.conn.QueryRow(
-		`SELECT id, kind, agent_type, session_id, provider_name, model_id, content, metadata, created_at
+		`SELECT id, kind, agent_type, session_id, provider_name, model_id, content, metadata, source_revision, prompt_version, source_fingerprint, created_at
 		 FROM ai_generations WHERE kind = ? AND agent_type = ? AND session_id = ?
 		 ORDER BY id DESC LIMIT 1`,
 		kind, agentType, sessionID,
 	).Scan(&g.ID, &g.Kind, &g.AgentType, &g.SessionID,
-		&g.ProviderName, &g.ModelID, &g.Content, &g.Metadata, &g.CreatedAt)
+		&g.ProviderName, &g.ModelID, &g.Content, &g.Metadata,
+		&g.SourceRevision, &g.PromptVersion, &g.SourceFingerprint, &g.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

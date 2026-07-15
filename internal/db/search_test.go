@@ -128,11 +128,11 @@ func TestSearch_SpecialChars(t *testing.T) {
 
 	// 3+ rune queries that look like FTS operators (should be treated as literals)
 	ftsLike := []string{
-		`foo OR bar`,   // FTS OR operator — must not be parsed as boolean
-		`hello AND bye`, // FTS AND operator
+		`foo OR bar`,     // FTS OR operator — must not be parsed as boolean
+		`hello AND bye`,  // FTS AND operator
 		`search NOT bug`, // FTS NOT operator
-		`"hello"`,       // nested double quotes — prepareFTSQuery escapes inner
-		`he*llo`,        // FTS prefix operator
+		`"hello"`,        // nested double quotes — prepareFTSQuery escapes inner
+		`he*llo`,         // FTS prefix operator
 	}
 	for _, q := range ftsLike {
 		results, err := database.SearchTurns(q, 30)

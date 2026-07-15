@@ -15,9 +15,9 @@ type TurnText struct {
 }
 
 // UpsertTurns 在一个事务内完成：
-//   1. 删除旧 turn_texts（触发 FTS5 delete 触发器）
-//   2. 批量插入新 turn_texts（触发 FTS5 insert 触发器）
-//   3. 更新 index_watermarks
+//  1. 删除旧 turn_texts（触发 FTS5 delete 触发器）
+//  2. 批量插入新 turn_texts（触发 FTS5 insert 触发器）
+//  3. 更新 index_watermarks
 //
 // turns 为空时仍然执行删除 + watermark 更新（会话内容清空的情况）。
 // revision 传入 session.UpdatedAt.UnixNano()。

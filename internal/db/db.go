@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -11,7 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 16
+const currentSchemaVersion = 17
 
 type DB struct {
 	conn *sql.DB
@@ -188,17 +189,20 @@ func migrate(conn *sql.DB) error {
 	    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 
-	-- AI 生成历史（summary / title / handoff 共用一张表）
+	-- AI 生成历史（summary / title / handoff / insight 共用一张表）
 	CREATE TABLE IF NOT EXISTS ai_generations (
-	    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-	    kind          TEXT NOT NULL CHECK (kind IN ('summary', 'title', 'handoff')),
-	    agent_type    TEXT NOT NULL,
-	    session_id    TEXT NOT NULL,
-	    provider_name TEXT NOT NULL DEFAULT '',
-	    model_id      TEXT NOT NULL DEFAULT '',
-	    content       TEXT NOT NULL,
-	    metadata      TEXT NOT NULL DEFAULT '',
-	    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+	    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+	    kind               TEXT NOT NULL CHECK (kind IN ('summary', 'title', 'handoff', 'insight')),
+	    agent_type         TEXT NOT NULL,
+	    session_id         TEXT NOT NULL,
+	    provider_name      TEXT NOT NULL DEFAULT '',
+	    model_id           TEXT NOT NULL DEFAULT '',
+	    content            TEXT NOT NULL,
+	    metadata           TEXT NOT NULL DEFAULT '',
+	    source_revision    INTEGER NOT NULL DEFAULT 0,
+	    prompt_version     TEXT NOT NULL DEFAULT '',
+	    source_fingerprint TEXT NOT NULL DEFAULT '',
+	    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 	CREATE INDEX IF NOT EXISTS idx_ai_generations_session
 	    ON ai_generations(agent_type, session_id, kind);
@@ -454,9 +458,136 @@ func migrate(conn *sql.DB) error {
 		conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`)
 	}
 
+	// Version 17: Deep Insight generations. Add the 'insight' kind and three
+	// freshness columns (source_revision, prompt_version, source_fingerprint).
+	// SQLite cannot ALTER a CHECK constraint, so the kind widening needs a
+	// table rebuild. This is gated on the real schema, not the version row: the
+	// index.db is shared across running instances, so a concurrent Open must be
+	// able to detect a rebuild another process already finished and skip it.
+	if err := migrateAIGenerationsV17(conn); err != nil {
+		return err
+	}
+
 	_, err = conn.Exec(
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)`,
 		currentSchemaVersion,
 	)
 	return err
+}
+
+// hasInsightColumn reports whether the ai_generations rows from a
+// PRAGMA table_info result include source_fingerprint. Gating on a real column
+// (not the version row) makes the migration self-healing and concurrency-safe:
+// a version number can be written even when an ALTER lost a lock race, but the
+// physical column cannot lie.
+func hasInsightColumn(rows *sql.Rows) bool {
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk) == nil && name == "source_fingerprint" {
+			return true
+		}
+	}
+	return false
+}
+
+// migrateAIGenerationsV17 rebuilds ai_generations to add the 'insight' kind and
+// the freshness columns, preserving every existing row (id, content, metadata,
+// provider/model, timestamps). The rebuild runs inside one BEGIN IMMEDIATE
+// transaction on a single pinned connection: the immediate write lock (bounded
+// by the DSN busy_timeout) serializes concurrent instances instead of
+// dead-locking two deferred readers, a mid-way failure rolls the whole thing
+// back to the working old table, and re-checking the real schema under the lock
+// lets a process that lost the race no-op instead of rebuilding twice.
+func migrateAIGenerationsV17(conn *sql.DB) (retErr error) {
+	// Fast path: fresh DB or already migrated — no lock needed.
+	if rows, err := conn.Query(`PRAGMA table_info(ai_generations)`); err == nil {
+		if hasInsightColumn(rows) {
+			return nil
+		}
+	}
+
+	ctx := context.Background()
+	c, err := conn.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("v17 pin connection: %w", err)
+	}
+	defer c.Close()
+
+	if _, err := c.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("v17 begin immediate: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			c.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+
+	// Re-check under the write lock: another instance may have rebuilt the
+	// table between the fast-path check and acquiring the lock.
+	rows, err := c.QueryContext(ctx, `PRAGMA table_info(ai_generations)`)
+	if err != nil {
+		return fmt.Errorf("v17 recheck schema: %w", err)
+	}
+	if hasInsightColumn(rows) {
+		if _, err := c.ExecContext(ctx, `COMMIT`); err != nil {
+			return fmt.Errorf("v17 commit noop: %w", err)
+		}
+		committed = true
+		return nil
+	}
+
+	var before int
+	if err := c.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_generations`).Scan(&before); err != nil {
+		return fmt.Errorf("v17 count old rows: %w", err)
+	}
+
+	stmts := []string{
+		`CREATE TABLE ai_generations_new (
+		    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+		    kind               TEXT NOT NULL CHECK (kind IN ('summary', 'title', 'handoff', 'insight')),
+		    agent_type         TEXT NOT NULL,
+		    session_id         TEXT NOT NULL,
+		    provider_name      TEXT NOT NULL DEFAULT '',
+		    model_id           TEXT NOT NULL DEFAULT '',
+		    content            TEXT NOT NULL,
+		    metadata           TEXT NOT NULL DEFAULT '',
+		    source_revision    INTEGER NOT NULL DEFAULT 0,
+		    prompt_version     TEXT NOT NULL DEFAULT '',
+		    source_fingerprint TEXT NOT NULL DEFAULT '',
+		    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+		)`,
+		// Explicit column list preserves ids and existing default semantics; the
+		// three new columns take their table defaults for old rows.
+		`INSERT INTO ai_generations_new
+		    (id, kind, agent_type, session_id, provider_name, model_id, content, metadata, created_at)
+		 SELECT id, kind, agent_type, session_id, provider_name, model_id, content, metadata, created_at
+		 FROM ai_generations`,
+		`DROP TABLE ai_generations`,
+		`ALTER TABLE ai_generations_new RENAME TO ai_generations`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_generations_session
+		    ON ai_generations(agent_type, session_id, kind)`,
+	}
+	for _, s := range stmts {
+		if _, err := c.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("v17 rebuild step failed (rolled back): %w", err)
+		}
+	}
+
+	var after int
+	if err := c.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_generations`).Scan(&after); err != nil {
+		return fmt.Errorf("v17 count new rows: %w", err)
+	}
+	if after != before {
+		return fmt.Errorf("v17 row count mismatch: before=%d after=%d (rolled back)", before, after)
+	}
+	if _, err := c.ExecContext(ctx, `COMMIT`); err != nil {
+		return fmt.Errorf("v17 commit: %w", err)
+	}
+	committed = true
+	return nil
 }
