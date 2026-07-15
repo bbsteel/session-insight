@@ -10,6 +10,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/claude"
 	"github.com/bbsteel/session-insight/internal/reader/codex"
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
+	"github.com/bbsteel/session-insight/internal/reader/grok"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 )
 
@@ -61,6 +62,11 @@ func Discover() []BaseSessionReader {
 		} else {
 			readers = append(readers, reader)
 		}
+	}
+
+	grokDir := filepath.Join(homeDir, ".grok", "sessions")
+	if info, err := os.Stat(grokDir); err == nil && info.IsDir() {
+		readers = append(readers, grok.New(grokDir))
 	}
 
 	return readers

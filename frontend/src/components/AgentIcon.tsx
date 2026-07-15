@@ -3,6 +3,7 @@ import githubCopilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg
 import openAIIcon from '@lobehub/icons-static-svg/icons/openai.svg'
 const openCodeIcon = '/icons/opencode-logo-light-square.png'
 const chrysIcon = '/icons/chrys-c.png'
+const grokIcon = '/icons/grok.png'
 import { resolveAgentStyle } from '../agentStyles'
 
 interface AgentIconProps {
@@ -18,6 +19,7 @@ function resolveIcon(agentType?: string): { src: string; colored: boolean } | nu
   if (normalized.includes('copilot')) return { src: githubCopilotIcon, colored: false }
   if (normalized.includes('opencode')) return { src: openCodeIcon, colored: true }
   if (normalized.includes('chrys')) return { src: chrysIcon, colored: false }
+  if (normalized.includes('grok')) return { src: grokIcon, colored: true }
   return null
 }
 

@@ -329,13 +329,14 @@ func TestRenderANSIUnknownSession(t *testing.T) {
 	reader, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	// Unknown session: no rows in DB → empty ANSI output, no error.
+	// Unknown session must error (not empty success) so multi-reader
+	// fall-through can reach the agent that actually owns the id.
 	out, err := reader.RenderANSI("unknown-session", 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected error for unknown session, got empty success (out=%q)", out)
 	}
 	if out != "" {
-		t.Errorf("expected empty output for unknown session, got %q", out)
+		t.Errorf("expected empty output on error, got %q", out)
 	}
 }
 
