@@ -41,4 +41,11 @@ const chrys = getResumeCommandOptions({ ...session, agent_type: 'chrys' })
 assert.equal(chrys.length, 2)
 assert.equal(chrys.some(option => option.mode === 'skip-permissions'), false)
 
+const grok = getResumeCommandOptions({ ...session, agent_type: 'grok', resume_id: '', id: '019f61d0-4553-70d3-ba91-e67bf43f1fea' })
+assert.equal(grok[0].mode, 'standard')
+assert.equal(grok[0].command.includes("'grok' '--resume' '019f61d0-4553-70d3-ba91-e67bf43f1fea'"), true)
+assert.equal(grok[1].mode, 'skip-permissions')
+assert.equal(grok[1].command.includes("'--always-approve'"), true)
+assert.equal(grok[1].command.includes("'--resume'"), true)
+
 console.log('resume command tests passed')

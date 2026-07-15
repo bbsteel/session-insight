@@ -732,7 +732,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
   // Keyboard navigation
   useEffect(() => {
-    if (!sessionId || !session?.turns.length) return
+    if (!sessionId || !session?.turns?.length) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); jump(1, 'turn') }
@@ -893,14 +893,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     </main>
   )
 
-  if (!session || !session.turns.length) return (
+  // turns may be null from older backends / nil Go slices — never touch .length bare.
+  if (!session || !(session.turns?.length)) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
       <GlobalSearch onSelect={onSelect} />
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
-          <h3 className="text-body font-medium text-[var(--text-primary)]">还没有会话记录</h3>
-          <p className="text-helper text-[var(--text-muted)] mt-1">使用 agent 进行编码后，会话将自动出现在这里。</p>
+          <h3 className="text-body font-medium text-[var(--text-primary)]">
+            {session ? '此会话暂无可回放内容' : '还没有会话记录'}
+          </h3>
+          <p className="text-helper text-[var(--text-muted)] mt-1">
+            {session
+              ? '会话已创建但尚无用户回合（例如仅写入了系统上下文）。有对话后会自动出现在这里。'
+              : '使用 agent 进行编码后，会话将自动出现在这里。'}
+          </p>
         </div>
       </div>
     </main>

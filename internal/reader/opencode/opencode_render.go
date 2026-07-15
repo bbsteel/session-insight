@@ -25,6 +25,17 @@ func (r *OpenCodeReader) RenderANSI(id string, cols int) (string, error) {
 }
 
 func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, error) {
+	// Must error when the session is absent so server handler fall-through
+	// does not steal UUIDs belonging to other agents (empty success short-
+	// circuits GetRenderEvents / RenderANSI for everyone registered later).
+	var n int
+	if err := r.db.QueryRow(`SELECT count(*) FROM session WHERE id = ?`, sessionID).Scan(&n); err != nil {
+		return nil, fmt.Errorf("opencode render: %w", err)
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("opencode session not found: %s", sessionID)
+	}
+
 	rows, err := r.db.Query(
 		"SELECT id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created ASC",
 		sessionID,

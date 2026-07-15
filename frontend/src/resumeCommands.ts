@@ -35,6 +35,10 @@ function agentResumeArgs(session: SessionSummary): AgentResumeArgs | null {
     skipPermissions: ['opencode', '--auto', '-s', id],
   }
   if (agent.includes('chrys')) return { standard: ['chrys', '-s', id] }
+  if (agent.includes('grok')) return {
+    standard: ['grok', '--resume', id],
+    skipPermissions: ['grok', '--always-approve', '--resume', id],
+  }
   return null
 }
 
