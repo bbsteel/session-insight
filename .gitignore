@@ -24,6 +24,8 @@ frontend/dist/
 session-insight
 session-insight.log
 session-insight.pid
+session-insight.url
+.runtime/
 
 # Environment
 .env

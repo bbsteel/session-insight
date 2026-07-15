@@ -65,7 +65,12 @@ See [BUILD.md](BUILD.md) for the full Windows build guide (requires MSYS2 + ming
 | Environment variable | Default | Description |
 |----------------------|---------|-------------|
 | `PORT` | `8080` | HTTP port |
+| `SI_DATA_DIR` | `~/.session-insight` | Override the application database directory |
 | `CHRYS_SESSION_ROOT_DIR` | — | Override Chrys session root directory |
+
+When `run.sh` is executed from a linked Git worktree, it automatically uses an
+OS-assigned random loopback port and an isolated `.runtime/session-insight`
+data directory. The `Ready:` line reports the actual full application URL.
 
 ## Privacy
 

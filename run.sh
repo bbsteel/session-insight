@@ -4,10 +4,43 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 BIN_PATH="${BIN_PATH:-$ROOT_DIR/session-insight}"
-PORT="${PORT:-8080}"
 
-PID_FILE="$ROOT_DIR/session-insight.pid"
-LOG_FILE="$ROOT_DIR/session-insight.log"
+# A linked worktree is an isolated development instance. Keep its mutable
+# application state inside the worktree and let the OS assign a free port.
+# The primary checkout retains the historical 8080 + ~/.session-insight setup.
+if [[ -f "$ROOT_DIR/.git" ]]; then
+  RUNTIME_DIR="$ROOT_DIR/.runtime"
+  PORT="${PORT:-0}"
+  SI_DATA_DIR="${SI_DATA_DIR:-$RUNTIME_DIR/session-insight}"
+else
+  RUNTIME_DIR="$ROOT_DIR"
+  PORT="${PORT:-8080}"
+  SI_DATA_DIR="${SI_DATA_DIR:-}"
+fi
+
+PID_FILE="$RUNTIME_DIR/session-insight.pid"
+LOG_FILE="$RUNTIME_DIR/session-insight.log"
+URL_FILE="$RUNTIME_DIR/session-insight.url"
+
+pid_is_owned() {
+  local pid="$1"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  if [[ -r "/proc/$pid/exe" ]]; then
+    local exe
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+    [[ "$exe" == "$BIN_PATH" || "$exe" == "$BIN_PATH (deleted)" ]]
+    return
+  fi
+
+  # Portable fallback for platforms without procfs. The binary is launched by
+  # absolute path, so the first command token still identifies this worktree.
+  local command
+  command=$(ps -p "$pid" -o command= 2>/dev/null || true)
+  [[ "$command" == "$BIN_PATH" || "$command" == "$BIN_PATH "* ]]
+}
 
 usage() {
   cat <<EOF
@@ -21,6 +54,10 @@ Commands:
   status   查看运行状态
   all      构建 + 运行
   log      查看后台日志
+
+Linked worktrees automatically use an OS-assigned random port and an isolated
+database under .runtime/. The primary checkout continues to use port 8080 and
+~/.session-insight. PORT and SI_DATA_DIR may be set to override these defaults.
 EOF
   exit 0
 }
@@ -57,6 +94,8 @@ do_build() {
 do_start() {
   cd "$ROOT_DIR"
 
+  mkdir -p "$RUNTIME_DIR"
+
   if [[ ! -x "$BIN_PATH" ]]; then
     echo "ERROR: binary not found at $BIN_PATH, run 'build' first."
     exit 1
@@ -64,14 +103,51 @@ do_start() {
 
   do_stop
 
+  rm -f "$URL_FILE"
+
   echo "==> Starting SessionInsight (background)"
-  echo "    URL: http://127.0.0.1:$PORT/"
+  if [[ "$PORT" == "0" ]]; then
+    echo "    URL: assigning a random loopback port"
+  else
+    echo "    URL: http://127.0.0.1:$PORT/"
+  fi
   echo "    Binary: $BIN_PATH"
+  if [[ -n "$SI_DATA_DIR" ]]; then
+    echo "    Data directory: $SI_DATA_DIR"
+  else
+    echo "    Data directory: ~/.session-insight"
+  fi
   echo "    PID file: $PID_FILE"
   echo "    Log file: $LOG_FILE"
-  nohup setsid env PORT="$PORT" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
+  nohup setsid env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
   echo $! >"$PID_FILE"
-  echo "    PID: $(cat "$PID_FILE")"
+  local pid
+  pid=$(cat "$PID_FILE")
+  echo "    PID: $pid"
+
+  # Listening starts after the bounded initial index pass. Wait for the
+  # post-bind log line so a printed URL always belongs to this exact process.
+  local url attempt
+  for ((attempt = 0; attempt < 300; attempt++)); do
+    url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+    if [[ -n "$url" ]]; then
+      printf '%s\n' "$url" >"$URL_FILE"
+      echo "    Ready: $url"
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "ERROR: SessionInsight exited before becoming ready"
+      tail -20 "$LOG_FILE" 2>/dev/null || true
+      rm -f "$PID_FILE"
+      return 1
+    fi
+    sleep 0.1
+  done
+
+  echo "ERROR: SessionInsight did not become ready within 30 seconds"
+  tail -20 "$LOG_FILE" 2>/dev/null || true
+  do_stop
+  return 1
 }
 
 # 只按 pid 文件精确 kill，禁止 pkill 模糊匹配（会误杀命令行含关键字的无关进程）
@@ -79,30 +155,37 @@ do_stop() {
   if [[ -f "$PID_FILE" ]]; then
     local pid
     pid=$(cat "$PID_FILE")
-    if kill -0 "$pid" 2>/dev/null; then
+    if pid_is_owned "$pid"; then
       echo "==> Stopping SessionInsight (PID: $pid)"
       kill "$pid"
       sleep 0.5
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    elif kill -0 "$pid" 2>/dev/null; then
+      echo "WARNING: refusing to stop PID $pid because it is not owned by this worktree"
     fi
     rm -f "$PID_FILE"
   fi
-  # pid 文件丢失时的兜底：按端口精确找监听进程
-  local port_pid
-  port_pid=$(lsof -t -i ":$PORT" -s TCP:LISTEN 2>/dev/null || true)
-  if [[ -n "$port_pid" ]]; then
-    echo "==> Stopping process listening on :$PORT (PID: $port_pid)"
-    kill $port_pid 2>/dev/null || true
-  fi
+  rm -f "$URL_FILE"
 }
 
 do_status() {
   if [[ -f "$PID_FILE" ]]; then
     local pid
     pid=$(cat "$PID_FILE")
-    if kill -0 "$pid" 2>/dev/null; then
+    if pid_is_owned "$pid"; then
       echo "SessionInsight is running (PID: $pid)"
-      echo "URL: http://127.0.0.1:$PORT/"
+      if [[ -s "$URL_FILE" ]]; then
+        echo "URL: $(cat "$URL_FILE")"
+      elif [[ "$PORT" != "0" ]]; then
+        echo "URL: http://127.0.0.1:$PORT/"
+      else
+        echo "URL: pending; inspect $LOG_FILE"
+      fi
+      if [[ -n "$SI_DATA_DIR" ]]; then
+        echo "Data directory: $SI_DATA_DIR"
+      else
+        echo "Data directory: ~/.session-insight"
+      fi
     else
       echo "SessionInsight is NOT running (stale PID file: $pid)"
     fi

@@ -5,6 +5,7 @@ import (
 	"embed"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,11 +32,14 @@ func main() {
 		log.Fatalf("failed to get frontend sub-fs: %v", err)
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatalf("failed to get home dir: %v", err)
+	dataDir := os.Getenv("SI_DATA_DIR")
+	if dataDir == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatalf("failed to get home dir: %v", err)
+		}
+		dataDir = filepath.Join(homeDir, ".session-insight")
 	}
-	dataDir := filepath.Join(homeDir, ".session-insight")
 	database, err := db.Open(dataDir)
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
@@ -111,6 +115,11 @@ func main() {
 	// Loopback only: the API exposes session contents and (via the editor
 	// command setting + open-file) command execution, so it must never be
 	// reachable from the network.
-	log.Printf("SessionInsight listening on http://127.0.0.1:%s", port)
-	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, srv.Mux))
+	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
+		log.Fatalf("failed to listen on 127.0.0.1:%s: %v", port, err)
+	}
+	url := "http://" + listener.Addr().String() + "/"
+	log.Printf("SessionInsight listening on %s", url)
+	log.Fatal(http.Serve(listener, srv.Mux))
 }

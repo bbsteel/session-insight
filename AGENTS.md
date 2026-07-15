@@ -5,10 +5,14 @@
 - After completing a full modification, run `./run.sh all` so the complete local app is restarted and ready for validation.
 - Write Git commit messages in English, including both the subject and body.
 
-## Port Allocation
+## Worktree Development and Runtime Isolation
 
-- The main instance owns port 8080. Extra instances (worktree validation, parallel debugging) take ports in +10 steps: 8090, then 8100, and so on. Never use 8081 — a vite dev server often sits there proxying `/api` back to the stale 8080 binary, so curl "works" while validating old code.
-- Before starting an instance, confirm the port is free (`ss -tlnp | grep <port>`); after starting, check the log for `bind: address already in use` — run.sh prints the URL before binding, so a successful-looking startup message does not mean the server is actually up.
+- Perform concurrent development and validation in separate linked Git worktrees. Do not run multiple development instances from the same checkout.
+- The primary checkout owns port 8080 and the default `~/.session-insight` database. In a linked worktree, `./run.sh all` automatically uses an OS-assigned random loopback port and stores its database, PID, log, and discovered URL under that worktree's `.runtime/` directory.
+- Treat the post-bind `Ready:` URL printed by `run.sh` as the authoritative address. Do not guess a port or use a URL printed before the backend has successfully bound its socket.
+- Multiple worktree instances may read the same live agent session roots, but only the primary instance may perform destructive operations against them, including deleting or stopping sessions. Use fixtures or snapshots when validation requires deterministic session counts or content.
+- Stop only the process recorded by the current worktree's PID file. Never use broad process-name matching or kill an unrelated listener merely because it occupies an expected port.
+- Keep runtime artifacts owned by a worktree inside that worktree. `PORT` and `SI_DATA_DIR` are escape hatches for explicit validation needs, not required per-instance setup.
 
 ## Terminal Interaction Positioning
 
