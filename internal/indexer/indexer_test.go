@@ -89,6 +89,52 @@ func TestIndexer_FirstRun(t *testing.T) {
 	}
 }
 
+func TestIndexer_UsesDetailMetadataWhenAvailable(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	mr := &mockReader{
+		agentType: "codex",
+		sessions: []model.Session{
+			{
+				ID:            "s1",
+				ModelName:     "GPT-5",
+				ModelProvider: "openai",
+				UpdatedAt:     time.Unix(0, 100),
+				CreatedAt:     time.Unix(0, 100),
+			},
+		},
+		details: map[string]*model.SessionDetail{
+			"s1": {
+				Session: model.Session{
+					ID:            "s1",
+					ModelName:     "gpt-5.5",
+					ModelProvider: "openai",
+					UpdatedAt:     time.Unix(0, 100),
+					CreatedAt:     time.Unix(0, 100),
+				},
+				Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "hello"}},
+			},
+		},
+	}
+
+	ix := New(database, []reader.BaseSessionReader{mr})
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	var modelName, modelProvider string
+	if err := database.Conn().QueryRow(`SELECT model_name, model_provider FROM sessions WHERE agent_type = 'codex' AND id = 's1'`).Scan(&modelName, &modelProvider); err != nil {
+		t.Fatalf("query session metadata: %v", err)
+	}
+	if modelName != "gpt-5.5" || modelProvider != "openai" {
+		t.Fatalf("stored model/provider = %q/%q, want gpt-5.5/openai", modelName, modelProvider)
+	}
+}
+
 func TestIndexer_UnchangedSkip(t *testing.T) {
 	database, err := db.Open(t.TempDir())
 	if err != nil {

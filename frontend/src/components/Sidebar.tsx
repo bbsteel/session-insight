@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { addBookmark, fetchAgents, fetchBookmarks, fetchSearch, fetchSessions, removeBookmark, watchSessionsChanged } from '../api'
+import { addBookmark, fetchAgents, fetchBookmarks, fetchSearch, fetchSessions, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import { applyBookmarkChange, filterBookmarks, removeBookmarkFromList, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
+import ModelFilter, { type ModelEntry } from './ModelFilter'
 import AgentIcon from './AgentIcon'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
 import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
+import { modelMeta } from '../modelMeta'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 
@@ -35,8 +37,98 @@ function getSessionName(s: SessionSummary): string {
   return s.id.slice(0, 8)
 }
 
+function sessionModelKey(s: Pick<SessionSummary, 'model_name' | 'model_provider'>): string {
+  const meta = modelMeta(s.model_name, s.model_provider)
+  return `model\x00${meta.label}`
+}
+
+function sessionModelProviderKey(s: Pick<SessionSummary, 'model_name' | 'model_provider'>): string {
+  const meta = modelMeta(s.model_name, s.model_provider)
+  return `provider\x00${meta.label}\x00${meta.providerKey}`
+}
+
+function sessionMatchesModelFilter(s: Pick<SessionSummary, 'model_name' | 'model_provider'>, filter: string): boolean {
+  if (filter.startsWith('provider\x00')) return sessionModelProviderKey(s) === filter
+  if (filter.startsWith('model\x00')) return sessionModelKey(s) === filter
+  return sessionModelProviderKey(s) === filter || sessionModelKey(s) === filter
+}
+
 function hostIsWindows(): boolean {
   return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform)
+}
+
+function BookmarkNoteEditor({ session, onSave }: { session: SessionSummary; onSave: (session: SessionSummary, note: string) => Promise<void> }) {
+  const note = session.bookmark_note?.trim() ?? ''
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(note)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!editing) setDraft(note)
+  }, [editing, note])
+
+  const save = async () => {
+    const next = draft.trim()
+    setSaving(true)
+    try {
+      await onSave(session, next)
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="mt-1.5">
+        <textarea
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          maxLength={2000}
+          rows={3}
+          className="w-full resize-none rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1.5 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
+          placeholder="记录收藏原因..."
+        />
+        <div className="mt-1 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className="h-6 px-2 rounded-md bg-[var(--accent-blue)] text-nav text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          >
+            保存
+          </button>
+          <button
+            type="button"
+            onClick={() => { setDraft(note); setEditing(false) }}
+            disabled={saving}
+            className="h-6 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-1.5 flex items-start gap-1.5">
+      {note ? (
+        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1 text-helper text-[var(--text-secondary)]">
+          {note}
+        </p>
+      ) : (
+        <p className="min-w-0 flex-1 px-0.5 py-1 text-helper text-[var(--text-muted)]">未记录收藏原因</p>
+      )}
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="h-6 px-2 flex-shrink-0 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+      >
+        {note ? '编辑备注' : '添加备注'}
+      </button>
+    </div>
+  )
 }
 
 interface ContextMenuState {
@@ -123,6 +215,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [agentsReady, setAgentsReady] = useState(false)
   const [agentFilter, setAgentFilter] = useState<string>('')
   const [projectFilter, setProjectFilter] = useState<string>('')
+  const [modelFilter, setModelFilter] = useState<string>('')
 
   const searchRef = useRef<HTMLInputElement>(null)
   const asideRef = useRef<HTMLElement>(null)
@@ -409,9 +502,24 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [onBookmarkChange, showToast])
 
+  const saveBookmarkNote = useCallback(async (session: SessionSummary, note: string) => {
+    try {
+      await updateBookmarkNote(session, note)
+      const patch = (list: SessionSummary[]) => list.map(s =>
+        s.agent_type === session.agent_type && s.id === session.id ? { ...s, bookmark_note: note } : s
+      )
+      setSessions(patch)
+      setBookmarks(patch)
+      showToast(note ? '收藏备注已保存' : '收藏备注已清空')
+    } catch {
+      showToast('收藏备注保存失败')
+    }
+  }, [showToast])
+
   const filtered = useMemo(() => sessions.filter(s => {
     if (agentFilter && s.agent_type !== agentFilter) return false
     if (projectFilter && s.project !== projectFilter) return false
+    if (modelFilter && !sessionMatchesModelFilter(s, modelFilter)) return false
     if (query.trim()) {
       const q = query.toLowerCase()
       const name = getSessionName(s).toLowerCase()
@@ -423,7 +531,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !sid.includes(q) && !contentHit) return false
     }
     return true
-  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, contentHits])
+  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, modelFilter, contentHits])
+
+  const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter)
 
   // A global-search result can be hidden by the sidebar's current filters and
   // by virtual scrolling. Reveal it, then move keyboard focus to its row.
@@ -431,6 +541,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     if (!focusTarget) return
     setAgentFilter(focusTarget.agentType)
     setProjectFilter('')
+    setModelFilter('')
     setQuery('')
   }, [focusTarget])
 
@@ -557,6 +668,57 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       .sort((a, b) => b.session_count - a.session_count || a.name.localeCompare(b.name))
   }, [sessions, agentFilter])
 
+  const modelEntries = useMemo<ModelEntry[]>(() => {
+    const counts = new Map<string, {
+      meta: ReturnType<typeof modelMeta>
+      modelName: string
+      sessionCount: number
+      providers: Map<string, { provider: string; providerKey: string; sessionCount: number }>
+    }>()
+    for (const s of sessions) {
+      if (!s.model_name) continue
+      if (agentFilter && s.agent_type !== agentFilter) continue
+      if (projectFilter && s.project !== projectFilter) continue
+      const meta = modelMeta(s.model_name, s.model_provider)
+      const key = sessionModelKey(s)
+      const entry = counts.get(key)
+      const providerKey = sessionModelProviderKey(s)
+      if (entry) {
+        entry.sessionCount++
+        const provider = entry.providers.get(providerKey)
+        if (provider) provider.sessionCount++
+        else entry.providers.set(providerKey, { provider: meta.provider, providerKey: meta.providerKey, sessionCount: 1 })
+      } else {
+        counts.set(key, {
+          meta,
+          modelName: s.model_name,
+          sessionCount: 1,
+          providers: new Map([[providerKey, { provider: meta.provider, providerKey: meta.providerKey, sessionCount: 1 }]]),
+        })
+      }
+    }
+    return [...counts.entries()]
+      .map(([key, entry]) => {
+        const providers = [...entry.providers.entries()]
+          .map(([providerKey, provider]) => ({
+            key: providerKey,
+            provider: provider.provider,
+            providerKey: provider.providerKey,
+            session_count: provider.sessionCount,
+          }))
+          .sort((a, b) => b.session_count - a.session_count || a.provider.localeCompare(b.provider))
+        return {
+          key,
+          name: entry.modelName,
+          session_count: entry.sessionCount,
+          ...entry.meta,
+          providerSummary: providers.length === 1 ? providers[0].provider : `${providers.length} Providers`,
+          providers,
+        }
+      })
+      .sort((a, b) => b.session_count - a.session_count || a.label.localeCompare(b.label))
+  }, [sessions, agentFilter, projectFilter])
+
   // Reset project filter when the selected project disappears from the list
   // (e.g. after switching agent filter).
   useEffect(() => {
@@ -564,6 +726,12 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       setProjectFilter('')
     }
   }, [projectFilter, projectEntries])
+
+  useEffect(() => {
+    if (modelFilter && !modelEntries.some(m => m.key === modelFilter || m.providers.some(p => p.key === modelFilter))) {
+      setModelFilter('')
+    }
+  }, [modelFilter, modelEntries])
 
   const SessionRow = ({ session }: { session: SessionSummary }) => {
     const selected = session.id === selectedId && (!selectedAgentType || session.agent_type === selectedAgentType)
@@ -606,7 +774,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
                 {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
                 {session.bookmarked && (
-                  <span className="text-meta text-[var(--accent-blue)] flex-shrink-0" title="已收藏" aria-label="已收藏">
+                  <span className="text-meta text-[var(--accent-blue)] flex-shrink-0" title={session.bookmark_note ? `已收藏：${session.bookmark_note}` : '已收藏'} aria-label="已收藏">
                     已收藏
                   </span>
                 )}
@@ -782,32 +950,35 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                       const project = session.project || repo || '未知项目'
                       const model = session.model_name || 'unknown model'
                       return (
-                        <div key={`${session.agent_type}-${session.id}`} className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--bg-surface-hover)]">
-                          <button
-                            onClick={() => { onSelect(session.id, session.agent_type, true); setBookmarksOpen(false) }}
-                            className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] rounded-sm"
-                          >
-                            <span className="block truncate text-body text-[var(--text-primary)]">{getSessionName(session)}</span>
-                            <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta text-[var(--text-secondary)]">
-                              <span className="inline-flex items-center gap-1 rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">
-                                <AgentIcon agentType={session.agent_type} size={12} />
-                                {getAgentLabel(session.agent_type)}
+                        <div key={`${session.agent_type}-${session.id}`} className="group rounded-md px-2 py-1.5 hover:bg-[var(--bg-surface-hover)]">
+                          <div className="flex items-start gap-2">
+                            <button
+                              onClick={() => { onSelect(session.id, session.agent_type, true); setBookmarksOpen(false) }}
+                              className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] rounded-sm"
+                            >
+                              <span className="block truncate text-body text-[var(--text-primary)]">{getSessionName(session)}</span>
+                              <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta text-[var(--text-secondary)]">
+                                <span className="inline-flex items-center gap-1 rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">
+                                  <AgentIcon agentType={session.agent_type} size={12} />
+                                  {getAgentLabel(session.agent_type)}
+                                </span>
+                                <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{model}</span>
+                                <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{project}</span>
                               </span>
-                              <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{model}</span>
-                              <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{project}</span>
-                            </span>
-                            <span className="mt-0.5 block truncate text-helper text-[var(--text-muted)]">
-                              {formatRelativeTime(session.updated_at, now)}
-                            </span>
-                          </button>
-                          <button
-                            onClick={() => removeSessionBookmark(session)}
-                            className="h-7 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                            title="取消收藏"
-                            aria-label="取消收藏"
-                          >
-                            取消收藏
-                          </button>
+                              <span className="mt-0.5 block truncate text-helper text-[var(--text-muted)]">
+                                {formatRelativeTime(session.updated_at, now)}
+                              </span>
+                            </button>
+                            <button
+                              onClick={() => removeSessionBookmark(session)}
+                              className="h-7 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                              title="取消收藏"
+                              aria-label="取消收藏"
+                            >
+                              取消收藏
+                            </button>
+                          </div>
+                          <BookmarkNoteEditor session={session} onSave={saveBookmarkNote} />
                         </div>
                       )
                     })}
@@ -872,6 +1043,12 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         onSelect={setProjectFilter}
       />
 
+      <ModelFilter
+        models={modelEntries}
+        selected={modelFilter}
+        onSelect={setModelFilter}
+      />
+
       {/* Session List */}
       <div className="px-2 flex-1 min-h-0">
         {error ? (
@@ -885,9 +1062,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <div className="mx-auto mb-2 flex h-7 w-7 items-center justify-center rounded-md bg-[var(--bg-inset)] text-helper text-[var(--text-muted)]">⌕</div>
             <div className="text-nav font-medium text-[var(--text-primary)]">未找到匹配的会话</div>
             <div className="mt-1 text-helper text-[var(--text-muted)]">尝试其他关键词或清除筛选条件</div>
-            {query && (
+            {hasActiveFilters && (
               <button
-                onClick={() => setQuery('')}
+                onClick={() => { setQuery(''); setAgentFilter(''); setProjectFilter(''); setModelFilter('') }}
                 className="mt-3 h-7 px-3 rounded-md border border-[var(--border-default)] text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 清除筛选

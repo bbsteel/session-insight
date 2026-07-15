@@ -32,7 +32,7 @@ func TestParseCodexRollbackKeepsHistoryOutsideActivePath(t *testing.T) {
 	lines = append(lines, codexTurn("2026-07-14T10:03:00Z", "t4", "four")...)
 	lines = append(lines, `{"timestamp":"2026-07-14T10:04:00Z","type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":3}}`)
 
-	parsed, _ := parseCodexEvents(writeCodexRollbackFixture(t, lines...))
+	parsed, _, _ := parseCodexEvents(writeCodexRollbackFixture(t, lines...))
 	if len(parsed.Active) != 1 || parsed.Active[0].UserMessage != "one" {
 		t.Fatalf("active path = %+v, want only first turn", parsed.Active)
 	}
@@ -61,7 +61,7 @@ func TestParseCodexRollbackAppliesBeforeEmptyTurnFiltering(t *testing.T) {
 		`{"timestamp":"2026-07-14T10:01:02Z","type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}}`,
 	)
 
-	parsed, _ := parseCodexEvents(writeCodexRollbackFixture(t, lines...))
+	parsed, _, _ := parseCodexEvents(writeCodexRollbackFixture(t, lines...))
 	if len(parsed.Active) != 1 || parsed.Active[0].UserMessage != "keep" {
 		t.Fatalf("empty rollback removed a real turn: %+v", parsed.Active)
 	}
@@ -77,7 +77,7 @@ func TestParseCodexRollbackThenContinueRenumbersActivePath(t *testing.T) {
 	lines = append(lines, `{"timestamp":"2026-07-14T10:02:00Z","type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}}`)
 	lines = append(lines, codexTurn("2026-07-14T10:03:00Z", "new", "new branch")...)
 
-	parsed, _ := parseCodexEvents(writeCodexRollbackFixture(t, lines...))
+	parsed, _, _ := parseCodexEvents(writeCodexRollbackFixture(t, lines...))
 	if len(parsed.Active) != 2 {
 		t.Fatalf("active turns = %d, want 2", len(parsed.Active))
 	}

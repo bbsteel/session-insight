@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,6 +292,27 @@ func TestBookmarkHandlersAnnotateSessionsAndListBookmarks(t *testing.T) {
 		t.Fatal("expected detail to be bookmarked")
 	}
 
+	req = httptest.NewRequest("PUT", "/api/sessions/sess-1/bookmark/note?agent=claude", strings.NewReader(`{"note":"Useful because it captured the UI tradeoff"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("PUT bookmark note expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest("GET", "/api/sessions", nil)
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET sessions after note expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	sessions = nil
+	if err := json.NewDecoder(w.Body).Decode(&sessions); err != nil {
+		t.Fatalf("decode sessions after note: %v", err)
+	}
+	if sessions[0].BookmarkNote != "Useful because it captured the UI tradeoff" {
+		t.Fatalf("expected session bookmark note, got %q", sessions[0].BookmarkNote)
+	}
+
 	req = httptest.NewRequest("GET", "/api/bookmarks", nil)
 	w = httptest.NewRecorder()
 	srv.Mux.ServeHTTP(w, req)
@@ -303,6 +325,9 @@ func TestBookmarkHandlersAnnotateSessionsAndListBookmarks(t *testing.T) {
 	}
 	if len(bookmarks) != 1 || bookmarks[0].ID != "sess-1" || !bookmarks[0].Bookmarked {
 		t.Fatalf("unexpected bookmarks response: %+v", bookmarks)
+	}
+	if bookmarks[0].BookmarkNote != "Useful because it captured the UI tradeoff" {
+		t.Fatalf("expected bookmark note, got %q", bookmarks[0].BookmarkNote)
 	}
 
 	req = httptest.NewRequest("DELETE", "/api/sessions/sess-1/bookmark?agent=claude", nil)

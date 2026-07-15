@@ -46,7 +46,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	bookmarkSet, err := s.bookmarkSet()
+	bookmarkNotes, err := s.bookmarkNotes()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -66,11 +66,17 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if sess.IsSubagent {
 			continue
 		}
-		sess.Bookmarked = bookmarkSet[db.BookmarkKey(sess.AgentType, sess.ID)]
-		if t, ok := overrides[db.BookmarkKey(sess.AgentType, sess.ID)]; ok {
+		key := db.BookmarkKey(sess.AgentType, sess.ID)
+		bookmarkNote, bookmarked := bookmarkNotes[key]
+		sess.Bookmarked = bookmarked
+		if t, ok := overrides[key]; ok {
 			sess.Name = t
 		}
-		sessions = append(sessions, sessionToSummary(sess))
+		summary := sessionToSummary(sess)
+		if bookmarked {
+			summary.BookmarkNote = bookmarkNote
+		}
+		sessions = append(sessions, summary)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -150,6 +156,7 @@ func sessionToSummary(s model.Session) SessionSummary {
 		AgentType:           s.AgentType,
 		Name:                s.Name,
 		ModelName:           s.ModelName,
+		ModelProvider:       s.ModelProvider,
 		Repository:          s.Repository,
 		Branch:              s.Branch,
 		Project:             s.Project,
@@ -187,11 +194,11 @@ func (s *Server) handleLiveRevision(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "live revision unavailable", http.StatusNotFound)
 }
 
-func (s *Server) bookmarkSet() (map[string]bool, error) {
+func (s *Server) bookmarkNotes() (map[string]string, error) {
 	if s.DB == nil {
-		return map[string]bool{}, nil
+		return map[string]string{}, nil
 	}
-	return s.DB.BookmarkSet()
+	return s.DB.BookmarkNotes()
 }
 
 func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
@@ -213,20 +220,22 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 			bm.Name = t
 		}
 		ss := SessionSummary{
-			ID:           bm.SessionID,
-			AgentType:    bm.AgentType,
-			Name:         bm.Name,
-			ModelName:    bm.ModelName,
-			Repository:   bm.Repository,
-			Project:      bm.Project,
-			CWD:          bm.CWD,
-			TurnCount:    bm.TurnCount,
-			MessageCount: bm.MessageCount,
-			Branch:       bm.Branch,
-			IsLive:       false,
-			Bookmarked:   true,
-			CreatedAt:    bm.BookmarkCreatedAt,
-			UpdatedAt:    bm.SessionUpdatedAt,
+			ID:            bm.SessionID,
+			AgentType:     bm.AgentType,
+			BookmarkNote:  bm.Note,
+			Name:          bm.Name,
+			ModelName:     bm.ModelName,
+			ModelProvider: bm.ModelProvider,
+			Repository:    bm.Repository,
+			Project:       bm.Project,
+			CWD:           bm.CWD,
+			TurnCount:     bm.TurnCount,
+			MessageCount:  bm.MessageCount,
+			Branch:        bm.Branch,
+			IsLive:        false,
+			Bookmarked:    true,
+			CreatedAt:     bm.BookmarkCreatedAt,
+			UpdatedAt:     bm.SessionUpdatedAt,
 		}
 		// Legacy bookmark without metadata: hydrate from reader once and
 		// backfill so subsequent requests are pure SQL.
@@ -238,11 +247,13 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 				if detail, e := rd.GetSession(bm.SessionID); e == nil && detail != nil {
 					ss = sessionToSummary(detail.Session)
 					ss.Bookmarked = true
+					ss.BookmarkNote = bm.Note
 					s.DB.UpdateBookmarkMeta(db.BookmarkedSession{
 						AgentType:        bm.AgentType,
 						SessionID:        bm.SessionID,
 						Name:             ss.Name,
 						ModelName:        ss.ModelName,
+						ModelProvider:    ss.ModelProvider,
 						Repository:       ss.Repository,
 						Project:          ss.Project,
 						CWD:              ss.CWD,
@@ -302,6 +313,7 @@ func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add
 						SessionID:        id,
 						Name:             ss.Name,
 						ModelName:        ss.ModelName,
+						ModelProvider:    ss.ModelProvider,
 						Repository:       ss.Repository,
 						Project:          ss.Project,
 						CWD:              ss.CWD,
@@ -319,6 +331,52 @@ func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add
 		err = s.DB.RemoveBookmark(agentType, id)
 	}
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.bumpListRev()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type bookmarkNoteRequest struct {
+	Note string `json:"note"`
+}
+
+func (s *Server) handleUpdateBookmarkNote(w http.ResponseWriter, r *http.Request) {
+	if rejectUnsafeWrite(w, r) || !s.requireDB(w) {
+		return
+	}
+	id := r.PathValue("id")
+	agentType := r.URL.Query().Get("agent")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+	if agentType == "" {
+		http.Error(w, "missing agent", http.StatusBadRequest)
+		return
+	}
+	bookmarked, err := s.DB.IsBookmarked(agentType, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !bookmarked {
+		http.Error(w, "bookmark not found", http.StatusNotFound)
+		return
+	}
+	var req bookmarkNoteRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	note := strings.TrimSpace(req.Note)
+	if len([]rune(note)) > 2000 {
+		http.Error(w, "note is too long", http.StatusBadRequest)
+		return
+	}
+	if err := s.DB.UpdateBookmarkNote(agentType, id, note); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

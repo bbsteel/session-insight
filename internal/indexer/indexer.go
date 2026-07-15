@@ -141,24 +141,63 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 		return false, fmt.Errorf("get session %s: reader returned nil detail", sess.ID)
 	}
 
+	persisted := sess
+	applyDetailMetadata(&persisted, detail.Session)
+
 	// Persist metadata before UpsertTurns commits the watermark. If metadata
 	// fails after a watermark write, the next cycle would otherwise treat the
 	// session as unchanged and permanently skip the resume_id backfill.
-	if err := ix.db.UpsertSessionMetaWithHistoryAndLineage(
-		agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
-		sess.Project, sess.Name, sess.ModelName, sess.ResumeID,
-		sess.ParentSessionID, sess.AgentPath, sess.IsSubagent,
-		detail.TurnCount, detail.HistoricalTurnCount, detail.RolledBackTurnCount, sess.MessageCount,
-		sess.CreatedAt, sess.UpdatedAt,
+	if err := ix.db.UpsertSessionMetaWithHistoryLineageAndProvider(
+		agentType, persisted.ID, persisted.CWD, persisted.Repository, persisted.Branch,
+		persisted.Project, persisted.Name, persisted.ModelName, persisted.ModelProvider, persisted.ResumeID,
+		persisted.ParentSessionID, persisted.AgentPath, persisted.IsSubagent,
+		detail.TurnCount, detail.HistoricalTurnCount, detail.RolledBackTurnCount, persisted.MessageCount,
+		persisted.CreatedAt, persisted.UpdatedAt,
 	); err != nil {
 		return false, err
 	}
 
-	turns := buildTurnTexts(sess, detail)
+	turns := buildTurnTexts(persisted, detail)
 	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
 		return false, fmt.Errorf("upsert turns: %w", err)
 	}
 	return true, nil
+}
+
+func applyDetailMetadata(base *model.Session, detail model.Session) {
+	if detail.CWD != "" {
+		base.CWD = detail.CWD
+	}
+	if detail.Repository != "" {
+		base.Repository = detail.Repository
+	}
+	if detail.Branch != "" {
+		base.Branch = detail.Branch
+	}
+	if detail.Project != "" {
+		base.Project = detail.Project
+	}
+	if detail.Name != "" {
+		base.Name = detail.Name
+	}
+	if detail.ModelName != "" {
+		base.ModelName = detail.ModelName
+	}
+	if detail.ModelProvider != "" {
+		base.ModelProvider = detail.ModelProvider
+	}
+	if detail.ResumeID != "" {
+		base.ResumeID = detail.ResumeID
+	}
+	if detail.ParentSessionID != "" {
+		base.ParentSessionID = detail.ParentSessionID
+	}
+	if detail.AgentPath != "" {
+		base.AgentPath = detail.AgentPath
+	}
+	if detail.IsSubagent {
+		base.IsSubagent = true
+	}
 }
 
 // buildTurnTexts 从 SessionDetail 构造待索引行列表：

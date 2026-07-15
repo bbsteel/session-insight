@@ -16,19 +16,29 @@ type SessionMeta struct {
 }
 
 func (db *DB) UpsertSessionMeta(agentType, id, cwd, repository, branch, project, name, modelName, resumeID string, turnCount, messageCount int, createdAt, updatedAt time.Time) error {
-	return db.UpsertSessionMetaWithHistory(agentType, id, cwd, repository, branch, project, name, modelName, resumeID,
+	return db.UpsertSessionMetaWithHistoryAndProvider(agentType, id, cwd, repository, branch, project, name, modelName, "", resumeID,
 		turnCount, turnCount, 0, messageCount, createdAt, updatedAt)
 }
 
 func (db *DB) UpsertSessionMetaWithHistory(agentType, id, cwd, repository, branch, project, name, modelName, resumeID string, turnCount, historicalTurnCount, rolledBackTurnCount, messageCount int, createdAt, updatedAt time.Time) error {
-	return db.UpsertSessionMetaWithHistoryAndLineage(agentType, id, cwd, repository, branch, project, name, modelName, resumeID,
+	return db.UpsertSessionMetaWithHistoryAndProvider(agentType, id, cwd, repository, branch, project, name, modelName, "", resumeID,
+		turnCount, historicalTurnCount, rolledBackTurnCount, messageCount, createdAt, updatedAt)
+}
+
+func (db *DB) UpsertSessionMetaWithHistoryAndProvider(agentType, id, cwd, repository, branch, project, name, modelName, modelProvider, resumeID string, turnCount, historicalTurnCount, rolledBackTurnCount, messageCount int, createdAt, updatedAt time.Time) error {
+	return db.UpsertSessionMetaWithHistoryLineageAndProvider(agentType, id, cwd, repository, branch, project, name, modelName, modelProvider, resumeID,
 		"", "", false, turnCount, historicalTurnCount, rolledBackTurnCount, messageCount, createdAt, updatedAt)
 }
 
 func (db *DB) UpsertSessionMetaWithHistoryAndLineage(agentType, id, cwd, repository, branch, project, name, modelName, resumeID, parentSessionID, agentPath string, isSubagent bool, turnCount, historicalTurnCount, rolledBackTurnCount, messageCount int, createdAt, updatedAt time.Time) error {
+	return db.UpsertSessionMetaWithHistoryLineageAndProvider(agentType, id, cwd, repository, branch, project, name, modelName, "", resumeID,
+		parentSessionID, agentPath, isSubagent, turnCount, historicalTurnCount, rolledBackTurnCount, messageCount, createdAt, updatedAt)
+}
+
+func (db *DB) UpsertSessionMetaWithHistoryLineageAndProvider(agentType, id, cwd, repository, branch, project, name, modelName, modelProvider, resumeID, parentSessionID, agentPath string, isSubagent bool, turnCount, historicalTurnCount, rolledBackTurnCount, messageCount int, createdAt, updatedAt time.Time) error {
 	_, err := db.conn.Exec(
-		`INSERT INTO sessions(agent_type, id, cwd, repository, branch, project, name, model_name, resume_id, parent_session_id, agent_path, is_subagent, turn_count, historical_turn_count, rolled_back_turn_count, message_count, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO sessions(agent_type, id, cwd, repository, branch, project, name, model_name, model_provider, resume_id, parent_session_id, agent_path, is_subagent, turn_count, historical_turn_count, rolled_back_turn_count, message_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(agent_type, id) DO UPDATE SET
 		     cwd = excluded.cwd,
 		     repository = excluded.repository,
@@ -36,6 +46,7 @@ func (db *DB) UpsertSessionMetaWithHistoryAndLineage(agentType, id, cwd, reposit
 		     project = excluded.project,
 		     name = excluded.name,
 		     model_name = excluded.model_name,
+		     model_provider = excluded.model_provider,
 		     resume_id = excluded.resume_id,
 		     parent_session_id = excluded.parent_session_id,
 		     agent_path = excluded.agent_path,
@@ -46,7 +57,7 @@ func (db *DB) UpsertSessionMetaWithHistoryAndLineage(agentType, id, cwd, reposit
 		     message_count = excluded.message_count,
 		     created_at = excluded.created_at,
 		     updated_at = excluded.updated_at`,
-		agentType, id, cwd, repository, branch, project, name, modelName, resumeID, parentSessionID, agentPath, isSubagent,
+		agentType, id, cwd, repository, branch, project, name, modelName, modelProvider, resumeID, parentSessionID, agentPath, isSubagent,
 		turnCount, historicalTurnCount, rolledBackTurnCount, messageCount,
 		model.FormatTime(createdAt),
 		model.FormatTime(updatedAt),
@@ -80,8 +91,8 @@ func (db *DB) UpdateSessionResumeID(agentType, sessionID, resumeID string) (bool
 // agent type) ordered by updated_at descending — the sidebar list is served
 // straight from this query instead of re-scanning session files on disk.
 func (db *DB) ListSessionSummaries(agentType string) ([]model.Session, error) {
-	query := `SELECT agent_type, id, cwd, repository, branch, project, name, model_name, resume_id, parent_session_id, agent_path, is_subagent,
-	                 turn_count, historical_turn_count, rolled_back_turn_count, message_count, created_at, updated_at
+	query := `SELECT agent_type, id, cwd, repository, branch, project, name, model_name, model_provider, resume_id, parent_session_id, agent_path, is_subagent,
+		                 turn_count, historical_turn_count, rolled_back_turn_count, message_count, created_at, updated_at
 	          FROM sessions`
 	var args []any
 	if agentType != "" {
@@ -102,7 +113,7 @@ func (db *DB) ListSessionSummaries(agentType string) ([]model.Session, error) {
 		var isSubagent int
 		var createdStr, updatedStr string
 		if err := rows.Scan(&s.AgentType, &s.ID, &s.CWD, &s.Repository, &s.Branch, &s.Project,
-			&s.Name, &s.ModelName, &s.ResumeID, &s.ParentSessionID, &s.AgentPath, &isSubagent,
+			&s.Name, &s.ModelName, &s.ModelProvider, &s.ResumeID, &s.ParentSessionID, &s.AgentPath, &isSubagent,
 			&s.TurnCount, &s.HistoricalTurnCount, &s.RolledBackTurnCount, &s.MessageCount,
 			&createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan session summary: %w", err)

@@ -198,25 +198,27 @@ func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
 		}
 
 		modelName := ""
+		modelProvider := ""
 		if modelJSON.Valid && modelJSON.String != "" {
-			modelName = extractModelID(modelJSON.String)
+			modelName, modelProvider = extractModelMeta(modelJSON.String)
 		}
 
 		createdAt := time.UnixMilli(timeCreated)
 		updatedAt := time.UnixMilli(timeUpdated)
 
 		sessions = append(sessions, model.Session{
-			ID:           id,
-			AgentType:    "opencode",
-			CWD:          directory,
-			Project:      shared.ResolveProject(directory, ""),
-			Name:         resolveName(title, previewText.String, createdAt),
-			ModelName:    modelName,
-			PreviewText:  strings.TrimSpace(previewText.String),
-			TurnCount:    turnCount,
-			MessageCount: messageCount,
-			CreatedAt:    createdAt,
-			UpdatedAt:    updatedAt,
+			ID:            id,
+			AgentType:     "opencode",
+			CWD:           directory,
+			Project:       shared.ResolveProject(directory, ""),
+			Name:          resolveName(title, previewText.String, createdAt),
+			ModelName:     modelName,
+			ModelProvider: modelProvider,
+			PreviewText:   strings.TrimSpace(previewText.String),
+			TurnCount:     turnCount,
+			MessageCount:  messageCount,
+			CreatedAt:     createdAt,
+			UpdatedAt:     updatedAt,
 		})
 	}
 
@@ -234,9 +236,12 @@ func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 		return nil, err
 	}
 
-	turns, modelName, billing := r.parseMessages(id)
+	turns, modelName, modelProvider, billing := r.parseMessages(id)
 	if modelName != "" && meta.ModelName == "" {
 		meta.ModelName = modelName
+	}
+	if modelProvider != "" && meta.ModelProvider == "" {
+		meta.ModelProvider = modelProvider
 	}
 	meta.TurnCount = len(turns)
 
@@ -263,8 +268,9 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 	}
 
 	modelName := ""
+	modelProvider := ""
 	if modelJSON.Valid && modelJSON.String != "" {
-		modelName = extractModelID(modelJSON.String)
+		modelName, modelProvider = extractModelMeta(modelJSON.String)
 	}
 
 	createdAt := time.UnixMilli(timeCreated)
@@ -274,29 +280,30 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 	r.db.QueryRow("SELECT COUNT(*) FROM message WHERE session_id = ?", id).Scan(&msgCount)
 
 	return model.Session{
-		ID:           id,
-		AgentType:    "opencode",
-		CWD:          directory,
-		Project:      shared.ResolveProject(directory, ""),
-		Name:         title,
-		ModelName:    modelName,
-		TurnCount:    0,
-		MessageCount: msgCount,
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
+		ID:            id,
+		AgentType:     "opencode",
+		CWD:           directory,
+		Project:       shared.ResolveProject(directory, ""),
+		Name:          title,
+		ModelName:     modelName,
+		ModelProvider: modelProvider,
+		TurnCount:     0,
+		MessageCount:  msgCount,
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
 	}, nil
 }
 
 // ---- Message/Turn parsing ----
 
-func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string, *model.SessionBilling) {
+func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string, string, *model.SessionBilling) {
 	rows, err := r.db.Query(`
 		SELECT id, time_created, data FROM message
 		WHERE session_id = ?
 		ORDER BY time_created ASC
 	`, sessionID)
 	if err != nil {
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 	defer rows.Close()
 
@@ -319,6 +326,7 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 	assistantMsgs := make(map[string][]row)
 
 	var foundModel string
+	var foundProvider string
 	byModel := make(map[string]*model.ModelUsage)
 	var totalCost float64
 	for _, m := range msgs {
@@ -337,8 +345,8 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 				if foundModel == "" && a.ModelID != "" {
 					foundModel = a.ModelID
 				}
-				if foundModel == "" && a.ProviderID != "" {
-					foundModel = a.ProviderID + "/" + a.ModelID
+				if foundProvider == "" && a.ProviderID != "" {
+					foundProvider = a.ProviderID
 				}
 				accumulateModelUsage(byModel, &totalCost, a)
 			}
@@ -435,7 +443,7 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 		turns = append(turns, turn)
 	}
 
-	return turns, foundModel, buildBilling(byModel, totalCost)
+	return turns, foundModel, foundProvider, buildBilling(byModel, totalCost)
 }
 
 // accumulateModelUsage folds one assistant message into the per-model bill.
@@ -575,14 +583,15 @@ func (r *OpenCodeReader) readTodos(sessionID string) []model.Todo {
 
 // ---- helpers ----
 
-func extractModelID(modelJSON string) string {
+func extractModelMeta(modelJSON string) (string, string) {
 	var m struct {
-		ID string `json:"id"`
+		ID         string `json:"id"`
+		ProviderID string `json:"providerID"`
 	}
-	if json.Unmarshal([]byte(modelJSON), &m) == nil && m.ID != "" {
-		return m.ID
+	if json.Unmarshal([]byte(modelJSON), &m) == nil {
+		return m.ID, m.ProviderID
 	}
-	return ""
+	return "", ""
 }
 
 func resolveName(title, previewText string, createdAt time.Time) string {

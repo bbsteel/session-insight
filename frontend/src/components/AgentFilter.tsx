@@ -14,7 +14,7 @@ const GAP = 4
 const STEP = ICON_BTN + GAP
 
 /** Leading "All agents" mark — 2×2 tiles = every source, not a globe. */
-function AllAgentsIcon({ size = 20 }: { size?: number }) {
+export function AllAgentsIcon({ size = 20 }: { size?: number }) {
   return (
     <svg
       width={size}

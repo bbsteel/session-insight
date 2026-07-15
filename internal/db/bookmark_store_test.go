@@ -72,6 +72,9 @@ func TestListBookmarksOrdersNewestFirst(t *testing.T) {
 	if err := database.AddBookmark("codex", "newer"); err != nil {
 		t.Fatalf("AddBookmark newer: %v", err)
 	}
+	if err := database.UpdateBookmarkNote("codex", "newer", "Important handoff context"); err != nil {
+		t.Fatalf("UpdateBookmarkNote newer: %v", err)
+	}
 
 	bookmarks, err := database.ListBookmarks()
 	if err != nil {
@@ -82,5 +85,8 @@ func TestListBookmarksOrdersNewestFirst(t *testing.T) {
 	}
 	if bookmarks[0].AgentType != "codex" || bookmarks[0].SessionID != "newer" {
 		t.Fatalf("expected newest bookmark first, got %+v", bookmarks[0])
+	}
+	if bookmarks[0].Note != "Important handoff context" {
+		t.Fatalf("expected bookmark note, got %q", bookmarks[0].Note)
 	}
 }

@@ -80,6 +80,8 @@ type codexPayload struct {
 	Message string          `json:"message"`
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
+	// turn_context
+	Model string `json:"model"`
 	// function_call / custom_tool_call
 	Name           string `json:"name"`
 	CustomToolName string `json:"custom_tool_name"`
@@ -224,18 +226,19 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 	sessionID := strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl")
 
 	var (
-		cwd          string
-		nativeID     string
-		parentID     string
-		agentPath    string
-		isSubagent   bool
-		modelName    string
-		firstUserMsg string
-		userMessages []string
-		createdAt    time.Time
-		updatedAt    time.Time
-		headLines    int
-		headBytes    int64
+		cwd           string
+		nativeID      string
+		parentID      string
+		agentPath     string
+		isSubagent    bool
+		modelName     string
+		modelProvider string
+		firstUserMsg  string
+		userMessages  []string
+		createdAt     time.Time
+		updatedAt     time.Time
+		headLines     int
+		headBytes     int64
 	)
 
 	scanner := bufio.NewScanner(f)
@@ -271,6 +274,9 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 				}
 				if modelName == "" {
 					modelName = extractModelName(&m)
+				}
+				if modelProvider == "" && m.ModelProvider != "" {
+					modelProvider = m.ModelProvider
 				}
 				if nativeID == "" {
 					// Codex resume resolves the rollout's own payload.id. For
@@ -319,6 +325,12 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 				// Best-effort: try content for model hints (unlikely to find here)
 				_ = p
 			}
+
+		case "turn_context":
+			var p codexPayload
+			if json.Unmarshal(evt.Payload, &p) == nil && p.Model != "" {
+				modelName = p.Model
+			}
 		}
 	}
 
@@ -363,6 +375,7 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 		Project:         shared.ResolveProject(cwd, ""),
 		Name:            name,
 		ModelName:       modelName,
+		ModelProvider:   modelProvider,
 		ResumeID:        nativeID,
 		ParentSessionID: parentID,
 		AgentPath:       agentPath,
@@ -397,9 +410,12 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 		return nil, fmt.Errorf("failed to read codex session: %s", id)
 	}
 
-	parsed, modelName := parseCodexEvents(jsonlPath)
+	parsed, modelName, modelProvider := parseCodexEvents(jsonlPath)
 	if modelName != "" {
 		session.ModelName = modelName
+	}
+	if modelProvider != "" {
+		session.ModelProvider = modelProvider
 	}
 	session.TurnCount = len(parsed.Active)
 	session.HistoricalTurnCount = parsed.Historical
@@ -447,20 +463,21 @@ type codexRollbackAttempt struct {
 	removed   []*codexTurnAttempt
 }
 
-func parseCodexEvents(path string) (codexParsedTurns, string) {
+func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return codexParsedTurns{}, ""
+		return codexParsedTurns{}, "", ""
 	}
 	defer f.Close()
 
 	var (
-		attempts    []*codexTurnAttempt
-		active      []*codexTurnAttempt
-		rollbacks   []codexRollbackAttempt
-		foundModel  string
-		current     *codexTurnAttempt
-		turnStartTS string
+		attempts      []*codexTurnAttempt
+		active        []*codexTurnAttempt
+		rollbacks     []codexRollbackAttempt
+		foundModel    string
+		foundProvider string
+		current       *codexTurnAttempt
+		turnStartTS   string
 	)
 
 	scanner := bufio.NewScanner(f)
@@ -474,11 +491,20 @@ func parseCodexEvents(path string) (codexParsedTurns, string) {
 
 		switch evt.Type {
 		case "session_meta":
-			if foundModel == "" {
-				var m codexSessionMeta
-				if json.Unmarshal(evt.Payload, &m) == nil {
+			var m codexSessionMeta
+			if json.Unmarshal(evt.Payload, &m) == nil {
+				if foundModel == "" {
 					foundModel = extractModelName(&m)
 				}
+				if foundProvider == "" && m.ModelProvider != "" {
+					foundProvider = m.ModelProvider
+				}
+			}
+
+		case "turn_context":
+			var p codexPayload
+			if json.Unmarshal(evt.Payload, &p) == nil && p.Model != "" {
+				foundModel = p.Model
 			}
 
 		case "event_msg":
@@ -728,7 +754,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string) {
 		}
 	}
 
-	return result, foundModel
+	return result, foundModel, foundProvider
 }
 
 // ---- RenderEvent adapter ----

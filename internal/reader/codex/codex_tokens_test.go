@@ -22,7 +22,7 @@ func TestParseCodexEventsCanonicalTokenBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parsed, _ := parseCodexEvents(path)
+	parsed, _, _ := parseCodexEvents(path)
 	if len(parsed.Active) == 0 {
 		t.Fatal("expected at least one turn")
 	}

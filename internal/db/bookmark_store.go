@@ -8,6 +8,7 @@ import (
 type Bookmark struct {
 	AgentType string
 	SessionID string
+	Note      string
 	CreatedAt string
 }
 
@@ -16,8 +17,10 @@ type Bookmark struct {
 type BookmarkedSession struct {
 	AgentType         string
 	SessionID         string
+	Note              string
 	Name              string
 	ModelName         string
+	ModelProvider     string
 	Repository        string
 	Project           string
 	CWD               string
@@ -42,18 +45,29 @@ func (db *DB) AddBookmark(agentType, sessionID string) error {
 
 func (db *DB) UpdateBookmarkMeta(s BookmarkedSession) error {
 	const q = `UPDATE bookmarked_sessions SET
-		name = ?, model_name = ?, repository = ?, project = ?, cwd = ?,
+		name = ?, model_name = ?, model_provider = ?, repository = ?, project = ?, cwd = ?,
 		preview_text = ?, turn_count = ?, message_count = ?, branch = ?,
 		session_updated_at = ?
 		WHERE agent_type = ? AND session_id = ?`
 	_, err := db.conn.Exec(q,
-		s.Name, s.ModelName, s.Repository, s.Project, s.CWD,
+		s.Name, s.ModelName, s.ModelProvider, s.Repository, s.Project, s.CWD,
 		s.PreviewText, s.TurnCount, s.MessageCount, s.Branch,
 		s.SessionUpdatedAt,
 		s.AgentType, s.SessionID,
 	)
 	if err != nil {
 		return fmt.Errorf("update bookmark meta: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) UpdateBookmarkNote(agentType, sessionID, note string) error {
+	_, err := db.conn.Exec(
+		`UPDATE bookmarked_sessions SET note = ? WHERE agent_type = ? AND session_id = ?`,
+		note, agentType, sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("update bookmark note: %w", err)
 	}
 	return nil
 }
@@ -86,7 +100,7 @@ func (db *DB) IsBookmarked(agentType, sessionID string) (bool, error) {
 
 func (db *DB) ListBookmarks() ([]Bookmark, error) {
 	rows, err := db.conn.Query(
-		`SELECT agent_type, session_id, created_at
+		`SELECT agent_type, session_id, note, created_at
 		 FROM bookmarked_sessions
 		 ORDER BY created_at DESC, agent_type ASC, session_id ASC`,
 	)
@@ -98,7 +112,7 @@ func (db *DB) ListBookmarks() ([]Bookmark, error) {
 	var bookmarks []Bookmark
 	for rows.Next() {
 		var b Bookmark
-		if err := rows.Scan(&b.AgentType, &b.SessionID, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.AgentType, &b.SessionID, &b.Note, &b.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan bookmark: %w", err)
 		}
 		bookmarks = append(bookmarks, b)
@@ -117,7 +131,7 @@ func (db *DB) ListBookmarks() ([]Bookmark, error) {
 // (pre-v7 bookmarks) will have zero/default values for the new columns.
 func (db *DB) ListBookmarkedSessions() ([]BookmarkedSession, error) {
 	rows, err := db.conn.Query(
-		`SELECT agent_type, session_id, name, model_name, repository, project, cwd,
+		`SELECT agent_type, session_id, note, name, model_name, model_provider, repository, project, cwd,
 		        preview_text, turn_count, message_count, branch, session_updated_at,
 		        created_at
 		 FROM bookmarked_sessions
@@ -132,7 +146,7 @@ func (db *DB) ListBookmarkedSessions() ([]BookmarkedSession, error) {
 	for rows.Next() {
 		var s BookmarkedSession
 		if err := rows.Scan(
-			&s.AgentType, &s.SessionID, &s.Name, &s.ModelName, &s.Repository,
+			&s.AgentType, &s.SessionID, &s.Note, &s.Name, &s.ModelName, &s.ModelProvider, &s.Repository,
 			&s.Project, &s.CWD, &s.PreviewText, &s.TurnCount, &s.MessageCount,
 			&s.Branch, &s.SessionUpdatedAt, &s.BookmarkCreatedAt,
 		); err != nil {
@@ -159,6 +173,18 @@ func (db *DB) BookmarkSet() (map[string]bool, error) {
 		set[BookmarkKey(b.AgentType, b.SessionID)] = true
 	}
 	return set, nil
+}
+
+func (db *DB) BookmarkNotes() (map[string]string, error) {
+	bookmarks, err := db.ListBookmarks()
+	if err != nil {
+		return nil, err
+	}
+	notes := make(map[string]string, len(bookmarks))
+	for _, b := range bookmarks {
+		notes[BookmarkKey(b.AgentType, b.SessionID)] = b.Note
+	}
+	return notes, nil
 }
 
 func BookmarkKey(agentType, sessionID string) string {

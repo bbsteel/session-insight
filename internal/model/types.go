@@ -31,7 +31,10 @@ type Session struct {
 	Project    string `json:"project"`
 	Name       string `json:"name"`
 	ModelName  string `json:"model_name"`
-	ResumeID   string `json:"resume_id,omitempty"`
+	// ModelProvider is the recorded runtime/provider that served the model, when
+	// the source log exposes it. It is not inferred from the model name.
+	ModelProvider string `json:"model_provider,omitempty"`
+	ResumeID      string `json:"resume_id,omitempty"`
 	// Codex records collaborative child agents as standalone rollout files
 	// whose inherited parent history looks like a duplicate user session.
 	// Keep the lineage so list surfaces can show only roots without losing the

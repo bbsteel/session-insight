@@ -27,6 +27,7 @@ type SessionSummary struct {
 	AgentType           string `json:"agent_type"`
 	Name                string `json:"name"`
 	ModelName           string `json:"model_name"`
+	ModelProvider       string `json:"model_provider,omitempty"`
 	Repository          string `json:"repository"`
 	Branch              string `json:"branch"`
 	Project             string `json:"project"`
@@ -38,6 +39,7 @@ type SessionSummary struct {
 	MessageCount        int    `json:"message_count"`
 	IsLive              bool   `json:"is_live"`
 	Bookmarked          bool   `json:"bookmarked"`
+	BookmarkNote        string `json:"bookmark_note,omitempty"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`
 }
@@ -63,6 +65,7 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("POST /api/sessions/{id}/stop", s.handleStopSession)
 	s.Mux.HandleFunc("PUT /api/sessions/{id}/bookmark", s.handleAddBookmark)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}/bookmark", s.handleRemoveBookmark)
+	s.Mux.HandleFunc("PUT /api/sessions/{id}/bookmark/note", s.handleUpdateBookmarkNote)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/analytics", s.handleSessionAnalytics)
 	s.Mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	s.Mux.HandleFunc("GET /api/search", s.handleSearch)

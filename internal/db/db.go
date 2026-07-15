@@ -12,7 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 17
+const currentSchemaVersion = 22
 
 type DB struct {
 	conn *sql.DB
@@ -59,10 +59,11 @@ func migrate(conn *sql.DB) error {
 		agent_type TEXT NOT NULL DEFAULT 'copilot',
 		cwd TEXT NOT NULL DEFAULT '',
 		repository TEXT NOT NULL DEFAULT '',
-		branch TEXT NOT NULL DEFAULT '',
-		name TEXT NOT NULL DEFAULT '',
-		model_name TEXT NOT NULL DEFAULT '',
-		turn_count INTEGER NOT NULL DEFAULT 0,
+			branch TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL DEFAULT '',
+			model_name TEXT NOT NULL DEFAULT '',
+			model_provider TEXT NOT NULL DEFAULT '',
+			turn_count INTEGER NOT NULL DEFAULT 0,
 		message_count INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -166,8 +167,10 @@ func migrate(conn *sql.DB) error {
 
 	CREATE TABLE IF NOT EXISTS bookmarked_sessions (
 	    agent_type TEXT NOT NULL,
-	    session_id TEXT NOT NULL,
-	    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		    session_id TEXT NOT NULL,
+		    note TEXT NOT NULL DEFAULT '',
+		    model_provider TEXT NOT NULL DEFAULT '',
+		    created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	    PRIMARY KEY (agent_type, session_id)
 	);
 
@@ -352,6 +355,7 @@ func migrate(conn *sql.DB) error {
 		for _, col := range []string{
 			`name TEXT NOT NULL DEFAULT ''`,
 			`model_name TEXT NOT NULL DEFAULT ''`,
+			`model_provider TEXT NOT NULL DEFAULT ''`,
 			`repository TEXT NOT NULL DEFAULT ''`,
 			`project TEXT NOT NULL DEFAULT ''`,
 			`cwd TEXT NOT NULL DEFAULT ''`,
@@ -391,6 +395,26 @@ func migrate(conn *sql.DB) error {
 		}
 	}
 
+	// Version 18: bookmark notes record why a session was saved.
+	hasBookmarkNote := false
+	if rows, err := conn.Query(`PRAGMA table_info(bookmarked_sessions)`); err == nil {
+		for rows.Next() {
+			var cid int
+			var name, typ string
+			var notnull, pk int
+			var dflt any
+			if rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk) == nil && name == "note" {
+				hasBookmarkNote = true
+			}
+		}
+		rows.Close()
+	}
+	if !hasBookmarkNote {
+		if _, err := conn.Exec(`ALTER TABLE bookmarked_sessions ADD COLUMN note TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("add bookmarked_sessions.note column: %w", err)
+		}
+	}
+
 	// Version 8: rebuild sessions table with correct composite key and project
 	// column. The old table was never populated (no code path wrote to it), so
 	// DROP + CREATE is safe. Also clear index watermarks so the indexer
@@ -404,10 +428,11 @@ func migrate(conn *sql.DB) error {
 		    cwd TEXT NOT NULL DEFAULT '',
 		    repository TEXT NOT NULL DEFAULT '',
 		    branch TEXT NOT NULL DEFAULT '',
-		    project TEXT NOT NULL DEFAULT '',
-		    name TEXT NOT NULL DEFAULT '',
-		    model_name TEXT NOT NULL DEFAULT '',
-		    turn_count INTEGER NOT NULL DEFAULT 0,
+			    project TEXT NOT NULL DEFAULT '',
+			    name TEXT NOT NULL DEFAULT '',
+			    model_name TEXT NOT NULL DEFAULT '',
+			    model_provider TEXT NOT NULL DEFAULT '',
+			    turn_count INTEGER NOT NULL DEFAULT 0,
 		    message_count INTEGER NOT NULL DEFAULT 0,
 		    created_at TEXT NOT NULL DEFAULT (datetime('now')),
 		    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -468,6 +493,40 @@ func migrate(conn *sql.DB) error {
 		return err
 	}
 
+	if err := migrateModelProviderV19(conn); err != nil {
+		return err
+	}
+
+	// Version 20: model_provider is now the recorded runtime/provider, not a
+	// value inferred from the model developer/name. Re-scan existing sessions so
+	// providers exposed by source logs (for example OpenCode Go serving glm-5.1)
+	// are backfilled into the sidebar filter data.
+	if maxVersion < 20 {
+		if _, err := conn.Exec(`DELETE FROM index_watermarks`); err != nil {
+			return fmt.Errorf("v20 clear watermarks: %w", err)
+		}
+	}
+
+	// Version 21: Codex stores the concrete selected model in turn_context.model.
+	// Older indexing only derived broad family names such as "GPT-5" from
+	// session_meta.base_instructions, so re-scan Codex sessions to backfill the
+	// specific model IDs.
+	if maxVersion < 21 {
+		if _, err := conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`); err != nil {
+			return fmt.Errorf("v21 clear codex watermarks: %w", err)
+		}
+	}
+
+	// Version 22: the indexer now persists richer metadata parsed from
+	// GetSession, not only shallow ListSessions metadata. Re-scan Codex once more
+	// so turn_context.model backfills even for sessions whose first turn_context
+	// appears beyond the list scan window.
+	if maxVersion < 22 {
+		if _, err := conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`); err != nil {
+			return fmt.Errorf("v22 clear codex watermarks: %w", err)
+		}
+	}
+
 	_, err = conn.Exec(
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)`,
 		currentSchemaVersion,
@@ -492,6 +551,75 @@ func hasInsightColumn(rows *sql.Rows) bool {
 		}
 	}
 	return false
+}
+
+func tableHasColumn(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, table, column string) (bool, error) {
+	rows, err := q.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk) == nil && name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func migrateModelProviderV19(conn *sql.DB) (retErr error) {
+	ctx := context.Background()
+	sessionsOK, _ := tableHasColumn(ctx, conn, "sessions", "model_provider")
+	bookmarksOK, _ := tableHasColumn(ctx, conn, "bookmarked_sessions", "model_provider")
+	if sessionsOK && bookmarksOK {
+		return nil
+	}
+
+	c, err := conn.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("v19 pin connection: %w", err)
+	}
+	defer c.Close()
+
+	if _, err := c.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("v19 begin immediate: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			c.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+
+	for _, table := range []string{"sessions", "bookmarked_sessions"} {
+		hasColumn, err := tableHasColumn(ctx, c, table, "model_provider")
+		if err != nil {
+			return fmt.Errorf("v19 check %s.model_provider: %w", table, err)
+		}
+		if hasColumn {
+			continue
+		}
+		if _, err := c.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN model_provider TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("v19 add %s.model_provider: %w", table, err)
+		}
+		if table == "sessions" {
+			if _, err := c.ExecContext(ctx, `DELETE FROM index_watermarks`); err != nil {
+				return fmt.Errorf("v19 clear watermarks: %w", err)
+			}
+		}
+	}
+
+	if _, err := c.ExecContext(ctx, `COMMIT`); err != nil {
+		return fmt.Errorf("v19 commit: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // migrateAIGenerationsV17 rebuilds ai_generations to add the 'insight' kind and

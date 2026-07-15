@@ -46,6 +46,16 @@ export async function removeBookmark(session: Pick<SessionSummary, 'id' | 'agent
   if (!res.ok) throw new Error(`Failed to remove bookmark: ${res.status}`)
 }
 
+export async function updateBookmarkNote(session: Pick<SessionSummary, 'id' | 'agent_type'>, note: string): Promise<void> {
+  const params = new URLSearchParams({ agent: session.agent_type })
+  const res = await fetch(`/api/sessions/${session.id}/bookmark/note?${params}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  })
+  if (!res.ok) throw new Error(`Failed to update bookmark note: ${res.status}`)
+}
+
 /** Thrown by deleteSession when the session's agent process is still running. */
 export class SessionRunningError extends Error {
   pids: number[]

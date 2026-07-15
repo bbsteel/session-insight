@@ -12,6 +12,7 @@ export interface SessionSummary {
   agent_type: string
   name: string
   model_name: string
+  model_provider?: string
   repository: string
   branch: string
   project: string
@@ -25,6 +26,7 @@ export interface SessionSummary {
   message_count: number
   is_live: boolean
   bookmarked: boolean
+  bookmark_note?: string
   created_at: string
   updated_at: string
 }
