@@ -232,6 +232,12 @@ class ReaderSearchPanel implements Panel {
   }
 
   private commit() {
+    // Match @codemirror/search's default SearchPanel: update the query on
+    // each keystroke, but do NOT call findNext here. findNext ends with
+    // selectSearchInput(), which selects the whole field while it still has
+    // focus — so the next typed character replaces the previous one and the
+    // box appears stuck at a single letter. Navigation stays on Enter /
+    // option toggles (and the match decorations still refresh from the query).
     const next = new SearchQuery({
       search: this.input.value,
       caseSensitive: this.query.caseSensitive,
@@ -239,14 +245,17 @@ class ReaderSearchPanel implements Panel {
       regexp: this.query.regexp,
     })
     if (!next.eq(this.query)) {
+      this.query = next
       this.view.dispatch({ effects: setSearchQuery.of(next) })
-      if (next.valid) findNext(this.view)
+      this.updateCount()
     }
   }
 
   private sync(query: SearchQuery) {
     this.query = query
-    this.input.value = query.search
+    // Avoid clobbering the caret when the query already matches what the
+    // user typed (we set this.query in commit before dispatching).
+    if (this.input.value !== query.search) this.input.value = query.search
     this.caseButton.dataset.active = String(query.caseSensitive)
     this.wordButton.dataset.active = String(query.wholeWord)
     this.regexButton.dataset.active = String(query.regexp)
