@@ -4,6 +4,7 @@ import * as echarts from 'echarts/core'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import DeepInsightSection from './DeepInsightSection'
 
 echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
@@ -71,6 +72,7 @@ interface AnalyticsData {
   }[]
   cost_precision?: string
   findings?: {
+    code?: string
     severity: 'critical' | 'warn' | 'info'
     title: string
     detail: string
@@ -88,6 +90,9 @@ interface AnalyticsData {
 interface Props {
   sessionId: string
   agentType?: string
+  // Whether the session is currently live: Deep Insight is refused while a
+  // session's data and bill are still changing.
+  isLive?: boolean
   onJumpToTurn?: (turnIndex: number) => void
   // 点击 Tool Usage 的工具 chip:切回终端并打开工具面板、按该工具筛选。
   onJumpToTool?: (name: string) => void
@@ -173,7 +178,7 @@ function bucketText(value: number, presence?: string): string {
   return presence === 'exact' ? fmtNumber(value) : '—'
 }
 
-export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJumpToTool }: Props) {
+export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTurn, onJumpToTool }: Props) {
   const [data, setData] = useState<AnalyticsData | null>(null)
 
   useEffect(() => {
@@ -426,12 +431,24 @@ export default function AnalyticsView({ sessionId, agentType, onJumpToTurn, onJu
         </div>
       )}
 
-      {/* Waste pattern findings */}
+      {/* Deep Insight (原因洞察) — the model-driven second layer, shown above
+          the local findings so cause explanation sits over the raw facts. */}
+      {data.findings && data.findings.length > 0 && (
+        <DeepInsightSection
+          sessionId={sessionId}
+          agentType={agentType ?? ''}
+          isLive={!!isLive}
+          findingsCount={data.findings.length}
+          onJumpToTurn={onJumpToTurn}
+        />
+      )}
+
+      {/* Preliminary findings (local, deterministic first layer) */}
       {data.findings && data.findings.length > 0 && (
         <div className="px-4 pb-4">
           <h3 className="text-body font-semibold text-[var(--text-primary)] mb-2">
-            浪费模式检测
-            <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">自动从消耗数据中提炼的结论</span>
+            初步 Findings
+            <span className="text-nav font-normal text-[var(--text-secondary)] ml-2">本地规则从消耗数据中提炼的事实</span>
           </h3>
           <div className="space-y-2">
             {data.findings.map((f, i) => {

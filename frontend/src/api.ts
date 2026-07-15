@@ -357,6 +357,163 @@ export async function generateAI(
   return result
 }
 
+// ---- Deep Insight (原因洞察) ----
+
+export interface InsightEvidenceRef {
+  evidence_id: string
+  kind: string
+  statement: string
+  turn_index?: number
+}
+
+export interface InsightItem {
+  title: string
+  finding_codes?: string[]
+  confidence: 'high' | 'medium' | 'low'
+  cause: { statement: string; epistemic_status: string; causal_strength: string; evidence_ids?: string[]; confounders?: string[] }
+  impact: { statement: string; evidence_ids?: string[] }
+  counter_evidence_ids?: string[]
+  alternatives?: { statement: string; evidence_ids?: string[]; opposing_evidence_ids?: string[]; assessment: string }[]
+  recommendations?: string[]
+  caveats?: string[]
+}
+
+export interface InsightOutput {
+  schema_version: number
+  summary: string
+  insights: InsightItem[]
+  evidence_gaps?: string[]
+}
+
+// Parsed shape of an insight generation's metadata JSON.
+export interface InsightMetadata {
+  output?: InsightOutput
+  cited_evidence?: InsightEvidenceRef[]
+  evidence_gaps?: string[]
+  warnings?: string[]
+  parse_failed?: boolean
+}
+
+export interface InsightFreshness {
+  stale: boolean
+  reasons: string[]
+  source_revision: number
+  current_revision: number
+  source_fingerprint: string
+  prompt_version: string
+}
+
+export interface InsightResult {
+  generation: AIGeneration
+  freshness: InsightFreshness
+}
+
+// SendPreview is the pre-flight privacy disclosure before the first send to a
+// model target; the caller shows it and re-runs with confirm=true on approval.
+export interface SendPreview {
+  needs_confirmation: true
+  target_fingerprint: string
+  target_label: string
+  data_categories: string[]
+  fact_count: number
+  char_count: number
+  truncated_count: number
+  redacted_count: number
+  note: string
+}
+
+export function parseInsightMetadata(raw: string | undefined): InsightMetadata | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as InsightMetadata
+    return typeof parsed === 'object' && parsed !== null ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+export async function fetchLatestInsight(sessionId: string, agent: string): Promise<InsightResult | null> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${sessionId}/ai/insight/latest?${params}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`获取洞察失败: ${res.status}`)
+  return res.json()
+}
+
+export async function revokeInsightTargets(): Promise<void> {
+  const res = await fetch('/api/insight/targets/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+// Reasons the server refuses to start an insight generation, surfaced so the
+// UI can explain rather than show a raw status code.
+export class InsightBlockedError extends Error {
+  constructor(public reason: 'session_active' | 'session_changing' | 'no_findings' | 'not_found', message: string) {
+    super(message)
+  }
+}
+
+// generateInsight runs a Deep Insight generation. Without confirm it may return
+// a SendPreview (first send to an unconfirmed target); with confirm=true it
+// streams SSE and resolves to the generation plus its freshness. The 200 JSON
+// preview and the SSE stream are distinguished by response Content-Type.
+export async function generateInsight(
+  sessionId: string,
+  onStatus: (stage: string) => void,
+  signal?: AbortSignal,
+  providerId?: number,
+  confirm?: boolean,
+): Promise<InsightResult | SendPreview> {
+  const res = await fetch(`/api/sessions/${sessionId}/ai/insight`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider_id: providerId || 0, confirm_target: !!confirm }),
+    signal,
+  })
+  if (res.status === 412) throw new NoProviderError(await res.text())
+  if (res.status === 404) throw new InsightBlockedError('not_found', '会话不存在')
+  if (res.status === 409) {
+    const t = (await res.text()).trim()
+    throw new InsightBlockedError(t.includes('active') ? 'session_active' : 'session_changing', t)
+  }
+  if (res.status === 422) throw new InsightBlockedError('no_findings', '没有可分析的初步 Finding')
+  if (!res.ok || !res.body) throw new Error(await res.text() || `分析失败: ${res.status}`)
+
+  // A JSON body (not an event stream) is the send-confirmation preview.
+  if ((res.headers.get('content-type') || '').includes('application/json')) {
+    return res.json() as Promise<SendPreview>
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let result: InsightResult | null = null
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (value) buf += decoder.decode(value, { stream: true })
+    for (let idx = buf.indexOf('\n\n'); idx >= 0; idx = buf.indexOf('\n\n')) {
+      const frame = buf.slice(0, idx)
+      buf = buf.slice(idx + 2)
+      let event = ''
+      let data = ''
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim()
+        else if (line.startsWith('data: ')) data += line.slice(6)
+      }
+      if (!event || !data) continue
+      if (event === 'status') onStatus((JSON.parse(data) as { stage: string }).stage)
+      else if (event === 'error') throw new Error((JSON.parse(data) as { message: string }).message)
+      else if (event === 'done') result = JSON.parse(data) as InsightResult
+    }
+    if (done) break
+  }
+  if (!result) throw new Error('分析中断：服务未返回结果')
+  return result
+}
+
 export async function setSessionTitle(sessionId: string, agent: string, title: string): Promise<void> {
   const params = new URLSearchParams({ agent })
   const res = await fetch(`/api/sessions/${sessionId}/title?${params}`, {
