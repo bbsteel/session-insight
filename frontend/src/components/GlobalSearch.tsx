@@ -342,6 +342,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   }, [isMac])
 
   return (
+    <>
     <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }}>
       <div ref={containerRef} className="relative w-full max-w-[420px]">
         <input
@@ -570,7 +571,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           )}
         </div>
       </div>
-      {showAISettings && <AISettingsModal onClose={() => setShowAISettings(false)} />}
     </header>
+    {showAISettings && <AISettingsModal onClose={() => setShowAISettings(false)} />}
+    </>
   )
 }

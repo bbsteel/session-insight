@@ -236,7 +236,7 @@ export default function AISettingsModal({ onClose }: Props) {
   const listedIds = new Set((st?.models ?? []).map(m => m.id))
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
         className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(640px,92vw)] max-h-[84vh] flex flex-col"
         onClick={e => e.stopPropagation()}

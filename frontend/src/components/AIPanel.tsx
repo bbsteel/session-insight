@@ -190,7 +190,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
       >
         <div className="px-4 py-2.5 border-b border-[var(--border-default)]">
           <div className="relative flex items-center justify-center">
-            <div className="max-w-[calc(100%-180px)] truncate text-center text-body font-bold text-[var(--text-primary)]" title="标题">标题</div>
+            <div className="max-w-[calc(100%-180px)] truncate text-center text-body font-bold text-[var(--text-primary)]" title={sessionName}>{sessionName}</div>
             <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center gap-1">
               <button
                 onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))}
