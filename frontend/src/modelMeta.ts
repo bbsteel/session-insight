@@ -72,8 +72,8 @@ export function modelMeta(modelName: string, modelProvider = ''): ModelMeta {
   if (!raw) {
     return { id: '', provider: 'Unknown', providerKey: 'unknown', label: 'unknown model', iconKey: 'unknown' }
   }
-  if (raw.toLowerCase() === '<synthetic>') {
-    return { id: raw, provider: 'Synthetic', providerKey: 'synthetic', label: 'Synthetic', iconKey: 'synthetic' }
+  if (raw.toLowerCase() === '<synthetic>' || raw.toLowerCase() === '<model not configured>') {
+    return { id: 'Other', provider: 'Other', providerKey: 'other', label: 'Other', iconKey: 'other' }
   }
 
   const recordedProvider = modelProvider.trim()

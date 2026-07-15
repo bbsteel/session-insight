@@ -184,7 +184,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
               <div
                 role="listbox"
                 aria-label="全部 Agent"
-                className="absolute top-full right-0 mt-1 z-[var(--z-dropdown)] w-56 max-h-80 overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1"
+                className="absolute top-full right-0 mt-1 z-[var(--z-dropdown)] w-56 max-h-[28rem] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1"
               >
                 {sortedAgents.map(agent => {
                   const isSelected = selected === agent.type
