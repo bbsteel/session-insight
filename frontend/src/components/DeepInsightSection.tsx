@@ -102,7 +102,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
         <span className="text-nav font-normal text-[var(--text-secondary)]">用配置的模型解释这些发现为何出现</span>
 
         {canExport && (
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <ExportButtons
               output={meta!.output!}
               evidenceMap={evidenceMap}
@@ -158,7 +158,9 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
           </div>
           {meta?.parse_failed ? (
             <div>
-              <div className="mb-1 text-helper text-[var(--warning)]">结构化解析失败，以下为原始输出（纯文本）</div>
+              <div className="mb-1 text-helper text-[var(--warning)]">
+                结构化解析失败，模型未按格式输出（下方为原始输出）。若模型拒答或答非所问，多为模型能力不足或对数据里的指令样文本过度敏感——可换用 API 类型或更强的模型源重试。
+              </div>
               <pre className="whitespace-pre-wrap break-words rounded-md bg-[var(--bg-inset)] p-3 text-body text-[var(--text-secondary)]">{result.generation.content}</pre>
             </div>
           ) : meta?.output ? (

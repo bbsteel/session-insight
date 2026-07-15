@@ -38,15 +38,17 @@ func TestUserMessageIsJSONNotConcatenation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Strip the fixed human-readable prefix; the remainder must be valid JSON
-	// that round-trips the attack string as data, proving no prompt-structure
-	// escape happened.
-	idx := strings.Index(user, "{")
-	if idx < 0 {
-		t.Fatal("no JSON object in user message")
+	// The bundle sits between the <evidence_bundle> fences; that slice must be
+	// valid JSON that round-trips the attack string as data, proving no
+	// prompt-structure escape happened.
+	open := strings.Index(user, "<evidence_bundle>\n")
+	closeIdx := strings.Index(user, "\n</evidence_bundle>")
+	if open < 0 || closeIdx < 0 {
+		t.Fatal("no fenced evidence_bundle in user message")
 	}
+	payload := user[open+len("<evidence_bundle>\n") : closeIdx]
 	var round Bundle
-	if err := json.Unmarshal([]byte(user[idx:]), &round); err != nil {
+	if err := json.Unmarshal([]byte(payload), &round); err != nil {
 		t.Fatalf("user payload is not valid JSON: %v", err)
 	}
 	found := false
