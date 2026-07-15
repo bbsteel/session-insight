@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/render"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 // RenderANSI implements reader.BaseSessionReader.

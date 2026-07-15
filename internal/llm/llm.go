@@ -43,6 +43,15 @@ type Client interface {
 	Generate(ctx context.Context, prompt string, onStatus StatusFunc) (string, error)
 }
 
+// SystemPromptGenerator is an optional Client capability: run a generation with
+// a separate immutable system instruction and an untrusted user payload. The
+// API path implements a real system role; sources that cannot (ACP) are driven
+// through Generate with a concatenated prompt instead, which the caller treats
+// as a weaker boundary. onStatus may be nil.
+type SystemPromptGenerator interface {
+	GenerateWithSystem(ctx context.Context, system, user string, onStatus StatusFunc) (string, error)
+}
+
 // New returns the client for cfg.Kind.
 func New(cfg Config) (Client, error) {
 	switch cfg.Kind {

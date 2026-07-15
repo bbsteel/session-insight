@@ -69,3 +69,16 @@ type SessionLivenessChecker interface {
 type LiveRevisionProvider interface {
 	LiveRevision(id string) (int64, error)
 }
+
+// InsightEvidenceProvider is an optional reader capability: agent-specific
+// facts that the unified SessionDetail discards but Deep Insight causal
+// analysis needs (e.g. Copilot subagent delegation descriptions, models,
+// modes, timing and response attribution). It returns the evidence plus the
+// session revision it actually read from, so the generation layer can confirm
+// the evidence came from the same logical snapshot as the SessionDetail and
+// Findings (see the consistency-snapshot rules). Readers without it leave the
+// bundle to declare an evidence gap. expectedRevision is advisory (0 = "read
+// current"); the returned revision is authoritative for cross-checking.
+type InsightEvidenceProvider interface {
+	GetInsightEvidence(id string, expectedRevision int64) (*model.InsightEvidence, int64, error)
+}

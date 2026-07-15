@@ -402,8 +402,14 @@ func (s *acpSession) modelConfigID() string {
 	return ""
 }
 
-// safestModeID prefers the most restricted execution mode the agent
-// offers. Text generation needs no tools, so lock everything down.
+// safestModeID prefers a mode that restricts tool execution WITHOUT changing
+// the agent's output behavior. We only want a JSON answer, so a true read-only
+// mode is ideal. Crucially, "plan" mode is NOT acceptable: for coding agents
+// (e.g. claude-code-acp) it turns the agent into a planner that refuses to
+// produce direct output and instead writes plan files — which made insight
+// generation fail. When no genuine read-only mode exists, fall back to the
+// agent's default mode (empty), whose normal question-answering behavior is far
+// safer for a tool-less text task than plan mode.
 func (s *acpSession) safestModeID() string {
 	if s.Modes == nil {
 		return ""
@@ -412,7 +418,7 @@ func (s *acpSession) safestModeID() string {
 	for _, m := range s.Modes.AvailableModes {
 		available[m.ID] = true
 	}
-	for _, want := range []string{"read-only", "plan", "dontAsk"} {
+	for _, want := range []string{"read-only", "readonly"} {
 		if available[want] {
 			return want
 		}

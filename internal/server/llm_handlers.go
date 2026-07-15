@@ -14,6 +14,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader"
 )
 
 // generateTimeout bounds one model generation end to end, including a
@@ -324,6 +325,12 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	kind := r.PathValue("kind")
+	// Deep Insight has its own snapshot/redaction/confirmation path and does
+	// not use the summary-oriented prompt builder.
+	if kind == insightKind {
+		s.generateInsight(w, r, id)
+		return
+	}
 	if !llm.ValidKind(kind) {
 		http.Error(w, "kind must be summary, title or handoff", http.StatusBadRequest)
 		return
@@ -386,6 +393,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
 		flusher.Flush()
 	}
+	sendEvent("status", map[string]string{"stage": "已选择模型 " + providerModelLabel(provider)})
 	sendEvent("status", map[string]string{"stage": "构建上下文"})
 
 	client, err := llm.New(llm.Config{
@@ -493,11 +501,12 @@ func (s *Server) handleAILatest(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := r.PathValue("kind")
 	agentType := r.URL.Query().Get("agent")
-	if !llm.ValidKind(kind) || agentType == "" {
+	if (!llm.ValidKind(kind) && kind != insightKind) || agentType == "" {
 		http.Error(w, "invalid kind or missing agent", http.StatusBadRequest)
 		return
 	}
-	gen, err := s.DB.LatestAIGeneration(kind, agentType, r.PathValue("id"))
+	id := r.PathValue("id")
+	gen, err := s.DB.LatestAIGeneration(kind, agentType, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -506,7 +515,30 @@ func (s *Server) handleAILatest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no generation yet", http.StatusNotFound)
 		return
 	}
+	// Insight carries explainable freshness so the UI can flag a stale result
+	// (session changed, or rule/skill version moved) instead of presenting it
+	// as a current conclusion.
+	if kind == insightKind {
+		if rd := s.readerForSession(agentType, id); rd != nil {
+			writeJSON(w, map[string]any{"generation": gen, "freshness": s.insightFreshness(gen, rd, id)})
+			return
+		}
+	}
 	writeJSON(w, gen)
+}
+
+// readerForSession returns the reader matching an agent type (and that can read
+// the session), or nil.
+func (s *Server) readerForSession(agentType, id string) reader.BaseSessionReader {
+	for _, rd := range s.Readers {
+		if rd.AgentType() != agentType {
+			continue
+		}
+		if d, err := rd.GetSession(id); err == nil && d != nil {
+			return rd
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleListAIGenerations(w http.ResponseWriter, r *http.Request) {

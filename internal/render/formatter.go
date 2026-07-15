@@ -1808,7 +1808,7 @@ func isZeroWidthRune(r rune) bool {
 	case r >= 0xFE00 && r <= 0xFE0F, // variation selectors (VS16 emoji style)
 		r >= 0x200B && r <= 0x200F, // zero-width space/joiners, directional marks
 		r >= 0x0300 && r <= 0x036F, // combining diacritical marks
-		r == 0xFEFF: // BOM / zero-width no-break space
+		r == 0xFEFF:                // BOM / zero-width no-break space
 		return true
 	}
 	return false
@@ -1876,18 +1876,30 @@ func wrapInBox(il string, contentWidth int) []string {
 
 // lcsLineDiff returns a line-level LCS diff between old and new.
 // Falls back to all-remove + all-add when the input is very large.
-func lcsLineDiff(old, new []string) []struct{ kind int; text string } {
-	type op = struct{ kind int; text string }
+func lcsLineDiff(old, new []string) []struct {
+	kind int
+	text string
+} {
+	type op = struct {
+		kind int
+		text string
+	}
 	const opEqual, opRemove, opAdd = 0, 1, 2
 	m, n := len(old), len(new)
 	if m*n > 60000 {
 		ops := make([]op, 0, m+n)
-		for _, l := range old { ops = append(ops, op{opRemove, l}) }
-		for _, l := range new  { ops = append(ops, op{opAdd, l}) }
+		for _, l := range old {
+			ops = append(ops, op{opRemove, l})
+		}
+		for _, l := range new {
+			ops = append(ops, op{opAdd, l})
+		}
 		return ops
 	}
 	dp := make([][]int, m+1)
-	for i := range dp { dp[i] = make([]int, n+1) }
+	for i := range dp {
+		dp[i] = make([]int, n+1)
+	}
 	for i := 1; i <= m; i++ {
 		for j := 1; j <= n; j++ {
 			if old[i-1] == new[j-1] {
@@ -1903,14 +1915,20 @@ func lcsLineDiff(old, new []string) []struct{ kind int; text string } {
 	i, j := m, n
 	for i > 0 || j > 0 {
 		if i > 0 && j > 0 && old[i-1] == new[j-1] {
-			ops = append(ops, op{opEqual, old[i-1]}); i--; j--
+			ops = append(ops, op{opEqual, old[i-1]})
+			i--
+			j--
 		} else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
-			ops = append(ops, op{opAdd, new[j-1]}); j--
+			ops = append(ops, op{opAdd, new[j-1]})
+			j--
 		} else {
-			ops = append(ops, op{opRemove, old[i-1]}); i--
+			ops = append(ops, op{opRemove, old[i-1]})
+			i--
 		}
 	}
-	for l, r := 0, len(ops)-1; l < r; l, r = l+1, r-1 { ops[l], ops[r] = ops[r], ops[l] }
+	for l, r := 0, len(ops)-1; l < r; l, r = l+1, r-1 {
+		ops[l], ops[r] = ops[r], ops[l]
+	}
 	return ops
 }
 
@@ -1930,26 +1948,30 @@ func writeEditDiff(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefi
 		return ""
 	}
 	filePath := str("file_path")
-	oldStr   := str("old_string")
-	newStr   := str("new_string")
+	oldStr := str("old_string")
+	newStr := str("new_string")
 
 	oldLines := splitLines(oldStr)
 	newLines := splitLines(newStr)
-	ops      := lcsLineDiff(oldLines, newLines)
+	ops := lcsLineDiff(oldLines, newLines)
 
 	// Count actual changes for summary
 	nDel, nAdd := 0, 0
 	for _, op := range ops {
 		switch op.kind {
-		case 1: nDel++
-		case 2: nAdd++
+		case 1:
+			nDel++
+		case 2:
+			nAdd++
 		}
 	}
 
 	// Header. The "✏️ <tool>: <path>" shape is load-bearing: the frontend's
 	// clickable diff affordance (parseEditHeaderLine) matches on it.
 	dispPath := filePath
-	if dispPath == "" { dispPath = "unknown" }
+	if dispPath == "" {
+		dispPath = "unknown"
+	}
 	headerText := fmt.Sprintf(" ✏️ %s: %s ", evt.ToolName, dispPath)
 	writeBoxTop(p, sb, prefix, headerText, bWidth, borderColor)
 
@@ -1982,15 +2004,15 @@ func writeEditDiff(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefi
 		)
 		switch op.kind {
 		case 0: // equal
-			sigil   = "  "
+			sigil = "  "
 			fgColor = ColFg
 			bgColor = ColNone
 		case 1: // remove
-			sigil   = "- "
+			sigil = "- "
 			fgColor = ColFg
 			bgColor = ColDiffDel
 		case 2: // add
-			sigil   = "+ "
+			sigil = "+ "
 			fgColor = ColFg
 			bgColor = ColDiffAdd
 		}

@@ -36,13 +36,13 @@ func TestChrysProfileLayout(t *testing.T) {
 	plain := stripANSIForTest(out)
 
 	for _, want := range []string{
-		"❯ You",              // user header instead of "> "
-		"◇ Code Agent",       // assistant header from agent_label metadata
-		"▼ Tools (1/2)",      // group header: 2 invocations, 1 succeeded
-		"• bash",             // tool bullet line
-		"╭── 看看目录 ",      // rounded box with promoted reason header
-		"╭── Output ",        // result box header
-		" Completed ──╯",     // success footer, right-aligned
+		"❯ You",                // user header instead of "> "
+		"◇ Code Agent",         // assistant header from agent_label metadata
+		"▼ Tools (1/2)",        // group header: 2 invocations, 1 succeeded
+		"• bash",               // tool bullet line
+		"╭── 看看目录 ",            // rounded box with promoted reason header
+		"╭── Output ",          // result box header
+		" Completed ──╯",       // success footer, right-aligned
 		" Failed (exit 1) ──╯", // failure footer with exit code
 	} {
 		if !strings.Contains(plain, want) {

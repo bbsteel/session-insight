@@ -40,7 +40,7 @@ func New(sessionDir string) *CopilotReader {
 
 func (r *CopilotReader) WatchRoots() []string { return []string{r.sessionDir} }
 
-func (r *CopilotReader) AgentType() string  { return "copilot" }
+func (r *CopilotReader) AgentType() string   { return "copilot" }
 func (r *CopilotReader) DisplayName() string { return "Copilot" }
 
 func validSessionID(id string) bool {
@@ -131,37 +131,37 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 			continue
 		}
 
-			session := toSession(ws)
-			session.PreviewText = scanPreviewText(eventsPath)
-			// Quick line count for message_count
-			if f, err := os.Open(eventsPath); err == nil {
-				var newlines int
-				buf := make([]byte, 32*1024)
-				for {
-					n, readErr := f.Read(buf)
-					for _, b := range buf[:n] {
-						if b == '\n' {
-							newlines++
-						}
-					}
-					if readErr != nil {
-						break
+		session := toSession(ws)
+		session.PreviewText = scanPreviewText(eventsPath)
+		// Quick line count for message_count
+		if f, err := os.Open(eventsPath); err == nil {
+			var newlines int
+			buf := make([]byte, 32*1024)
+			for {
+				n, readErr := f.Read(buf)
+				for _, b := range buf[:n] {
+					if b == '\n' {
+						newlines++
 					}
 				}
-				f.Close()
-				session.MessageCount = newlines
-				// Use events.jsonl mtime for UpdatedAt (revision source, and the
-				// activity timestamp the server-side liveness check reads).
-				// workspace.yaml UpdatedAt is unreliable for detecting content
-				// changes because events.jsonl is continuously appended to.
-				// Liveness itself is computed uniformly at serve time
-				// (model.IsSessionLive), not here.
-				if info, err := os.Stat(eventsPath); err == nil {
-					if info.ModTime().After(session.UpdatedAt) {
-						session.UpdatedAt = info.ModTime()
-					}
+				if readErr != nil {
+					break
 				}
 			}
+			f.Close()
+			session.MessageCount = newlines
+			// Use events.jsonl mtime for UpdatedAt (revision source, and the
+			// activity timestamp the server-side liveness check reads).
+			// workspace.yaml UpdatedAt is unreliable for detecting content
+			// changes because events.jsonl is continuously appended to.
+			// Liveness itself is computed uniformly at serve time
+			// (model.IsSessionLive), not here.
+			if info, err := os.Stat(eventsPath); err == nil {
+				if info.ModTime().After(session.UpdatedAt) {
+					session.UpdatedAt = info.ModTime()
+				}
+			}
+		}
 		sessions = append(sessions, session)
 	}
 
@@ -438,18 +438,18 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 			currentTurn.ToolCallCount++
 			if code := extractFloat(evt.Data, "exit_code"); code != 0 {
 				currentTurn.ErrorCount++
-			if callId, ok := extractString(evt.Data, "toolCallId"); ok && callId != "" {
-				name := toolStarts[callId]
-				if name == "" {
-					name = "unknown"
+				if callId, ok := extractString(evt.Data, "toolCallId"); ok && callId != "" {
+					name := toolStarts[callId]
+					if name == "" {
+						name = "unknown"
+					}
+					dur := extractFloat(evt.Data, "durationMs")
+					currentTurn.ToolDetails = append(currentTurn.ToolDetails, model.ToolCallVM{
+						Name:     name,
+						ExitCode: int(extractFloat(evt.Data, "exitCode")),
+						Duration: int64(dur),
+					})
 				}
-				dur := extractFloat(evt.Data, "durationMs")
-				currentTurn.ToolDetails = append(currentTurn.ToolDetails, model.ToolCallVM{
-					Name:     name,
-					ExitCode: int(extractFloat(evt.Data, "exitCode")),
-					Duration: int64(dur),
-				})
-			}
 			}
 
 		case evt.Type == "session.model_change":

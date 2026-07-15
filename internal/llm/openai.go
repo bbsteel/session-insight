@@ -94,6 +94,21 @@ func (c *openAIClient) ListModels(ctx context.Context) ([]Model, error) {
 }
 
 func (c *openAIClient) Generate(ctx context.Context, prompt string, onStatus StatusFunc) (string, error) {
+	return c.generate(ctx, []map[string]string{{"role": "user", "content": prompt}}, onStatus)
+}
+
+// GenerateWithSystem implements llm.SystemPromptGenerator: the immutable
+// analysis instruction goes in a real system role, the untrusted evidence
+// bundle in the user role — the separation Deep Insight relies on for the API
+// path.
+func (c *openAIClient) GenerateWithSystem(ctx context.Context, system, user string, onStatus StatusFunc) (string, error) {
+	return c.generate(ctx, []map[string]string{
+		{"role": "system", "content": system},
+		{"role": "user", "content": user},
+	}, onStatus)
+}
+
+func (c *openAIClient) generate(ctx context.Context, messages []map[string]string, onStatus StatusFunc) (string, error) {
 	if c.cfg.ModelID == "" {
 		return "", fmt.Errorf("no model selected for this provider")
 	}
@@ -101,11 +116,9 @@ func (c *openAIClient) Generate(ctx context.Context, prompt string, onStatus Sta
 		onStatus("准备模型请求")
 	}
 	body := map[string]any{
-		"model": c.cfg.ModelID,
-		"messages": []map[string]string{
-			{"role": "user", "content": prompt},
-		},
-		"stream": false,
+		"model":    c.cfg.ModelID,
+		"messages": messages,
+		"stream":   false,
 	}
 	if onStatus != nil {
 		onStatus("等待模型响应")

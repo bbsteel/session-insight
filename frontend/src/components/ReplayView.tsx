@@ -1129,7 +1129,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           )}
           {viewMode === 'analytics' ? (
             <Suspense fallback={<AnalyticsSkeleton />}>
-              <AnalyticsView sessionId={session.id} agentType={session.agent_type} onJumpToTurn={handleJumpToTurn} onJumpToTool={handleJumpToTool} />
+              <AnalyticsView sessionId={session.id} agentType={session.agent_type} isLive={session.is_live} onJumpToTurn={handleJumpToTurn} onJumpToTool={handleJumpToTool} />
             </Suspense>
           ) : tsKinds !== null && (
             <Suspense fallback={<div className="flex-1 bg-[#1a1b26]" />}>
