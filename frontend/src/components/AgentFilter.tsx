@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { AgentInfo } from '../types'
 import AgentIcon from './AgentIcon'
+import { getAgentLabel } from '../sidebarRows'
 
 interface AgentFilterProps {
   agents: AgentInfo[]
@@ -8,14 +9,21 @@ interface AgentFilterProps {
   onSelect: (agentType: string) => void
 }
 
-export default function AgentFilter({ agents, selected, onSelect }: AgentFilterProps) {
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const [dropdownOpen, setDropdownOpen] = useState(false)
+const ICON_BTN = 30
+const GAP = 4
+const STEP = ICON_BTN + GAP
 
-  const agentMap = useMemo(
-    () => new Map(agents.map(agent => [agent.type, agent])),
+export default function AgentFilter({ agents, selected, onSelect }: AgentFilterProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const overflowRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+  const [overflowOpen, setOverflowOpen] = useState(false)
+
+  const sortedAgents = useMemo(
+    () => [...agents].sort((a, b) => b.session_count - a.session_count),
     [agents],
   )
+
   const totalSessions = useMemo(
     () => agents.reduce((total, agent) => total + agent.session_count, 0),
     [agents],
@@ -24,126 +32,173 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
     () => agents.reduce((total, agent) => total + (agent.live_count ?? 0), 0),
     [agents],
   )
-  const selectedAgent = selected ? agentMap.get(selected) : undefined
-  const selectedLabel = selectedAgent?.display_name ?? (selected || 'All')
-  const selectedCount = selectedAgent?.session_count ?? totalSessions
-  const selectedLive = selectedAgent?.live_count ?? totalLive
-
-  const formatCount = (live: number, total: number) => `${live}/${total}`
 
   useEffect(() => {
-    if (!dropdownOpen) return
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width)
+      }
+    })
+    ro.observe(el)
+    setContainerWidth(el.getBoundingClientRect().width)
+    return () => ro.disconnect()
+  }, [])
 
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setDropdownOpen(false)
+  const { visibleAgents, hiddenAgents } = useMemo(() => {
+    if (containerWidth === 0 || sortedAgents.length === 0) {
+      return { visibleAgents: sortedAgents, hiddenAgents: [] }
+    }
+    const maxNoOverflow = Math.floor(containerWidth / STEP) - 1
+    if (maxNoOverflow >= sortedAgents.length) {
+      return { visibleAgents: sortedAgents, hiddenAgents: [] }
+    }
+    const withOverflow = Math.floor(containerWidth / STEP) - 2
+    const visible = Math.max(0, Math.min(withOverflow, sortedAgents.length))
+    return {
+      visibleAgents: sortedAgents.slice(0, visible),
+      hiddenAgents: sortedAgents.slice(visible),
+    }
+  }, [sortedAgents, containerWidth])
+
+  useEffect(() => {
+    if (!overflowOpen) return
+    const close = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false)
       }
     }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setDropdownOpen(false)
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOverflowOpen(false)
     }
-
-    document.addEventListener('mousedown', closeOnOutsideClick)
-    window.addEventListener('keydown', closeOnEscape)
+    document.addEventListener('mousedown', close)
+    window.addEventListener('keydown', esc)
     return () => {
-      document.removeEventListener('mousedown', closeOnOutsideClick)
-      window.removeEventListener('keydown', closeOnEscape)
+      document.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', esc)
     }
-  }, [dropdownOpen])
+  }, [overflowOpen])
 
-  const selectAgent = (agentType: string) => {
+  const selectAgent = useCallback((agentType: string) => {
     onSelect(agentType)
-    setDropdownOpen(false)
-  }
+    setOverflowOpen(false)
+  }, [onSelect])
+
+  const showOverflow = hiddenAgents.length > 0
 
   return (
-    <div className="px-4 pb-2 flex-shrink-0">
-      <div ref={dropdownRef} className="relative">
+    <div className="px-3 pb-2 flex-shrink-0">
+      <div
+        ref={containerRef}
+        className="flex items-center gap-1 overflow-hidden"
+      >
         <button
           type="button"
-          onClick={() => setDropdownOpen(open => !open)}
-          aria-expanded={dropdownOpen}
-          aria-haspopup="listbox"
-          className="w-full h-8 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          onClick={() => selectAgent('')}
+          aria-pressed={selected === ''}
+          title={`All (${totalLive}/${totalSessions})`}
+          className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+            selected === ''
+              ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
+              : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+          }`}
+          style={{ width: ICON_BTN, height: ICON_BTN }}
         >
-          {selected ? (
-            <AgentIcon agentType={selected} size={18} />
-          ) : (
-            <span className="inline-flex w-[18px] h-[18px] items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-muted)] flex-shrink-0">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
-              </svg>
-            </span>
-          )}
-          <span className="truncate">{selectedLabel}</span>
-          <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0">
-            {formatCount(selectedLive, selectedCount)}
-          </span>
-          <svg
-            className={`w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0 transition-transform duration-fast ${dropdownOpen ? 'rotate-180' : ''}`}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polyline points="6 9 12 15 18 9" />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
           </svg>
         </button>
 
-        {dropdownOpen && (
-          <div
-            role="listbox"
-            aria-label="按 Agent 筛选会话"
-            className="absolute top-full mt-1 left-0 right-0 z-[var(--z-dropdown)] max-h-80 overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1"
-          >
+        {visibleAgents.map(agent => {
+          const isSelected = selected === agent.type
+          const label = agent.display_name || getAgentLabel(agent.type)
+          const live = agent.live_count ?? 0
+          const total = agent.session_count
+          const title = `${label} (${live}/${total})`
+          return (
+            <button
+              key={agent.type}
+              type="button"
+              onClick={() => selectAgent(agent.type)}
+              aria-pressed={isSelected}
+              title={title}
+              className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] relative ${
+                isSelected
+                  ? 'bg-[var(--bg-surface-hover)]'
+                  : 'hover:bg-[var(--bg-surface-hover)]'
+              }`}
+              style={{ width: ICON_BTN, height: ICON_BTN }}
+            >
+              <AgentIcon agentType={agent.type} size={22} />
+              {live > 0 && (
+                <span
+                  className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-[var(--success)] ring-1 ring-[var(--bg-surface)]"
+                  title={`${live} 活跃中`}
+                />
+              )}
+            </button>
+          )
+        })}
+
+        {showOverflow && (
+          <div ref={overflowRef} className="relative flex-shrink-0 ml-auto">
             <button
               type="button"
-              role="option"
-              aria-selected={selected === ''}
-              onClick={() => selectAgent('')}
-              className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                selected === '' ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+              onClick={() => setOverflowOpen(v => !v)}
+              aria-expanded={overflowOpen}
+              aria-haspopup="listbox"
+              aria-label="更多 Agent"
+              title="更多 Agent"
+              className={`flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                overflowOpen
+                  ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
               }`}
+              style={{ width: ICON_BTN, height: ICON_BTN }}
             >
-              <span className="inline-flex w-[18px] h-[18px] items-center justify-center rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] flex-shrink-0">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
-                </svg>
-              </span>
-              <span className="text-body text-[var(--text-primary)] truncate">All</span>
-              <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0">
-                {formatCount(totalLive, totalSessions)}
-              </span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="2" />
+                <circle cx="12" cy="12" r="2" />
+                <circle cx="19" cy="12" r="2" />
+              </svg>
             </button>
 
-            {agents.map(agent => {
-              const isSelected = selected === agent.type
-              return (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  key={agent.type}
-                  onClick={() => selectAgent(agent.type)}
-                  className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    isSelected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                  }`}
-                >
-                  <AgentIcon agentType={agent.type} size={18} />
-                  <span className="text-body text-[var(--text-primary)] truncate">
-                    {agent.display_name}
-                  </span>
-                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0">
-                    {formatCount(agent.live_count ?? 0, agent.session_count)}
-                  </span>
-                </button>
-              )
-            })}
+            {overflowOpen && (
+              <div
+                role="listbox"
+                aria-label="全部 Agent"
+                className="absolute top-full right-0 mt-1 z-[var(--z-dropdown)] w-56 max-h-80 overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1"
+              >
+                {sortedAgents.map(agent => {
+                  const isSelected = selected === agent.type
+                  const label = agent.display_name || getAgentLabel(agent.type)
+                  const live = agent.live_count ?? 0
+                  const total = agent.session_count
+                  return (
+                    <button
+                      key={agent.type}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      onClick={() => selectAgent(agent.type)}
+                      className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
+                        isSelected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                      }`}
+                    >
+                      <AgentIcon agentType={agent.type} size={18} />
+                      <span className="text-body text-[var(--text-primary)] truncate flex-1 min-w-0">
+                        {label}
+                      </span>
+                      <span className="text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">
+                        {live}/{total}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
