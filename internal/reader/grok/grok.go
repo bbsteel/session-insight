@@ -507,6 +507,12 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 				continue
 			}
 			name := toolNameFromRaw(u)
+			input := rawToMap(u.RawInput)
+			// Same skill rewrite as render path: SKILL.md read → Skill + turn.Skills.
+			if skill := skillNameFromRead(name, input); skill != "" {
+				current.Skills = append(current.Skills, skill)
+				name = "Skill"
+			}
 			current.ToolCallCount++
 			current.ToolNames = append(current.ToolNames, name)
 			current.ToolDetails = append(current.ToolDetails, model.ToolCallVM{Name: name})

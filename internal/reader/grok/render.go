@@ -219,10 +219,16 @@ func parseUpdatesRender(path string) ([]model.RenderEvent, bool, error) {
 		case "tool_call":
 			closeThought(ts)
 			name := toolNameFromRaw(u)
-			if name == "run_terminal_command" {
+			input := rawToMap(u.RawInput)
+			// Native Grok TUI rewrites reads of …/skills/<name>/SKILL.md as
+			// "Skill <name>" (and groups them under "Read N skill"). Mirror
+			// that presentation so SI matches the agent terminal.
+			if skill := skillNameFromRead(name, input); skill != "" {
+				name = "Skill"
+				input = map[string]any{"skill": skill}
+			} else if name == "run_terminal_command" {
 				name = "Run" // to match native "◆ Run <description>" bullet
 			}
-			input := rawToMap(u.RawInput)
 			invID := emit(model.RenderEvent{
 				Type:       "ToolInvocation",
 				Timestamp:  ts,

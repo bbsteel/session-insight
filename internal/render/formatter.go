@@ -1230,6 +1230,9 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	if evt.ToolName == "Agent" || evt.ToolName == "Task" {
 		borderColor = ColSubagent
 	}
+	if evt.ToolName == "Skill" {
+		borderColor = ColSkill // magenta/violet — skill accent (native Grok accent_skill)
+	}
 	if p.Name == "grok" && toolName == "Run" {
 		borderColor = ColSuccess // green for success run tools
 		if failed {
@@ -1290,6 +1293,16 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				if s := toolSummary(purpose, evt.ToolInput); s != "" {
 					sb.WriteString(styled(sep+s, ColFg, ColNone, true, false))
 				}
+			} else if p.Name == "grok" && toolName == "Skill" {
+				// Native: "Skill <name>" with skill name on accent_skill (ColSkill).
+				diamondStr := fgWrap(char, ColSkill)
+				sb.WriteString(diamondStr)
+				nameRun := styled(" "+toolName, ColFg, ColNone, true, false)
+				sb.WriteString(nameRun)
+				headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(diamondStr) + utf16Len(nameRun)
+				if s := toolSummary(purpose, evt.ToolInput); s != "" {
+					sb.WriteString(styled(" "+s, ColSkill, ColNone, true, false))
+				}
 			} else {
 				nameRun := styled(bullet+toolName, bulletColor, ColNone, true, false)
 				sb.WriteString(nameRun)
@@ -1307,6 +1320,12 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				}
 				sb.WriteString(fgWrap(char, c))
 				sb.WriteString(styled(" "+toolName, ColFg, ColNone, true, false))
+			} else if p.Name == "grok" && toolName == "Skill" {
+				sb.WriteString(fgWrap(char, ColSkill))
+				sb.WriteString(styled(" "+toolName, ColFg, ColNone, true, false))
+				if s := toolSummary(purpose, evt.ToolInput); s != "" {
+					sb.WriteString(styled(" "+s, ColSkill, ColNone, true, false))
+				}
 			} else {
 				sb.WriteString(styled(char+" "+toolName, bulletColor, ColNone, true, false))
 			}
@@ -1361,7 +1380,7 @@ func toolSummary(purpose string, input map[string]any) string {
 	if s := oneLine(purpose); s != "" {
 		return sanitizeControlChars(s)
 	}
-	for _, k := range []string{"command", "file_path", "path", "pattern", "query", "url", "prompt", "description"} {
+	for _, k := range []string{"command", "skill", "file_path", "path", "pattern", "query", "url", "prompt", "description"} {
 		if v, ok := input[k].(string); ok {
 			if s := oneLine(v); s != "" {
 				return sanitizeControlChars(s)
