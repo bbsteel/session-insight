@@ -54,10 +54,10 @@ func TestBuildSessionContextElidesMiddleWithinBudget(t *testing.T) {
 
 func TestSanitizeTitle(t *testing.T) {
 	cases := map[string]string{
-		"「修复登录超时」":              "修复登录超时",
+		"「修复登录超时」":               "修复登录超时",
 		"\"Fix login bug.\"":     "Fix login bug",
-		"修复登录超时。\n多余的解释":        "修复登录超时",
-		"  修复登录超时!  ":           "修复登录超时",
+		"修复登录超时。\n多余的解释":         "修复登录超时",
+		"  修复登录超时!  ":            "修复登录超时",
 		strings.Repeat("长", 100): strings.Repeat("长", 40),
 	}
 	for in, want := range cases {
