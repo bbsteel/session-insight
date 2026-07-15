@@ -115,31 +115,9 @@ type codexTokenUsage struct {
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 }
 
-type codexContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
 var exitCodeRe = regexp.MustCompile(`Process exited with code (\d+)`)
 
 // ---- helpers ----
-
-func extractContentText(content json.RawMessage) string {
-	if len(content) == 0 {
-		return ""
-	}
-	var blocks []codexContentBlock
-	if json.Unmarshal(content, &blocks) == nil {
-		var parts []string
-		for _, b := range blocks {
-			if (b.Type == "output_text" || b.Type == "input_text") && b.Text != "" {
-				parts = append(parts, b.Text)
-			}
-		}
-		return strings.Join(parts, "")
-	}
-	return ""
-}
 
 func extractExitCode(output string) int {
 	m := exitCodeRe.FindStringSubmatch(output)
@@ -615,10 +593,13 @@ func parseCodexEvents(path string) (codexParsedTurns, string) {
 				if current == nil {
 					continue
 				}
-				text := extractContentText(p.Content)
 				switch p.Role {
 				case "assistant":
-					current.turn.AssistantMessage += text
+					// Skip: the event_msg/agent_message branch already
+					// accumulated this assistant text. Codex logs every
+					// assistant message twice (once as agent_message, once as
+					// this response_item), so appending here would duplicate it
+					// — the same reason codexToRenderEvents skips it.
 				case "user":
 					// system-context user message, not the actual user prompt
 					// skip to avoid overwriting user_message
