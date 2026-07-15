@@ -159,6 +159,12 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
       - name: Download platform archives
         uses: actions/download-artifact@v7
         with:
@@ -169,16 +175,66 @@ jobs:
         working-directory: dist
         run: sha256sum session-insight-* > checksums.txt
 
+      # Preferred path: local "release" skill already created the GitHub Release
+      # with agent-authored notes. This job then only uploads binaries.
+      # Fallback: if the Release is missing (raw tag push), attach a
+      # deterministic feat/fix-grouped commit list — never --generate-notes.
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" dist/* --clobber --repo "${GITHUB_REPOSITORY}"
-          else
-            gh release create "${RELEASE_TAG}" dist/* \
-              --verify-tag \
-              --generate-notes \
-              --title "Session Insight ${RELEASE_TAG}" \
-              --repo "${GITHUB_REPOSITORY}"
+            exit 0
           fi
+
+          prev="$(git describe --tags --abbrev=0 "${RELEASE_TAG}^" 2>/dev/null || true)"
+          notes="$(mktemp)"
+          {
+            echo "## What's Changed"
+            echo
+            if [ -n "${prev}" ]; then
+              range="${prev}..${RELEASE_TAG}"
+            else
+              range="${RELEASE_TAG}"
+            fi
+
+            feats="$(git log "${range}" --pretty=format:'%s' --no-merges | grep -E '^[Ff]eat(\(|:)' || true)"
+            fixes="$(git log "${range}" --pretty=format:'%s' --no-merges | grep -E '^[Ff]ix(\(|:)|^bugfix(\(|:)' || true)"
+            others="$(git log "${range}" --pretty=format:'%s' --no-merges | grep -Ev '^[Ff]eat(\(|:)|^([Ff]ix|bugfix)(\(|:)' || true)"
+
+            if [ -n "${feats}" ]; then
+              echo "### Features"
+              echo
+              printf '%s\n' "${feats}" | sed 's/^/- /'
+              echo
+            fi
+            if [ -n "${fixes}" ]; then
+              echo "### Bug Fixes"
+              echo
+              printf '%s\n' "${fixes}" | sed 's/^/- /'
+              echo
+            fi
+            if [ -n "${others}" ]; then
+              echo "### Other"
+              echo
+              printf '%s\n' "${others}" | sed 's/^/- /'
+              echo
+            fi
+
+            if [ -n "${prev}" ]; then
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${RELEASE_TAG}"
+            else
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}"
+            fi
+            echo
+            echo "_Notes were auto-grouped from commits because no pre-created Release was found. Prefer the local \`release\` skill for Highlights-quality notes._"
+          } > "${notes}"
+
+          gh release create "${RELEASE_TAG}" dist/* \
+            --verify-tag \
+            --notes-file "${notes}" \
+            --title "Session Insight ${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}"
+          rm -f "${notes}"
