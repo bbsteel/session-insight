@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import {
   fetchLatestInsight, fetchLLMProviders, parseInsightMetadata, revokeInsightTargets,
-  type InsightItem, type InsightOutput, type InsightEvidenceRef, type SendPreview,
+  type InsightItem, type InsightOutput, type InsightEvidenceRef, type SendPreview, type LLMProvider,
 } from '../api'
 import { subscribe, getState, seedResult, start, cancel, dismissPreview } from '../insightStore'
 
@@ -27,7 +27,9 @@ const kindLabel: Record<string, string> = {
 // keeps the analysis going and coming back re-attaches to its progress.
 export default function DeepInsightSection({ sessionId, agentType, isLive, findingsCount, onJumpToTurn }: Props) {
   const [loaded, setLoaded] = useState(false)
-  const [hasProvider, setHasProvider] = useState(false)
+  const [providers, setProviders] = useState<LLMProvider[]>([])
+  // 0 = use the server-side default provider.
+  const [providerId, setProviderId] = useState(0)
 
   const state = useSyncExternalStore(
     useCallback(cb => subscribe(sessionId, cb), [sessionId]),
@@ -35,7 +37,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
   )
 
   useEffect(() => {
-    const load = () => fetchLLMProviders().then(d => setHasProvider(d.providers.length > 0)).catch(() => {})
+    const load = () => fetchLLMProviders().then(d => setProviders(d.providers)).catch(() => {})
     load()
     window.addEventListener('si-ai-providers-changed', load)
     return () => window.removeEventListener('si-ai-providers-changed', load)
@@ -58,7 +60,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
   const preview = state.status === 'preview' ? state.preview : null
   const blocked = state.status === 'blocked' ? state.blocked : null
   const error = state.status === 'error' ? state.error : null
-  const providerMissing = !hasProvider || state.noProvider
+  const providerMissing = providers.length === 0 || state.noProvider
 
   const meta = parseInsightMetadata(result?.generation.metadata)
   const evidenceMap = new Map<string, InsightEvidenceRef>()
@@ -70,7 +72,20 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
     <div className="px-4 pb-4">
       <div className="flex items-center gap-3 mb-2 flex-wrap">
         <h3 className="text-body font-semibold text-[var(--text-primary)]">根因分析</h3>
-        {/* Launch control sits right next to the title, not pushed to the edge. */}
+        {/* Launch control + model picker sit right next to the title. */}
+        {!busy && !isLive && !providerMissing && providers.length > 0 && (
+          <select
+            value={providerId}
+            onChange={e => setProviderId(Number(e.target.value))}
+            className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
+            title="用哪个模型源做根因分析"
+          >
+            <option value={0}>默认模型源</option>
+            {providers.map(p => (
+              <option key={p.id} value={p.id}>{p.name}{p.is_default ? '（默认）' : ''}</option>
+            ))}
+          </select>
+        )}
         {busy ? (
           <button onClick={() => cancel(sessionId)} className={btnCls}>取消</button>
         ) : isLive ? (
@@ -80,7 +95,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
             配置模型后启动
           </button>
         ) : (
-          <button onClick={() => start(sessionId, false)} className={`${btnCls} border-[var(--accent-blue)] text-[var(--accent-blue)]`}>
+          <button onClick={() => start(sessionId, false, providerId)} className={`${btnCls} border-[var(--accent-blue)] text-[var(--accent-blue)]`}>
             {result ? '重新分析' : '启动分析'}
           </button>
         )}
@@ -88,7 +103,13 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
 
         {canExport && (
           <div className="ml-auto flex items-center gap-2">
-            <ExportButtons output={meta!.output!} evidenceMap={evidenceMap} generation={result!.generation} />
+            <ExportButtons
+              output={meta!.output!}
+              evidenceMap={evidenceMap}
+              generation={result!.generation}
+              sessionId={sessionId}
+              agentType={agentType}
+            />
           </div>
         )}
       </div>
@@ -119,7 +140,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
       {preview && (
         <SendPreviewCard
           preview={preview}
-          onConfirm={() => start(sessionId, true)}
+          onConfirm={() => start(sessionId, true, providerId)}
           onCancel={() => dismissPreview(sessionId)}
         />
       )}
@@ -129,7 +150,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
           {stale && (
             <div className="mb-2 flex items-center gap-2 rounded-md bg-[var(--warning)]/15 px-3 py-1.5 text-helper text-[var(--warning)]">
               <span>结果可能已过期（{staleReason(result.freshness.reasons)}）</span>
-              <button onClick={() => start(sessionId, false)} className="underline">重新分析</button>
+              <button onClick={() => start(sessionId, false, providerId)} className="underline">重新分析</button>
             </div>
           )}
           <div className="mb-2 text-meta text-[var(--text-muted)]">
@@ -321,20 +342,22 @@ function Bullets({ label, items, accent }: { label: string; items: string[]; acc
   )
 }
 
-function ExportButtons({ output, evidenceMap, generation }: {
+function ExportButtons({ output, evidenceMap, generation, sessionId, agentType }: {
   output: InsightOutput
   evidenceMap: Map<string, InsightEvidenceRef>
   generation: { model_id: string; created_at: string }
+  sessionId: string
+  agentType: string
 }) {
   const [copied, setCopied] = useState(false)
-  const md = () => buildMarkdown(output, evidenceMap, generation)
+  const stem = fileStem(agentType, sessionId, generation.created_at)
 
-  const download = () => {
-    const blob = new Blob([md()], { type: 'text/markdown;charset=utf-8' })
+  const save = (content: string, ext: string, mime: string) => {
+    const blob = new Blob([content], { type: mime })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `根因分析-${generation.created_at.replace(/[:\s]/g, '-')}.md`
+    a.download = `${stem}.${ext}`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -342,73 +365,92 @@ function ExportButtons({ output, evidenceMap, generation }: {
   }
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(md()); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked */ }
+    try {
+      await navigator.clipboard.writeText(buildMarkdown(output, evidenceMap, generation))
+      setCopied(true); setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard blocked */ }
   }
 
   return (
     <>
-      <button onClick={download} className={btnCls}>导出 Markdown</button>
+      <button onClick={() => save(buildMarkdown(output, evidenceMap, generation), 'md', 'text/markdown;charset=utf-8')} className={btnCls}>导出 Markdown</button>
+      <button onClick={() => save(buildHTML(output, evidenceMap, generation), 'html', 'text/html;charset=utf-8')} className={btnCls}>导出 HTML</button>
       <button onClick={copy} className={btnCls}>{copied ? '已复制' : '复制'}</button>
     </>
   )
 }
 
-// buildMarkdown flattens the structured report (and its cited evidence) into a
-// portable Markdown document for archiving or sharing.
+// fileStem builds a readable, session-identifying filename base, e.g.
+// 根因分析_codex_019f5fa6_20260715-145545.
+function fileStem(agent: string, sessionId: string, createdAt: string): string {
+  const m = createdAt.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/)
+  const ts = m ? `${m[1]}${m[2]}${m[3]}-${m[4]}${m[5]}${m[6]}` : createdAt.replace(/[^\d]/g, '')
+  return `根因分析_${agent || 'session'}_${sessionId.slice(0, 8)}_${ts}`
+}
+
+function trunc(s: string, n: number): string {
+  const a = [...s]
+  return a.length > n ? a.slice(0, n).join('') + '…' : s
+}
+
+// compactRefs turns a citation list into deduped short tags (T3 for turns,
+// kind label otherwise) so an insight's basis reads as one short line rather
+// than a wall of repeated full-text evidence.
+function compactRefs(evidenceMap: Map<string, InsightEvidenceRef>, ...lists: (string[] | undefined)[]): string {
+  const seen = new Set<string>()
+  const tags: string[] = []
+  for (const ids of lists) {
+    for (const id of ids ?? []) {
+      const ev = evidenceMap.get(id)
+      const tag = ev?.turn_index !== undefined ? `T${ev.turn_index}` : (kindLabel[ev?.kind ?? ''] ?? ev?.kind ?? '证据')
+      if (seen.has(tag)) continue
+      seen.add(tag); tags.push(tag)
+    }
+  }
+  return tags.join('、')
+}
+
+// citedIds collects every evidence id an insight references, in first-seen order.
+function citedIds(output: InsightOutput): string[] {
+  const seen = new Set<string>()
+  const push = (ids?: string[]) => ids?.forEach(i => seen.add(i))
+  for (const ins of output.insights) {
+    push(ins.cause.evidence_ids); push(ins.impact.evidence_ids); push(ins.counter_evidence_ids)
+    ins.alternatives?.forEach(a => { push(a.evidence_ids); push(a.opposing_evidence_ids) })
+  }
+  return [...seen]
+}
+
+// buildMarkdown renders a conclusion-first report: each insight shows its cause,
+// impact, recommendations and a one-line basis; full evidence text appears once
+// in an appendix (truncated) instead of being repeated under every insight.
 function buildMarkdown(
   output: InsightOutput,
   evidenceMap: Map<string, InsightEvidenceRef>,
   generation: { model_id: string; created_at: string },
 ): string {
   const L: string[] = []
-  L.push('# 根因分析报告')
-  L.push('')
-  L.push(`> 模型 ${generation.model_id} · ${generation.created_at}`)
-  L.push('')
-  if (output.summary) { L.push('## 概要', '', output.summary, '') }
-
-  const evLines = (label: string, ids?: string[]) => {
-    if (!ids || ids.length === 0) return
-    L.push(`**${label}：**`)
-    for (const id of ids) {
-      const ev = evidenceMap.get(id)
-      const kind = ev?.kind ? (kindLabel[ev.kind] ?? ev.kind) : '证据'
-      const jump = ev?.turn_index !== undefined ? `（T${ev.turn_index}）` : ''
-      L.push(`- [${kind}] ${ev?.statement ?? id}${jump}`)
-    }
-    L.push('')
-  }
+  L.push('# 根因分析报告', '', `> 模型 ${generation.model_id} · ${generation.created_at}`, '')
+  if (output.summary) L.push('## 概要', '', output.summary, '')
 
   output.insights.forEach((ins, i) => {
-    L.push(`## 洞察 ${i + 1}：${ins.title}`)
-    L.push('')
-    L.push(`- 置信度：${confidenceLabel[ins.confidence] ?? ins.confidence}`)
-    L.push(`- 主要原因（${epistemicLabel[ins.cause.epistemic_status] ?? ins.cause.epistemic_status} · ${strengthLabel[ins.cause.causal_strength] ?? ins.cause.causal_strength}）：${ins.cause.statement}`)
-    L.push('')
-    evLines('关键证据', ins.cause.evidence_ids)
-    if (ins.cause.confounders && ins.cause.confounders.length > 0) {
-      L.push('**已排查的混淆因素：**')
-      ins.cause.confounders.forEach(c => L.push(`- ${c}`))
-      L.push('')
-    }
-    if (ins.impact.statement) { L.push(`**影响：** ${ins.impact.statement}`, '') }
-    evLines('影响证据', ins.impact.evidence_ids)
-    evLines('反证', ins.counter_evidence_ids)
-    ins.alternatives?.forEach(alt => {
-      L.push(`**替代解释：** ${alt.statement}${alt.assessment ? `（${alt.assessment}）` : ''}`, '')
-      evLines('支持', alt.evidence_ids)
-      evLines('反对', alt.opposing_evidence_ids)
-    })
+    L.push(`## ${i + 1}. ${ins.title}（置信度 ${confidenceLabel[ins.confidence] ?? ins.confidence}）`, '')
+    L.push(`**原因**（${epistemicLabel[ins.cause.epistemic_status] ?? ins.cause.epistemic_status} · ${strengthLabel[ins.cause.causal_strength] ?? ins.cause.causal_strength}）：${ins.cause.statement}`, '')
+    if (ins.impact.statement) L.push(`**影响**：${ins.impact.statement}`, '')
     if (ins.recommendations && ins.recommendations.length > 0) {
-      L.push('**下一次可改进：**')
+      L.push('**建议**')
       ins.recommendations.forEach(r => L.push(`- ${r}`))
       L.push('')
     }
+    ins.alternatives?.forEach(alt => L.push(`**替代解释**：${alt.statement}${alt.assessment ? `（${alt.assessment}）` : ''}`, ''))
     if (ins.caveats && ins.caveats.length > 0) {
-      L.push('**数据边界：**')
+      L.push('**数据边界**')
       ins.caveats.forEach(c => L.push(`- ${c}`))
       L.push('')
     }
+    const basis = compactRefs(evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
+    const counter = compactRefs(evidenceMap, ins.counter_evidence_ids)
+    if (basis) L.push(`**依据**：${basis}${counter ? `　**反证**：${counter}` : ''}`, '')
   })
 
   if (output.evidence_gaps && output.evidence_gaps.length > 0) {
@@ -416,7 +458,93 @@ function buildMarkdown(
     output.evidence_gaps.forEach(g => L.push(`- ${g}`))
     L.push('')
   }
+
+  const ids = citedIds(output)
+  if (ids.length > 0) {
+    L.push('---', '', '## 证据附录', '')
+    for (const id of ids) {
+      const ev = evidenceMap.get(id)
+      const kind = ev?.kind ? (kindLabel[ev.kind] ?? ev.kind) : '证据'
+      const tag = ev?.turn_index !== undefined ? `T${ev.turn_index}` : kind
+      L.push(`- **[${tag}]** ${trunc(ev?.statement ?? id, 140)}`)
+    }
+    L.push('')
+  }
   return L.join('\n')
+}
+
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// buildHTML renders the same conclusion-first report as a self-contained,
+// lightly-styled HTML document for archiving or sharing outside the app.
+function buildHTML(
+  output: InsightOutput,
+  evidenceMap: Map<string, InsightEvidenceRef>,
+  generation: { model_id: string; created_at: string },
+): string {
+  const H: string[] = []
+  H.push(`<h1>根因分析报告</h1>`)
+  H.push(`<p class="meta">模型 ${esc(generation.model_id)} · ${esc(generation.created_at)}</p>`)
+  if (output.summary) H.push(`<div class="summary">${esc(output.summary)}</div>`)
+
+  output.insights.forEach((ins, i) => {
+    const conf = ins.confidence
+    H.push(`<section class="card ${conf}">`)
+    H.push(`<h2><span class="idx">${i + 1}</span> ${esc(ins.title)} <span class="badge ${conf}">置信度 ${confidenceLabel[conf] ?? conf}</span></h2>`)
+    H.push(`<p><b>原因</b> <span class="dim">（${epistemicLabel[ins.cause.epistemic_status] ?? ins.cause.epistemic_status} · ${strengthLabel[ins.cause.causal_strength] ?? ins.cause.causal_strength}）</span>：${esc(ins.cause.statement)}</p>`)
+    if (ins.impact.statement) H.push(`<p><b>影响</b>：${esc(ins.impact.statement)}</p>`)
+    if (ins.recommendations && ins.recommendations.length > 0) {
+      H.push(`<p><b>建议</b></p><ul>${ins.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`)
+    }
+    ins.alternatives?.forEach(alt => H.push(`<p><b>替代解释</b>：${esc(alt.statement)}${alt.assessment ? `（${esc(alt.assessment)}）` : ''}</p>`))
+    if (ins.caveats && ins.caveats.length > 0) {
+      H.push(`<p><b>数据边界</b></p><ul>${ins.caveats.map(c => `<li>${esc(c)}</li>`).join('')}</ul>`)
+    }
+    const basis = compactRefs(evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
+    const counter = compactRefs(evidenceMap, ins.counter_evidence_ids)
+    if (basis) H.push(`<p class="basis"><b>依据</b>：${esc(basis)}${counter ? `　<b>反证</b>：${esc(counter)}` : ''}</p>`)
+    H.push(`</section>`)
+  })
+
+  if (output.evidence_gaps && output.evidence_gaps.length > 0) {
+    H.push(`<h2>数据缺口</h2><ul>${output.evidence_gaps.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`)
+  }
+
+  const ids = citedIds(output)
+  if (ids.length > 0) {
+    H.push(`<h2>证据附录</h2><ul class="appendix">`)
+    for (const id of ids) {
+      const ev = evidenceMap.get(id)
+      const kind = ev?.kind ? (kindLabel[ev.kind] ?? ev.kind) : '证据'
+      const tag = ev?.turn_index !== undefined ? `T${ev.turn_index}` : kind
+      H.push(`<li><span class="tag">${esc(tag)}</span> ${esc(trunc(ev?.statement ?? id, 200))}</li>`)
+    }
+    H.push(`</ul>`)
+  }
+
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>根因分析报告</title>
+<style>
+:root{color-scheme:light dark}
+body{font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:820px;margin:32px auto;padding:0 20px;color:#1f2328}
+h1{font-size:22px;margin:0 0 4px}
+.meta{color:#656d76;margin:0 0 20px;font-size:12px}
+.summary{background:#f6f8fa;border-radius:8px;padding:12px 14px;margin-bottom:20px;font-size:15px}
+.card{border-left:3px solid #6b7280;background:#f6f8fa;border-radius:8px;padding:12px 16px;margin:14px 0}
+.card.high{border-left-color:#cf222e}.card.medium{border-left-color:#bf8700}.card.low{border-left-color:#0969da}
+h2{font-size:16px;margin:18px 0 8px}
+.idx{color:#8250df;font-weight:700;margin-right:4px}
+.badge{font-size:11px;padding:2px 6px;border-radius:4px;background:#eaeef2;color:#57606a;font-weight:500;vertical-align:middle}
+.badge.high{background:#ffebe9;color:#cf222e}.badge.medium{background:#fff8c5;color:#7d4e00}.badge.low{background:#ddf4ff;color:#0969da}
+p{margin:6px 0}.dim{color:#656d76;font-size:12px}
+.basis{color:#57606a;font-size:13px;border-top:1px solid #d0d7de;padding-top:6px;margin-top:8px}
+ul{margin:6px 0;padding-left:22px}li{margin:2px 0}
+.appendix li{color:#57606a;font-size:13px}
+.tag{display:inline-block;font-size:11px;background:#eaeef2;color:#57606a;border-radius:4px;padding:1px 5px;margin-right:4px}
+</style></head><body>
+${H.join('\n')}
+</body></html>`
 }
 
 function SendPreviewCard({ preview, onConfirm, onCancel }: { preview: SendPreview; onConfirm: () => void; onCancel: () => void }) {

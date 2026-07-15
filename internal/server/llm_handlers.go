@@ -393,6 +393,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
 		flusher.Flush()
 	}
+	sendEvent("status", map[string]string{"stage": "已选择模型 " + providerModelLabel(provider)})
 	sendEvent("status", map[string]string{"stage": "构建上下文"})
 
 	client, err := llm.New(llm.Config{

@@ -28,6 +28,22 @@ const confirmedTargetsKey = "insight_confirmed_targets"
 // the concrete endpoint (base_url for API, agent for ACP). Changing the
 // endpoint changes the fingerprint, so a re-confirmation is required — a
 // provider config ID alone must not grant a permanent grant.
+// providerModelLabel is a short human-readable name for the model being used,
+// shown in the generation progress so the user can see which model ran.
+func providerModelLabel(p *db.LLMProvider) string {
+	name := p.ModelLabel
+	if name == "" {
+		name = p.ModelID
+	}
+	if name == "" {
+		name = p.Agent
+	}
+	if p.Name != "" && p.Name != name {
+		return name + "（" + p.Name + "）"
+	}
+	return name
+}
+
 func modelTargetFingerprint(p *db.LLMProvider) string {
 	var target string
 	switch p.Kind {
@@ -226,6 +242,7 @@ func (s *Server) generateInsight(w http.ResponseWriter, r *http.Request, id stri
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
 		flusher.Flush()
 	}
+	sendEvent("status", map[string]string{"stage": "已选择模型 " + providerModelLabel(provider)})
 	sendEvent("status", map[string]string{"stage": "构建证据"})
 
 	userMsg, err := insight.BuildUserMessage(redacted)
