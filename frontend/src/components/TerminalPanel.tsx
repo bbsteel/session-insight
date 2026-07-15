@@ -145,10 +145,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     const container = containerRef.current
     if (!container) return
 
+    const agent = agentTypeRef.current || ""
+    // Grok native TUI is very compact; use denser line height only for it
+    // (global changes to row height affect all agents, so keep agent-specific).
+    const lineH = agent === "grok" ? 1.05 : 1.2
     const term = new Terminal({
       theme: terminalTheme(isDarkRef.current, agentTypeRef.current),
       fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: TERMINAL_FONT_SIZE,
+      lineHeight: lineH,
       allowProposedApi: true,
       scrollback: 20000,
       convertEol: true,

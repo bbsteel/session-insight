@@ -219,6 +219,9 @@ func parseUpdatesRender(path string) ([]model.RenderEvent, bool, error) {
 		case "tool_call":
 			closeThought(ts)
 			name := toolNameFromRaw(u)
+			if name == "run_terminal_command" {
+				name = "Run" // to match native "◆ Run <description>" bullet
+			}
 			input := rawToMap(u.RawInput)
 			invID := emit(model.RenderEvent{
 				Type:       "ToolInvocation",
@@ -233,12 +236,16 @@ func parseUpdatesRender(path string) ([]model.RenderEvent, bool, error) {
 			}
 
 		case "tool_call_update":
-			if u.Status != "completed" && u.Status != "failed" && u.Status != "error" {
-				// Intermediate status / richer rawInput — ignore for render.
+			stdout := toolResultText(u)
+			// Emit result as soon as we see output data (often arrives on
+			// "in_progress" for grok), or on explicit terminal status.
+			// This ensures ToolInvocation + ToolResult stay adjacent for
+			// folding and "call + output together" in the terminal view.
+			if stdout == "" && u.Status != "completed" && u.Status != "failed" && u.Status != "error" {
+				// Pure status/metadata update without payload yet; skip.
 				continue
 			}
 			closeThought(ts)
-			stdout := toolResultText(u)
 			exit := 0
 			if u.Status == "failed" || u.Status == "error" {
 				exit = 1

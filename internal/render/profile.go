@@ -38,6 +38,10 @@ type Profile struct {
 	// and promotes a reason/description/title argument into the box header.
 	ToolBullet bool
 
+	// ToolBulletChar overrides the bullet character used in ToolBullet mode
+	// (e.g. "◆" for grok to match native TUI bullets).
+	ToolBulletChar string
+
 	// ResultBox, when true, renders tool results as a bordered "Output" box
 	// with a Completed/Failed footer instead of a bare ✓/✗ line.
 	ResultBox bool
@@ -61,6 +65,7 @@ var chrysProfile = Profile{
 	AssistantHeader: true,
 	GroupToolRuns:   true,
 	ToolBullet:      true,
+	ToolBulletChar:  "•",
 	ResultBox:       true,
 	SubagentBadge:   true,
 }
@@ -76,9 +81,26 @@ var claudeProfile = Profile{
 	GroupHeaderStats: true,
 }
 
+// grokProfile enables per-tool bullet folding with description promotion
+// (matching how Grok Build surfaces tool calls in its own terminal UI: folded
+// to the human description, with command+output together inside the fold).
+var grokProfile = Profile{
+	Name:  "grok",
+	BoxTL: "╭", BoxTR: "╮", BoxBL: "╰", BoxBR: "╯",
+	BoxH: "─", BoxV: "│",
+	ToolBullet:     true,
+	ToolBulletChar: "◆", // match Grok native TUI bullet style for thoughts and runs
+	ResultBox:      true,
+	GroupToolRuns:  false, // Grok terminal shows tools sequentially as individual "Run <desc>" lines, not batched under one group header. Respect the order in the event stream.
+	// Intentionally not forcing UserHeader/AssistantHeader so existing grok
+	// replay layout for messages stays close to default while tools get the
+	// nice folded terminal simulation.
+}
+
 var profiles = map[string]*Profile{
 	"chrys":  &chrysProfile,
 	"claude": &claudeProfile,
+	"grok":   &grokProfile,
 }
 
 // profileFor resolves the layout profile from the event stream's agent type

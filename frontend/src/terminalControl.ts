@@ -1,6 +1,6 @@
 import type { ScrollMetrics } from './minimapGeometry'
 
-export const TERMINAL_LINE_HEIGHT = 16
+export const TERMINAL_LINE_HEIGHT = 14 // base; grok uses even denser via xterm lineHeight option (see TerminalPanel)
 
 // Screen/cell context of the click that activated a matcher row, so handlers
 // can anchor popovers at the cursor and inspect the exact clicked column.

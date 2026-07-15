@@ -65,6 +65,9 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	}
 
 	p := profileFor(events)
+	if p.Name == "grok" {
+		computeGrokThoughtSummaries(events)
+	}
 	// chrys emits a turn's parallel invocations first and all results after;
 	// pair each invocation with its result so a per-tool fold covers input+output.
 	if p.ToolBullet {
@@ -190,6 +193,8 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		badgeOffset   int // UTF-16 index in the header line where the "(N 行)" badge goes
 	}
 	var openToolFold *toolFoldState
+	var openGrokThoughtFold *toolFoldState
+	grokSidebar := ColNone
 	closeToolFold := func() {
 		if openToolFold == nil {
 			return
@@ -218,6 +223,39 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				"badge_offset":   float64(f.badgeOffset),
 			},
 		})
+		if p.Name == "grok" {
+			grokSidebar = ColNone // reset after tool block
+		}
+	}
+
+	closeGrokThoughtFold := func() {
+		if openGrokThoughtFold == nil {
+			return
+		}
+		f := openGrokThoughtFold
+		openGrokThoughtFold = nil
+		if tb.CurrentLine() <= f.bodyDisplay {
+			return
+		}
+		endIncl := tb.CurrentLine() - 1
+		positions = append(positions, RenderPosition{
+			PositionKey: f.key,
+			Kind:        "fold",
+			TurnIndex:   f.turnIndex,
+			LineStart:   f.headerDisplay,
+			LineEnd:     &endIncl,
+			Label:       "thought",
+			Payload: map[string]any{
+				"level":          "thought",
+				"group_key":      f.groupKey,
+				"display_start":  float64(f.bodyDisplay),
+				"display_end":    float64(tb.CurrentLine()),
+				"logical_start":  float64(f.bodyLogical),
+				"logical_end":    float64(tb.CurrentLogicalLine()),
+				"header_logical": float64(f.headerLogical),
+			},
+		})
+		grokSidebar = ColNone // reset after thought block to prevent sidebar leak to following text
 	}
 
 	// truncSeq numbers truncated output segments in document order; the
@@ -264,11 +302,15 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	for i, evt := range events {
 		if openFold != nil && i >= openFold.run.endIdx {
 			closeToolFold() // close the group's last tool before the group itself
+			closeGrokThoughtFold()
 			closeFold()
 		}
 
+		closeGrokThoughtFold()
+
 		if evt.Type == "RollbackStart" {
 			closeToolFold()
+			closeGrokThoughtFold()
 			closeFold()
 			count := metadataInt(evt.Metadata, "count")
 			resumeTurn := metadataInt(evt.Metadata, "resume_turn")
@@ -287,6 +329,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		}
 		if evt.Type == "RollbackEnd" {
 			closeToolFold()
+			closeGrokThoughtFold()
 			closeFold()
 			closeRollbackFold()
 			prevTurnIndex = evt.TurnIndex
@@ -296,6 +339,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 		if evt.TurnIndex != prevTurnIndex {
 			closeToolFold() // never let a tool fold span a turn boundary
+			closeGrokThoughtFold()
 			rolledBack := evt.Type == "TurnBoundary" && metadataBool(evt.Metadata, "rolled_back")
 			if rolledBack {
 				original := metadataInt(evt.Metadata, "original_turn_index")
@@ -345,16 +389,71 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			}
 		case "UserPrompt":
 			emit("user", "用户输入", "", evt.TurnIndex, nil)
-			writeUserPrompt(p, tb, evt, prefix, tsFor(evt, opts.TimestampUser))
+			userPrefix := prefix
+			if p.Name == "grok" && grokSidebar != ColNone {
+				userPrefix = prefix + fgWrap(p.BoxV, grokSidebar) + " "
+			}
+			writeUserPrompt(p, tb, evt, userPrefix, tsFor(evt, opts.TimestampUser))
 		case "ThinkingStart":
-			writeThinking(tb, evt, prefix)
+			if p.Name == "grok" && evt.Text != "" {
+				// compact ◆ header 
+				tb.WriteString(prefix)
+				if t := tsFor(evt, opts.TimestampAssistant); t != "" {
+					tb.WriteString(fgWrap(t+" ", ColMuted))
+				}
+				tb.WriteString(fgWrap("◆", ColMuted))
+				tb.WriteString(styled(" "+evt.Text, ColFg, ColNone, true, false))
+				tb.WriteString("\n")
+
+				// setup fold so body (following chunks with | ) can be collapsed by default
+				// like tool tfolds
+				hdrDisp := tb.CurrentLine() - 1
+				hdrLog := tb.CurrentLogicalLine() - 1
+				bodyDisp := tb.CurrentLine()
+				bodyLog := tb.CurrentLogicalLine()
+				openGrokThoughtFold = &toolFoldState{
+					turnIndex:     evt.TurnIndex,
+					key:           fmt.Sprintf("tfold:%d:%d", evt.TurnIndex, hdrDisp),
+					groupKey:      "",
+					headerDisplay: hdrDisp,
+					headerLogical: hdrLog,
+					bodyDisplay:   bodyDisp,
+					bodyLogical:   bodyLog,
+					badgeOffset:   0,
+				}
+			} else {
+				writeThinking(tb, evt, prefix)
+			}
 		case "ThinkingChunk":
-			writeThinking(tb, evt, prefix)
+			if p.Name == "grok" {
+				// write content so it's available when thought fold is expanded
+				// prefix with green │ to match native expanded sidebar
+				tb.WriteString(prefix)
+				tb.WriteString(fgWrap(p.BoxV, ColMuted))
+				tb.WriteString(" ")
+				tb.WriteString(italicWrap(fgWrap(sanitizeControlChars(evt.Text), ColMuted)))
+				tb.WriteString("\n")
+			} else {
+				writeThinking(tb, evt, prefix)
+			}
 		case "ThinkingEnd":
+			if p.Name == "grok" {
+				closeGrokThoughtFold()
+			}
 		case "TextChunk":
+			if p.Name == "grok" {
+				grokSidebar = ColNone // reset to prevent sidebar leak to plain text after blocks
+			}
+			textPrefix := prefix
+			if p.Name == "grok" && grokSidebar != ColNone {
+				textPrefix = prefix + fgWrap(p.BoxV, grokSidebar) + " "
+			}
 			if p.AssistantHeader && evt.Depth == 0 && prevDepth0Type != "TextChunk" {
 				if prevDepth0Type != "" {
 					tb.WriteString("\n")
+				}
+				if p.Name == "grok" && grokSidebar != ColNone {
+					tb.WriteString(prefix + fgWrap(p.BoxV, grokSidebar) + " ")
 				}
 				writeAssistantHeader(tb, agentLabel, tsFor(evt, opts.TimestampAssistant))
 			} else if evt.Depth == 0 && prevDepth0Type != "TextChunk" {
@@ -362,12 +461,12 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				// as its own muted line: prefixing the first markdown line
 				// would overflow the wrap width computed without the prefix.
 				if ts := tsFor(evt, opts.TimestampAssistant); ts != "" {
-					tb.WriteString(prefix)
+					tb.WriteString(textPrefix)
 					tb.WriteString(fgWrap(ts, ColMuted))
 					tb.WriteString("\n")
 				}
 			}
-			writeTextChunk(tb, evt, prefix, cols)
+			writeTextChunk(tb, evt, textPrefix, cols)
 		case "ToolInvocation":
 			onEdit := func(filePath string) {
 				seq := editSeqByTurn[evt.TurnIndex]
@@ -376,6 +475,10 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			}
 			outcome := outcomes[evt.ToolCallID]
 			toolTS := tsFor(evt, opts.TimestampTool)
+			failed := outcome.status != "" && outcome.status != "ok"
+			if p.Name == "grok" {
+				grokSidebar = ColNone // reset for new tool bullet
+			}
 			// Every depth-0 tool call gets a "tool" position anchored to its
 			// header line — the tool-call panel's data source. Nested
 			// (depth>0) subagent tools are skipped: their TurnIndex is local
@@ -397,14 +500,18 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			// Per-tool folds need the bullet line as their "▼ …" header, so
 			// they're limited to bullet profiles (chrys). Non-bullet profiles
 			// (claude/codex) keep the existing group-only fold.
-			if openFold != nil && evt.Depth == 0 && p.ToolBullet && !model.IsEditTool(evt.ToolName) {
+			if evt.Depth == 0 && p.ToolBullet && !model.IsEditTool(evt.ToolName) {
 				headerDisplay := tb.CurrentLine()
 				headerLogical := tb.CurrentLogicalLine()
-				bodyD, bodyL, badgeOff := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true, outcome.durationMs, toolTS)
+				bodyD, bodyL, badgeOff := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true, outcome.durationMs, toolTS, failed)
+				gk := ""
+				if openFold != nil {
+					gk = openFold.key
+				}
 				openToolFold = &toolFoldState{
 					turnIndex:     evt.TurnIndex,
 					key:           fmt.Sprintf("tfold:%d:%d", evt.TurnIndex, headerDisplay),
-					groupKey:      openFold.key,
+					groupKey:      gk,
 					headerDisplay: headerDisplay,
 					headerLogical: headerLogical,
 					bodyDisplay:   bodyD,
@@ -412,7 +519,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 					badgeOffset:   badgeOff,
 				}
 			} else {
-				writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, false, outcome.durationMs, toolTS)
+				writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, false, outcome.durationMs, toolTS, failed)
 			}
 		case "ToolResult":
 			if evt.Rejected {
@@ -422,7 +529,12 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			} else if evt.ExitCode != 0 || evt.Stderr != "" {
 				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName, "exit_code": evt.ExitCode, "kind": evt.ErrorKind})
 			}
-			writeToolResult(p, tb, evt, prefix, bWidth, makeOnTrunc(evt.TurnIndex))
+			resultPrefix := prefix
+			if p.Name == "grok" && evt.Depth == 0 {
+				resultPrefix = prefix + "  " // match the indent of input box under ◆ header
+			}
+			writeToolResult(p, tb, evt, resultPrefix, bWidth, makeOnTrunc(evt.TurnIndex))
+			closeToolFold() // finalize the per-tool fold immediately after its result, so following assistant text is not swallowed into the fold (fixes folding assistant messages)
 		case "CompactionBoundary":
 			emit("compaction", "压缩", "", evt.TurnIndex, nil)
 		case "AgentSpecific":
@@ -434,6 +546,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		}
 	}
 	closeToolFold()
+	closeGrokThoughtFold()
 	closeFold()
 	for len(rollbackFolds) > 0 {
 		closeRollbackFold()
@@ -771,6 +884,43 @@ func writeAssistantHeader(sb *trackingBuilder, label string, ts string) {
 	sb.WriteString("\n")
 }
 
+// computeGrokThoughtSummaries post-processes the event list for grok to set
+// a compact "Thought for Xs" summary on ThinkingStart events (duration from
+// start to corresponding ThinkingEnd in same turn). This lets the terminal
+// view show only the ◆ header line (matching native Grok TUI), while the
+// detailed thought chunks can be suppressed in writing for the list view.
+func computeGrokThoughtSummaries(events []model.RenderEvent) {
+	for i := range events {
+		e := &events[i]
+		if e.Type != "ThinkingStart" || e.AgentType != "grok" {
+			continue
+		}
+		startTs := e.Timestamp
+		turn := e.TurnIndex
+		for j := i + 1; j < len(events); j++ {
+			if events[j].TurnIndex != turn {
+				break
+			}
+			if events[j].Type == "ThinkingEnd" {
+				if !events[j].Timestamp.IsZero() && !startTs.IsZero() {
+					d := events[j].Timestamp.Sub(startTs).Seconds()
+					if d < 0 {
+						d = 0
+					}
+					e.Text = fmt.Sprintf("Thought for %.1fs", d)
+				}
+				break
+			}
+			if events[j].Type == "ThinkingStart" {
+				break
+			}
+		}
+		if e.Text == "" {
+			e.Text = "Thought"
+		}
+	}
+}
+
 func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	// A turn start must be findable at a glance when scrolling or after a
 	// jump: solid inverse-video badge followed by a heavy rule, instead of
@@ -1028,7 +1178,7 @@ func promoteBoxHeader(input map[string]any) (string, map[string]any) {
 // durationMs (0 = unknown) and ts ("" = disabled) enrich the header line so
 // the invocation's cost and wall-clock moment are readable without expanding
 // anything. Edit tools render as diffs and currently skip both.
-func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool, durationMs int64, ts string) (bodyDisplay, bodyLogical, headerBadgeOffset int) {
+func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool, durationMs int64, ts string, failed bool) (bodyDisplay, bodyLogical, headerBadgeOffset int) {
 	if model.IsEditTool(evt.ToolName) {
 		if evt.ToolName == "apply_patch" {
 			// apply_patch carries a raw patch string (under args/input/patch),
@@ -1056,18 +1206,36 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 			if onEditStart != nil {
 				onEditStart(filePath)
 			}
+			if p.Name == "grok" {
+				// write ◆ for grok edits too, for consistent bullet style
+				// full name "SearchReplace", with timestamp like other bullets
+				editLabel := "SearchReplace"
+				if ts != "" {
+					sb.WriteString(prefix)
+					sb.WriteString(fgWrap(ts + " ", ColMuted))
+				}
+				sb.WriteString(prefix)
+				sb.WriteString(styled("◆ " + editLabel, ColFg, ColNone, true, false))
+				sb.WriteString("\n")
+			}
 			writeEditDiff(p, sb, evt, prefix, bWidth)
 			return 0, 0, 0
 		}
 	}
 
+	toolName := sanitizeControlChars(evt.ToolName)
+	input := evt.ToolInput
+
 	borderColor := ColTool
 	if evt.ToolName == "Agent" || evt.ToolName == "Task" {
 		borderColor = ColSubagent
 	}
-
-	toolName := sanitizeControlChars(evt.ToolName)
-	input := evt.ToolInput
+	if p.Name == "grok" && toolName == "Run" {
+		borderColor = ColSuccess // green for success run tools
+		if failed {
+			borderColor = ColErrorBright // red for failed
+		}
+	}
 	var header string
 
 	if p.ToolBullet {
@@ -1077,11 +1245,22 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 		} else {
 			header = ""
 		}
+		if p.Name == "grok" {
+			header = "" // do not repeat description in the inner tool box top; the ◆ header already shows it. Box will show the command in content.
+		}
 		sb.WriteString(prefix)
 		tsRun := ""
 		if ts != "" {
 			tsRun = fgWrap(ts+" ", ColMuted)
 			sb.WriteString(tsRun)
+		}
+		char := p.ToolBulletChar
+		if char == "" {
+			char = "•"
+		}
+		bulletColor := ColFg
+		if p.Name == "grok" {
+			bulletColor = ColSuccess
 		}
 		if asFoldHeader {
 			// Emit the name and the summary as two independent SGR runs so the
@@ -1092,14 +1271,45 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 			// means the badge needs no style reopen — the summary run restyles
 			// itself. This is the ONLY place that encodes "where chrys's tool
 			// header ends"; the client stays profile-agnostic.
-			nameRun := styled("▼ • "+toolName, ColFg, ColNone, true, false)
-			sb.WriteString(nameRun)
-			headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(nameRun)
-			if s := toolSummary(purpose, evt.ToolInput); s != "" {
-				sb.WriteString(styled("  "+s, ColFg, ColNone, true, false))
+			bullet := "▼ " + char + " "
+			if p.Name == "grok" || char == "◆" {
+				bullet = char + " "
+			}
+			if p.Name == "grok" && toolName == "Run" {
+				// ◆ color based on success/fail (green/red), text default (matches native)
+				c := ColSuccess
+				if failed {
+					c = ColErrorBright
+				}
+				diamondStr := fgWrap(char, c)
+				sb.WriteString(diamondStr)
+				nameRun := styled(" "+toolName, ColFg, ColNone, true, false)
+				sb.WriteString(nameRun)
+				headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(diamondStr) + utf16Len(nameRun)
+				sep := " "
+				if s := toolSummary(purpose, evt.ToolInput); s != "" {
+					sb.WriteString(styled(sep+s, ColFg, ColNone, true, false))
+				}
+			} else {
+				nameRun := styled(bullet+toolName, bulletColor, ColNone, true, false)
+				sb.WriteString(nameRun)
+				headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(nameRun)
+				sep := "  "
+				if s := toolSummary(purpose, evt.ToolInput); s != "" {
+					sb.WriteString(styled(sep+s, bulletColor, ColNone, true, false))
+				}
 			}
 		} else {
-			sb.WriteString(styled("• "+toolName, ColFg, ColNone, true, false))
+			if p.Name == "grok" && toolName == "Run" {
+				c := ColSuccess
+				if failed {
+					c = ColErrorBright
+				}
+				sb.WriteString(fgWrap(char, c))
+				sb.WriteString(styled(" "+toolName, ColFg, ColNone, true, false))
+			} else {
+				sb.WriteString(styled(char+" "+toolName, bulletColor, ColNone, true, false))
+			}
 		}
 		if durationMs > 0 {
 			sb.WriteString(fgWrap(" · "+fmtDurationShort(durationMs), ColMuted))
@@ -1129,11 +1339,16 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 
 	inputLines := formatToolInput(input)
 
-	writeBoxTop(p, sb, prefix, header, bWidth, borderColor)
-	for _, il := range inputLines {
-		writeBoxRow(p, sb, prefix, il, bWidth, borderColor, ColFg)
+	boxPrefix := prefix
+	if p.Name == "grok" {
+		boxPrefix = prefix + "  " // indent box so not tight against left border
 	}
-	writeBoxBottom(p, sb, prefix, "", bWidth, borderColor)
+
+	writeBoxTop(p, sb, boxPrefix, header, bWidth, borderColor)
+	for _, il := range inputLines {
+		writeBoxRow(p, sb, boxPrefix, il, bWidth, borderColor, ColFg)
+	}
+	writeBoxBottom(p, sb, boxPrefix, "", bWidth, borderColor)
 	return bodyDisplay, bodyLogical, headerBadgeOffset
 }
 
