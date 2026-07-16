@@ -61,6 +61,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
   const blocked = state.status === 'blocked' ? state.blocked : null
   const error = state.status === 'error' ? state.error : null
   const providerMissing = providers.length === 0 || state.noProvider
+  const defaultProvider = providers.find(p => p.is_default)
 
   const meta = parseInsightMetadata(result?.generation.metadata)
   const evidenceMap = new Map<string, InsightEvidenceRef>()
@@ -80,9 +81,11 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
             className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
             title="用哪个模型源做根因分析"
           >
-            <option value={0}>默认模型源</option>
+            <option value={0}>
+              {defaultProvider ? `${defaultProvider.name}（默认）` : '（未设置默认）'}
+            </option>
             {providers.map(p => (
-              <option key={p.id} value={p.id}>{p.name}{p.is_default ? '（默认）' : ''}</option>
+              <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
         )}
