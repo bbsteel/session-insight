@@ -2,11 +2,12 @@
 //
 //   - "api": an OpenAI-compatible HTTP endpoint (DeepSeek, 通义, Kimi,
 //     ollama, one-api, ...).
-//   - "acp": a local agent CLI (claude / codex / gemini) driven over the
-//     Agent Client Protocol, the same integration path Zed uses. Model
-//     lists come from the agent itself at runtime and the chosen model is
-//     set explicitly per session — generation never relies on whatever
-//     default the CLI happens to have.
+//   - "acp": a local agent CLI used as a model source. Claude / Codex /
+//     Gemini are driven over the Agent Client Protocol (same path Zed uses).
+//     Grok has no ACP server, so it runs headless (`grok models` /
+//     `grok --prompt-file`). Model lists come from the CLI at runtime and
+//     the chosen model is set explicitly — generation never relies on
+//     whatever default the CLI happens to have.
 package llm
 
 import (
@@ -19,7 +20,7 @@ type Config struct {
 	Kind    string // "api" | "acp"
 	BaseURL string // api: endpoint base, e.g. https://api.deepseek.com/v1
 	APIKey  string // api: bearer token
-	Agent   string // acp: "claude" | "codex" | "gemini"
+	Agent   string // acp: "claude" | "codex" | "gemini" | "grok"
 	ModelID string // the explicitly selected model
 }
 
@@ -63,6 +64,13 @@ func New(cfg Config) (Client, error) {
 	case "acp":
 		if cfg.Agent == "" {
 			return nil, fmt.Errorf("acp provider requires agent")
+		}
+		if AgentBinary(cfg.Agent) == "" {
+			return nil, fmt.Errorf("unsupported acp agent %q", cfg.Agent)
+		}
+		// Grok: headless CLI (no ACP). Others: ACP stdio adapters.
+		if cfg.Agent == "grok" {
+			return &grokCLIClient{cfg: cfg}, nil
 		}
 		return &acpClient{cfg: cfg}, nil
 	default:

@@ -45,7 +45,10 @@ func ListACPModelsCached(ctx context.Context, agent string, force bool) ([]Model
 	if !force && !entry.at.IsZero() && time.Since(entry.at) < acpModelTTL {
 		return entry.models, entry.err
 	}
-	client := &acpClient{cfg: Config{Kind: "acp", Agent: agent}}
+	client, err := New(Config{Kind: "acp", Agent: agent})
+	if err != nil {
+		return nil, err
+	}
 	models, err := client.ListModels(ctx)
 	// A cancelled request (user navigated away) says nothing about the
 	// agent — don't poison the cache with it.

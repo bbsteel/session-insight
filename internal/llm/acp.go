@@ -20,9 +20,31 @@ type acpClient struct {
 	cfg Config
 }
 
+// LocalAgents is the ordered list of local CLI agents that can act as model
+// sources under provider kind "acp". Claude/Codex/Gemini speak ACP; Grok uses
+// headless CLI (see grokCLIClient) because it has no ACP server.
+var LocalAgents = []string{"claude", "codex", "gemini", "grok"}
+
+// LocalAgentLabel is a short UI/docs label for a local agent id.
+func LocalAgentLabel(agent string) string {
+	switch agent {
+	case "claude":
+		return "Claude Code"
+	case "codex":
+		return "Codex CLI"
+	case "gemini":
+		return "Gemini CLI"
+	case "grok":
+		return "Grok CLI"
+	default:
+		return agent
+	}
+}
+
 // acpCommand maps an agent name to the argv that starts its ACP server.
 // claude/codex go through the npm adapters Zed maintains (npx auto-installs
 // on first use and caches after); gemini ships ACP in the CLI itself.
+// Grok is not ACP — callers must use grokCLIClient instead.
 func acpCommand(agent string) ([]string, error) {
 	switch agent {
 	// @latest pins force npx to re-resolve the registry instead of serving a
@@ -49,20 +71,20 @@ func IsScratchCWD(cwd string) bool {
 	return strings.Contains(cwd, scratchDirPrefix)
 }
 
-// AgentBinary is the executable whose presence gates showing an ACP agent
+// AgentBinary is the executable whose presence gates showing a local agent
 // as a provider candidate in the UI.
 func AgentBinary(agent string) string {
 	switch agent {
-	case "claude", "codex", "gemini":
+	case "claude", "codex", "gemini", "grok":
 		return agent
 	}
 	return ""
 }
 
-// DetectACPAgents reports which supported agent CLIs exist on this machine.
+// DetectACPAgents reports which supported local agent CLIs exist on this machine.
 func DetectACPAgents() []string {
 	var out []string
-	for _, agent := range []string{"claude", "codex", "gemini"} {
+	for _, agent := range LocalAgents {
 		if _, err := exec.LookPath(AgentBinary(agent)); err == nil {
 			out = append(out, agent)
 		}

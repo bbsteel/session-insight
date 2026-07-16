@@ -13,7 +13,10 @@ const AGENT_LABELS: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex CLI',
   gemini: 'Gemini CLI',
+  grok: 'Grok CLI',
 }
+
+const LOCAL_AGENTS = ['claude', 'codex', 'gemini', 'grok'] as const
 
 // Common OpenAI-compatible endpoints, one click to fill. Model names are
 // offline fallbacks so the user can save without a live /models round-trip;
@@ -183,8 +186,17 @@ export default function AISettingsModal({ onClose }: Props) {
     setForm(next)
   }
 
+  // model_id is globally unique across saved providers.
+  const takenModelIds = new Set(
+    providers.filter(p => p.id !== form?.editingId).map(p => p.model_id),
+  )
+
   const save = async () => {
     if (!form) return
+    if (takenModelIds.has(form.modelId)) {
+      setFormError(`model_id「${form.modelId}」已被其他模型源占用，不可重复配置`)
+      return
+    }
     const input: LLMProviderInput = {
       name: form.name.trim(),
       kind: form.kind,
@@ -237,227 +249,277 @@ export default function AISettingsModal({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={onClose}>
+      {/* Fixed height so switching source kind / agent / model list length does not resize the dialog. */}
       <div
-        className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(640px,92vw)] max-h-[84vh] flex flex-col"
+        className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(640px,92vw)] h-[min(720px,84vh)] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-default)]">
+        <div className="flex flex-shrink-0 items-center justify-between px-4 py-2.5 border-b border-[var(--border-default)]">
           <div className="text-sm font-medium text-[var(--text-primary)]">AI 模型源</div>
           <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none px-1">✕</button>
         </div>
 
-        <div className="flex-1 overflow-auto p-4">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
           {loading && <div className="text-helper text-[var(--text-secondary)]">加载中…</div>}
-          {listError && <div className="mb-2 text-helper text-[var(--error)]">{listError}</div>}
+          {listError && <div className="mb-2 flex-shrink-0 text-helper text-[var(--error)]">{listError}</div>}
 
           {!loading && !form && (
-            <>
-              {providers.length === 0 ? (
-                <div className="rounded-md border border-dashed border-[var(--border-default)] p-4 text-center text-helper text-[var(--text-secondary)]">
-                  还没有配置模型源。支持 OpenAI 兼容 API（DeepSeek、通义、Kimi、ollama…），
-                  或直接使用本机已安装的 agent CLI（无需 API key）。
-                  {acpAgents.length > 0 && (
-                    <div className="mt-1 text-meta text-[var(--text-muted)]">
-                      本机已检测到：{acpAgents.map(a => AGENT_LABELS[a] ?? a).join('、')}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {providers.map(p => (
-                    <li
-                      key={p.id}
-                      className={`flex items-center gap-2 rounded-md border px-3 py-2 ${
-                        p.is_default
-                          ? 'border-[var(--accent-blue)] bg-[color-mix(in_srgb,var(--accent-blue)_6%,transparent)]'
-                          : 'border-[var(--border-muted)]'
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-helper font-medium text-[var(--text-primary)]">{p.name}</span>
-                          <span className="flex-shrink-0 rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5 text-meta text-[var(--text-secondary)]">
-                            {p.kind === 'api' ? 'API' : (AGENT_LABELS[p.agent] ?? p.agent)}
-                          </span>
-                          {p.is_default && (
-                            <span className="flex-shrink-0 rounded bg-[var(--accent-blue)] px-1.5 py-px text-meta font-medium text-[var(--text-inverse)]">✓ 使用中</span>
-                          )}
-                        </div>
-                        <div className="mt-0.5 truncate text-meta text-[var(--text-muted)]">
-                          {p.model_id}{p.kind === 'api' && p.base_url ? ` · ${p.base_url}` : ''}
-                        </div>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {providers.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-[var(--border-default)] p-4 text-center text-helper text-[var(--text-secondary)]">
+                    还没有配置模型源。支持 OpenAI 兼容 API（DeepSeek、通义、Kimi、ollama…），
+                    或直接使用本机已安装的 agent CLI（无需 API key）。
+                    {acpAgents.length > 0 && (
+                      <div className="mt-1 text-meta text-[var(--text-muted)]">
+                        本机已检测到：{acpAgents.map(a => AGENT_LABELS[a] ?? a).join('、')}
                       </div>
-                      {!p.is_default && (
-                        <button className={btnCls} onClick={() => void makeDefault(p)}>设为默认</button>
-                      )}
-                      <button className={btnCls} onClick={() => openEdit(p)}>编辑</button>
-                      <button className={`${btnCls} text-[var(--error)]`} onClick={() => void remove(p)}>删除</button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <button className={`${btnCls} mt-3`} onClick={openAdd}>+ 添加模型源</button>
-            </>
+                    )}
+                  </div>
+                ) : (
+                  <ul className="space-y-2">
+                    {providers.map(p => (
+                      <li
+                        key={p.id}
+                        className={`flex items-center gap-2 rounded-md border px-3 py-2 ${
+                          p.is_default
+                            ? 'border-[var(--accent-blue)] bg-[color-mix(in_srgb,var(--accent-blue)_6%,transparent)]'
+                            : 'border-[var(--border-muted)]'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-helper font-medium text-[var(--text-primary)]">{p.name}</span>
+                            <span className="flex-shrink-0 rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5 text-meta text-[var(--text-secondary)]">
+                              {p.kind === 'api' ? 'API' : (AGENT_LABELS[p.agent] ?? p.agent)}
+                            </span>
+                            {p.is_default && (
+                              <span className="flex-shrink-0 rounded bg-[var(--accent-blue)] px-1.5 py-px text-meta font-medium text-[var(--text-inverse)]">✓ 使用中</span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 truncate text-meta text-[var(--text-muted)]">
+                            {p.model_id}{p.kind === 'api' && p.base_url ? ` · ${p.base_url}` : ''}
+                          </div>
+                        </div>
+                        {!p.is_default && (
+                          <button className={btnCls} onClick={() => void makeDefault(p)}>设为默认</button>
+                        )}
+                        <button className={btnCls} onClick={() => openEdit(p)}>编辑</button>
+                        <button className={`${btnCls} text-[var(--error)]`} onClick={() => void remove(p)}>删除</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <button className={`${btnCls} mt-3 flex-shrink-0 self-start`} onClick={openAdd}>+ 添加模型源</button>
+            </div>
           )}
 
           {form && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                {(['api', 'acp'] as const).map(kind => (
-                  <button
-                    key={kind}
-                    onClick={() => {
-                      setForm({ ...form, kind, agent: kind === 'acp' ? (form.agent || acpAgents[0] || 'claude') : form.agent, modelId: '', modelLabel: '' })
-                    }}
-                    className={`h-7 rounded-md px-3 text-helper ${form.kind === kind ? chipOn : chipOff}`}
-                  >
-                    {kind === 'api' ? 'OpenAI 兼容 API' : '本机 Agent CLI'}
-                  </button>
-                ))}
-              </div>
-
-              {form.kind === 'api' && (
-                <div>
-                  <div className="text-meta text-[var(--text-muted)]">常用服务（点击填充端点）</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    {API_PRESETS.map(preset => (
-                      <button
-                        key={preset.name}
-                        onClick={() => applyPreset(preset)}
-                        className={`h-6 rounded-full px-2.5 text-meta ${form.baseUrl.trim() === preset.baseUrl ? chipOn : chipOff}`}
-                      >
-                        {preset.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <label className="block text-helper text-[var(--text-primary)]">
-                名称
-                <input
-                  type="text"
-                  value={form.name}
-                  placeholder="选择模型后自动生成，可修改"
-                  onChange={e => setForm({ ...form, name: e.target.value })}
-                  className={inputCls}
-                />
-              </label>
-
-              {form.kind === 'api' ? (
-                <>
-                  <label className="block text-helper text-[var(--text-primary)]">
-                    Base URL
-                    <input
-                      type="text"
-                      value={form.baseUrl}
-                      placeholder="https://api.deepseek.com/v1"
-                      onChange={e => setForm({ ...form, baseUrl: e.target.value })}
-                      className={`${inputCls} font-mono`}
-                    />
-                  </label>
-                  <label className="block text-helper text-[var(--text-primary)]">
-                    API Key
-                    <input
-                      type="password"
-                      value={form.apiKey}
-                      placeholder={form.hasStoredKey ? '已保存（留空则不修改）' : 'sk-…'}
-                      onChange={e => setForm({ ...form, apiKey: e.target.value })}
-                      className={`${inputCls} font-mono`}
-                    />
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <button className={btnCls} disabled={st?.status === 'loading' || !form.baseUrl.trim()} onClick={() => void fetchModels(form, false)}>
-                      {st?.status === 'loading' ? '连接中…' : '测试连接并获取模型'}
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              {/* Top: kind + source fields — fixed block height so API/ACP switch does not jump. */}
+              <div className="flex flex-shrink-0 flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  {(['api', 'acp'] as const).map(kind => (
+                    <button
+                      key={kind}
+                      onClick={() => {
+                        setForm({ ...form, kind, agent: kind === 'acp' ? (form.agent || acpAgents[0] || 'claude') : form.agent, modelId: '', modelLabel: '' })
+                      }}
+                      className={`h-7 rounded-md px-3 text-helper ${form.kind === kind ? chipOn : chipOff}`}
+                    >
+                      {kind === 'api' ? 'OpenAI 兼容 API' : '本机 Agent CLI'}
                     </button>
-                    {st?.status === 'ok' && !st.preset && (
-                      <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ 获取到 {st.models!.length} 个模型</span>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div className="block text-helper text-[var(--text-primary)]">
-                  Agent CLI
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                    {['claude', 'codex', 'gemini'].map(a => (
-                      <button
-                        key={a}
-                        onClick={() => {
-                          if (a === form.agent) return
-                          setForm({ ...form, agent: a, modelId: '', modelLabel: '' })
-                        }}
-                        className={`h-7 rounded-md px-2.5 text-helper ${form.agent === a ? chipOn : chipOff}`}
-                      >
-                        {AGENT_LABELS[a]}{acpAgents.includes(a) ? '' : '（未检测到）'}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mt-1 text-meta text-[var(--text-muted)]">
-                    复用本机 CLI 的登录态，无需 API key。首次连接会自动下载适配器，可能需要一分钟左右。
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    {st?.status === 'loading' && <span className="text-meta text-[var(--text-muted)]" role="status">正在获取模型列表…</span>}
-                    {st?.status === 'ok' && (
-                      <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ {st.models!.length} 个模型</span>
-                    )}
-                    {st && st.status !== 'loading' && (
-                      <button className={`${btnCls} h-6 px-2 text-meta`} onClick={() => void fetchModels(form, true)}>
-                        强制刷新
-                      </button>
-                    )}
-                  </div>
+                  ))}
                 </div>
-              )}
 
-              {st?.status === 'error' && (
-                <div className="whitespace-pre-wrap break-all rounded-md border border-[var(--error)] bg-[color-mix(in_srgb,var(--error)_6%,transparent)] px-2.5 py-1.5 text-helper text-[var(--error)]">
-                  {st.error}
-                </div>
-              )}
-
-              {(st?.status === 'ok' || form.modelId) && (
-                <div className="block text-helper text-[var(--text-primary)]">
-                  模型（必选）
-                  {st?.preset && (
-                    <span className="ml-2 text-meta text-[var(--text-muted)]">预置常见模型，建议「测试连接」获取实际列表</span>
-                  )}
-                  {st?.status === 'ok' && st.models!.length > 0 && (
-                    <div className="mt-1 space-y-1">
-                      {st.models!.map(m => (
-                        <button
-                          key={m.id}
-                          onClick={() => selectModel(m.id)}
-                          className={`flex w-full items-baseline gap-2 rounded-md border px-2.5 py-1.5 text-left ${form.modelId === m.id ? chipOn : chipOff}`}
-                        >
-                          <span className="flex-shrink-0 font-medium">
-                            {m.label && m.label !== m.id ? m.label : m.id}
-                          </span>
-                          {m.label && m.label !== m.id && (
-                            <span className="flex-shrink-0 font-mono text-meta opacity-70">{m.id}</span>
-                          )}
-                          {m.description && (
-                            <span className="min-w-0 truncate text-meta text-[var(--text-muted)]">{m.description}</span>
-                          )}
-                        </button>
-                      ))}
+                {/* Reserve preset-row height on ACP too so kind switch does not jump. */}
+                <div className="min-h-[4.75rem]">
+                  {form.kind === 'api' ? (
+                    <div>
+                      <div className="text-meta text-[var(--text-muted)]">常用服务（点击填充端点）</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {API_PRESETS.map(preset => (
+                          <button
+                            key={preset.name}
+                            onClick={() => applyPreset(preset)}
+                            className={`h-6 rounded-full px-2.5 text-meta ${form.baseUrl.trim() === preset.baseUrl ? chipOn : chipOff}`}
+                          >
+                            {preset.name}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  )}
+                  ) : null}
+                </div>
+
+                <label className="block text-helper text-[var(--text-primary)]">
+                  名称
                   <input
                     type="text"
-                    value={listedIds.has(form.modelId) ? '' : form.modelId}
-                    placeholder="或手动填写模型 ID（列表里没有的型号）"
-                    onChange={e => selectModel(e.target.value.trim())}
-                    className={`${inputCls} font-mono`}
+                    value={form.name}
+                    placeholder="选择模型后自动生成，可修改"
+                    onChange={e => setForm({ ...form, name: e.target.value })}
+                    className={inputCls}
                   />
+                </label>
+
+                {/* min-h keeps API (URL+key) and ACP (chips) layouts from resizing the shell. */}
+                <div className="min-h-[9.5rem]">
+                  {form.kind === 'api' ? (
+                    <div className="space-y-3">
+                      <label className="block text-helper text-[var(--text-primary)]">
+                        Base URL
+                        <input
+                          type="text"
+                          value={form.baseUrl}
+                          placeholder="https://api.deepseek.com/v1"
+                          onChange={e => setForm({ ...form, baseUrl: e.target.value })}
+                          className={`${inputCls} font-mono`}
+                        />
+                      </label>
+                      <label className="block text-helper text-[var(--text-primary)]">
+                        API Key
+                        <input
+                          type="password"
+                          value={form.apiKey}
+                          placeholder={form.hasStoredKey ? '已保存（留空则不修改）' : 'sk-…'}
+                          onChange={e => setForm({ ...form, apiKey: e.target.value })}
+                          className={`${inputCls} font-mono`}
+                        />
+                      </label>
+                      <div className="flex h-7 items-center gap-2">
+                        <button className={btnCls} disabled={st?.status === 'loading' || !form.baseUrl.trim()} onClick={() => void fetchModels(form, false)}>
+                          {st?.status === 'loading' ? '连接中…' : '测试连接并获取模型'}
+                        </button>
+                        {st?.status === 'ok' && !st.preset && (
+                          <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ 获取到 {st.models!.length} 个模型</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="block text-helper text-[var(--text-primary)]">
+                      Agent CLI
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {LOCAL_AGENTS.map(a => (
+                          <button
+                            key={a}
+                            onClick={() => {
+                              if (a === form.agent) return
+                              setForm({ ...form, agent: a, modelId: '', modelLabel: '' })
+                            }}
+                            className={`h-7 rounded-md px-2.5 text-helper ${form.agent === a ? chipOn : chipOff}`}
+                          >
+                            {AGENT_LABELS[a]}{acpAgents.includes(a) ? '' : '（未检测到）'}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-1 text-meta text-[var(--text-muted)]">
+                        复用本机 CLI 的登录态，无需 API key。首次连接会自动下载适配器，可能需要一分钟左右。
+                      </div>
+                      <div className="mt-2 flex h-7 items-center gap-2">
+                        {st?.status === 'loading' && <span className="text-meta text-[var(--text-muted)]" role="status">正在获取模型列表…</span>}
+                        {st?.status === 'ok' && (
+                          <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ {st.models!.length} 个模型</span>
+                        )}
+                        {st && st.status !== 'loading' && (
+                          <button className={`${btnCls} h-6 px-2 text-meta`} onClick={() => void fetchModels(form, true)}>
+                            强制刷新
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {st?.status === 'error' && (
+                  <div className="max-h-16 overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[var(--error)] bg-[color-mix(in_srgb,var(--error)_6%,transparent)] px-2.5 py-1.5 text-helper text-[var(--error)]">
+                    {st.error}
+                  </div>
+                )}
+              </div>
+
+              {/* Middle: model list absorbs remaining height and scrolls — main stabilizer. */}
+              <div className="flex min-h-0 flex-1 flex-col text-helper text-[var(--text-primary)]">
+                <div className="flex flex-shrink-0 items-baseline gap-2">
+                  <span>模型（必选）</span>
+                  {st?.preset && (
+                    <span className="text-meta text-[var(--text-muted)]">预置常见模型，建议「测试连接」获取实际列表</span>
+                  )}
+                </div>
+                <div className="mt-1 min-h-0 flex-1 overflow-y-auto rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] p-1.5">
+                  {st?.status === 'loading' && (
+                    <div className="px-2 py-3 text-meta text-[var(--text-muted)]">正在获取模型列表…</div>
+                  )}
+                  {st?.status === 'ok' && st.models!.length > 0 && (
+                    <div className="space-y-1">
+                      {st.models!.map(m => {
+                        const taken = takenModelIds.has(m.id)
+                        return (
+                          <button
+                            key={m.id}
+                            disabled={taken}
+                            onClick={() => !taken && selectModel(m.id)}
+                            title={taken ? '该 model_id 已被其他模型源占用' : undefined}
+                            className={`flex w-full items-baseline gap-2 rounded-md border px-2.5 py-1.5 text-left ${
+                              taken
+                                ? 'cursor-not-allowed border-[var(--border-muted)] opacity-50'
+                                : form.modelId === m.id ? chipOn : chipOff
+                            }`}
+                          >
+                            <span className="flex-shrink-0 font-medium">
+                              {m.label && m.label !== m.id ? m.label : m.id}
+                            </span>
+                            {m.label && m.label !== m.id && (
+                              <span className="flex-shrink-0 font-mono text-meta opacity-70">{m.id}</span>
+                            )}
+                            {taken && (
+                              <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">已占用</span>
+                            )}
+                            {m.description && !taken && (
+                              <span className="min-w-0 truncate text-meta text-[var(--text-muted)]">{m.description}</span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {st?.status === 'ok' && st.models!.length === 0 && (
+                    <div className="px-2 py-3 text-meta text-[var(--text-muted)]">未返回模型，可手动填写下方 ID</div>
+                  )}
+                  {!st && (
+                    <div className="px-2 py-3 text-meta text-[var(--text-muted)]">
+                      {form.kind === 'api' ? '测试连接后显示模型列表，或手动填写 ID' : '选择 Agent 后自动获取模型列表'}
+                    </div>
+                  )}
+                  {st?.status === 'error' && (
+                    <div className="px-2 py-3 text-meta text-[var(--text-muted)]">获取失败，可手动填写下方 ID 或强制刷新</div>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  value={listedIds.has(form.modelId) ? '' : form.modelId}
+                  placeholder="或手动填写模型 ID（列表里没有的型号）"
+                  onChange={e => selectModel(e.target.value.trim())}
+                  className={`${inputCls} flex-shrink-0 font-mono`}
+                />
+                {form.modelId && takenModelIds.has(form.modelId) && (
+                  <div className="mt-1 flex-shrink-0 text-meta text-[var(--error)]">
+                    model_id「{form.modelId}」已被其他模型源占用
+                  </div>
+                )}
+              </div>
+
+              {formError && (
+                <div className="max-h-14 flex-shrink-0 overflow-y-auto whitespace-pre-wrap break-all text-helper text-[var(--error)]">
+                  {formError}
                 </div>
               )}
 
-              {formError && <div className="whitespace-pre-wrap break-all text-helper text-[var(--error)]">{formError}</div>}
-
-              <div className="flex items-center gap-2 border-t border-[var(--border-muted)] pt-3">
+              <div className="flex flex-shrink-0 items-center gap-2 border-t border-[var(--border-muted)] pt-3">
                 <button
                   className={`${btnCls} border-[var(--accent-blue)] text-[var(--accent-blue)]`}
-                  disabled={saving || !form.name.trim() || !form.modelId}
+                  disabled={saving || !form.name.trim() || !form.modelId || takenModelIds.has(form.modelId)}
                   onClick={() => void save()}
                 >
                   {saving ? '保存中…' : '保存'}

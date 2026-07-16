@@ -113,6 +113,25 @@ func (db *DB) DeleteLLMProvider(id int64) error {
 	return nil
 }
 
+// FindLLMProviderByModelID returns the provider that already owns modelID, or
+// nil. excludeID skips that row so an update can keep its own model_id.
+func (db *DB) FindLLMProviderByModelID(modelID string, excludeID int64) (*LLMProvider, error) {
+	var p LLMProvider
+	err := db.conn.QueryRow(
+		`SELECT id, name, kind, base_url, api_key, agent, model_id, model_label, created_at
+		 FROM llm_providers WHERE model_id = ? AND id != ? LIMIT 1`,
+		modelID, excludeID,
+	).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey,
+		&p.Agent, &p.ModelID, &p.ModelLabel, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find llm provider by model_id: %w", err)
+	}
+	return &p, nil
+}
+
 // DefaultLLMProviderID returns 0 when no default is set.
 func (db *DB) DefaultLLMProviderID() (int64, error) {
 	v, err := db.GetSetting(llmDefaultProviderKey)

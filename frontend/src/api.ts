@@ -296,6 +296,7 @@ export async function setDefaultLLMProvider(id: number): Promise<void> {
 // Validates a (possibly unsaved) provider config by fetching its model list.
 // provider_id lets a saved provider refresh models without re-entering the
 // key. ACP model lists are served from a backend TTL cache; force bypasses it.
+// Listing a model does not prove generation will succeed.
 export async function testLLMProvider(input: Partial<LLMProviderInput> & { provider_id?: number; force?: boolean }): Promise<LLMModel[]> {
   const res = await fetch('/api/llm/providers/test', {
     method: 'POST',

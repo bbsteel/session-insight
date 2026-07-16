@@ -281,7 +281,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
           {st.noProvider && (
             <div className="rounded-md border border-dashed border-[var(--border-default)] p-4 text-center">
               <div className="text-helper text-[var(--text-primary)]">还没有配置 AI 模型</div>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">支持 OpenAI 兼容 API，或直接复用本机 claude / codex / gemini CLI</div>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">支持 OpenAI 兼容 API，或直接复用本机 claude / codex / gemini / grok CLI</div>
               <button
                 className={`${btnCls} mt-3 border-[var(--accent-blue)] text-[var(--accent-blue)]`}
                 onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))}

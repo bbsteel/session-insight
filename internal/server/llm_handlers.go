@@ -81,7 +81,7 @@ func (req *providerRequest) validate() error {
 		}
 	case "acp":
 		if llm.AgentBinary(req.Agent) == "" {
-			return fmt.Errorf("agent must be one of claude, codex, gemini")
+			return fmt.Errorf("agent must be one of %s", strings.Join(llm.LocalAgents, ", "))
 		}
 	default:
 		return fmt.Errorf("kind must be api or acp")
@@ -135,11 +135,19 @@ func (s *Server) handleAddLLMProvider(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := s.ensureUniqueModelID(req.ModelID, 0); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	id, err := s.DB.AddLLMProvider(db.LLMProvider{
 		Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, APIKey: req.APIKey,
 		Agent: req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
 	})
 	if err != nil {
+		if isUniqueConstraintErr(err) {
+			http.Error(w, fmt.Sprintf("model_id %q 已被其他模型源占用", req.ModelID), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -179,6 +187,10 @@ func (s *Server) handleUpdateLLMProvider(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := s.ensureUniqueModelID(req.ModelID, id); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	// Empty api_key means "unchanged": the client never saw the stored key,
 	// so it cannot round-trip it.
 	apiKey := existing.APIKey
@@ -190,6 +202,10 @@ func (s *Server) handleUpdateLLMProvider(w http.ResponseWriter, r *http.Request)
 		Agent: req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
 	})
 	if err != nil {
+		if isUniqueConstraintErr(err) {
+			http.Error(w, fmt.Sprintf("model_id %q 已被其他模型源占用", req.ModelID), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -245,6 +261,10 @@ func (s *Server) handleSetDefaultLLMProvider(w http.ResponseWriter, r *http.Requ
 // handleTestLLMProvider validates a (possibly unsaved) provider config by
 // fetching its model list. provider_id lets a saved provider refresh its
 // models without re-entering the API key.
+//
+// Listing a model id is not treated as proof it can generate — that only
+// fails or succeeds on a real Generate call — so this endpoint never claims
+// "model available".
 func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 	if rejectUnsafeWrite(w, r) {
 		return
@@ -258,6 +278,7 @@ func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.BaseURL = strings.TrimSpace(req.BaseURL)
 	if req.APIKey == "" && req.ProviderID > 0 && s.DB != nil {
 		if p, err := s.DB.GetLLMProvider(req.ProviderID); err == nil && p != nil {
 			req.APIKey = p.APIKey
@@ -266,37 +287,57 @@ func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), testProviderTimeout)
 	defer cancel()
 
-	// ACP model lists are expensive (npx adapter spawn) and only change when
-	// the CLI updates — serve them from a TTL cache unless force is set.
-	if req.Kind == "acp" {
-		if llm.AgentBinary(req.Agent) == "" {
-			http.Error(w, "agent must be one of claude, codex, gemini", http.StatusBadRequest)
-			return
-		}
-		models, err := llm.ListACPModelsCached(ctx, req.Agent, req.Force)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, map[string]any{"models": models})
-		return
-	}
-
-	cfg := llm.Config{
-		Kind: req.Kind, BaseURL: strings.TrimSpace(req.BaseURL),
-		APIKey: req.APIKey, Agent: req.Agent,
-	}
-	client, err := llm.New(cfg)
+	models, err := s.listModelsForProvider(ctx, req.Kind, req.Agent, req.BaseURL, req.APIKey, req.Force)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	models, err := client.ListModels(ctx)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		// Config errors (unsupported agent / missing base_url) are 400; live
+		// fetch failures are 502.
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "must be") || strings.Contains(err.Error(), "requires") ||
+			strings.Contains(err.Error(), "unsupported") || strings.Contains(err.Error(), "unknown provider") {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	writeJSON(w, map[string]any{"models": models})
+}
+
+// ensureUniqueModelID rejects a model_id already owned by another provider.
+func (s *Server) ensureUniqueModelID(modelID string, excludeID int64) error {
+	other, err := s.DB.FindLLMProviderByModelID(modelID, excludeID)
+	if err != nil {
+		return err
+	}
+	if other != nil {
+		return fmt.Errorf("model_id %q 已被模型源「%s」占用，不可重复配置", modelID, other.Name)
+	}
+	return nil
+}
+
+func (s *Server) listModelsForProvider(ctx context.Context, kind, agent, baseURL, apiKey string, force bool) ([]llm.Model, error) {
+	switch kind {
+	case "acp":
+		if llm.AgentBinary(agent) == "" {
+			return nil, fmt.Errorf("agent must be one of %s", strings.Join(llm.LocalAgents, ", "))
+		}
+		return llm.ListACPModelsCached(ctx, agent, force)
+	case "api":
+		client, err := llm.New(llm.Config{Kind: "api", BaseURL: baseURL, APIKey: apiKey})
+		if err != nil {
+			return nil, err
+		}
+		return client.ListModels(ctx)
+	default:
+		return nil, fmt.Errorf("kind must be api or acp")
+	}
+}
+
+func isUniqueConstraintErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique") || strings.Contains(msg, "constraint failed")
 }
 
 // resolveProvider picks the provider for one generation: an explicit
@@ -450,16 +491,9 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 // actually seen in recent sessions — grounded in what the user can run,
 // not a hardcoded market survey.
 func (s *Server) handoffCandidates() []string {
-	agentLabels := map[string]string{
-		"claude": "Claude Code CLI", "codex": "Codex CLI", "gemini": "Gemini CLI",
-	}
 	var out []string
 	for _, agent := range llm.DetectACPAgents() {
-		label := agentLabels[agent]
-		if label == "" {
-			label = agent
-		}
-		out = append(out, label+"（本机已安装）")
+		out = append(out, llm.LocalAgentLabel(agent)+"（本机已安装）")
 	}
 
 	// Distinct models from recent sessions, most recently used first.

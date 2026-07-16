@@ -12,7 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 22
+const currentSchemaVersion = 23
 
 type DB struct {
 	conn *sql.DB
@@ -180,6 +180,7 @@ func migrate(conn *sql.DB) error {
 	);
 
 	-- LLM provider 配置（api 型 = OpenAI 兼容 HTTP；acp 型 = 本地 CLI 走 ACP 协议）
+	-- model_id 全局唯一索引在 v23 迁移里创建（需先对旧数据去重）
 	CREATE TABLE IF NOT EXISTS llm_providers (
 	    id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	    name        TEXT NOT NULL,
@@ -527,6 +528,21 @@ func migrate(conn *sql.DB) error {
 		}
 	}
 
+	// Version 23: each configured model_id may appear only once across providers
+	// so the picker and default selection stay unambiguous. Pre-existing
+	// duplicates keep the lowest id and rewrite later rows to model_id~<id>
+	// so the unique index can be applied without dropping user configs.
+	if maxVersion < 23 {
+		if err := dedupeLLMProviderModelIDs(conn); err != nil {
+			return fmt.Errorf("v23 dedupe llm model_id: %w", err)
+		}
+		if _, err := conn.Exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_providers_model_id ON llm_providers(model_id)`,
+		); err != nil {
+			return fmt.Errorf("v23 unique llm model_id index: %w", err)
+		}
+	}
+
 	_, err = conn.Exec(
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)`,
 		currentSchemaVersion,
@@ -571,6 +587,62 @@ func tableHasColumn(ctx context.Context, q interface {
 		}
 	}
 	return false, rows.Err()
+}
+
+// dedupeLLMProviderModelIDs rewrites every non-first row that shares a model_id
+// so a UNIQUE index can be created. The lowest id for each model_id is kept.
+func dedupeLLMProviderModelIDs(conn *sql.DB) error {
+	rows, err := conn.Query(
+		`SELECT id, model_id FROM llm_providers ORDER BY id`)
+	if err != nil {
+		// Table may not exist on very old DBs that never created providers.
+		if strings.Contains(err.Error(), "no such table") {
+			return nil
+		}
+		return err
+	}
+	defer rows.Close()
+
+	type row struct {
+		id      int64
+		modelID string
+	}
+	var all []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.modelID); err != nil {
+			return err
+		}
+		all = append(all, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	seen := map[string]int64{} // model_id -> first id
+	for _, r := range all {
+		if first, ok := seen[r.modelID]; ok {
+			// Disambiguate: keep original token visible, append ~id.
+			newID := fmt.Sprintf("%s~%d", r.modelID, r.id)
+			// Extremely unlikely collision with another rewritten id; loop-safe.
+			for {
+				if _, clash := seen[newID]; !clash {
+					break
+				}
+				newID = fmt.Sprintf("%s~%d", newID, r.id)
+			}
+			if _, err := conn.Exec(
+				`UPDATE llm_providers SET model_id = ? WHERE id = ?`, newID, r.id,
+			); err != nil {
+				return err
+			}
+			seen[newID] = r.id
+			_ = first
+		} else {
+			seen[r.modelID] = r.id
+		}
+	}
+	return nil
 }
 
 func migrateModelProviderV19(conn *sql.DB) (retErr error) {
