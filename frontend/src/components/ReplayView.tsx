@@ -68,6 +68,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [edits, setEdits] = useState<EditCall[]>([])
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [showAIPanel, setShowAIPanel] = useState(false)
+  // Live follow (tail -f): pin viewport to bottom on every live refresh.
+  // Only offered for active sessions; cleared when the session goes idle or changes.
+  const [followOutput, setFollowOutput] = useState(false)
   // 时间戳前缀设置(后端 ts 渲染参数);null = 设置未加载,先不挂终端,
   // 避免渲染与 positions 用了不同的 ts 导致行号错位。
   const [tsKinds, setTsKinds] = useState<string | null>(null)
@@ -135,6 +138,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
   // Left-click on a row with file context opens a small action popover at the
   // cursor (editor / new tab / diff) instead of a single hard-wired action.
+  // foldKey (from path-bearing tool headers) adds 展开/收起 next to open-file.
   const openFilePopover = useCallback((bufLine: number, meta: TerminalActivateMeta | undefined, editIdx: number | null) => {
     if (!meta) return
     const ctrl = termControlRef.current
@@ -147,6 +151,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       collapsedFoldKeys: ctrl?.getCollapsedFoldKeys() ?? [],
       fileOnly: true,
       editIdx: editIdx ?? undefined,
+      foldKey: meta.foldKey,
     })
   }, [])
 
@@ -296,6 +301,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     return () => window.clearInterval(timer)
   }, [session?.is_live, session?.id])
 
+  // Follow is live-only: drop it when switching sessions or when the live
+  // window expires so a historical replay never keeps auto-scrolling.
+  useEffect(() => {
+    setFollowOutput(false)
+  }, [sessionId])
+  const sessionIsLive = !!(session && isSessionLive(session, now))
+  useEffect(() => {
+    if (!sessionIsLive && followOutput) setFollowOutput(false)
+  }, [sessionIsLive, followOutput])
+
   // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
   // helper textarea, which stops keydown propagation before the bubble phase.
   const [searchOpen, setSearchOpen] = useState(false)
@@ -383,6 +398,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
       setCtxMenu(null)
     }
+    const toggleFollow = () => {
+      setFollowOutput(v => {
+        const next = !v
+        if (next) {
+          // Turning on: jump to the tail immediately, like enabling tail -f.
+          const ctrl = termControlRef.current
+          if (ctrl) {
+            const metrics = ctrl.getMetrics()
+            ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
+          }
+        }
+        return next
+      })
+      setCtxMenu(null)
+    }
     const sessionCwd = (session as (SessionDetail & { cwd?: string }) | null)?.cwd ?? ''
 
     // File actions shared by the left-click popover and the full menu.
@@ -426,9 +456,25 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       }] : []),
     ]
 
-    // Left-click file popover: only the file section, anchored at the cursor.
+    // Left-click file popover: file actions (+ fold toggle when opened from a
+    // path-bearing tool header like `◆ write … /path`).
     if (ctxMenu?.fileOnly) {
-      return [{ title: '文件', items: fileItems(), emptyText: '未识别到文件' }]
+      const foldKey = ctxMenu.foldKey
+      const foldItems = foldKey
+        ? [{
+            label: ctxMenu.collapsedFoldKeys.includes(foldKey) ? '展开内容' : '收起内容',
+            onClick: () => {
+              const collapsed = ctxMenu.collapsedFoldKeys.includes(foldKey)
+              termControlRef.current?.setFoldsCollapsed([foldKey], !collapsed, ctxMenu.originalRow)
+              setCtxMenu(null)
+            },
+          }]
+        : []
+      return [{
+        title: '文件',
+        items: [...foldItems, ...fileItems()],
+        emptyText: '未识别到文件',
+      }]
     }
 
     const sections: TerminalMenuSection[] = [
@@ -443,6 +489,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           { label: '下一 Turn', onClick: () => { jump(1, 'turn'); setCtxMenu(null) } },
           { label: '回到顶部', onClick: () => { termControlRef.current?.scrollToLine(0); setCtxMenu(null) } },
           { label: '回到底部', onClick: scrollToBottom },
+          ...(sessionIsLive
+            ? [{ label: followOutput ? '关闭跟随' : '跟随输出', onClick: toggleFollow }]
+            : []),
           {
             label: '复制选中文本',
             disabled: selectedText.length === 0,
@@ -513,7 +562,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       ],
     })
     return sections
-  }, [ctxMenu, fileTarget, folds, positionsData, session])
+  }, [ctxMenu, fileTarget, folds, positionsData, session, followOutput, sessionIsLive])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -966,6 +1015,32 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             工具{toolCallCount > 0 ? ` ${toolCallCount}` : ''}
           </button>
+          {sessionIsLive && (
+            <>
+              <span className="text-[var(--border-default)]">|</span>
+              <button
+                onClick={() => {
+                  setFollowOutput(v => {
+                    const next = !v
+                    if (next) {
+                      const ctrl = termControlRef.current
+                      if (ctrl) {
+                        const metrics = ctrl.getMetrics()
+                        ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
+                      }
+                    }
+                    return next
+                  })
+                }}
+                className={`h-7 rounded-md px-2 text-nav ${followOutput ? 'text-[var(--accent-green)] bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)]' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+                title={followOutput ? '关闭跟随：停止自动滚到底部' : '跟随输出（类似 tail -f）：活跃会话有新内容时自动滚到底部'}
+                aria-pressed={followOutput}
+                aria-label={followOutput ? '关闭跟随输出' : '开启跟随输出'}
+              >
+                {followOutput ? '● 跟随' : '跟随'}
+              </button>
+            </>
+          )}
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
           <span className="text-[var(--border-default)]">|</span>
@@ -1138,7 +1213,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 agentType={session.agent_type}
                 folds={folds}
                 tsKinds={tsKinds}
+                followOutput={followOutput && sessionIsLive}
                 onFoldChange={handleFoldChange}
+                onFoldPathActivate={(bufLine, meta) => openFilePopover(bufLine, meta, null)}
                 onContextMenu={handleTerminalContextMenu}
                 onScrollMetrics={handleTerminalScrollMetrics}
                 onColsReady={handleColsReady}

@@ -4,10 +4,11 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { fetchRenderANSI } from '../api'
+import { extractPathsAt } from '../filePathDetection'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
-import { TERMINAL_LINE_HEIGHT, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
 import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 
@@ -83,7 +84,14 @@ interface Props {
   // Comma-separated message kinds that get an HH:MM:SS prefix (backend "ts"
   // render option). Changing it re-renders the terminal from scratch.
   tsKinds?: string
+  // Live follow (tail -f): when true, content refreshes always pin the
+  // viewport to the bottom even if the user was scrolled up. Only meaningful
+  // for active sessions; ReplayView gates the toggle on isSessionLive.
+  followOutput?: boolean
   onFoldChange?: () => void
+  // Path-bearing fold headers (e.g. ◆ write … /path): open file menu instead
+  // of only toggling the fold. foldKey is set so the menu can still expand.
+  onFoldPathActivate?: (bufLine: number, meta: TerminalActivateMeta) => void
   onContextMenu?: (e: TerminalContextMenuEvent) => void
   onScrollMetrics?: (m: ScrollMetrics) => void
   onColsReady?: (cols: number) => void
@@ -110,7 +118,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', onFoldChange, onContextMenu, onScrollMetrics, onColsReady, controlRef }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -137,6 +145,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   onFoldChangeRef.current = onFoldChange
   const onContextMenuRef = useRef(onContextMenu)
   onContextMenuRef.current = onContextMenu
+  const onFoldPathActivateRef = useRef(onFoldPathActivate)
+  onFoldPathActivateRef.current = onFoldPathActivate
+  // Live follow is read from a ref inside refreshContent so toggling does not
+  // remount the terminal; only the next live-tail poll needs the new value.
+  const followOutputRef = useRef(followOutput)
+  followOutputRef.current = followOutput
   // Assigned inside the mount effect once the terminal is live; the folds
   // prop effect below routes updated fold ranges into that closure.
   const applyFoldsRef = useRef<((folds: FoldRange[]) => void) | null>(null)
@@ -471,11 +485,53 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
 
       // Register collapsed/expanded tool-group headers as clickable rows.
       // Injected after every scanBuffer so a rewrite can't leave stale rows.
-      const foldToggleMatcher: TerminalLineMatcher<FoldRange> = {
+      //
+      // Path-bearing headers (`◆ write (N 行) /path/file.md`) open the file
+      // menu instead of only toggling the fold. Soft-wrapped rows are joined
+      // so a long path split across display lines still counts.
+      const joinWrappedLineText = (startRow: number): string => {
+        const buf = term.buffer.active
+        let text = buf.getLine(startRow)?.translateToString(true) ?? ''
+        for (let r = startRow + 1; r < buf.length; r++) {
+          const bl = buf.getLine(r)
+          if (!bl || !bl.isWrapped) break
+          text += bl.translateToString(true)
+        }
+        return text
+      }
+      // Walk back to the first non-wrapped row of a soft-wrap group.
+      const wrapGroupStart = (row: number): number => {
+        const buf = term.buffer.active
+        let r = row
+        while (r > 0) {
+          const bl = buf.getLine(r)
+          if (!bl?.isWrapped) break
+          r--
+        }
+        return r
+      }
+      const makeFoldMatcher = (): TerminalLineMatcher<FoldRange> => ({
         match: () => null, // rows come from fold geometry, not text scanning
         tooltip: '收起/展开内容',
-        onActivate: (_bufLine, fold) => toggleFold(fold),
-      }
+        onActivate: (bufLine, fold, _matchIndex, meta) => {
+          const groupStart = wrapGroupStart(bufLine)
+          const joined = joinWrappedLineText(groupStart)
+          // Any path-like token on the (joined) header → file menu with fold
+          // toggle, not silent expand-only. Matches write/read/edit summaries.
+          const hasPath = extractPathsAt(joined, null, null).length > 0
+          if (hasPath && meta && onFoldPathActivateRef.current) {
+            onFoldPathActivateRef.current(bufLine, {
+              clientX: meta.clientX,
+              clientY: meta.clientY,
+              column: meta.column,
+              lineText: joined,
+              foldKey: fold.key,
+            })
+            return
+          }
+          toggleFold(fold)
+        },
+      })
       const injectFoldRows = () => {
         if (!foldRanges.length) return
         // Inject group folds last: when a group is collapsed, every tool
@@ -486,9 +542,19 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         const sorted = [...foldRanges].sort((a, b) =>
           a.level === 'group' ? 1 : b.level === 'group' ? -1 : 0)
         const buf = term.buffer.active
+        const foldMatcher = makeFoldMatcher() as TerminalLineMatcher<unknown>
         for (const f of sorted) {
           const row = logicalToDisplayLine(f.headerLogical)
-          const entry = { matcher: foldToggleMatcher as TerminalLineMatcher<unknown>, data: f, matchIndex: 0 }
+          const joined = joinWrappedLineText(row)
+          const hasPath = extractPathsAt(joined, null, null).length > 0
+          // Tooltip reflects the dual action when a path is present.
+          const matcher: TerminalLineMatcher<unknown> = hasPath
+            ? {
+                ...foldMatcher,
+                tooltip: '打开文件（编辑器 / 新 Tab）· 菜单内可展开/收起',
+              }
+            : foldMatcher
+          const entry = { matcher, data: f, matchIndex: 0 }
           interactionMap.set(row, entry)
           // An untruncated header ("▶ • Name  <full summary>") can soft-wrap over
           // several display rows. Make every one clickable so a click on the
@@ -753,12 +819,19 @@ const snapshotTerminal = () => {
         const core = (term as unknown as { _core?: XtermCoreWithMouse })._core
         const screenElement = core?.screenElement ?? xtermScreen ?? container
         const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
+        // Join soft-wrapped rows so right-click on a long path (write header)
+        // still resolves the full token for "打开文件".
+        let lineText = ''
+        if (bl !== null) {
+          const start = wrapGroupStart(bl)
+          lineText = joinWrappedLineText(start)
+        }
         onContextMenuRef.current?.({
           clientX: e.clientX,
           clientY: e.clientY,
           originalRow: bl !== null ? toOriginalLine(bl) : null,
           column: coords ? coords[0] - 1 : null,
-          lineText: bl !== null ? (term.buffer.active.getLine(bl)?.translateToString(true) ?? '') : '',
+          lineText,
           collapsedFoldKeys: [...collapsedKeys],
         })
       }
@@ -899,7 +972,9 @@ const snapshotTerminal = () => {
             const ansi = await fetchRenderANSI(sessionId, currentCols, tsKinds)
             if (disposed || ansi === rawAnsi) return 'unchanged'
             const buf = term.buffer.active
-            const atBottom = buf.viewportY >= buf.baseY
+            // Pin to bottom when already there, or when live-follow is on
+            // (explicit tail -f mode for active sessions).
+            const pinBottom = followOutputRef.current || buf.viewportY >= buf.baseY
 
             // Pure append: rendering is deterministic, so as long as nothing
             // structural changed upstream (an in-progress group header's n/m
@@ -915,7 +990,7 @@ const snapshotTerminal = () => {
                 queueMetrics()
                 resolve()
               }))
-              if (atBottom) term.scrollToBottom()
+              if (pinBottom) term.scrollToBottom()
               return 'appended'
             }
 
@@ -923,7 +998,7 @@ const snapshotTerminal = () => {
             rawAnsi = ansi
             foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys) : null
             await new Promise<void>(resolve => writeComposed(() => {
-              if (atBottom) term.scrollToBottom()
+              if (pinBottom) term.scrollToBottom()
               else term.scrollToLine(keepRow)
               resolve()
             }))

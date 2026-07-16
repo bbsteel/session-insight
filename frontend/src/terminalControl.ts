@@ -9,6 +9,8 @@ export interface TerminalActivateMeta {
   clientY: number
   column: number | null
   lineText: string
+  /** When set, the click was on a path-bearing fold header — show 展开/收起 with open-file. */
+  foldKey?: string
 }
 
 export interface TerminalLineMatcher<T = unknown> {
@@ -53,8 +55,8 @@ export interface TerminalControl {
   getCollapsedFoldKeys: () => string[]
   // Live tail: re-fetch the render and apply it incrementally — pure appends
   // stream into the buffer, structural changes (group counters, folds) fall
-  // back to the snapshot-covered full rewrite. Follows the bottom only when
-  // the viewport was already pinned there.
+  // back to the snapshot-covered full rewrite. Pins the viewport to the
+  // bottom when it was already there, or when live-follow (tail -f) is on.
   refreshContent: () => Promise<'appended' | 'rewritten' | 'unchanged'>
   // In-terminal search (xterm addon-search). Searches the composed buffer,
   // so content inside collapsed tool groups is not matched until expanded.
@@ -84,4 +86,6 @@ export interface TerminalContextMenuEvent {
   column: number | null
   lineText: string
   collapsedFoldKeys: string[]
+  /** Path-bearing fold header: offer 展开/收起 alongside open-file in fileOnly menu. */
+  foldKey?: string
 }

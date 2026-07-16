@@ -1,4 +1,4 @@
-import { extractPathAt } from '/tmp/session-insight-file-path/filePathDetection.js'
+import { extractPathAt, pathAtColumn } from '/tmp/session-insight-file-path/filePathDetection.js'
 
 let failures = 0
 function assertEq(actual, expected, label) {
@@ -35,6 +35,13 @@ assertEq(extractPathAt('edit C:\\Users\\foo\\bar.ts:123 done', 6), { path: 'C:\\
 assertEq(extractPathAt('cd C:\\Users\\foo && vim a.vue', 4), { path: 'C:\\Users\\foo', line: null }, 'windows drive dir')
 assertEq(extractPathAt('cat src\\components\\App.tsx', 5), { path: 'src\\components\\App.tsx', line: null }, 'windows relative backslash path')
 assertEq(extractPathAt('share \\\\server\\share\\foo\\bar.go', 7), { path: '\\\\server\\share\\foo\\bar.go', line: null }, 'UNC path')
+
+// pathAtColumn: strict column hit only (used by fold-header dual-action).
+const writeHeader = '◆ write (275 行)  /home/deck/projects/session-insight/docs/version-roadmap.md · 3.0s'
+const pathStart = writeHeader.indexOf('/home/deck')
+assertEq(pathAtColumn(writeHeader, pathStart + 5), { path: '/home/deck/projects/session-insight/docs/version-roadmap.md', line: null }, 'pathAtColumn hits path token')
+assertEq(pathAtColumn(writeHeader, 2), null, 'pathAtColumn misses tool name → null (fold keeps click)')
+assertEq(pathAtColumn(writeHeader, writeHeader.indexOf('275')), null, 'pathAtColumn misses badge digits → null')
 
 if (failures > 0) {
   console.error(`${failures} failure(s)`)

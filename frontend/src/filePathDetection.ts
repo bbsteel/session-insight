@@ -93,3 +93,28 @@ export function extractPathsAt(lineText: string, column: number | null, exts: Se
 export function extractPathAt(lineText: string, column: number | null, exts: Set<string> | null = null): PathCandidate | null {
   return extractPathsAt(lineText, column, exts)[0] ?? null
 }
+
+/**
+ * Path token that strictly spans `column` (no fallback to "first on row").
+ * Used when a fold header also owns the click: only a hit on the path itself
+ * should open the file; the rest of the row toggles the fold.
+ *
+ * `column` is an xterm cell index. Fold badges often include fullwidth CJK
+ * (e.g. "行"), so cell columns and JS string indices can drift by 1–2; a small
+ * window around the token still counts as a path hit.
+ */
+export function pathAtColumn(lineText: string, column: number, exts: Set<string> | null = null): PathCandidate | null {
+  const SLACK = 2
+  PATH_TOKEN.lastIndex = 0
+  for (let m = PATH_TOKEN.exec(lineText); m; m = PATH_TOKEN.exec(lineText)) {
+    if (isUrlContext(lineText, m.index)) continue
+    if (PSEUDO_FS.test(m[0])) continue
+    if (!candidateAllowed(parseToken(m[0]).path, exts)) continue
+    const start = m.index
+    const end = m.index + m[0].length
+    if (column >= start - SLACK && column < end + SLACK) {
+      return parseToken(m[0])
+    }
+  }
+  return null
+}
