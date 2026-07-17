@@ -12,6 +12,10 @@ interface AgentIconProps {
   className?: string
 }
 
+/**
+ * colored: keep original multicolor art via <img>.
+ * mask: monochrome mark recolored with text-primary (SVG / alpha assets).
+ */
 function resolveIcon(agentType?: string): { src: string; colored: boolean } | null {
   const normalized = agentType?.toLowerCase() ?? ''
   if (normalized.includes('claude')) return { src: claudeIcon, colored: true }
@@ -34,13 +38,13 @@ export default function AgentIcon({ agentType, size = 20, className = '' }: Agen
         aria-hidden="true"
       >
         {icon.colored ? (
-          <img src={icon.src} alt="" className="block w-full h-full object-contain" />
+          <img src={icon.src} alt="" className="block w-full h-full object-contain" draggable={false} />
         ) : (
           <span
             className="block w-full h-full bg-[var(--text-primary)]"
             style={{
-              WebkitMaskImage: `url("${icon.src}")`,
-              maskImage: `url("${icon.src}")`,
+              WebkitMaskImage: `url(${icon.src})`,
+              maskImage: `url(${icon.src})`,
               WebkitMaskPosition: 'center',
               maskPosition: 'center',
               WebkitMaskRepeat: 'no-repeat',

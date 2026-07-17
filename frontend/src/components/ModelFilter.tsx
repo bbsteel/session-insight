@@ -149,7 +149,10 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
   const selectedProvider = selectedModel?.providers.find(p => p.key === selected)
   const selectedMeta = selectedModel ?? modelMeta(selected)
   const label = selectedModel?.label ?? selectedMeta.label
-  const providerLabel = selectedProvider?.provider ?? (selected ? selectedModel?.providerSummary ?? selectedMeta.provider : 'All Providers')
+  // Only show a provider line when a concrete model/provider is selected — not for "All Models".
+  const providerLabel = selected
+    ? (selectedProvider?.provider ?? selectedModel?.providerSummary ?? selectedMeta.provider)
+    : ''
   const count = selectedProvider?.session_count ?? selectedModel?.session_count ?? total
 
   useEffect(() => {
@@ -211,14 +214,17 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
           onClick={() => setOpen(v => !v)}
           aria-expanded={open}
           aria-haspopup="listbox"
-          className="w-full h-10 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="w-full h-9 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          title={providerLabel ? `${selected ? label : 'All Models'} · ${providerLabel}` : undefined}
         >
           <span className="flex-shrink-0">
-            <ModelIcon meta={selected ? selectedMeta : { id: 'all-models', provider: 'All Providers', label: 'All Models', iconKey: 'all-models' }} size={18} />
+            <ModelIcon meta={selected ? selectedMeta : { id: 'all-models', provider: '', label: 'All Models', iconKey: 'all-models' }} size={16} />
           </span>
-          <span className="min-w-0 flex-1 text-left leading-tight">
-            <span className="block truncate">{selected ? label : 'All Models'}</span>
-            <span className="block truncate text-helper text-[var(--text-muted)]">{providerLabel}</span>
+          <span className="min-w-0 flex-1 text-left truncate">
+            {selected ? label : 'All Models'}
+            {providerLabel ? (
+              <span className="text-helper text-[var(--text-muted)]"> · {providerLabel}</span>
+            ) : null}
           </span>
           <span className="text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">
             {count}
@@ -271,11 +277,10 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                   }`}
                 >
                   <span className="text-[var(--text-muted)] flex-shrink-0">
-                    <ModelIcon meta={{ id: 'all-models', provider: 'All Providers', label: 'All Models', iconKey: 'all-models' }} size={18} />
+                    <ModelIcon meta={{ id: 'all-models', provider: '', label: 'All Models', iconKey: 'all-models' }} size={18} />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-body text-[var(--text-primary)]">All Models</span>
-                    <span className="block truncate text-helper text-[var(--text-muted)]">All Providers</span>
                   </span>
                   <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
                 </button>

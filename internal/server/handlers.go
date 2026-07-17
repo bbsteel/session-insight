@@ -117,12 +117,15 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		// agents share one definition (see model.IsSessionLive).
 		detail.IsLive = model.IsSessionLive(detail.UpdatedAt)
 		if s.DB != nil {
-			bookmarked, err := s.DB.IsBookmarked(detail.AgentType, detail.ID)
+			note, bookmarked, err := s.DB.GetBookmark(detail.AgentType, detail.ID)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			detail.Bookmarked = bookmarked
+			if bookmarked {
+				detail.BookmarkNote = note
+			}
 			if t, _ := s.DB.TitleOverride(detail.AgentType, detail.ID); t != "" {
 				detail.Name = t
 			}

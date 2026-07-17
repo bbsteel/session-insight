@@ -1,4 +1,5 @@
 import { useLayoutEffect, useEffect, useRef, useState } from 'react'
+import InstantTooltip from './InstantTooltip'
 
 // Sectioned context menu for the terminal area. Sections render in order with
 // a separator between them; an empty section shows its emptyText placeholder
@@ -7,6 +8,8 @@ import { useLayoutEffect, useEffect, useRef, useState } from 'react'
 export interface TerminalMenuItem {
   label: string
   disabled?: boolean
+  /** Instant hover tooltip (no native title delay). */
+  tooltip?: string
   onClick: () => void
 }
 
@@ -78,17 +81,24 @@ export default function TerminalContextMenu({ x, y, sections, onClose }: Props) 
               {section.emptyText ?? '暂无操作'}
             </div>
           ) : (
-            section.items.map(item => (
-              <button
-                key={item.label}
-                role="menuitem"
-                disabled={item.disabled}
-                onClick={() => { if (!item.disabled) item.onClick() }}
-                className="block w-full px-2.5 py-1 text-left text-helper text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:cursor-default disabled:text-[var(--text-muted)] disabled:hover:bg-transparent"
-              >
-                {item.label}
-              </button>
-            ))
+            section.items.map(item => {
+              const button = (
+                <button
+                  role="menuitem"
+                  disabled={item.disabled}
+                  onClick={() => { if (!item.disabled) item.onClick() }}
+                  className="block w-full px-2.5 py-1 text-left text-helper text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:cursor-default disabled:text-[var(--text-muted)] disabled:hover:bg-transparent"
+                >
+                  {item.label}
+                </button>
+              )
+              if (!item.tooltip) return <div key={item.label}>{button}</div>
+              return (
+                <InstantTooltip key={item.label} text={item.tooltip} placement="cursor" className="block w-full">
+                  {button}
+                </InstantTooltip>
+              )
+            })
           )}
         </div>
       ))}

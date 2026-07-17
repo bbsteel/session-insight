@@ -51,8 +51,11 @@ type Session struct {
 	MessageCount        int       `json:"message_count"`
 	IsLive              bool      `json:"is_live"`
 	Bookmarked          bool      `json:"bookmarked"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	// BookmarkNote is user-owned local state (why this session was starred).
+	// Only set when Bookmarked is true.
+	BookmarkNote string    `json:"bookmark_note,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Presence marks whether a token bucket was actually reported by the agent.

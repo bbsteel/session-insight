@@ -4,15 +4,23 @@ export interface BookmarkChange {
   agentType: string
   sessionId: string
   bookmarked: boolean
+  /** When set (including empty string), replaces bookmark_note. Cleared on unbookmark. */
+  bookmarkNote?: string
 }
 
-export function applyBookmarkChange<T extends Pick<SessionSummary, 'id' | 'agent_type' | 'bookmarked'>>(
+export function applyBookmarkChange<T extends Pick<SessionSummary, 'id' | 'agent_type' | 'bookmarked' | 'bookmark_note'>>(
   sessions: T[],
   change: BookmarkChange,
 ): T[] {
   return sessions.map(session => {
     if (session.id !== change.sessionId || session.agent_type !== change.agentType) return session
-    return { ...session, bookmarked: change.bookmarked }
+    if (!change.bookmarked) {
+      return { ...session, bookmarked: false, bookmark_note: undefined }
+    }
+    if (change.bookmarkNote !== undefined) {
+      return { ...session, bookmarked: true, bookmark_note: change.bookmarkNote }
+    }
+    return { ...session, bookmarked: true }
   })
 }
 

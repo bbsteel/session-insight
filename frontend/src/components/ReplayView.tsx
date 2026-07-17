@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile } from '../api'
+import { addBookmark, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
@@ -8,7 +8,9 @@ import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMe
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import AIPanel from './AIPanel'
+import BookmarkNoteEditor from './BookmarkNoteEditor'
 import DiffModal from './DiffModal'
+import InstantTooltip from './InstantTooltip'
 import OutputModal from './OutputModal'
 import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
@@ -76,6 +78,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [tsKinds, setTsKinds] = useState<string | null>(null)
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [bookmarkError, setBookmarkError] = useState<string | null>(null)
+  const [noteEditorOpen, setNoteEditorOpen] = useState(false)
   const termControlRef = useRef<TerminalControl | null>(null)
   const miniMapControlRef = useRef<MiniMapControl | null>(null)
   const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
@@ -513,11 +516,27 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           {
             label: session?.bookmarked ? '取消收藏' : '收藏',
             disabled: bookmarkBusy,
+            tooltip: session?.bookmarked
+              ? (session.bookmark_note?.trim()
+                ? `已收藏：${session.bookmark_note.trim()}`
+                : '已收藏（未写备注）')
+              : '收藏后可添加备注',
             onClick: () => {
               void toggleBookmark()
               setCtxMenu(null)
             },
           },
+          ...(session?.bookmarked
+            ? [{
+                label: session.bookmark_note?.trim() ? '编辑收藏备注' : '添加收藏备注',
+                disabled: bookmarkBusy,
+                tooltip: session.bookmark_note?.trim() || '未记录收藏原因',
+                onClick: () => {
+                  setNoteEditorOpen(true)
+                  setCtxMenu(null)
+                },
+              }]
+            : []),
         ],
         emptyText: '暂无操作',
       },
@@ -586,7 +605,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     if (!bookmarkChange) return
     setSession(prev => {
       if (!prev || prev.id !== bookmarkChange.sessionId || prev.agent_type !== bookmarkChange.agentType) return prev
-      return { ...prev, bookmarked: bookmarkChange.bookmarked }
+      if (!bookmarkChange.bookmarked) {
+        setNoteEditorOpen(false)
+        return { ...prev, bookmarked: false, bookmark_note: undefined }
+      }
+      if (bookmarkChange.bookmarkNote !== undefined) {
+        return { ...prev, bookmarked: true, bookmark_note: bookmarkChange.bookmarkNote }
+      }
+      return { ...prev, bookmarked: true }
     })
   }, [bookmarkChange])
 
@@ -598,11 +624,19 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     try {
       if (nextBookmarked) await addBookmark(session)
       else await removeBookmark(session)
-      setSession(prev => prev ? { ...prev, bookmarked: nextBookmarked } : prev)
+      setSession(prev => prev
+        ? {
+            ...prev,
+            bookmarked: nextBookmarked,
+            bookmark_note: nextBookmarked ? prev.bookmark_note : undefined,
+          }
+        : prev)
+      if (!nextBookmarked) setNoteEditorOpen(false)
       onBookmarkChange?.({
         agentType: session.agent_type,
         sessionId: session.id,
         bookmarked: nextBookmarked,
+        bookmarkNote: nextBookmarked ? (session.bookmark_note ?? '') : undefined,
       })
     } catch {
       setBookmarkError(nextBookmarked ? '添加收藏失败' : '取消收藏失败')
@@ -610,6 +644,23 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       setBookmarkBusy(false)
     }
   }, [bookmarkBusy, onBookmarkChange, session])
+
+  const saveBookmarkNote = useCallback(async (_target: { id: string; agent_type: string }, note: string) => {
+    if (!session) return
+    try {
+      await updateBookmarkNote(session, note)
+      setSession(prev => prev ? { ...prev, bookmarked: true, bookmark_note: note } : prev)
+      onBookmarkChange?.({
+        agentType: session.agent_type,
+        sessionId: session.id,
+        bookmarked: true,
+        bookmarkNote: note,
+      })
+    } catch {
+      setBookmarkError('收藏备注保存失败')
+      throw new Error('收藏备注保存失败')
+    }
+  }, [onBookmarkChange, session])
 
   const turns = session?.turns ?? []
   const rolledBackTurns = useMemo(
@@ -979,17 +1030,42 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       <GlobalSearch onSelect={onSelect} />
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggleBookmark}
-            disabled={bookmarkBusy}
-            className={`h-7 rounded-md px-2 inline-flex items-center justify-center text-nav ${
-              session.bookmarked ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'
-            } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            title={session.bookmarked ? '取消收藏' : '收藏'}
-            aria-label={session.bookmarked ? '取消收藏' : '收藏'}
+          <InstantTooltip
+            text={
+              session.bookmarked
+                ? (session.bookmark_note?.trim()
+                  ? `已收藏：${session.bookmark_note.trim()}`
+                  : '已收藏（未写备注）')
+                : '收藏此会话'
+            }
+            placement="bottom"
           >
-            {session.bookmarked ? '取消收藏' : '收藏'}
-          </button>
+            <button
+              onClick={toggleBookmark}
+              disabled={bookmarkBusy}
+              className={`h-7 rounded-md px-2 inline-flex items-center justify-center text-nav ${
+                session.bookmarked ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'
+              } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+              aria-label={session.bookmarked ? '取消收藏' : '收藏'}
+            >
+              {session.bookmarked ? '取消收藏' : '收藏'}
+            </button>
+          </InstantTooltip>
+          {session.bookmarked && (
+            <InstantTooltip
+              text={session.bookmark_note?.trim() || '未记录收藏原因'}
+              placement="bottom"
+            >
+              <button
+                onClick={() => setNoteEditorOpen(true)}
+                disabled={bookmarkBusy}
+                className="h-7 rounded-md px-2 inline-flex items-center justify-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                aria-label={session.bookmark_note?.trim() ? '编辑收藏备注' : '添加收藏备注'}
+              >
+                {session.bookmark_note?.trim() ? '备注' : '添加备注'}
+              </button>
+            </InstantTooltip>
+          )}
           {bookmarkError && (
             <span className="text-meta text-[var(--error)]" role="status">
               {bookmarkError}
@@ -1162,6 +1238,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
       {showDiffModal && session && (
         <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} initialIdx={initialDiffIdx} />
+      )}
+
+      {noteEditorOpen && session?.bookmarked && (
+        <BookmarkNoteEditor
+          session={session}
+          onSave={saveBookmarkNote}
+          onClose={() => setNoteEditorOpen(false)}
+        />
       )}
 
       {outputModalIdx !== null && session && (

@@ -81,7 +81,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
           onClick={() => setOpen(v => !v)}
           aria-expanded={open}
           aria-haspopup="listbox"
-          className="w-full h-8 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="w-full h-9 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         >
           <span className={`flex-shrink-0 ${selected ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'}`}>
             <FolderIcon size={16} />

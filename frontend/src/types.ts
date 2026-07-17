@@ -119,6 +119,7 @@ export interface SessionDetail {
   message_count: number
   is_live: boolean
   bookmarked: boolean
+  bookmark_note?: string
   created_at: string
   updated_at: string
   model_name: string

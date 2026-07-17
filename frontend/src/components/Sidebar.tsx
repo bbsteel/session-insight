@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { addBookmark, fetchAgents, fetchBookmarks, fetchSearch, fetchSessions, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
+import { addBookmark, fetchAgents, fetchSearch, fetchSessions, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
-import { applyBookmarkChange, filterBookmarks, removeBookmarkFromList, type BookmarkChange } from '../bookmarkState'
+import { applyBookmarkChange, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import ModelFilter, { type ModelEntry } from './ModelFilter'
 import AgentIcon from './AgentIcon'
+import BookmarkNoteEditor, { type BookmarkNoteTarget } from './BookmarkNoteEditor'
 import DeleteSessionDialog from './DeleteSessionDialog'
+import InstantTooltip from './InstantTooltip'
+import StarIcon from './StarIcon'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
 import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
@@ -57,80 +60,6 @@ function hostIsWindows(): boolean {
   return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform)
 }
 
-function BookmarkNoteEditor({ session, onSave }: { session: SessionSummary; onSave: (session: SessionSummary, note: string) => Promise<void> }) {
-  const note = session.bookmark_note?.trim() ?? ''
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(note)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (!editing) setDraft(note)
-  }, [editing, note])
-
-  const save = async () => {
-    const next = draft.trim()
-    setSaving(true)
-    try {
-      await onSave(session, next)
-      setEditing(false)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (editing) {
-    return (
-      <div className="mt-1.5">
-        <textarea
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          maxLength={2000}
-          rows={3}
-          className="w-full resize-none rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1.5 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
-          placeholder="记录收藏原因..."
-        />
-        <div className="mt-1 flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving}
-            className="h-6 px-2 rounded-md bg-[var(--accent-blue)] text-nav text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          >
-            保存
-          </button>
-          <button
-            type="button"
-            onClick={() => { setDraft(note); setEditing(false) }}
-            disabled={saving}
-            className="h-6 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          >
-            取消
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="mt-1.5 flex items-start gap-1.5">
-      {note ? (
-        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1 text-helper text-[var(--text-secondary)]">
-          {note}
-        </p>
-      ) : (
-        <p className="min-w-0 flex-1 px-0.5 py-1 text-helper text-[var(--text-muted)]">未记录收藏原因</p>
-      )}
-      <button
-        type="button"
-        onClick={() => setEditing(true)}
-        className="h-6 px-2 flex-shrink-0 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-      >
-        {note ? '编辑备注' : '添加备注'}
-      </button>
-    </div>
-  )
-}
-
 interface ContextMenuState {
   x: number
   y: number
@@ -152,13 +81,6 @@ interface SidebarProps {
 export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
   const [now, setNow] = useState(Date.now())
   const [sessions, setSessions] = useState<SessionSummary[]>([])
-  const [bookmarks, setBookmarks] = useState<SessionSummary[]>([])
-  const [bookmarksOpen, setBookmarksOpen] = useState(false)
-  const [bookmarksError, setBookmarksError] = useState<string | null>(null)
-  const [bookmarkAgentFilter, setBookmarkAgentFilter] = useState('')
-  const [bookmarkProjectFilter, setBookmarkProjectFilter] = useState('')
-  const [bookmarkModelFilter, setBookmarkModelFilter] = useState('')
-  const [bookmarkAgentDropdownOpen, setBookmarkAgentDropdownOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [disconnected, setDisconnected] = useState(false)
@@ -204,6 +126,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [noteEditorSession, setNoteEditorSession] = useState<SessionSummary | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   // 活跃会话点「复制恢复命令」不直接复制，先弹窗确认——对同一会话开第二个
   // CLI 实例可能与正在写入的进程双写冲突。
@@ -216,11 +139,10 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [agentFilter, setAgentFilter] = useState<string>('')
   const [projectFilter, setProjectFilter] = useState<string>('')
   const [modelFilter, setModelFilter] = useState<string>('')
+  const [bookmarksOnly, setBookmarksOnly] = useState(false)
 
   const searchRef = useRef<HTMLInputElement>(null)
   const asideRef = useRef<HTMLElement>(null)
-  const bookmarksDropdownRef = useRef<HTMLDivElement>(null)
-  const bookmarkAgentDropdownRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<VirtuosoHandle>(null)
 
   useEffect(() => {
@@ -238,13 +160,11 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [isMobile, drawer])
 
-  // Esc to close drawer on mobile, context menu, or bookmarks dropdown.
+  // Esc to close drawer on mobile or context menu.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (bookmarksOpen) {
-          setBookmarksOpen(false)
-        } else if (contextMenu) {
+        if (contextMenu) {
           setContextMenu(null)
         } else if (isMobile && onClose) {
           onClose()
@@ -253,7 +173,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isMobile, onClose, contextMenu, bookmarksOpen])
+  }, [isMobile, onClose, contextMenu])
 
   // Load all sessions once on mount — agent/search filters are client-side
   useEffect(() => {
@@ -348,10 +268,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       const { agentType, sessionId, title } =
         (e as CustomEvent).detail as { agentType: string; sessionId: string; title: string | null }
       if (title) {
-        const rename = (list: SessionSummary[]) =>
-          list.map(s => (s.agent_type === agentType && s.id === sessionId ? { ...s, name: title } : s))
-        setSessions(rename)
-        setBookmarks(rename)
+        setSessions(list =>
+          list.map(s => (s.agent_type === agentType && s.id === sessionId ? { ...s, name: title } : s)),
+        )
       } else {
         fetchSessions().then(setSessions).catch(() => {})
       }
@@ -373,31 +292,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   useEffect(() => {
     if (!bookmarkChange) return
     setSessions(prev => applyBookmarkChange(prev, bookmarkChange))
-    setBookmarks(prev => {
-      const updated = applyBookmarkChange(prev, bookmarkChange)
-      return removeBookmarkFromList(updated, bookmarkChange)
+    setNoteEditorSession(prev => {
+      if (!prev) return prev
+      if (prev.id !== bookmarkChange.sessionId || prev.agent_type !== bookmarkChange.agentType) return prev
+      const [next] = applyBookmarkChange([prev], bookmarkChange)
+      return next.bookmarked ? next : null
     })
   }, [bookmarkChange])
-
-  useEffect(() => {
-    if (!bookmarksOpen) return
-    const handler = (e: MouseEvent) => {
-      if (bookmarksDropdownRef.current?.contains(e.target as Node)) return
-      setBookmarksOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [bookmarksOpen])
-
-  useEffect(() => {
-    if (!bookmarkAgentDropdownOpen) return
-    const handler = (e: MouseEvent) => {
-      if (bookmarkAgentDropdownRef.current?.contains(e.target as Node)) return
-      setBookmarkAgentDropdownOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [bookmarkAgentDropdownOpen])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -462,39 +363,18 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     setContextMenu({ x: e.clientX, y: e.clientY, session })
   }, [])
 
-  const openBookmarks = useCallback(() => {
-    if (bookmarksOpen) {
-      setBookmarksOpen(false)
-      return
-    }
-    setBookmarksOpen(true)
-    setBookmarksError(null)
-    fetchBookmarks()
-      .then(data => setBookmarks(data))
-      .catch(err => setBookmarksError(err instanceof Error ? err.message : '收藏加载失败'))
-  }, [bookmarksOpen])
-
-  const removeSessionBookmark = useCallback(async (session: SessionSummary) => {
-    try {
-      await removeBookmark(session)
-      const change = { agentType: session.agent_type, sessionId: session.id, bookmarked: false }
-      setSessions(prev => applyBookmarkChange(prev, change))
-      setBookmarks(prev => removeBookmarkFromList(prev, change))
-      onBookmarkChange?.(change)
-      showToast('已取消收藏')
-    } catch {
-      showToast('取消收藏失败')
-    }
-  }, [onBookmarkChange, showToast])
-
   const toggleSessionBookmark = useCallback(async (session: SessionSummary) => {
     const bookmarked = !session.bookmarked
     try {
       if (bookmarked) await addBookmark(session)
       else await removeBookmark(session)
-      const change = { agentType: session.agent_type, sessionId: session.id, bookmarked }
+      const change: BookmarkChange = {
+        agentType: session.agent_type,
+        sessionId: session.id,
+        bookmarked,
+        bookmarkNote: bookmarked ? (session.bookmark_note ?? '') : undefined,
+      }
       setSessions(prev => applyBookmarkChange(prev, change))
-      setBookmarks(prev => removeBookmarkFromList(applyBookmarkChange(prev, change), change))
       onBookmarkChange?.(change)
       showToast(bookmarked ? '已收藏' : '已取消收藏')
     } catch {
@@ -502,21 +382,31 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [onBookmarkChange, showToast])
 
-  const saveBookmarkNote = useCallback(async (session: SessionSummary, note: string) => {
+  const saveBookmarkNote = useCallback(async (session: BookmarkNoteTarget, note: string) => {
     try {
       await updateBookmarkNote(session, note)
-      const patch = (list: SessionSummary[]) => list.map(s =>
-        s.agent_type === session.agent_type && s.id === session.id ? { ...s, bookmark_note: note } : s
-      )
-      setSessions(patch)
-      setBookmarks(patch)
+      const change: BookmarkChange = {
+        agentType: session.agent_type,
+        sessionId: session.id,
+        bookmarked: true,
+        bookmarkNote: note,
+      }
+      setSessions(prev => applyBookmarkChange(prev, change))
+      onBookmarkChange?.(change)
       showToast(note ? '收藏备注已保存' : '收藏备注已清空')
     } catch {
       showToast('收藏备注保存失败')
+      throw new Error('收藏备注保存失败')
     }
-  }, [showToast])
+  }, [onBookmarkChange, showToast])
+
+  const bookmarkCount = useMemo(
+    () => sessions.reduce((n, s) => n + (s.bookmarked ? 1 : 0), 0),
+    [sessions],
+  )
 
   const filtered = useMemo(() => sessions.filter(s => {
+    if (bookmarksOnly && !s.bookmarked) return false
     if (agentFilter && s.agent_type !== agentFilter) return false
     if (projectFilter && s.project !== projectFilter) return false
     if (modelFilter && !sessionMatchesModelFilter(s, modelFilter)) return false
@@ -531,9 +421,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !sid.includes(q) && !contentHit) return false
     }
     return true
-  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, modelFilter, contentHits])
+  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, modelFilter, bookmarksOnly, contentHits])
 
-  const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter)
+  const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter || bookmarksOnly)
 
   // A global-search result can be hidden by the sidebar's current filters and
   // by virtual scrolling. Reveal it, then move keyboard focus to its row.
@@ -542,6 +432,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     setAgentFilter(focusTarget.agentType)
     setProjectFilter('')
     setModelFilter('')
+    setBookmarksOnly(false)
     setQuery('')
   }, [focusTarget])
 
@@ -564,46 +455,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     requestAnimationFrame(focusRow)
   }, [filtered, focusTarget])
 
-  const bookmarkAgentOptions = useMemo(() => {
-    return [...new Set(bookmarks.map(s => s.agent_type).filter(Boolean))].sort()
-  }, [bookmarks])
-
-  const bookmarkProjectOptions = useMemo(() => {
-    return [...new Set(bookmarks
-      .filter(s => !bookmarkAgentFilter || s.agent_type === bookmarkAgentFilter)
-      .map(s => s.project)
-      .filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b))
-  }, [bookmarks, bookmarkAgentFilter])
-
-  const bookmarkModelOptions = useMemo(() => {
-    return [...new Set(bookmarks
-      .filter(s =>
-        (!bookmarkAgentFilter || s.agent_type === bookmarkAgentFilter) &&
-        (!bookmarkProjectFilter || s.project === bookmarkProjectFilter)
-      )
-      .map(s => s.model_name)
-      .filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b))
-  }, [bookmarks, bookmarkAgentFilter, bookmarkProjectFilter])
-
-  useEffect(() => {
-    if (bookmarkProjectFilter && !bookmarkProjectOptions.includes(bookmarkProjectFilter)) {
-      setBookmarkProjectFilter('')
-    }
-  }, [bookmarkProjectFilter, bookmarkProjectOptions])
-
-  useEffect(() => {
-    if (bookmarkModelFilter && !bookmarkModelOptions.includes(bookmarkModelFilter)) {
-      setBookmarkModelFilter('')
-    }
-  }, [bookmarkModelFilter, bookmarkModelOptions])
-
-  const visibleBookmarks = useMemo(
-    () => filterBookmarks(bookmarks, { agentType: bookmarkAgentFilter, project: bookmarkProjectFilter, modelName: bookmarkModelFilter }),
-    [bookmarks, bookmarkAgentFilter, bookmarkProjectFilter, bookmarkModelFilter],
-  )
-
   // 只有后端 reader 声明了删除能力（can_delete）的 agent 才显示删除入口。
   const deletableAgents = useMemo(
     () => new Set((agents ?? []).filter(a => a.can_delete).map(a => a.type)),
@@ -612,10 +463,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
 
   const handleSessionDeleted = useCallback((session: SessionSummary) => {
     setDeleteTarget(null)
-    const drop = (list: SessionSummary[]) =>
-      list.filter(s => !(s.id === session.id && s.agent_type === session.agent_type))
-    setSessions(drop)
-    setBookmarks(drop)
+    setSessions(list =>
+      list.filter(s => !(s.id === session.id && s.agent_type === session.agent_type)),
+    )
     onSessionDeleted?.(session)
     showToast('会话已删除')
   }, [onSessionDeleted, showToast])
@@ -774,9 +624,14 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
                 {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
                 {session.bookmarked && (
-                  <span className="text-meta text-[var(--accent-blue)] flex-shrink-0" title={session.bookmark_note ? `已收藏：${session.bookmark_note}` : '已收藏'} aria-label="已收藏">
-                    已收藏
-                  </span>
+                  <InstantTooltip
+                    text={session.bookmark_note?.trim() ? `已收藏：${session.bookmark_note.trim()}` : '已收藏'}
+                    placement="top"
+                  >
+                    <span className="inline-flex flex-shrink-0 text-[var(--accent-blue)]" aria-label="已收藏">
+                      <StarIcon size={12} filled strokeWidth={1.5} />
+                    </span>
+                  </InstantTooltip>
                 )}
                 <span className="truncate">{getSessionName(session)}</span>
               </div>
@@ -850,161 +705,23 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </span>
           )}
         </div>
-        <div ref={bookmarksDropdownRef} className="relative flex items-center gap-1 flex-shrink-0">
+        {isMobile && onClose && (
           <button
-            onClick={openBookmarks}
-            aria-label="收藏列表"
-            title="收藏列表"
-            className="h-6 px-2 flex items-center justify-center rounded-md text-nav text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            onClick={onClose}
+            aria-label="关闭会话列表"
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
-            收藏列表
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
-          {bookmarksOpen && (
-            <div className="absolute left-full top-0 ml-2 z-[var(--z-dropdown)] w-[520px] max-h-[70vh] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg flex flex-col">
-              <div className="h-10 flex items-center justify-between border-b border-[var(--border-default)] px-3">
-                <h3 className="text-nav font-semibold text-[var(--text-primary)]">收藏列表</h3>
-                <button
-                  onClick={() => setBookmarksOpen(false)}
-                  aria-label="关闭收藏列表"
-                  className="h-7 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                >
-                  关闭
-                </button>
-              </div>
-              <div className="grid grid-cols-3 gap-2 border-b border-[var(--border-default)] p-2">
-                <div ref={bookmarkAgentDropdownRef} className="min-w-0 text-meta text-[var(--text-secondary)] relative">
-                  <span className="mb-1 block">Agent</span>
-                  <button
-                    type="button"
-                    onClick={() => setBookmarkAgentDropdownOpen(v => !v)}
-                    className="h-7 w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-1.5 text-nav text-[var(--text-primary)] flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                  >
-                    {bookmarkAgentFilter ? (
-                      <>
-                        <AgentIcon agentType={bookmarkAgentFilter} size={14} />
-                        <span>{getAgentLabel(bookmarkAgentFilter)}</span>
-                      </>
-                    ) : (
-                      <span>全部</span>
-                    )}
-                    <svg className="w-3 h-3 ml-auto text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9" /></svg>
-                  </button>
-                  {bookmarkAgentDropdownOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-1 z-10 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1 max-h-48 overflow-y-auto">
-                      <button
-                        onClick={() => { setBookmarkAgentFilter(''); setBookmarkAgentDropdownOpen(false) }}
-                        className={`w-full h-7 flex items-center gap-1.5 px-2 text-nav hover:bg-[var(--bg-surface-hover)] ${!bookmarkAgentFilter ? 'text-[var(--accent-blue)]' : 'text-[var(--text-primary)]'}`}
-                      >
-                        <span className="inline-flex w-[14px] h-[14px] items-center justify-center rounded border border-[var(--border-default)] bg-[var(--bg-surface)]" />
-                        <span>全部</span>
-                      </button>
-                      {bookmarkAgentOptions.map(agent => (
-                        <button
-                          key={agent}
-                          onClick={() => { setBookmarkAgentFilter(agent); setBookmarkAgentDropdownOpen(false) }}
-                          className={`w-full h-7 flex items-center gap-1.5 px-2 text-nav hover:bg-[var(--bg-surface-hover)] ${bookmarkAgentFilter === agent ? 'text-[var(--accent-blue)]' : 'text-[var(--text-primary)]'}`}
-                        >
-                          <AgentIcon agentType={agent} size={14} />
-                          <span>{getAgentLabel(agent)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <label className="min-w-0 text-meta text-[var(--text-secondary)]">
-                  <span className="mb-1 block">项目</span>
-                  <select
-                    value={bookmarkProjectFilter}
-                    onChange={e => setBookmarkProjectFilter(e.target.value)}
-                    className="h-7 w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-1.5 text-nav text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                  >
-                    <option value="">全部</option>
-                    {bookmarkProjectOptions.map(project => (
-                      <option key={project} value={project}>{project}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="min-w-0 text-meta text-[var(--text-secondary)]">
-                  <span className="mb-1 block">模型</span>
-                  <select
-                    value={bookmarkModelFilter}
-                    onChange={e => setBookmarkModelFilter(e.target.value)}
-                    className="h-7 w-full rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-1.5 text-nav text-[var(--text-primary)] truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                  >
-                    <option value="">全部</option>
-                    {bookmarkModelOptions.map(model => (
-                      <option key={model} value={model}>{model}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                {bookmarksError ? (
-                  <div className="px-3 py-8 text-center text-helper text-[var(--error)]">{bookmarksError}</div>
-                ) : visibleBookmarks.length === 0 ? (
-                  <div className="px-3 py-8 text-center text-helper text-[var(--text-muted)]">暂无收藏</div>
-                ) : (
-                  <div className="space-y-1">
-                    {visibleBookmarks.map(session => {
-                      const repo = session.repository ? session.repository.split('/').slice(-2).join('/') : ''
-                      const project = session.project || repo || '未知项目'
-                      const model = session.model_name || 'unknown model'
-                      return (
-                        <div key={`${session.agent_type}-${session.id}`} className="group rounded-md px-2 py-1.5 hover:bg-[var(--bg-surface-hover)]">
-                          <div className="flex items-start gap-2">
-                            <button
-                              onClick={() => { onSelect(session.id, session.agent_type, true); setBookmarksOpen(false) }}
-                              className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] rounded-sm"
-                            >
-                              <span className="block truncate text-body text-[var(--text-primary)]">{getSessionName(session)}</span>
-                              <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta text-[var(--text-secondary)]">
-                                <span className="inline-flex items-center gap-1 rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">
-                                  <AgentIcon agentType={session.agent_type} size={12} />
-                                  {getAgentLabel(session.agent_type)}
-                                </span>
-                                <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{model}</span>
-                                <span className="max-w-[150px] truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5">{project}</span>
-                              </span>
-                              <span className="mt-0.5 block truncate text-helper text-[var(--text-muted)]">
-                                {formatRelativeTime(session.updated_at, now)}
-                              </span>
-                            </button>
-                            <button
-                              onClick={() => removeSessionBookmark(session)}
-                              className="h-7 px-2 rounded-md text-nav text-[var(--text-muted)] hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                              title="取消收藏"
-                              aria-label="取消收藏"
-                            >
-                              取消收藏
-                            </button>
-                          </div>
-                          <BookmarkNoteEditor session={session} onSave={saveBookmarkNote} />
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {isMobile && onClose && (
-            <button
-              onClick={onClose}
-              aria-label="关闭会话列表"
-              className="ml-1 w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* Filter Bar */}
-      <div className="px-4 pb-2 flex-shrink-0">
-        <div className="relative">
+      {/* Filter Bar: search + bookmark star */}
+      <div className="px-4 pb-2 flex-shrink-0 flex items-center gap-1.5">
+        <div className="relative min-w-0 flex-1">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -1027,6 +744,25 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </button>
           )}
         </div>
+        <InstantTooltip
+          text={bookmarksOnly ? '显示全部会话' : `只看收藏${bookmarkCount > 0 ? `（${bookmarkCount}）` : ''}`}
+          placement="bottom"
+        >
+          <button
+            type="button"
+            role="switch"
+            aria-checked={bookmarksOnly}
+            onClick={() => setBookmarksOnly(v => !v)}
+            aria-label={bookmarksOnly ? '关闭只看收藏' : '只看收藏'}
+            className={`h-[34px] w-[34px] flex-shrink-0 inline-flex items-center justify-center rounded-md border transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+              bookmarksOnly
+                ? 'border-[var(--accent-blue)]/40 bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:text-[var(--warning)] hover:border-[var(--border-muted)]'
+            }`}
+          >
+            <StarIcon size={16} filled={bookmarksOnly} />
+          </button>
+        </InstantTooltip>
       </div>
 
       {/* Agent Filter */}
@@ -1064,7 +800,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <div className="mt-1 text-helper text-[var(--text-muted)]">尝试其他关键词或清除筛选条件</div>
             {hasActiveFilters && (
               <button
-                onClick={() => { setQuery(''); setAgentFilter(''); setProjectFilter(''); setModelFilter('') }}
+                onClick={() => {
+                  setQuery('')
+                  setAgentFilter('')
+                  setProjectFilter('')
+                  setModelFilter('')
+                  setBookmarksOnly(false)
+                }}
                 className="mt-3 h-7 px-3 rounded-md border border-[var(--border-default)] text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 清除筛选
@@ -1108,12 +850,41 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             className="fixed z-[var(--z-toast,50)] w-60 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1 text-body"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <button
-              className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
-              onClick={() => { void toggleSessionBookmark(contextMenu.session); setContextMenu(null) }}
+            <InstantTooltip
+              text={
+                contextMenu.session.bookmarked
+                  ? (contextMenu.session.bookmark_note?.trim()
+                    ? `已收藏：${contextMenu.session.bookmark_note.trim()}`
+                    : '已收藏（未写备注）')
+                  : '收藏后可添加备注'
+              }
+              placement="cursor"
+              className="block w-full"
             >
-              {contextMenu.session.bookmarked ? '取消收藏' : '收藏'}
-            </button>
+              <button
+                className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+                onClick={() => { void toggleSessionBookmark(contextMenu.session); setContextMenu(null) }}
+              >
+                {contextMenu.session.bookmarked ? '取消收藏' : '收藏'}
+              </button>
+            </InstantTooltip>
+            {contextMenu.session.bookmarked && (
+              <InstantTooltip
+                text={contextMenu.session.bookmark_note?.trim() || '未记录收藏原因'}
+                placement="cursor"
+                className="block w-full"
+              >
+                <button
+                  className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+                  onClick={() => {
+                    setNoteEditorSession(contextMenu.session)
+                    setContextMenu(null)
+                  }}
+                >
+                  {contextMenu.session.bookmark_note?.trim() ? '编辑收藏备注' : '添加收藏备注'}
+                </button>
+              </InstantTooltip>
+            )}
             <button
               className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
               onClick={() => { copyId(contextMenu.session); setContextMenu(null) }}
@@ -1183,6 +954,14 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           </div>
         </>,
         document.body
+      )}
+
+      {noteEditorSession && (
+        <BookmarkNoteEditor
+          session={noteEditorSession}
+          onSave={saveBookmarkNote}
+          onClose={() => setNoteEditorSession(null)}
+        />
       )}
 
       {/* Delete confirmation dialog */}
