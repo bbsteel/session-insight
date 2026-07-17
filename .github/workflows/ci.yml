@@ -41,6 +41,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Run TypeScript type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
       - name: Run frontend tests
         working-directory: frontend
         run: npm test
@@ -48,6 +52,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Run Go vet
+        run: go vet -tags sqlite_fts5 ./...
 
       - name: Run Go tests
         run: go test -count=1 -tags sqlite_fts5 ./...
