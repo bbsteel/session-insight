@@ -48,8 +48,10 @@ reviews:
 
   # ── Include or exclude files from review ─────────────────────────────
   # Glob patterns; '!' excludes. Also used for sparse-checkout hints.
+  # Do NOT exclude frontend/dist: main.go //go:embed needs that tree for Go
+  # typecheck (CodeRabbit golangci-lint tool + local analysis). Dist is
+  # gitignored; CI materializes it via npm run build before golangci-lint.
   path_filters:
-    - "!frontend/dist/**"
     - "!**/node_modules/**"
     - "!**/*.min.js"
     - "!**/*.map"
