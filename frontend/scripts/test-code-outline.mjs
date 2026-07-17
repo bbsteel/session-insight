@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { pythonLanguage } from '@codemirror/lang-python'
 import { javaLanguage } from '@codemirror/lang-java'
 import { markdownLanguage } from '@codemirror/lang-markdown'
+import { goLanguage } from '@codemirror/lang-go'
+import { javascriptLanguage, typescriptLanguage } from '@codemirror/lang-javascript'
+import { rustLanguage } from '@codemirror/lang-rust'
 import { activeOutlineId, flattenOutline, outlineFromTree } from '/tmp/session-insight-codeOutline.mjs'
 import {
   codeParsePolicy,
@@ -75,6 +78,79 @@ Reference
   assert.deepEqual(outline[0].children.map(x => x.name), ['Install', 'Usage'])
   assert.equal(outline[0].children[0].children[0].name, 'Linux')
   assert.equal(flattenOutline(outline).length, 5)
+}
+
+{
+  const source = `package main
+
+func Hello() {}
+
+type Foo struct{}
+
+func (f *Foo) Bar() {}
+
+type Reader interface {
+	Read()
+}
+`
+  const outline = outlineFromTree(goLanguage.parser.parse(source), source, 'go')
+  assert.deepEqual(outline.map(x => [x.name, x.kind]), [
+    ['Hello', 'function'],
+    ['Foo', 'class'],
+    ['Bar', 'method'],
+    ['Reader', 'interface'],
+  ])
+  assert.deepEqual(outline[3].children.map(x => [x.name, x.kind]), [['Read', 'method']])
+}
+
+{
+  const source = `export function foo() {}
+class Bar {
+  constructor() {}
+  method() {}
+}
+`
+  const outline = outlineFromTree(javascriptLanguage.parser.parse(source), source, 'javascript')
+  assert.deepEqual(outline.map(x => [x.name, x.kind]), [
+    ['foo', 'function'],
+    ['Bar', 'class'],
+  ])
+  assert.deepEqual(outline[1].children.map(x => [x.name, x.kind]), [
+    ['constructor', 'constructor'],
+    ['method', 'method'],
+  ])
+}
+
+{
+  const source = `export interface I { x: number }
+enum E { A }
+class C { m(): void {} }
+`
+  const outline = outlineFromTree(typescriptLanguage.parser.parse(source), source, 'javascript')
+  assert.deepEqual(outline.map(x => [x.name, x.kind]), [
+    ['I', 'interface'],
+    ['E', 'enum'],
+    ['C', 'class'],
+  ])
+  assert.deepEqual(outline[2].children.map(x => [x.name, x.kind]), [['m', 'method']])
+}
+
+{
+  const source = `fn main() {}
+struct Foo {}
+impl Foo {
+  fn bar(&self) {}
+}
+enum E { A }
+`
+  const outline = outlineFromTree(rustLanguage.parser.parse(source), source, 'rust')
+  assert.deepEqual(outline.map(x => [x.name, x.kind]), [
+    ['main', 'function'],
+    ['Foo', 'class'],
+    ['Foo', 'class'],
+    ['E', 'enum'],
+  ])
+  assert.deepEqual(outline[2].children.map(x => [x.name, x.kind]), [['bar', 'method']])
 }
 
 console.log('code outline tests passed')

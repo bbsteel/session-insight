@@ -15,6 +15,7 @@ import {
   foldGutter,
   foldKeymap,
   forceParsing,
+  StreamLanguage,
   syntaxHighlighting,
   syntaxTree,
 } from '@codemirror/language'
@@ -45,21 +46,144 @@ interface LanguageConfig {
 }
 
 async function languageForPath(path: string, parseLanguage: boolean): Promise<LanguageConfig> {
-  const ext = path.split('.').pop()?.toLowerCase()
-  if (!parseLanguage) return { extension: [], outline: null, wrap: ext === 'md' || ext === 'markdown' }
-  if (ext === 'py' || ext === 'pyw') {
-    const { python } = await import('@codemirror/lang-python')
-    return { extension: python(), outline: 'python', wrap: false }
+  const ext = path.split('.').pop()?.toLowerCase() ?? ''
+  const wrap = ext === 'md' || ext === 'markdown'
+  if (!parseLanguage) return { extension: [], outline: null, wrap }
+
+  // Mainstream languages: CodeMirror grammar packages when available,
+  // StreamLanguage + legacy modes for shell/toml/kotlin/csharp/ruby/swift.
+  // Outline only where we extract symbols (go / js-family / python / java / rust / markdown).
+  switch (ext) {
+    case 'go': {
+      const { go } = await import('@codemirror/lang-go')
+      return { extension: go(), outline: 'go', wrap: false }
+    }
+    case 'js':
+    case 'mjs':
+    case 'cjs': {
+      const { javascript } = await import('@codemirror/lang-javascript')
+      return { extension: javascript(), outline: 'javascript', wrap: false }
+    }
+    case 'jsx': {
+      const { javascript } = await import('@codemirror/lang-javascript')
+      return { extension: javascript({ jsx: true }), outline: 'javascript', wrap: false }
+    }
+    case 'ts': {
+      const { javascript } = await import('@codemirror/lang-javascript')
+      return { extension: javascript({ typescript: true }), outline: 'javascript', wrap: false }
+    }
+    case 'tsx': {
+      const { javascript } = await import('@codemirror/lang-javascript')
+      return { extension: javascript({ jsx: true, typescript: true }), outline: 'javascript', wrap: false }
+    }
+    case 'py':
+    case 'pyw': {
+      const { python } = await import('@codemirror/lang-python')
+      return { extension: python(), outline: 'python', wrap: false }
+    }
+    case 'java': {
+      const { java } = await import('@codemirror/lang-java')
+      return { extension: java(), outline: 'java', wrap: false }
+    }
+    case 'rs': {
+      const { rust } = await import('@codemirror/lang-rust')
+      return { extension: rust(), outline: 'rust', wrap: false }
+    }
+    case 'c':
+    case 'h':
+    case 'cpp':
+    case 'cc':
+    case 'cxx':
+    case 'hpp':
+    case 'hh':
+    case 'hxx': {
+      const { cpp } = await import('@codemirror/lang-cpp')
+      return { extension: cpp(), outline: null, wrap: false }
+    }
+    case 'php': {
+      const { php } = await import('@codemirror/lang-php')
+      return { extension: php(), outline: null, wrap: false }
+    }
+    case 'json':
+    case 'jsonc': {
+      const { json } = await import('@codemirror/lang-json')
+      return { extension: json(), outline: null, wrap: false }
+    }
+    case 'html':
+    case 'htm':
+    case 'vue':
+    case 'svelte': {
+      const { html } = await import('@codemirror/lang-html')
+      return { extension: html(), outline: null, wrap: false }
+    }
+    case 'css': {
+      const { css } = await import('@codemirror/lang-css')
+      return { extension: css(), outline: null, wrap: false }
+    }
+    case 'scss': {
+      const { sass } = await import('@codemirror/lang-sass')
+      return { extension: sass(), outline: null, wrap: false }
+    }
+    case 'sass': {
+      const { sass } = await import('@codemirror/lang-sass')
+      return { extension: sass({ indented: true }), outline: null, wrap: false }
+    }
+    case 'less': {
+      const { less } = await import('@codemirror/lang-less')
+      return { extension: less(), outline: null, wrap: false }
+    }
+    case 'kt':
+    case 'kts': {
+      const { kotlin } = await import('@codemirror/legacy-modes/mode/clike')
+      return { extension: StreamLanguage.define(kotlin), outline: null, wrap: false }
+    }
+    case 'cs': {
+      const { csharp } = await import('@codemirror/legacy-modes/mode/clike')
+      return { extension: StreamLanguage.define(csharp), outline: null, wrap: false }
+    }
+    case 'rb':
+    case 'rake':
+    case 'gemspec': {
+      const { ruby } = await import('@codemirror/legacy-modes/mode/ruby')
+      return { extension: StreamLanguage.define(ruby), outline: null, wrap: false }
+    }
+    case 'swift': {
+      const { swift } = await import('@codemirror/legacy-modes/mode/swift')
+      return { extension: StreamLanguage.define(swift), outline: null, wrap: false }
+    }
+    case 'xml':
+    case 'svg': {
+      const { xml } = await import('@codemirror/lang-xml')
+      return { extension: xml(), outline: null, wrap: false }
+    }
+    case 'yaml':
+    case 'yml': {
+      const { yaml } = await import('@codemirror/lang-yaml')
+      return { extension: yaml(), outline: null, wrap: false }
+    }
+    case 'sql': {
+      const { sql } = await import('@codemirror/lang-sql')
+      return { extension: sql(), outline: null, wrap: false }
+    }
+    case 'md':
+    case 'markdown': {
+      const { markdown } = await import('@codemirror/lang-markdown')
+      return { extension: markdown(), outline: 'markdown', wrap: true }
+    }
+    case 'sh':
+    case 'bash':
+    case 'zsh':
+    case 'ksh': {
+      const { shell } = await import('@codemirror/legacy-modes/mode/shell')
+      return { extension: StreamLanguage.define(shell), outline: null, wrap: false }
+    }
+    case 'toml': {
+      const { toml } = await import('@codemirror/legacy-modes/mode/toml')
+      return { extension: StreamLanguage.define(toml), outline: null, wrap: false }
+    }
+    default:
+      return { extension: [], outline: null, wrap: false }
   }
-  if (ext === 'java') {
-    const { java } = await import('@codemirror/lang-java')
-    return { extension: java(), outline: 'java', wrap: false }
-  }
-  if (ext === 'md' || ext === 'markdown') {
-    const { markdown } = await import('@codemirror/lang-markdown')
-    return { extension: markdown(), outline: 'markdown', wrap: true }
-  }
-  return { extension: [], outline: null, wrap: false }
 }
 
 const readerTheme = EditorView.theme({

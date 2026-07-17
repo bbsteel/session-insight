@@ -1,6 +1,6 @@
 import type { Tree, SyntaxNode } from '@lezer/common'
 
-export type OutlineLanguage = 'python' | 'java' | 'markdown'
+export type OutlineLanguage = 'python' | 'java' | 'markdown' | 'go' | 'javascript' | 'rust'
 export type OutlineKind = 'class' | 'interface' | 'enum' | 'function' | 'method' | 'constructor' | 'heading'
 
 export interface OutlineItem {
@@ -37,6 +37,13 @@ function childText(node: SyntaxNode, childName: string, content: string): string
   return child ? content.slice(child.from, child.to) : ''
 }
 
+function hasAncestor(node: SyntaxNode, name: string): boolean {
+  for (let p = node.parent; p; p = p.parent) {
+    if (p.name === name) return true
+  }
+  return false
+}
+
 function codeSymbol(node: SyntaxNode, language: Exclude<OutlineLanguage, 'markdown'>, content: string): { name: string; kind: OutlineKind } | null {
   if (language === 'python') {
     if (node.name === 'ClassDefinition') return { name: childText(node, 'VariableName', content), kind: 'class' }
@@ -47,6 +54,42 @@ function codeSymbol(node: SyntaxNode, language: Exclude<OutlineLanguage, 'markdo
     return null
   }
 
+  if (language === 'go') {
+    if (node.name === 'FunctionDecl') return { name: childText(node, 'DefName', content), kind: 'function' }
+    if (node.name === 'MethodDecl') return { name: childText(node, 'FieldName', content), kind: 'method' }
+    if (node.name === 'TypeSpec') {
+      const name = childText(node, 'DefName', content)
+      if (node.getChild('InterfaceType')) return { name, kind: 'interface' }
+      return { name, kind: 'class' }
+    }
+    if (node.name === 'MethodElem') return { name: childText(node, 'FieldName', content), kind: 'method' }
+    return null
+  }
+
+  if (language === 'javascript') {
+    if (node.name === 'FunctionDeclaration') return { name: childText(node, 'VariableDefinition', content), kind: 'function' }
+    if (node.name === 'ClassDeclaration') return { name: childText(node, 'VariableDefinition', content), kind: 'class' }
+    if (node.name === 'MethodDeclaration') {
+      const name = childText(node, 'PropertyDefinition', content)
+      return { name, kind: name === 'constructor' ? 'constructor' : 'method' }
+    }
+    if (node.name === 'InterfaceDeclaration') return { name: childText(node, 'TypeDefinition', content), kind: 'interface' }
+    if (node.name === 'EnumDeclaration') return { name: childText(node, 'TypeDefinition', content), kind: 'enum' }
+    return null
+  }
+
+  if (language === 'rust') {
+    if (node.name === 'FunctionItem') {
+      const name = childText(node, 'BoundIdentifier', content)
+      return { name, kind: hasAncestor(node, 'ImplItem') ? 'method' : 'function' }
+    }
+    if (node.name === 'StructItem') return { name: childText(node, 'TypeIdentifier', content), kind: 'class' }
+    if (node.name === 'EnumItem') return { name: childText(node, 'TypeIdentifier', content), kind: 'enum' }
+    if (node.name === 'ImplItem') return { name: childText(node, 'TypeIdentifier', content), kind: 'class' }
+    return null
+  }
+
+  // Java (and similar Definition-named grammars)
   const name = childText(node, 'Definition', content)
   if (node.name === 'ClassDeclaration') return { name, kind: 'class' }
   if (node.name === 'InterfaceDeclaration') return { name, kind: 'interface' }
