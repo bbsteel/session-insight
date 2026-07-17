@@ -16,7 +16,7 @@ func (grokThought) Start(p *Profile, tb *trackingBuilder, evt model.RenderEvent,
 		tb.WriteString(fgWrap(ts+" ", p.Palette.Muted))
 	}
 	tb.WriteString(fgWrap("◆", p.Palette.Muted))
-	tb.WriteString(styled(" "+evt.Text, p.Palette.Fg, ColNone, true, false))
+	tb.WriteString(styled(" "+sanitizeControlChars(evt.Text), p.Palette.Fg, ColNone, true, false))
 	tb.WriteString("\n")
 
 	hdrDisp := tb.CurrentLine() - 1

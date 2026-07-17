@@ -86,11 +86,10 @@ func (grokBullet) WriteInlineHeader(p *Profile, tb *trackingBuilder, toolName st
 }
 
 func (grokBullet) WriteEditHeader(p *Profile, tb *trackingBuilder, prefix, ts, toolName string) {
+	tb.WriteString(prefix)
 	if ts != "" {
-		tb.WriteString(prefix)
 		tb.WriteString(fgWrap(ts+" ", p.Palette.Muted))
 	}
-	tb.WriteString(prefix)
 	tb.WriteString(styled("◆ SearchReplace", p.Palette.Fg, ColNone, true, false))
 	tb.WriteString("\n")
 }

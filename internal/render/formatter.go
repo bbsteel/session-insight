@@ -1166,8 +1166,15 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	bodyDisplay = sb.CurrentLine()
 	bodyLogical = sb.CurrentLogicalLine()
 
-	header, _ := p.ToolBox.BuildHeader(p, inputForBox, toolName, purpose, durationMs, ts)
-	boxPrefix := p.ToolBox.BoxPrefix(p, prefix)
+	toolBox := p.ToolBox
+	if toolBox == nil {
+		toolBox = standardToolBox{}
+	}
+	header, suppress := toolBox.BuildHeader(p, inputForBox, toolName, purpose, durationMs, ts)
+	if suppress {
+		header = ""
+	}
+	boxPrefix := toolBox.BoxPrefix(p, prefix)
 
 	inputLines := formatToolInput(inputForBox)
 	writeBoxTop(p, sb, boxPrefix, header, bWidth, borderColor)

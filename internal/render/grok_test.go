@@ -55,6 +55,19 @@ func TestGrokStyleResolved(t *testing.T) {
 	}
 }
 
+// lineForTool returns the raw ANSI line whose plain-text form contains the
+// given tool header (e.g. "◆ Run"), or empty string if not found.
+func lineForTool(toolName, plain, ansi string) string {
+	plainLines := strings.Split(plain, "\n")
+	ansiLines := strings.Split(ansi, "\n")
+	for i, pl := range plainLines {
+		if i < len(ansiLines) && strings.Contains(pl, "◆ "+toolName) {
+			return ansiLines[i]
+		}
+	}
+	return ""
+}
+
 func TestGrokProfileLayout(t *testing.T) {
 	ansi, positions := FormatEventsWithPositions(grokEvents(), 100)
 	plain := stripANSIForTest(ansi)
@@ -79,13 +92,22 @@ func TestGrokProfileLayout(t *testing.T) {
 		}
 	}
 
-	// Run success uses ColSuccess (ANSI slot 2).
-	if !hasFgColor(ansi, ColSuccess) {
-		t.Errorf("expected Run success color in output")
+	// Run success bullet uses ColSuccess (ANSI slot 2).
+	if runLine := lineForTool("Run", plain, ansi); runLine != "" {
+		if !hasFgColor(runLine, ColSuccess) {
+			t.Errorf("expected Run success color on %q", stripANSIForTest(runLine))
+		}
+	} else {
+		t.Errorf("missing ◆ Run header line")
 	}
-	// Skill uses ColSkill (ANSI slot 5).
-	if !hasFgColor(ansi, ColSkill) {
-		t.Errorf("expected Skill color in output")
+
+	// Skill bullet uses ColSkill (ANSI slot 5).
+	if skillLine := lineForTool("Skill", plain, ansi); skillLine != "" {
+		if !hasFgColor(skillLine, ColSkill) {
+			t.Errorf("expected Skill color on %q", stripANSIForTest(skillLine))
+		}
+	} else {
+		t.Errorf("missing ◆ Skill header line")
 	}
 
 	// A thought fold position must be emitted.
@@ -110,7 +132,12 @@ func TestGrokRunFailedUsesErrorColor(t *testing.T) {
 		}
 	}
 	ansi := FormatEvents(evts, 100)
-	if !hasFgColor(ansi, ColErrorBright) {
-		t.Errorf("expected error bright color for failed Run")
+	plain := stripANSIForTest(ansi)
+	if runLine := lineForTool("Run", plain, ansi); runLine != "" {
+		if !hasFgColor(runLine, ColErrorBright) {
+			t.Errorf("expected Run error color on %q", stripANSIForTest(runLine))
+		}
+	} else {
+		t.Errorf("missing ◆ Run header line")
 	}
 }
