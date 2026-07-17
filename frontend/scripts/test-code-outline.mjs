@@ -5,6 +5,8 @@ import { markdownLanguage } from '@codemirror/lang-markdown'
 import { goLanguage } from '@codemirror/lang-go'
 import { javascriptLanguage, typescriptLanguage } from '@codemirror/lang-javascript'
 import { rustLanguage } from '@codemirror/lang-rust'
+import { rubyLanguage } from 'codemirror-lang-ruby'
+import { csharpLanguage } from '@replit/codemirror-lang-csharp'
 import { activeOutlineId, flattenOutline, outlineFromTree } from '/tmp/session-insight-codeOutline.mjs'
 import {
   codeParsePolicy,
@@ -151,6 +153,51 @@ enum E { A }
     ['E', 'enum'],
   ])
   assert.deepEqual(outline[2].children.map(x => [x.name, x.kind]), [['bar', 'method']])
+}
+
+{
+  const source = `module App
+  class Worker
+    def run
+      def nested; end
+    end
+  end
+  def top; end
+end
+`
+  const outline = outlineFromTree(rubyLanguage.parser.parse(source), source, 'ruby')
+  assert.deepEqual(outline.map(x => [x.name, x.kind]), [['App', 'class']])
+  assert.deepEqual(outline[0].children.map(x => [x.name, x.kind]), [
+    ['Worker', 'class'],
+    ['top', 'method'],
+  ])
+  assert.deepEqual(outline[0].children[0].children.map(x => [x.name, x.kind]), [['run', 'method']])
+  assert.deepEqual(outline[0].children[0].children[0].children.map(x => [x.name, x.kind]), [['nested', 'method']])
+}
+
+{
+  const source = `namespace Demo {
+  public class Service {
+    public void Execute() {}
+    public void Stop() {}
+  }
+  public interface IListener {
+    void Changed();
+  }
+  public enum State { Ready }
+}
+`
+  const outline = outlineFromTree(csharpLanguage.parser.parse(source), source, 'csharp')
+  assert.deepEqual(outline.map(x => [x.name, x.kind]), [
+    ['Service', 'class'],
+    ['IListener', 'interface'],
+    ['State', 'enum'],
+  ])
+  assert.deepEqual(outline[0].children.map(x => [x.name, x.kind]), [
+    ['Execute', 'method'],
+    ['Stop', 'method'],
+  ])
+  assert.deepEqual(outline[1].children.map(x => [x.name, x.kind]), [['Changed', 'method']])
 }
 
 console.log('code outline tests passed')

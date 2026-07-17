@@ -50,9 +50,9 @@ async function languageForPath(path: string, parseLanguage: boolean): Promise<La
   const wrap = ext === 'md' || ext === 'markdown'
   if (!parseLanguage) return { extension: [], outline: null, wrap }
 
-  // Mainstream languages: CodeMirror grammar packages when available,
-  // StreamLanguage + legacy modes for shell/toml/kotlin/csharp/ruby/swift.
-  // Outline only where we extract symbols (go / js-family / python / java / rust / markdown).
+  // Mainstream languages: CodeMirror / community Lezer packages when available,
+  // StreamLanguage + legacy modes otherwise. Outline for go / js / python /
+  // java / rust / ruby / csharp / markdown.
   switch (ext) {
     case 'go': {
       const { go } = await import('@codemirror/lang-go')
@@ -138,14 +138,16 @@ async function languageForPath(path: string, parseLanguage: boolean): Promise<La
       return { extension: StreamLanguage.define(kotlin), outline: null, wrap: false }
     }
     case 'cs': {
-      const { csharp } = await import('@codemirror/legacy-modes/mode/clike')
-      return { extension: StreamLanguage.define(csharp), outline: null, wrap: false }
+      // Community Lezer grammar (Replit). Structural classDecl nodes are often
+      // missing; outline walks Keyword/TypeIdentifier/MethodName instead.
+      const { csharp } = await import('@replit/codemirror-lang-csharp')
+      return { extension: csharp(), outline: 'csharp', wrap: false }
     }
     case 'rb':
     case 'rake':
     case 'gemspec': {
-      const { ruby } = await import('@codemirror/legacy-modes/mode/ruby')
-      return { extension: StreamLanguage.define(ruby), outline: null, wrap: false }
+      const { ruby } = await import('codemirror-lang-ruby')
+      return { extension: ruby(), outline: 'ruby', wrap: false }
     }
     case 'swift': {
       const { swift } = await import('@codemirror/legacy-modes/mode/swift')
