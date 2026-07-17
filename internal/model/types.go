@@ -46,11 +46,11 @@ type Session struct {
 	TurnCount       int    `json:"turn_count"`
 	// HistoricalTurnCount includes completed turns that were later removed
 	// from the agent's active conversation by an explicit rollback.
-	HistoricalTurnCount int       `json:"historical_turn_count,omitempty"`
-	RolledBackTurnCount int       `json:"rolled_back_turn_count,omitempty"`
-	MessageCount        int       `json:"message_count"`
-	IsLive              bool      `json:"is_live"`
-	Bookmarked          bool      `json:"bookmarked"`
+	HistoricalTurnCount int  `json:"historical_turn_count,omitempty"`
+	RolledBackTurnCount int  `json:"rolled_back_turn_count,omitempty"`
+	MessageCount        int  `json:"message_count"`
+	IsLive              bool `json:"is_live"`
+	Bookmarked          bool `json:"bookmarked"`
 	// BookmarkNote is user-owned local state (why this session was starred).
 	// Only set when Bookmarked is true.
 	BookmarkNote string    `json:"bookmark_note,omitempty"`

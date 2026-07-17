@@ -403,7 +403,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			writeUserPrompt(p, tb, evt, userPrefix, tsFor(evt, opts.TimestampUser))
 		case "ThinkingStart":
 			if p.Name == "grok" && evt.Text != "" {
-				// compact ◆ header 
+				// compact ◆ header
 				tb.WriteString(prefix)
 				if t := tsFor(evt, opts.TimestampAssistant); t != "" {
 					tb.WriteString(fgWrap(t+" ", ColMuted))
@@ -1219,10 +1219,10 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				editLabel := "SearchReplace"
 				if ts != "" {
 					sb.WriteString(prefix)
-					sb.WriteString(fgWrap(ts + " ", ColMuted))
+					sb.WriteString(fgWrap(ts+" ", ColMuted))
 				}
 				sb.WriteString(prefix)
-				sb.WriteString(styled("◆ " + editLabel, ColFg, ColNone, true, false))
+				sb.WriteString(styled("◆ "+editLabel, ColFg, ColNone, true, false))
 				sb.WriteString("\n")
 			}
 			writeEditDiff(p, sb, evt, prefix, bWidth)
@@ -1520,15 +1520,6 @@ func truncateToWidth(s string, maxWidth int) string {
 	}
 	sb.WriteRune('…')
 	return sb.String()
-}
-
-func shouldQuote(s string) bool {
-	for _, ch := range s {
-		if ch == ' ' || ch == '"' || ch == '\'' {
-			return true
-		}
-	}
-	return false
 }
 
 func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onTrunc func()) {

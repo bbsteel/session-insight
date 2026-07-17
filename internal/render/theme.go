@@ -71,10 +71,6 @@ func bgWrap(text string, c Color) string {
 	return bg(c) + text + resetCode
 }
 
-func boldWrap(text string) string {
-	return boldCode + text + resetCode
-}
-
 func italicWrap(text string) string {
 	return italicCode + text + resetCode
 }

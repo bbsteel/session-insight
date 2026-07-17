@@ -455,7 +455,7 @@ function buildMarkdown(
     }
     const basis = compactRefs(evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
     const counter = compactRefs(evidenceMap, ins.counter_evidence_ids)
-    if (basis) L.push(`**依据**：${basis}${counter ? `　**反证**：${counter}` : ''}`, '')
+    if (basis) L.push(`**依据**：${basis}${counter ? ` **反证**：${counter}` : ''}`, '')
   })
 
   if (output.evidence_gaps && output.evidence_gaps.length > 0) {
@@ -509,7 +509,7 @@ function buildHTML(
     }
     const basis = compactRefs(evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
     const counter = compactRefs(evidenceMap, ins.counter_evidence_ids)
-    if (basis) H.push(`<p class="basis"><b>依据</b>：${esc(basis)}${counter ? `　<b>反证</b>：${esc(counter)}` : ''}</p>`)
+    if (basis) H.push(`<p class="basis"><b>依据</b>：${esc(basis)}${counter ? ` <b>反证</b>：${esc(counter)}` : ''}</p>`)
     H.push(`</section>`)
   })
 

@@ -207,7 +207,7 @@ func (s *Server) handleAddLLMProvider(w http.ResponseWriter, r *http.Request) {
 	id, err := s.DB.AddLLMProvider(db.LLMProvider{
 		Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, APIKey: req.APIKey,
 		Headers: encodeProviderHeaders(req.Headers),
-		Agent: req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
+		Agent:   req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
 	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {
@@ -267,7 +267,7 @@ func (s *Server) handleUpdateLLMProvider(w http.ResponseWriter, r *http.Request)
 	err = s.DB.UpdateLLMProvider(db.LLMProvider{
 		ID: id, Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, APIKey: apiKey,
 		Headers: encodeProviderHeaders(req.Headers),
-		Agent: req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
+		Agent:   req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
 	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {
@@ -411,7 +411,7 @@ func providerLLMConfig(p *db.LLMProvider) llm.Config {
 	return llm.Config{
 		Kind: p.Kind, BaseURL: p.BaseURL, APIKey: p.APIKey,
 		Headers: decodeProviderHeaders(p.Headers),
-		Agent: p.Agent, ModelID: p.ModelID,
+		Agent:   p.Agent, ModelID: p.ModelID,
 	}
 }
 

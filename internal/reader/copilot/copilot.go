@@ -371,8 +371,8 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 			continue
 		}
 
-		switch {
-		case evt.Type == "user.message":
+		switch evt.Type {
+		case "user.message":
 			if currentTurn != nil {
 				turns = append(turns, *currentTurn)
 			}
@@ -385,7 +385,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 				currentTurn.UserMessage = content
 			}
 
-		case evt.Type == "assistant.message":
+		case "assistant.message":
 			if currentTurn == nil {
 				continue
 			}
@@ -408,19 +408,19 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 			// Each assistant.message is one API response.
 			currentTurn.RequestCount++
 
-		case evt.Type == "skill.invoked":
+		case "skill.invoked":
 			if currentTurn != nil {
 				if name, ok := extractString(evt.Data, "name"); ok && name != "" {
 					currentTurn.Skills = append(currentTurn.Skills, name)
 				}
 			}
-		case evt.Type == "subagent.started":
+		case "subagent.started":
 			if currentTurn != nil {
 				if name, ok := extractString(evt.Data, "agentDisplayName"); ok && name != "" {
 					currentTurn.Subagents = append(currentTurn.Subagents, name)
 				}
 			}
-		case evt.Type == "tool.execution_start":
+		case "tool.execution_start":
 			if currentTurn == nil {
 				continue
 			}
@@ -431,7 +431,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 				}
 			}
 
-		case evt.Type == "tool.execution_complete":
+		case "tool.execution_complete":
 			if currentTurn == nil {
 				continue
 			}
@@ -452,7 +452,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 				}
 			}
 
-		case evt.Type == "session.model_change":
+		case "session.model_change":
 			if foundModel == "" {
 				if name, ok := extractString(evt.Data, "newModel"); ok && name != "" {
 					foundModel = name

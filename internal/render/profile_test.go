@@ -369,7 +369,7 @@ func TestChrysPairsBatchedToolResults(t *testing.T) {
 		t.Fatalf("missing rows: oneHdr=%d twoHdr=%d oneOut=%d twoOut=%d\n%s", oneHdr, twoHdr, oneOut, twoOut, ansi)
 	}
 	// Paired order: echo one … OUT_ONE … echo two … OUT_TWO.
-	if !(oneHdr < oneOut && oneOut < twoHdr && twoHdr < twoOut) {
+	if oneHdr >= oneOut || oneOut >= twoHdr || twoHdr >= twoOut {
 		t.Errorf("tool results not paired with invocations; order oneHdr=%d oneOut=%d twoHdr=%d twoOut=%d", oneHdr, oneOut, twoHdr, twoOut)
 	}
 	_ = positions

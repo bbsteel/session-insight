@@ -189,7 +189,7 @@ func TestMarkdownTableFitsTermWidth(t *testing.T) {
 func TestMarkdownNestedList(t *testing.T) {
 	text := "- top one\n  - nested a\n  - nested b\n- top two"
 	lines := mdLines(text)
-	var nestedIndent, topIndent int = -1, -1
+	var nestedIndent, topIndent = -1, -1
 	for _, ln := range lines {
 		plain := stripANSI(ln)
 		if strings.Contains(plain, "nested a") {
