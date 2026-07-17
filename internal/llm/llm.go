@@ -20,6 +20,10 @@ type Config struct {
 	Kind    string // "api" | "acp"
 	BaseURL string // api: endpoint base, e.g. https://api.deepseek.com/v1
 	APIKey  string // api: bearer token
+	// Headers are extra HTTP headers for kind="api" (e.g. OpenRouter Referer,
+	// gateway api-key). Applied after Authorization so a custom Authorization
+	// entry can override the Bearer derived from APIKey.
+	Headers map[string]string
 	Agent   string // acp: "claude" | "codex" | "gemini" | "grok"
 	ModelID string // the explicitly selected model
 }

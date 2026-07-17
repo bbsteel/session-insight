@@ -9,12 +9,15 @@ import (
 // OpenAI-compatible HTTP endpoint; kind='acp' is a local agent CLI driven
 // over the Agent Client Protocol. ModelID is always the user's explicit
 // choice — generation never falls back to a provider-side default model.
+// Headers is a JSON object of extra HTTP headers for kind='api' (empty when
+// unused); values are sent as-is on /models and /chat/completions.
 type LLMProvider struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`
 	BaseURL    string `json:"base_url"`
 	APIKey     string `json:"api_key,omitempty"`
+	Headers    string `json:"headers,omitempty"`
 	Agent      string `json:"agent"`
 	ModelID    string `json:"model_id"`
 	ModelLabel string `json:"model_label"`
@@ -47,7 +50,7 @@ const llmDefaultProviderKey = "llm_default_provider_id"
 
 func (db *DB) ListLLMProviders() ([]LLMProvider, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, name, kind, base_url, api_key, agent, model_id, model_label, created_at
+		`SELECT id, name, kind, base_url, api_key, headers, agent, model_id, model_label, created_at
 		 FROM llm_providers ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list llm providers: %w", err)
@@ -56,7 +59,7 @@ func (db *DB) ListLLMProviders() ([]LLMProvider, error) {
 	var out []LLMProvider
 	for rows.Next() {
 		var p LLMProvider
-		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey,
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &p.Headers,
 			&p.Agent, &p.ModelID, &p.ModelLabel, &p.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan llm provider: %w", err)
 		}
@@ -68,9 +71,9 @@ func (db *DB) ListLLMProviders() ([]LLMProvider, error) {
 func (db *DB) GetLLMProvider(id int64) (*LLMProvider, error) {
 	var p LLMProvider
 	err := db.conn.QueryRow(
-		`SELECT id, name, kind, base_url, api_key, agent, model_id, model_label, created_at
+		`SELECT id, name, kind, base_url, api_key, headers, agent, model_id, model_label, created_at
 		 FROM llm_providers WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey,
+	).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &p.Headers,
 		&p.Agent, &p.ModelID, &p.ModelLabel, &p.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -83,9 +86,9 @@ func (db *DB) GetLLMProvider(id int64) (*LLMProvider, error) {
 
 func (db *DB) AddLLMProvider(p LLMProvider) (int64, error) {
 	res, err := db.conn.Exec(
-		`INSERT INTO llm_providers(name, kind, base_url, api_key, agent, model_id, model_label)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.Kind, p.BaseURL, p.APIKey, p.Agent, p.ModelID, p.ModelLabel,
+		`INSERT INTO llm_providers(name, kind, base_url, api_key, headers, agent, model_id, model_label)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.Kind, p.BaseURL, p.APIKey, p.Headers, p.Agent, p.ModelID, p.ModelLabel,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("add llm provider: %w", err)
@@ -95,9 +98,9 @@ func (db *DB) AddLLMProvider(p LLMProvider) (int64, error) {
 
 func (db *DB) UpdateLLMProvider(p LLMProvider) error {
 	_, err := db.conn.Exec(
-		`UPDATE llm_providers SET name = ?, kind = ?, base_url = ?, api_key = ?,
+		`UPDATE llm_providers SET name = ?, kind = ?, base_url = ?, api_key = ?, headers = ?,
 		 agent = ?, model_id = ?, model_label = ? WHERE id = ?`,
-		p.Name, p.Kind, p.BaseURL, p.APIKey, p.Agent, p.ModelID, p.ModelLabel, p.ID,
+		p.Name, p.Kind, p.BaseURL, p.APIKey, p.Headers, p.Agent, p.ModelID, p.ModelLabel, p.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update llm provider %d: %w", p.ID, err)
@@ -118,10 +121,10 @@ func (db *DB) DeleteLLMProvider(id int64) error {
 func (db *DB) FindLLMProviderByModelID(modelID string, excludeID int64) (*LLMProvider, error) {
 	var p LLMProvider
 	err := db.conn.QueryRow(
-		`SELECT id, name, kind, base_url, api_key, agent, model_id, model_label, created_at
+		`SELECT id, name, kind, base_url, api_key, headers, agent, model_id, model_label, created_at
 		 FROM llm_providers WHERE model_id = ? AND id != ? LIMIT 1`,
 		modelID, excludeID,
-	).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey,
+	).Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKey, &p.Headers,
 		&p.Agent, &p.ModelID, &p.ModelLabel, &p.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil

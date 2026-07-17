@@ -61,25 +61,25 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(ms / 3_600_000)}h${String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, '0')}m`
 }
 
-// 每种工具一个稳定专属色,形成"看颜色即知工具"的记忆点:常见工具按语义
-// 固定配色(执行=绿、读取=蓝、写改=橙、搜索=紫、子代理=粉、网络=青),
-// 未知工具按名字哈希取色,同名永远同色。
+// 每种工具一个稳定专属色,形成"看颜色即知工具"的记忆点:常见工具走主题
+// accent CSS 变量(亮/暗主题都能看清),未知工具按名字哈希取色。
+// 旧版用 GitHub dark 浅色 hex,在白底下对比度极差。
 const TOOL_COLORS: Record<string, string> = {
-  Bash: '#3fb950',
-  BashOutput: '#3fb950',
-  Read: '#58a6ff',
-  Edit: '#d29922',
-  Write: '#e3b341',
-  MultiEdit: '#d29922',
-  NotebookEdit: '#d29922',
-  apply_patch: '#d29922',
-  Grep: '#bc8cff',
-  Glob: '#bc8cff',
-  Task: '#f778ba',
-  Agent: '#f778ba',
-  WebFetch: '#39c5cf',
-  WebSearch: '#39c5cf',
-  TodoWrite: '#79c0ff',
+  Bash: 'var(--cat-bash)',
+  BashOutput: 'var(--cat-bash)',
+  Read: 'var(--cat-read)',
+  Edit: 'var(--cat-edit)',
+  Write: 'var(--cat-write)',
+  MultiEdit: 'var(--cat-edit)',
+  NotebookEdit: 'var(--cat-edit)',
+  apply_patch: 'var(--cat-edit)',
+  Grep: 'var(--cat-search)',
+  Glob: 'var(--cat-search)',
+  Task: 'var(--cat-task)',
+  Agent: 'var(--cat-task)',
+  WebFetch: 'var(--cat-mcp)',
+  WebSearch: 'var(--cat-mcp)',
+  TodoWrite: 'var(--accent-sky)',
 }
 
 function toolColor(name: string): string {
@@ -87,7 +87,8 @@ function toolColor(name: string): string {
   if (fixed) return fixed
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
-  return `hsl(${h % 360}, 55%, 65%)`
+  // 中等明度:亮底够深、暗底够亮;同名永远同色。
+  return `hsl(${h % 360} 62% 42%)`
 }
 
 // 展开只在能看到"摘要之外的内容"时才有意义:所有参数值都已完整出现在
@@ -270,7 +271,7 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
               <button
                 key={name}
                 onClick={() => toggleName(name)}
-                className={`h-5 rounded-full border px-2 text-meta leading-none ${
+                className={`h-6 rounded-full border px-2 text-helper font-semibold leading-none ${
                   isOn ? '' : 'border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)]'
                 }`}
                 style={isOn
@@ -344,13 +345,13 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
                 <div className="w-[58px] flex-shrink-0 border-r border-[var(--border-muted)] px-1 pt-1.5 text-center text-meta tabular-nums text-[var(--text-muted)]">
                   {e.tsMs !== null ? fmtTime(e.tsMs) : ''}
                 </div>
-                <div className="flex min-w-0 flex-1 items-start gap-1 px-1.5 py-1.5">
-                  <span className={`w-3 flex-shrink-0 text-center text-meta font-semibold ${st.className}`} title={st.title}>
+                <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1.5">
+                  <span className={`w-3 flex-shrink-0 text-center text-helper font-bold ${st.className}`} title={st.title}>
                     {st.icon}
                   </span>
-                  <span className="flex-shrink-0 text-meta font-medium" style={{ color }}>{e.name}</span>
+                  <span className="flex-shrink-0 text-nav font-bold tracking-tight" style={{ color }}>{e.name}</span>
                   <span
-                    className="min-w-0 flex-1 font-mono text-meta text-[var(--text-secondary)]"
+                    className="min-w-0 flex-1 font-mono text-helper text-[var(--text-secondary)]"
                     style={summaryClampStyle}
                     title={e.summary}
                   >

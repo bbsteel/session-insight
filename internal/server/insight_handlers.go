@@ -251,10 +251,7 @@ func (s *Server) generateInsight(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
-	client, err := llm.New(llm.Config{
-		Kind: provider.Kind, BaseURL: provider.BaseURL, APIKey: provider.APIKey,
-		Agent: provider.Agent, ModelID: provider.ModelID,
-	})
+	client, err := llm.New(providerLLMConfig(provider))
 	if err != nil {
 		sendEvent("error", map[string]string{"message": err.Error()})
 		return

@@ -25,18 +25,21 @@ const generateTimeout = 5 * time.Minute
 const testProviderTimeout = 3 * time.Minute
 
 // providerJSON is the wire shape for llm_providers: the stored API key never
-// leaves the server, only the fact that one exists.
+// leaves the server, only the fact that one exists. Headers are returned in
+// full (they are not secrets in the same sense as the key; values may still
+// be sensitive tokens the user chose to put there).
 type providerJSON struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Kind       string `json:"kind"`
-	BaseURL    string `json:"base_url"`
-	HasAPIKey  bool   `json:"has_api_key"`
-	Agent      string `json:"agent"`
-	ModelID    string `json:"model_id"`
-	ModelLabel string `json:"model_label"`
-	IsDefault  bool   `json:"is_default"`
-	CreatedAt  string `json:"created_at"`
+	ID         int64             `json:"id"`
+	Name       string            `json:"name"`
+	Kind       string            `json:"kind"`
+	BaseURL    string            `json:"base_url"`
+	HasAPIKey  bool              `json:"has_api_key"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Agent      string            `json:"agent"`
+	ModelID    string            `json:"model_id"`
+	ModelLabel string            `json:"model_label"`
+	IsDefault  bool              `json:"is_default"`
+	CreatedAt  string            `json:"created_at"`
 }
 
 func toProviderJSON(p db.LLMProvider, defaultID int64) providerJSON {
@@ -46,6 +49,7 @@ func toProviderJSON(p db.LLMProvider, defaultID int64) providerJSON {
 		Kind:       p.Kind,
 		BaseURL:    p.BaseURL,
 		HasAPIKey:  p.APIKey != "",
+		Headers:    decodeProviderHeaders(p.Headers),
 		Agent:      p.Agent,
 		ModelID:    p.ModelID,
 		ModelLabel: p.ModelLabel,
@@ -55,19 +59,21 @@ func toProviderJSON(p db.LLMProvider, defaultID int64) providerJSON {
 }
 
 type providerRequest struct {
-	Name       string `json:"name"`
-	Kind       string `json:"kind"`
-	BaseURL    string `json:"base_url"`
-	APIKey     string `json:"api_key"`
-	Agent      string `json:"agent"`
-	ModelID    string `json:"model_id"`
-	ModelLabel string `json:"model_label"`
+	Name       string            `json:"name"`
+	Kind       string            `json:"kind"`
+	BaseURL    string            `json:"base_url"`
+	APIKey     string            `json:"api_key"`
+	Headers    map[string]string `json:"headers"`
+	Agent      string            `json:"agent"`
+	ModelID    string            `json:"model_id"`
+	ModelLabel string            `json:"model_label"`
 }
 
 func (req *providerRequest) validate() error {
 	req.Name = strings.TrimSpace(req.Name)
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
 	req.ModelID = strings.TrimSpace(req.ModelID)
+	req.Headers = normalizeProviderHeaders(req.Headers)
 	if req.Name == "" {
 		return fmt.Errorf("name is required")
 	}
@@ -83,10 +89,69 @@ func (req *providerRequest) validate() error {
 		if llm.AgentBinary(req.Agent) == "" {
 			return fmt.Errorf("agent must be one of %s", strings.Join(llm.LocalAgents, ", "))
 		}
+		// ACP has no HTTP hop; drop accidental header payloads.
+		req.Headers = nil
 	default:
 		return fmt.Errorf("kind must be api or acp")
 	}
 	return nil
+}
+
+// normalizeProviderHeaders trims keys/values, drops empty keys, and rejects
+// hop-by-hop / forbidden names that must not be user-controlled.
+func normalizeProviderHeaders(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if isForbiddenProviderHeader(k) {
+			continue
+		}
+		out[k] = strings.TrimSpace(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func isForbiddenProviderHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "host", "content-length", "connection", "transfer-encoding",
+		"keep-alive", "upgrade", "te", "trailer", "proxy-connection":
+		return true
+	default:
+		return false
+	}
+}
+
+func encodeProviderHeaders(h map[string]string) string {
+	h = normalizeProviderHeaders(h)
+	if len(h) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(h)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func decodeProviderHeaders(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil
+	}
+	return normalizeProviderHeaders(m)
 }
 
 func (s *Server) requireDB(w http.ResponseWriter) bool {
@@ -141,6 +206,7 @@ func (s *Server) handleAddLLMProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.DB.AddLLMProvider(db.LLMProvider{
 		Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, APIKey: req.APIKey,
+		Headers: encodeProviderHeaders(req.Headers),
 		Agent: req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
 	})
 	if err != nil {
@@ -192,13 +258,15 @@ func (s *Server) handleUpdateLLMProvider(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Empty api_key means "unchanged": the client never saw the stored key,
-	// so it cannot round-trip it.
+	// so it cannot round-trip it. Headers are always fully replaced from the
+	// request (the client round-trips the whole map).
 	apiKey := existing.APIKey
 	if req.APIKey != "" {
 		apiKey = req.APIKey
 	}
 	err = s.DB.UpdateLLMProvider(db.LLMProvider{
 		ID: id, Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, APIKey: apiKey,
+		Headers: encodeProviderHeaders(req.Headers),
 		Agent: req.Agent, ModelID: req.ModelID, ModelLabel: req.ModelLabel,
 	})
 	if err != nil {
@@ -279,6 +347,10 @@ func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	req.Headers = normalizeProviderHeaders(req.Headers)
+	// Empty api_key falls back to the saved provider so "测试连接" works
+	// without re-entering the key. Headers always come from the request body
+	// (the editor round-trips them; empty means none).
 	if req.APIKey == "" && req.ProviderID > 0 && s.DB != nil {
 		if p, err := s.DB.GetLLMProvider(req.ProviderID); err == nil && p != nil {
 			req.APIKey = p.APIKey
@@ -287,7 +359,7 @@ func (s *Server) handleTestLLMProvider(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), testProviderTimeout)
 	defer cancel()
 
-	models, err := s.listModelsForProvider(ctx, req.Kind, req.Agent, req.BaseURL, req.APIKey, req.Force)
+	models, err := s.listModelsForProvider(ctx, req.Kind, req.Agent, req.BaseURL, req.APIKey, req.Headers, req.Force)
 	if err != nil {
 		// Config errors (unsupported agent / missing base_url) are 400; live
 		// fetch failures are 502.
@@ -314,7 +386,7 @@ func (s *Server) ensureUniqueModelID(modelID string, excludeID int64) error {
 	return nil
 }
 
-func (s *Server) listModelsForProvider(ctx context.Context, kind, agent, baseURL, apiKey string, force bool) ([]llm.Model, error) {
+func (s *Server) listModelsForProvider(ctx context.Context, kind, agent, baseURL, apiKey string, headers map[string]string, force bool) ([]llm.Model, error) {
 	switch kind {
 	case "acp":
 		if llm.AgentBinary(agent) == "" {
@@ -322,13 +394,24 @@ func (s *Server) listModelsForProvider(ctx context.Context, kind, agent, baseURL
 		}
 		return llm.ListACPModelsCached(ctx, agent, force)
 	case "api":
-		client, err := llm.New(llm.Config{Kind: "api", BaseURL: baseURL, APIKey: apiKey})
+		client, err := llm.New(llm.Config{
+			Kind: "api", BaseURL: baseURL, APIKey: apiKey,
+			Headers: normalizeProviderHeaders(headers),
+		})
 		if err != nil {
 			return nil, err
 		}
 		return client.ListModels(ctx)
 	default:
 		return nil, fmt.Errorf("kind must be api or acp")
+	}
+}
+
+func providerLLMConfig(p *db.LLMProvider) llm.Config {
+	return llm.Config{
+		Kind: p.Kind, BaseURL: p.BaseURL, APIKey: p.APIKey,
+		Headers: decodeProviderHeaders(p.Headers),
+		Agent: p.Agent, ModelID: p.ModelID,
 	}
 }
 
@@ -437,10 +520,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	sendEvent("status", map[string]string{"stage": "已选择模型 " + providerModelLabel(provider)})
 	sendEvent("status", map[string]string{"stage": "构建上下文"})
 
-	client, err := llm.New(llm.Config{
-		Kind: provider.Kind, BaseURL: provider.BaseURL, APIKey: provider.APIKey,
-		Agent: provider.Agent, ModelID: provider.ModelID,
-	})
+	client, err := llm.New(providerLLMConfig(provider))
 	if err != nil {
 		sendEvent("error", map[string]string{"message": err.Error()})
 		return

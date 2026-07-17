@@ -203,6 +203,8 @@ export interface LLMProvider {
   kind: 'api' | 'acp'
   base_url: string
   has_api_key: boolean
+  /** Extra HTTP headers for OpenAI-compatible API sources. */
+  headers?: Record<string, string>
   agent: string
   model_id: string
   model_label: string
@@ -215,6 +217,8 @@ export interface LLMProviderInput {
   kind: 'api' | 'acp'
   base_url?: string
   api_key?: string
+  /** Extra HTTP headers (api kind only). Sent in full on every save. */
+  headers?: Record<string, string>
   agent?: string
   model_id: string
   model_label?: string

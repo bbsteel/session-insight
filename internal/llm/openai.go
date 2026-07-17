@@ -42,6 +42,15 @@ func (c *openAIClient) do(ctx context.Context, method, path string, body any) ([
 	if c.cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	}
+	// Custom headers last so they can override Authorization / Content-Type
+	// when a gateway needs a non-Bearer scheme.
+	for k, v := range c.cfg.Headers {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
 	resp, err := openAIHTTPClient.Do(req)
 	if err != nil {
 		return nil, err

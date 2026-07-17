@@ -12,7 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 23
+const currentSchemaVersion = 24
 
 type DB struct {
 	conn *sql.DB
@@ -187,6 +187,7 @@ func migrate(conn *sql.DB) error {
 	    kind        TEXT NOT NULL CHECK (kind IN ('api', 'acp')),
 	    base_url    TEXT NOT NULL DEFAULT '',
 	    api_key     TEXT NOT NULL DEFAULT '',
+	    headers     TEXT NOT NULL DEFAULT '',
 	    agent       TEXT NOT NULL DEFAULT '',
 	    model_id    TEXT NOT NULL,
 	    model_label TEXT NOT NULL DEFAULT '',
@@ -540,6 +541,21 @@ func migrate(conn *sql.DB) error {
 			`CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_providers_model_id ON llm_providers(model_id)`,
 		); err != nil {
 			return fmt.Errorf("v23 unique llm model_id index: %w", err)
+		}
+	}
+
+	// Version 24: custom HTTP headers for OpenAI-compatible API model sources
+	// (gateways, enterprise proxies, OpenRouter Referer/X-Title, etc.).
+	// Gate on the real column so concurrent worktree startups remain safe.
+	hasHeaders, err := tableHasColumn(context.Background(), conn, "llm_providers", "headers")
+	if err != nil {
+		// Fresh installs create the table with the column; missing table is fine.
+		if !strings.Contains(err.Error(), "no such table") {
+			return fmt.Errorf("v24 inspect llm_providers.headers: %w", err)
+		}
+	} else if !hasHeaders {
+		if _, err := conn.Exec(`ALTER TABLE llm_providers ADD COLUMN headers TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("v24 add llm_providers.headers: %w", err)
 		}
 	}
 
