@@ -290,10 +290,13 @@ body {
 }
 
 /* User-message highlight: light gray background across every row of a user
-   prompt range. The decoration element is rendered in xterm's 'bottom' layer
-   so terminal text stays readable on top. CSS variables adapt to dark/light. */
+   prompt range. The decoration element is rendered in xterm's 'top' layer
+   with the background set imperatively in onRender (survives xterm repaints);
+   this CSS is the fallback when the inline style is cleared. CSS variables
+   adapt to dark/light — light theme uses a darker slate tint at higher
+   opacity so the highlight is clearly visible on a near-white background. */
 .si-user-msg-highlight {
-  background: var(--si-user-msg-bg, rgba(130, 130, 140, 0.14)) !important;
+  background: var(--si-user-msg-bg, rgba(100, 110, 130, 0.22)) !important;
 }
 .dark .si-user-msg-highlight {
   background: var(--si-user-msg-bg, rgba(130, 130, 140, 0.18)) !important;

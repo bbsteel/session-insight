@@ -289,11 +289,18 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       userDecorations = []
       userMarkers = []
     }
-    // Resolve an original render row to a buffer row through the fold view
-    // and xterm's own wrap state. Prefer logical_start (exact under fold
-    // badge wrap drift); fall back to display-line mapping.
+    // Resolve a user-message position to a buffer row. Prefer logical_start
+    // (exact under fold badge wrap drift) but only when the logical line is
+    // actually present in the xterm buffer — sessions longer than scrollback
+    // (20000 rows) will have logicalRows shorter than the render's logical
+    // line count, and logicalToDisplayLine clamps out-of-range indices to
+    // the last entry, making every out-of-range highlight pile up on the
+    // same row. Fall back to display-line mapping (toDisplayLine) which at
+    // worst places the marker off-screen rather than on the wrong row.
     const resolveUserRow = (origLine: number, logical?: number): number => {
-      if (typeof logical === 'number') return logicalToDisplayLine(logical)
+      if (typeof logical === 'number' && logical < logicalRows.length) {
+        return logicalToDisplayLine(logical)
+      }
       return toDisplayLine(origLine)
     }
     // Apply background decorations for every user-message range. Called after
@@ -312,6 +319,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         const endRow = resolveUserRow(endOrig, endLogical)
         const first = Math.max(0, Math.min(startRow, endRow))
         const last = Math.max(startRow, endRow)
+        // Skip ranges entirely outside the buffer (e.g. scrolled out of
+        // scrollback) so we don't paint a stray highlight at the buffer edge.
+        if (first >= buf.length && last >= buf.length) continue
         for (let row = first; row <= last; row++) {
           if (row < 0 || row >= buf.length) continue
           const offset = getMarkerOffsetForBufferLine({
@@ -337,7 +347,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
             // Set background directly (not just via CSS class) so it survives
             // xterm's between-paint element resets. Semi-transparent so the
             // terminal text stays readable through the overlay.
-            const bg = isDarkRef.current ? 'rgba(130, 130, 140, 0.18)' : 'rgba(130, 130, 140, 0.14)'
+            const bg = isDarkRef.current ? 'rgba(130, 130, 140, 0.18)' : 'rgba(100, 110, 130, 0.22)'
             element.style.background = bg
             element.classList.add('si-user-msg-highlight')
           })
