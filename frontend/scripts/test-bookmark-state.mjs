@@ -11,6 +11,22 @@ assert.equal(changed[1].bookmarked, true)
 assert.deepEqual(changed.map(s => s.id), ['newer', 'older'], 'bookmarking must not reorder sessions')
 assert.equal(sessions[1].bookmarked, false, 'state helper must not mutate input')
 
+const withNote = applyBookmarkChange(changed, {
+  agentType: 'claude',
+  sessionId: 'older',
+  bookmarked: true,
+  bookmarkNote: 'handoff context',
+})
+assert.equal(withNote[1].bookmark_note, 'handoff context')
+
+const cleared = applyBookmarkChange(withNote, {
+  agentType: 'claude',
+  sessionId: 'older',
+  bookmarked: false,
+})
+assert.equal(cleared[1].bookmarked, false)
+assert.equal(cleared[1].bookmark_note, undefined, 'unbookmark must clear note')
+
 const untouched = applyBookmarkChange(changed, { agentType: 'codex', sessionId: 'older', bookmarked: false })
 assert.equal(untouched[1].bookmarked, true, 'agent mismatch must not change same session id')
 

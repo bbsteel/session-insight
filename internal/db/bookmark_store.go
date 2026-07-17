@@ -84,18 +84,24 @@ func (db *DB) RemoveBookmark(agentType, sessionID string) error {
 }
 
 func (db *DB) IsBookmarked(agentType, sessionID string) (bool, error) {
-	var one int
-	err := db.conn.QueryRow(
-		`SELECT 1 FROM bookmarked_sessions WHERE agent_type = ? AND session_id = ?`,
+	_, bookmarked, err := db.GetBookmark(agentType, sessionID)
+	return bookmarked, err
+}
+
+// GetBookmark returns the note and whether the session is bookmarked.
+// Note is empty when not bookmarked or when no note was saved.
+func (db *DB) GetBookmark(agentType, sessionID string) (note string, bookmarked bool, err error) {
+	err = db.conn.QueryRow(
+		`SELECT COALESCE(note, '') FROM bookmarked_sessions WHERE agent_type = ? AND session_id = ?`,
 		agentType, sessionID,
-	).Scan(&one)
+	).Scan(&note)
 	if err == sql.ErrNoRows {
-		return false, nil
+		return "", false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("check bookmark: %w", err)
+		return "", false, fmt.Errorf("get bookmark: %w", err)
 	}
-	return true, nil
+	return note, true, nil
 }
 
 func (db *DB) ListBookmarks() ([]Bookmark, error) {
