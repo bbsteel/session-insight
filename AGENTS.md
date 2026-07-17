@@ -6,6 +6,26 @@
 - Documentation, comments, repository metadata, and agent-instruction-only changes do not require starting or restarting the application; validate them with an appropriate diff, lint, or text-check command instead.
 - Write Git commit messages in English, including both the subject and body.
 
+## Branch and PR Workflow (required)
+
+All code and docs changes land on `main` **only via pull request**. Do not commit product work directly onto `main`, and do not `git push origin main` for feature or fix delivery.
+
+For **every** change set (including small fixes and agent-instruction edits):
+
+1. **Start from up-to-date `main`**: `git fetch origin` and base the branch on `origin/main` (or the primary checkout’s `main` after it matches remote when that is the agreed base).
+2. **Create a dedicated branch** with a clear prefix, e.g. `feat/…`, `fix/…`, `docs/…`, `chore/…`. Prefer one logical change per branch.
+3. **Commit only on that branch.** Do not leave finished work solely as commits on `main`.
+4. **Open a PR into `main`** (`gh pr create` or equivalent). Default to **not** merging unless the user explicitly asks to merge.
+5. **Push the branch**, not `main`, when publishing the change for review.
+6. After merge (by user or explicit request), continue the next task from a **new** branch off updated `main`.
+
+Exceptions (must still prefer a branch when practical):
+
+- User explicitly orders a direct commit or direct push to `main` for that action.
+- Emergency hotfix the user scopes as “commit on main now” — still prefer a branch + fast PR when time allows.
+
+When the working tree already has uncommitted or local-only work on `main` that belongs to the current task, **move it onto a feature branch before committing** (e.g. create branch from current HEAD, or `git switch -c` then commit). Do not “finish on main and PR later” as the default path.
+
 ## Worktree Development and Runtime Isolation
 
 - Perform concurrent development and validation in separate linked Git worktrees. Do not run multiple development instances from the same checkout.
