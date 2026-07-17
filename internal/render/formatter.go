@@ -388,7 +388,14 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				}
 			}
 		case "UserPrompt":
-			emit("user", "用户输入", "", evt.TurnIndex, nil)
+			userPayload := map[string]any{}
+			if !evt.Timestamp.IsZero() {
+				userPayload["ts_ms"] = float64(evt.Timestamp.UnixMilli())
+			}
+			if evt.Text != "" {
+				userPayload["text"] = evt.Text
+			}
+			emit("user", "用户输入", "", evt.TurnIndex, userPayload)
 			userPrefix := prefix
 			if p.Name == "grok" && grokSidebar != ColNone {
 				userPrefix = prefix + fgWrap(p.BoxV, grokSidebar) + " "

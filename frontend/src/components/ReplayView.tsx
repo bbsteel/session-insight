@@ -15,6 +15,7 @@ import OutputModal from './OutputModal'
 import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
 import ToolCallPanel from './ToolCallPanel'
+import UserMessagePanel from './UserMessagePanel'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
@@ -69,6 +70,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [outputModalIdx, setOutputModalIdx] = useState<number | null>(null)
   const [edits, setEdits] = useState<EditCall[]>([])
   const [showToolPanel, setShowToolPanel] = useState(false)
+  const [showUserPanel, setShowUserPanel] = useState(false)
   const [showAIPanel, setShowAIPanel] = useState(false)
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
@@ -805,8 +807,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     return () => window.clearInterval(timer)
   }, [searchTarget, sessionId, folds])
 
-  // 工具面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
-  const handleToolJump = useCallback((lineStart: number, logicalStart?: number) => {
+  // 面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
+  // 工具面板和用户消息面板共用同一套动效。
+  const handlePanelJump = useCallback((lineStart: number, logicalStart?: number) => {
     const ctrl = termControlRef.current
     if (!ctrl) return
     const line = typeof logicalStart === 'number'
@@ -818,6 +821,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
   const toolCallCount = useMemo(
     () => (positionsData?.positions ?? []).filter(p => p.kind === 'tool').length,
+    [positionsData],
+  )
+
+  const userMessageCount = useMemo(
+    () => (positionsData?.positions ?? []).filter(p => p.kind === 'user').length,
     [positionsData],
   )
 
@@ -1083,14 +1091,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             分析
           </button>
-          <span className="text-[var(--border-default)]">|</span>
-          <button
-            onClick={() => setShowToolPanel(v => !v)}
-            className={`h-7 rounded-md px-2 text-nav ${showToolPanel ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            title="工具调用面板"
-          >
-            工具{toolCallCount > 0 ? ` ${toolCallCount}` : ''}
-          </button>
           {sessionIsLive && (
             <>
               <span className="text-[var(--border-default)]">|</span>
@@ -1210,6 +1210,41 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             <span className="ml-1 text-[var(--accent-green)]">{session.todos.filter(t => t.status === 'done').length}/{session.todos.length} done</span>
           )}
         </span>
+        <span className="text-[var(--border-default)] mx-1">|</span>
+        <div className="flex items-center gap-2 mr-4">
+          <span className="text-nav text-[var(--text-muted)]">导航</span>
+          <button
+            onClick={() => setShowUserPanel(v => {
+              const next = !v
+              if (next) setShowToolPanel(false)
+              return next
+            })}
+            className={`h-7 rounded-md border px-2 text-nav ${
+              showUserPanel
+                ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title="用户消息面板"
+          >
+            用户消息{userMessageCount > 0 ? ` ${userMessageCount}` : ''}
+          </button>
+          <button
+            onClick={() => setShowToolPanel(v => {
+              const next = !v
+              if (next) setShowUserPanel(false)
+              else setToolFilterRequest(null)
+              return next
+            })}
+            className={`h-7 rounded-md border px-2 text-nav ${
+              showToolPanel
+                ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title="工具调用面板"
+          >
+            工具调用{toolCallCount > 0 ? ` ${toolCallCount}` : ''}
+          </button>
+        </div>
         <span ref={visibleRangeLabelRef} className="flex-shrink-0 text-meta text-[var(--text-muted)]">
           Turn ?/{session.turn_count}
         </span>
@@ -1307,6 +1342,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               />
             </Suspense>
           )}
+          {viewMode === 'terminal' && showUserPanel && (
+            <UserMessagePanel
+              positions={positionsData}
+              building={positionsBuilding}
+              onJump={handlePanelJump}
+              onClose={() => setShowUserPanel(false)}
+            />
+          )}
           {/* 浮层覆盖在终端右侧:不改变终端布局宽度,开关面板不会触发
               列数变化 → 整屏重渲染 → minimap 闪烁。 */}
           {viewMode === 'terminal' && showToolPanel && (
@@ -1314,7 +1357,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               positions={positionsData}
               building={positionsBuilding}
               filterRequest={toolFilterRequest}
-              onJump={handleToolJump}
+              onJump={handlePanelJump}
               onClose={() => {
                 setShowToolPanel(false)
                 // 面板生命周期结束,清掉分析页带来的筛选请求,
