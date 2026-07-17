@@ -6,14 +6,28 @@ FRONTEND_DIR="$ROOT_DIR/frontend"
 BIN_PATH="${BIN_PATH:-$ROOT_DIR/session-insight}"
 
 # A linked worktree is an isolated development instance. Keep its mutable
-# application state inside the worktree and let the OS assign a free port.
+# application state inside the worktree. The first run picks a free OS-assigned
+# loopback port and persists it to .runtime/session-insight.port so subsequent
+# restarts in the same worktree reuse it — the port stays stable within a
+# worktree across restarts, while different worktrees remain isolated.
 # The primary checkout retains the historical 8080 + ~/.session-insight setup.
 if [[ -f "$ROOT_DIR/.git" ]]; then
   RUNTIME_DIR="$ROOT_DIR/.runtime"
+  mkdir -p "$RUNTIME_DIR"
+  PORT_FILE="$RUNTIME_DIR/session-insight.port"
+  # Reuse a previously-persisted port for this worktree; fall back to $PORT or
+  # 0 (OS-assigned) on the first run. A non-empty PORT env var always wins.
+  if [[ -z "${PORT:-}" && -f "$PORT_FILE" ]]; then
+    SAVED_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+    if [[ "$SAVED_PORT" =~ ^[0-9]+$ && "$SAVED_PORT" -gt 0 ]]; then
+      PORT="$SAVED_PORT"
+    fi
+  fi
   PORT="${PORT:-0}"
   SI_DATA_DIR="${SI_DATA_DIR:-$RUNTIME_DIR/session-insight}"
 else
   RUNTIME_DIR="$ROOT_DIR"
+  PORT_FILE="$RUNTIME_DIR/session-insight.port"
   PORT="${PORT:-8080}"
   SI_DATA_DIR="${SI_DATA_DIR:-}"
 fi
@@ -55,9 +69,11 @@ Commands:
   all      构建 + 运行
   log      查看后台日志
 
-Linked worktrees automatically use an OS-assigned random port and an isolated
-database under .runtime/. The primary checkout continues to use port 8080 and
-~/.session-insight. PORT and SI_DATA_DIR may be set to override these defaults.
+Linked worktrees automatically use an OS-assigned random loopback port on the
+first run and reuse the same port on subsequent restarts (persisted to
+.runtime/session-insight.port), with an isolated database under .runtime/. The
+primary checkout continues to use port 8080 and ~/.session-insight. PORT and
+SI_DATA_DIR may be set to override these defaults.
 EOF
   exit 0
 }
@@ -132,6 +148,13 @@ do_start() {
     url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$LOG_FILE" 2>/dev/null | tail -1 || true)
     if [[ -n "$url" ]]; then
       printf '%s\n' "$url" >"$URL_FILE"
+      # Persist the actual bound port so the next restart in this worktree
+      # reuses it (PORT=0 → OS-assigned → extract from the ready URL).
+      local bound_port
+      bound_port=$(sed -n 's|.*://127\.0\.0\.1:\([0-9]\+\)/.*|\1|p' <<<"$url" | tail -1 || true)
+      if [[ "$bound_port" =~ ^[0-9]+$ && "$bound_port" -gt 0 ]]; then
+        printf '%s\n' "$bound_port" >"$PORT_FILE"
+      fi
       echo "    Ready: $url"
       return 0
     fi
