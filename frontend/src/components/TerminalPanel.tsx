@@ -8,7 +8,7 @@ import { extractPathsAt } from '../filePathDetection'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
-import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type UserHighlightRange } from '../terminalControl'
 import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 
@@ -95,6 +95,14 @@ interface Props {
   onScrollMetrics?: (m: ScrollMetrics) => void
   onColsReady?: (cols: number) => void
   controlRef?: React.MutableRefObject<TerminalControl | null>
+  // User-message ranges (from positions API) to highlight with a background
+  // decoration. Re-applied after every buffer rewrite / fold change so the
+  // highlight tracks the rows as display rows shift.
+  userPositions?: UserHighlightRange[]
+  // Click handler for the sticky top user-message bar: jump back to the
+  // user message that has been scrolled past. Receives original render rows
+  // + logical start so the jump resolves through xterm's wrap state.
+  onJumpToUserMessage?: (lineStart: number, logicalStart?: number) => void
 }
 
 async function waitForTerminalFont() {
@@ -117,13 +125,27 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
   onScrollMetricsRef.current = onScrollMetrics
   const onColsReadyRef = useRef(onColsReady)
   onColsReadyRef.current = onColsReady
+  const onJumpToUserMessageRef = useRef(onJumpToUserMessage)
+  onJumpToUserMessageRef.current = onJumpToUserMessage
+  // userPositions is read inside the mount effect's closures (which run once
+  // per sessionId) so a ref keeps the latest ranges without re-mounting.
+  // A version token bumps whenever the value changes so the mount effect can
+  // re-apply highlight decorations without a full buffer rewrite.
+  const userPositionsRef = useRef<UserHighlightRange[]>(userPositions ?? [])
+  const userPositionsVersionRef = useRef(0)
+  const userPositionsPrevRef = useRef<UserHighlightRange[] | undefined>(userPositions)
+  if (userPositions !== userPositionsPrevRef.current) {
+    userPositionsPrevRef.current = userPositions
+    userPositionsRef.current = userPositions ?? []
+    userPositionsVersionRef.current++
+  }
   const isDark = useIsDark()
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
@@ -153,6 +175,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   // Assigned inside the mount effect once the terminal is live; the folds
   // prop effect below routes updated fold ranges into that closure.
   const applyFoldsRef = useRef<((folds: FoldRange[]) => void) | null>(null)
+  // Same pattern for user-message highlights: the mount effect owns the
+  // decoration closures; this ref lets the userPositions effect re-apply
+  // them without re-mounting the terminal.
+  const applyUserHighlightsRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -252,6 +278,125 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       progressMarker = null
     }
 
+    // User-message highlight decorations: one per row of each user prompt
+    // range. Re-applied after every rewrite (display rows shift when folds
+    // toggle) and whenever userPositions changes (new positions poll).
+    let userDecorations: IDecoration[] = []
+    let userMarkers: IMarker[] = []
+    const clearUserHighlights = () => {
+      userDecorations.forEach(d => d.dispose())
+      userMarkers.forEach(m => m.dispose())
+      userDecorations = []
+      userMarkers = []
+    }
+    // Resolve an original render row to a buffer row through the fold view
+    // and xterm's own wrap state. Prefer logical_start (exact under fold
+    // badge wrap drift); fall back to display-line mapping.
+    const resolveUserRow = (origLine: number, logical?: number): number => {
+      if (typeof logical === 'number') return logicalToDisplayLine(logical)
+      return toDisplayLine(origLine)
+    }
+    // Apply background decorations for every user-message range. Called after
+    // scanBuffer/injectFoldRows in every rewrite path and on prop change.
+    const injectUserHighlights = () => {
+      clearUserHighlights()
+      const ranges = userPositionsRef.current
+      if (ranges.length === 0) return
+      const buf = term.buffer.active
+      for (const r of ranges) {
+        const startRow = resolveUserRow(r.lineStart, r.logicalStart)
+        // lineEnd is inclusive on the original render; resolve through the
+        // same mapping. Fall back to a single-row highlight when missing.
+        const endOrig = typeof r.lineEnd === 'number' ? r.lineEnd : r.lineStart
+        const endLogical = typeof r.logicalEnd === 'number' ? r.logicalEnd : r.logicalStart
+        const endRow = resolveUserRow(endOrig, endLogical)
+        const first = Math.max(0, Math.min(startRow, endRow))
+        const last = Math.max(startRow, endRow)
+        for (let row = first; row <= last; row++) {
+          if (row < 0 || row >= buf.length) continue
+          const offset = getMarkerOffsetForBufferLine({
+            bufferLine: row,
+            baseY: buf.baseY,
+            cursorY: buf.cursorY,
+          })
+          const marker = term.registerMarker(offset)
+          if (!marker) continue
+          let decoration: IDecoration | undefined
+          try {
+            decoration = term.registerDecoration({ marker, width: term.cols, height: 1, layer: 'top' })
+          } catch {
+            marker.dispose()
+            continue
+          }
+          if (!decoration) { marker.dispose(); continue }
+          decoration.onRender(element => {
+            element.style.pointerEvents = 'none'
+            element.style.left = '0'
+            element.style.width = '100%'
+            element.style.boxSizing = 'border-box'
+            // Set background directly (not just via CSS class) so it survives
+            // xterm's between-paint element resets. Semi-transparent so the
+            // terminal text stays readable through the overlay.
+            const bg = isDarkRef.current ? 'rgba(130, 130, 140, 0.18)' : 'rgba(130, 130, 140, 0.14)'
+            element.style.background = bg
+            element.classList.add('si-user-msg-highlight')
+          })
+          userMarkers.push(marker)
+          userDecorations.push(decoration)
+        }
+      }
+    }
+    // Compute the most recent user message that has been fully scrolled past
+    // the current viewport top. Returns null when none qualifies. Used by the
+    // scroll handler to update the sticky top bar without re-rendering on
+    // every pixel scroll — only when the resolved message key changes.
+    const computeStickyUserMsg = (): UserHighlightRange | null => {
+      const ranges = userPositionsRef.current
+      if (ranges.length === 0) return null
+      const buf = term.buffer.active
+      const viewportTop = buf.viewportY
+      // Find the last user range whose last row is strictly above viewportTop.
+      // Equal-to-top means the message is still visible — don't sticky it.
+      let sticky: UserHighlightRange | null = null
+      for (const r of ranges) {
+        const endOrig = typeof r.lineEnd === 'number' ? r.lineEnd : r.lineStart
+        const endLogical = typeof r.logicalEnd === 'number' ? r.logicalEnd : r.logicalStart
+        const endRow = resolveUserRow(endOrig, endLogical)
+        if (endRow < viewportTop) sticky = r
+        else break
+      }
+      return sticky
+    }
+    // Sticky top bar: imperative DOM overlay at the top of the terminal
+    // viewport showing the most recent user message scrolled past. Managed
+    // imperatively (like tooltipEl) so it never conflicts with xterm's own
+    // DOM children under container. Clicking it jumps back to that message.
+    let stickyBarEl: HTMLDivElement | null = null
+    let stickyLabelEl: HTMLSpanElement | null = null
+    let stickyTextEl: HTMLSpanElement | null = null
+    let currentStickyRange: UserHighlightRange | null = null
+    const updateStickyUserMsg = () => {
+      if (disposed || !stickyBarEl) return
+      const next = computeStickyUserMsg()
+      if ((next?.key ?? null) === (currentStickyRange?.key ?? null)) return
+      currentStickyRange = next
+      if (!next) {
+        stickyBarEl.style.display = 'none'
+        return
+      }
+      stickyBarEl.style.display = 'flex'
+      if (stickyTextEl) {
+        const text = next.text || ''
+        stickyTextEl.textContent = text
+        stickyTextEl.title = text
+      }
+    }
+    const onStickyClick = () => {
+      const r = currentStickyRange
+      if (!r) return
+      onJumpToUserMessageRef.current?.(r.lineStart, r.logicalStart)
+    }
+
     let onMouseMove: ((e: MouseEvent) => void) | null = null
     let onMouseLeave: (() => void) | null = null
     let onClick: ((e: MouseEvent) => void) | null = null
@@ -328,6 +473,42 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         'white-space:nowrap', 'box-shadow:0 2px 10px rgba(0,0,0,0.45)',
       ].join(';')
       document.body.appendChild(tooltipEl)
+
+      // Sticky top user-message bar: imperative DOM overlay at the top of
+      // the terminal viewport. Shows the most recent user message that has
+      // been scrolled past; click jumps back to it. Created here (not via
+      // React JSX) so it never conflicts with xterm's own children under
+      // container — React reconciliation would otherwise risk removing
+      // xterm's elements on re-render.
+      stickyBarEl = document.createElement('div')
+      stickyBarEl.className = 'si-sticky-user-msg'
+      stickyBarEl.style.cssText = [
+        'position:absolute', 'top:0', 'left:0', 'right:0',
+        'display:none', 'align-items:center', 'gap:6px',
+        'padding:4px 12px', 'z-index:10', 'cursor:pointer',
+        'font-family:system-ui,-apple-system,sans-serif',
+        'font-size:12px', 'line-height:1.4',
+        'white-space:nowrap', 'overflow:hidden',
+        'border-bottom:1px solid var(--border-default)',
+        'background:var(--bg-surface)',
+        'color:var(--text-secondary)',
+      ].join(';')
+      stickyBarEl.title = '点击返回这条用户消息'
+      stickyLabelEl = document.createElement('span')
+      stickyLabelEl.textContent = '↑ 用户消息'
+      stickyLabelEl.style.cssText = [
+        'flex-shrink:0', 'font-weight:600',
+        'color:var(--accent-blue)',
+      ].join(';')
+      stickyTextEl = document.createElement('span')
+      stickyTextEl.style.cssText = [
+        'min-width:0', 'flex:1', 'overflow:hidden',
+        'text-overflow:ellipsis', 'white-space:nowrap',
+      ].join(';')
+      stickyBarEl.appendChild(stickyLabelEl)
+      stickyBarEl.appendChild(stickyTextEl)
+      stickyBarEl.addEventListener('click', onStickyClick)
+      container.appendChild(stickyBarEl)
 
       const xtermScreen = container.querySelector<HTMLElement>('.xterm-screen')
       const eventTarget = xtermScreen ?? container
@@ -663,6 +844,8 @@ const snapshotTerminal = () => {
           scanBuffer()
           injectFoldRows()
           injectProgressRow()
+          injectUserHighlights()
+          updateStickyUserMsg()
           queueMetrics()
           afterWrite?.()
           // Two frames: one for xterm's render, one to be past the paint.
@@ -737,7 +920,16 @@ const snapshotTerminal = () => {
           }
         }
         if (collapsedKeys.size > 0 || dropped || addedDefault || foldView) recompose()
-        else { injectFoldRows(); injectProgressRow() }
+        else { injectFoldRows(); injectProgressRow(); injectUserHighlights() }
+      }
+
+      // Re-apply user-message highlights when the prop changes without a
+      // rewrite (e.g. positions poll landed while folds stayed the same).
+      // Also refreshes the sticky bar in case the resolved message changed.
+      applyUserHighlightsRef.current = () => {
+        if (!hasWrittenOnce) return
+        injectUserHighlights()
+        updateStickyUserMsg()
       }
 
       const showHoverFor = (bl: number, entry: InteractionEntry, clientX: number, clientY: number) => {
@@ -921,6 +1113,8 @@ const snapshotTerminal = () => {
               scanBuffer()
               injectFoldRows()
               injectProgressRow()
+              injectUserHighlights()
+              updateStickyUserMsg()
             }
           },
           flashLines,
@@ -986,6 +1180,8 @@ const snapshotTerminal = () => {
                 scanBuffer()
                 injectFoldRows()
                 injectProgressRow()
+                injectUserHighlights()
+                updateStickyUserMsg()
                 queueMetrics()
                 resolve()
               }))
@@ -1013,6 +1209,7 @@ const snapshotTerminal = () => {
         if (tooltipEl) tooltipEl.style.display = 'none'
         if (xtermScreen) xtermScreen.style.cursor = ''
         queueMetrics()
+        updateStickyUserMsg()
         // Diagnose scroll→blank: coalesce leading-edge samples into a
         // single debug line per animation frame so we don't spam.
         if (TERM_DEBUG) {
@@ -1120,9 +1317,18 @@ const snapshotTerminal = () => {
       hoverMarker?.dispose()
       clearFlash()
       clearProgress()
+      clearUserHighlights()
       tooltipEl?.remove()
+      if (stickyBarEl) {
+        stickyBarEl.removeEventListener('click', onStickyClick)
+        stickyBarEl.remove()
+        stickyBarEl = null
+        stickyLabelEl = null
+        stickyTextEl = null
+      }
       if (controlRef) controlRef.current = null
       applyFoldsRef.current = null
+      applyUserHighlightsRef.current = null
       termRef.current = null
       term.dispose()
     }
@@ -1145,6 +1351,15 @@ const snapshotTerminal = () => {
   useEffect(() => {
     applyFoldsRef.current?.(folds ?? [])
   }, [folds])
+
+  // Re-apply user-message highlight decorations when the prop changes. The
+  // mount effect owns the decoration closures; this just routes the new
+  // ranges in via the ref. Version token avoids a no-op call when the
+  // mount effect itself already refreshed (e.g. after a rewrite).
+  useEffect(() => {
+    void userPositionsVersionRef.current
+    applyUserHighlightsRef.current?.()
+  }, [userPositions])
 
   const dismissWebglWarn = () => {
     localStorage.setItem('si-webgl-warn-dismissed', '1')

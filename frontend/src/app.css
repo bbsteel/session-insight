@@ -288,3 +288,21 @@ body {
   0%, 40% { background-color: rgba(37, 99, 235, 0.32); }
   100% { background-color: rgba(37, 99, 235, 0); }
 }
+
+/* User-message highlight: light gray background across every row of a user
+   prompt range. The decoration element is rendered in xterm's 'bottom' layer
+   so terminal text stays readable on top. CSS variables adapt to dark/light. */
+.si-user-msg-highlight {
+  background: var(--si-user-msg-bg, rgba(130, 130, 140, 0.14)) !important;
+}
+.dark .si-user-msg-highlight {
+  background: var(--si-user-msg-bg, rgba(130, 130, 140, 0.18)) !important;
+}
+
+/* Sticky top user-message bar: sits at the top of the terminal viewport when
+   the user has scrolled past a user message. Hover feedback + truncated text
+   are styled inline in TerminalPanel; this just adds the hover background. */
+.si-sticky-user-msg:hover {
+  background: var(--bg-surface-hover) !important;
+  color: var(--text-primary) !important;
+}

@@ -396,11 +396,28 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				userPayload["text"] = evt.Text
 			}
 			emit("user", "用户输入", "", evt.TurnIndex, userPayload)
+			userPosIdx := len(positions) - 1
 			userPrefix := prefix
 			if p.Name == "grok" && grokSidebar != ColNone {
 				userPrefix = prefix + fgWrap(p.BoxV, grokSidebar) + " "
 			}
 			writeUserPrompt(p, tb, evt, userPrefix, tsFor(evt, opts.TimestampUser))
+			// Record the inclusive end line of the user prompt body so the
+			// frontend can apply a highlight decoration across exactly those
+			// rows. Captured before the trailing blank line below so the
+			// highlight does not paint the separator.
+			userEndIncl := tb.CurrentLine() - 1
+			if userEndIncl < positions[userPosIdx].LineStart {
+				userEndIncl = positions[userPosIdx].LineStart
+			}
+			positions[userPosIdx].LineEnd = &userEndIncl
+			if positions[userPosIdx].Payload == nil {
+				positions[userPosIdx].Payload = map[string]any{}
+			}
+			positions[userPosIdx].Payload["logical_end"] = float64(tb.CurrentLogicalLine() - 1)
+			// Trailing blank line: visually separates the user message from
+			// the assistant reply / tool output that follows.
+			tb.WriteString("\n")
 		case "ThinkingStart":
 			if p.Name == "grok" && evt.Text != "" {
 				// compact ◆ header
