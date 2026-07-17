@@ -8,6 +8,10 @@ import {
   MAX_FILE_PARSE_BYTES,
   type CodeParsePolicy,
 } from '../codeReaderPolicy'
+import {
+  languageSupportForPath,
+  shouldShowLanguageSupportBanner,
+} from '../codeReaderSupport'
 import type { CodeReaderHandle } from './CodeReader'
 import ThemeToggle from './ThemeToggle'
 
@@ -192,6 +196,8 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
 
   const rel = current.startsWith(root) ? current.slice(root.length).replace(/^\//, '') : current
   const parseEnabled = parsePolicy === 'enabled' || parsePolicy === 'confirmed'
+  const langSupport = useMemo(() => languageSupportForPath(current), [current])
+  const showLangBanner = shouldShowLanguageSupportBanner(langSupport)
   const visibleOutline = useMemo(() => filterOutline(outline, outlineQuery.trim()), [outline, outlineQuery])
   const visibleRows = useMemo(() => flattenWithDepth(visibleOutline), [visibleOutline])
   const activeId = useMemo(() => activeOutlineId(outline, activePosition), [outline, activePosition])
@@ -255,6 +261,25 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
               {parsePolicy === 'refused' && (
                 <div className="z-10 flex-shrink-0 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-1.5 text-helper text-[var(--warning)]">
                   性能提示：文件大小 {formatByteSize(fileSize)}，超过 {formatByteSize(MAX_FILE_PARSE_BYTES)} 解析上限；已拒绝语法解析，仅虚拟预览前 2 MiB。
+                </div>
+              )}
+              {showLangBanner && (
+                <div
+                  role="status"
+                  className="z-10 flex flex-shrink-0 items-start gap-2 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-1.5 text-helper text-[var(--text-secondary)]"
+                  title={langSupport.summary}
+                >
+                  <span
+                    className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-[var(--warning)]/60 text-[11px] font-bold leading-none text-[var(--warning)]"
+                    aria-hidden
+                  >
+                    !
+                  </span>
+                  <span className="min-w-0 leading-snug">
+                    <span className="font-medium text-[var(--warning)]">语言支持</span>
+                    <span className="text-[var(--text-muted)]"> · </span>
+                    {langSupport.summary}
+                  </span>
                 </div>
               )}
               <div className="min-h-0 flex-1">
@@ -322,9 +347,15 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
                     ? '文件超过解析上限，不会生成结构大纲。'
                     : outlineQuery
                       ? '没有匹配的结构'
-                      : outlineComplete
-                        ? '当前文件没有可展示的结构'
-                        : '正在解析文件结构…'}
+                      : !parseEnabled
+                        ? '结构解析未启用'
+                        : langSupport.outline === 'none'
+                          ? langSupport.highlight
+                            ? '当前语言仅支持语法高亮，暂无结构大纲。'
+                            : '当前文件类型无结构大纲（按纯文本显示）。'
+                          : outlineComplete
+                            ? '当前文件没有可展示的结构'
+                            : '正在解析文件结构…'}
               </div>
             )}
           </div>
