@@ -1,6 +1,6 @@
 import type { Tree, SyntaxNode } from '@lezer/common'
 
-export type OutlineLanguage = 'python' | 'java' | 'markdown'
+export type OutlineLanguage = 'python' | 'java' | 'markdown' | 'go' | 'javascript' | 'rust' | 'ruby' | 'csharp'
 export type OutlineKind = 'class' | 'interface' | 'enum' | 'function' | 'method' | 'constructor' | 'heading'
 
 export interface OutlineItem {
@@ -37,6 +37,13 @@ function childText(node: SyntaxNode, childName: string, content: string): string
   return child ? content.slice(child.from, child.to) : ''
 }
 
+function hasAncestor(node: SyntaxNode, name: string): boolean {
+  for (let p = node.parent; p; p = p.parent) {
+    if (p.name === name) return true
+  }
+  return false
+}
+
 function codeSymbol(node: SyntaxNode, language: Exclude<OutlineLanguage, 'markdown'>, content: string): { name: string; kind: OutlineKind } | null {
   if (language === 'python') {
     if (node.name === 'ClassDefinition') return { name: childText(node, 'VariableName', content), kind: 'class' }
@@ -47,6 +54,57 @@ function codeSymbol(node: SyntaxNode, language: Exclude<OutlineLanguage, 'markdo
     return null
   }
 
+  if (language === 'go') {
+    if (node.name === 'FunctionDecl') return { name: childText(node, 'DefName', content), kind: 'function' }
+    if (node.name === 'MethodDecl') return { name: childText(node, 'FieldName', content), kind: 'method' }
+    if (node.name === 'TypeSpec') {
+      const name = childText(node, 'DefName', content)
+      if (node.getChild('InterfaceType')) return { name, kind: 'interface' }
+      return { name, kind: 'class' }
+    }
+    if (node.name === 'MethodElem') return { name: childText(node, 'FieldName', content), kind: 'method' }
+    return null
+  }
+
+  if (language === 'javascript') {
+    if (node.name === 'FunctionDeclaration') return { name: childText(node, 'VariableDefinition', content), kind: 'function' }
+    if (node.name === 'ClassDeclaration') return { name: childText(node, 'VariableDefinition', content), kind: 'class' }
+    if (node.name === 'MethodDeclaration') {
+      const name = childText(node, 'PropertyDefinition', content)
+      return { name, kind: name === 'constructor' ? 'constructor' : 'method' }
+    }
+    if (node.name === 'InterfaceDeclaration') return { name: childText(node, 'TypeDefinition', content), kind: 'interface' }
+    if (node.name === 'EnumDeclaration') return { name: childText(node, 'TypeDefinition', content), kind: 'enum' }
+    return null
+  }
+
+  if (language === 'rust') {
+    if (node.name === 'FunctionItem') {
+      const name = childText(node, 'BoundIdentifier', content)
+      return { name, kind: hasAncestor(node, 'ImplItem') ? 'method' : 'function' }
+    }
+    if (node.name === 'StructItem') return { name: childText(node, 'TypeIdentifier', content), kind: 'class' }
+    if (node.name === 'EnumItem') return { name: childText(node, 'TypeIdentifier', content), kind: 'enum' }
+    if (node.name === 'ImplItem') return { name: childText(node, 'TypeIdentifier', content), kind: 'class' }
+    return null
+  }
+
+  if (language === 'ruby') {
+    if (node.name === 'ClassDef') return { name: childText(node, 'Constant', content), kind: 'class' }
+    // Modules share class-like outline slots (no separate "module" kind).
+    if (node.name === 'ModuleDef') return { name: childText(node, 'Constant', content), kind: 'class' }
+    if (node.name === 'MethodDef') {
+      const name = childText(node, 'Identifier', content)
+      const nested = hasAncestor(node, 'ClassDef') || hasAncestor(node, 'ModuleDef')
+      return { name, kind: nested ? 'method' : 'function' }
+    }
+    return null
+  }
+
+  // csharp uses a separate token-level walk (Replit grammar rarely emits
+  // structural classDecl/methodDecl nodes).
+
+  // Java (and similar Definition-named grammars)
   const name = childText(node, 'Definition', content)
   if (node.name === 'ClassDeclaration') return { name, kind: 'class' }
   if (node.name === 'InterfaceDeclaration') return { name, kind: 'interface' }
@@ -56,22 +114,75 @@ function codeSymbol(node: SyntaxNode, language: Exclude<OutlineLanguage, 'markdo
   return null
 }
 
+function makeItem(kind: OutlineKind, name: string, from: number, to: number, starts: number[]): OutlineItem {
+  return {
+    id: `${kind}:${from}:${name}`,
+    name,
+    kind,
+    from,
+    to,
+    line: lineAt(starts, from),
+    children: [],
+  }
+}
+
+// @replit/codemirror-lang-csharp often fails to build classDecl/methodDecl
+// nodes (error recovery leaves Keyword + TypeIdentifier + MethodName). Walk
+// those tokens for a flat/approx-nested outline.
+function csharpOutline(tree: Tree, content: string, starts: number[]): OutlineItem[] {
+  const root: OutlineItem[] = []
+  let pending: OutlineKind | 'skip-type' | null = null
+  let currentType: OutlineItem | null = null
+
+  tree.iterate({
+    enter(node) {
+      if (node.name === 'Keyword') {
+        const kw = content.slice(node.from, node.to)
+        if (kw === 'class' || kw === 'struct' || kw === 'record') pending = 'class'
+        else if (kw === 'interface') pending = 'interface'
+        else if (kw === 'enum') pending = 'enum'
+        else if (kw === 'namespace') pending = 'skip-type'
+        else if (pending !== 'skip-type') pending = null
+        return
+      }
+      if (node.name === 'TypeIdentifier' && pending) {
+        if (pending === 'skip-type') {
+          pending = null
+          return
+        }
+        const name = content.slice(node.from, node.to)
+        if (!name) {
+          pending = null
+          return
+        }
+        const item = makeItem(pending, name, node.from, node.to, starts)
+        root.push(item)
+        currentType = item
+        pending = null
+        return
+      }
+      if (node.name === 'MethodName') {
+        const name = content.slice(node.from, node.to)
+        if (!name) return
+        const item = makeItem('method', name, node.from, node.to, starts)
+        if (currentType) currentType.children.push(item)
+        else root.push(item)
+      }
+    },
+  })
+  return root
+}
+
 function codeOutline(tree: Tree, content: string, language: Exclude<OutlineLanguage, 'markdown'>, starts: number[]): OutlineItem[] {
+  if (language === 'csharp') return csharpOutline(tree, content, starts)
+
   const root: OutlineItem[] = []
 
   const visit = (node: SyntaxNode, parent: OutlineItem[]) => {
     const symbol = codeSymbol(node, language, content)
     let children = parent
     if (symbol?.name) {
-      const item: OutlineItem = {
-        id: `${symbol.kind}:${node.from}:${symbol.name}`,
-        name: symbol.name,
-        kind: symbol.kind,
-        from: node.from,
-        to: node.to,
-        line: lineAt(starts, node.from),
-        children: [],
-      }
+      const item = makeItem(symbol.kind, symbol.name, node.from, node.to, starts)
       parent.push(item)
       children = item.children
     }
