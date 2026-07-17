@@ -1,0 +1,100 @@
+# CodeRabbit configuration for session-insight
+# Docs: https://docs.coderabbit.ai/reference/configuration
+#
+# Soft review only — merge gate remains CI (CodeQL, golangci-lint, ESLint, tests).
+# After installing the GitHub App, every PR against main gets an automatic review.
+
+language: en-US
+
+reviews:
+  # quiet | chill | assertive — chill balances signal vs noise for a solo/small project
+  profile: chill
+  high_level_summary: true
+  collapse_walkthrough: true
+  poem: false
+  in_progress_fortune: false
+  request_changes_workflow: false
+  auto_title_instructions: ""
+
+  path_filters:
+    - "!frontend/dist/**"
+    - "!**/node_modules/**"
+    - "!**/*.min.js"
+    - "!assets/screenshots/**"
+    - "!.runtime/**"
+    - "!docs/**"
+
+  path_instructions:
+    - path: "internal/**/*.go"
+      instructions: |
+        This is a local desktop session viewer (Go backend). Prefer:
+        - Correctness around session parsing, SQLite FTS, and delete/live safety
+        - Privacy: no secrets/tokens/session content leaking into logs or API errors
+        - Respect build tag sqlite_fts5 and //go:embed frontend/dist
+        - Prefer small, testable changes; do not invent mobile UX
+        Avoid style nits already covered by golangci-lint / gofmt.
+
+    - path: "frontend/src/**/*.{ts,tsx}"
+      instructions: |
+        React + TypeScript desktop UI (not mobile-first). Prefer:
+        - Terminal hit-testing must stay on xterm APIs (markers/decorations); no hand-rolled row overlay math
+        - Replay/minimap/sidebar correctness and scroll sync
+        - Avoid breaking existing agent-filter / code-reader / bookmark flows
+        Skip pure formatting already covered by ESLint / tsc.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        CI must keep hard gates: frontend lint/typecheck/tests/build, golangci-lint, go vet, go test, CodeQL.
+        Do not suggest removing those checks. Linked-worktree runtime isolation is intentional.
+
+    - path: "run.sh"
+      instructions: |
+        Primary checkout uses port 8080; linked worktrees use random ports and .runtime/.
+        Do not suggest killing processes by port name broadly.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    # Skip WIP noise
+    ignore_title_keywords:
+      - WIP
+      - "DO NOT MERGE"
+    base_branches:
+      - main
+
+  tools:
+    golangci-lint:
+      enabled: true
+      config_file: ".golangci.yml"
+    eslint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    github-checks:
+      enabled: true
+
+  pre_merge_checks:
+    # Advisory only — do not block merge; CI is the hard gate
+    title:
+      mode: warning
+    description:
+      mode: off
+    docstrings:
+      mode: off
+    issue_assessment:
+      mode: off
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - path: "AGENTS.md"
+      - path: "CLAUDE.md"
+      - path: "**/AGENTS.md"
