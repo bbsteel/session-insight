@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml/badge.svg)](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml)
 
-A local web app for browsing and replaying AI coding agent sessions. Session discovery, indexing, search, and replay run on your machine. AI generation is opt-in and may send selected session context to a provider you configure.
+A local-first web app for browsing and analyzing AI coding agent sessions through terminal-native replay. It reconstructs ANSI-styled conversations, tool calls, and code output in an interactive terminal, while session discovery, indexing, search, and replay stay on your machine. AI generation is opt-in and may send selected session context to a provider you configure.
 
 [中文](README_ZH.md)
 
