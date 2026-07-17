@@ -44,6 +44,40 @@ When the working tree already has uncommitted or local-only work on `main` that 
 - Do not introduce independent DOM overlay coordinate math for terminal rows. Hand-rolled `getBoundingClientRect()`/`cellHeight` calculations can drift from xterm by 1-2 rows because xterm accounts for screen padding, renderService CSS cell dimensions, ceil/clamp behavior, and viewport state internally.
 - Use xterm marker/decoration rendering for hover feedback so visual positioning shares xterm's own viewport math.
 
+## Frontend Validation (Playwright)
+
+Frontend unit scripts under `frontend/scripts/` (pure Node + `tsc` of isolated modules) remain the default for **logic-only** modules with no DOM or layout surface (`scrollSync`, `sidebarRows`, outline parsers, etc.). They do **not** replace browser checks when the user-visible UI can break.
+
+### What PR CI already runs
+
+`.github/workflows/ci.yml` runs `npm test` in `frontend/` on every pull request (after `npm ci`, lint, and `tsc --noEmit`). That script is an **explicit aggregator** in `frontend/package.json` (`"test": "npm run test:scroll && …"`). CI does **not** auto-discover scripts by filename.
+
+### How to make a new frontend test run on PRs
+
+For any **durable, headless unit script** meant as regression coverage:
+
+1. Add `frontend/scripts/test-<name>.mjs` (or extend an existing script).
+2. Add a matching npm script, e.g. `"test:<name>": "… tsc … && node scripts/test-<name>.mjs"`.
+3. **Add** `npm run test:<name>` to the `"test"` aggregator in `frontend/package.json` (keep `test:*` keys and the aggregator chain in alphabetical order so the block stays scannable). Omitting this step means local `npm run test:<name>` works but **PR CI never runs it**.
+4. Do not put live-app Playwright scripts into `"test"` unless they are fully headless, self-contained (fixtures/mocks, no dependency on the developer’s local sessions or a manually started `./run.sh`), and finish reliably on `ubuntu-latest` without interactive display setup beyond what CI already has.
+
+Optional: if a future browser e2e suite is added for CI, wire it as a **separate** npm script (e.g. `test:e2e`) and a dedicated CI step (install Chromium, start the app against fixtures, run Playwright). Do not silently fold flaky live-session scripts into the existing `npm test` chain.
+
+### Live Playwright validation (agent / local, not PR CI by default)
+
+For changes that affect **rendered UI, layout, CSS, interactions, or multi-component wiring** (components under `frontend/src/components/`, app shell, terminal/xterm UI, minimap chrome, modals, filters, panels, theme):
+
+1. **Run the full app** first (`./run.sh all` in the correct checkout; use the post-bind `Ready:` URL / worktree `.runtime/session-insight.url`). Do not validate against a frontend-only Vite URL unless the API path is also verified.
+2. **Write or extend a Playwright script** that exercises the changed path against that running instance. Prefer a focused throwaway or `frontend/scripts/` script over claiming “looks fine” without automation. Playwright is already a `frontend` devDependency; Chromium: `npm --prefix frontend exec -- playwright install chromium`.
+3. **Assert first (works for every agent, with or without vision).** Prefer checks that do not require looking at pixels: visible text/roles, counts, selected state, URL/hash, enabled/disabled, `getBoundingClientRect()` / box model (overlap, zero size, off-screen, order), computed styles when relevant, console errors, network failures. Encode the acceptance criteria in the script so a text-only agent can still get a hard pass/fail.
+4. **Screenshot when visual judgment is still needed** — layout shifts, spacing, overflow, theme, terminal/minimap alignment, panel chrome, or defects that structural assertions cannot prove. Save under a disposable path (e.g. worktree `.runtime/` or `/tmp/session-insight-ui/`).
+   - **Multimodal agents** (can open images via the file/image reader): open the PNG and decide pass/fail from pixels; do not stop at “screenshot written”.
+   - **Text-only / non-vision agents**: still capture screenshots and print their absolute paths, but **do not claim visual QA passed**. State clearly that pixel review is deferred; hand the paths to the user (or a vision-capable agent) and limit your own pass/fail claim to the assertion results in step 3. Optionally dump accessibility tree or key bounding boxes next to the screenshot for a stronger text report.
+5. **Do not** treat README capture (`npm --prefix frontend run capture:screenshots`) as product regression coverage; that workflow is only for publishing sanitized marketing screenshots (see `assets/screenshots/README.md`).
+6. Pure logic refactors with existing `npm --prefix frontend run test*` coverage and no UI surface still need those unit scripts (wired into `"test"` as above); live Playwright is not mandatory for them.
+
+Agent-instruction or docs-only edits do not require Playwright.
+
 ## Product Scope
 
 - Do not optimize new UI work for mobile. Design and verify the application as a desktop/local developer tool unless the user explicitly requests mobile support.
