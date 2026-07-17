@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -18,12 +19,28 @@ type DB struct {
 	conn *sql.DB
 }
 
+// dbOpenLocks serializes Open calls for the same database path. Multiple
+// goroutines opening the same SQLite file during migrations (DDL) can race and
+// produce "database is locked"; the mutex lets one caller finish migrations and
+// the others proceed against an already-initialized schema.
+var dbOpenLocks sync.Map // map[string]*sync.Mutex
+
+func openMutex(dbPath string) *sync.Mutex {
+	mu, _ := dbOpenLocks.LoadOrStore(dbPath, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
 func Open(dataDir string) (*DB, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
 	}
 
 	dbPath := filepath.Join(dataDir, "index.db")
+
+	mu := openMutex(dbPath)
+	mu.Lock()
+	defer mu.Unlock()
+
 	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return nil, err
