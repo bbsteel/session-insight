@@ -18,7 +18,7 @@ jobs:
   test:
     name: Test and build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
@@ -41,6 +41,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Run ESLint
+        working-directory: frontend
+        run: npm run lint
+
       - name: Run TypeScript type check
         working-directory: frontend
         run: npx tsc --noEmit
@@ -52,6 +56,15 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      # go:embed frontend/dist requires a real build tree (not a stub) before Go analysis.
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          # goinstall builds with the setup-go toolchain so typecheck matches go.mod (1.25+).
+          version: v2.12.2
+          install-mode: goinstall
+          args: --timeout=5m
 
       - name: Run Go vet
         run: go vet -tags sqlite_fts5 ./...

@@ -260,7 +260,7 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 						Repository:       ss.Repository,
 						Project:          ss.Project,
 						CWD:              ss.CWD,
-						PreviewText:      detail.Session.PreviewText,
+						PreviewText:      detail.PreviewText,
 						TurnCount:        ss.TurnCount,
 						MessageCount:     ss.MessageCount,
 						Branch:           ss.Branch,
@@ -320,7 +320,7 @@ func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add
 						Repository:       ss.Repository,
 						Project:          ss.Project,
 						CWD:              ss.CWD,
-						PreviewText:      detail.Session.PreviewText,
+						PreviewText:      detail.PreviewText,
 						TurnCount:        ss.TurnCount,
 						MessageCount:     ss.MessageCount,
 						Branch:           ss.Branch,
@@ -677,11 +677,9 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	for _, rd := range s.Readers {
 		sessions, _ := rd.ListSessions()
 		count := 0
-		if sessions != nil {
-			for _, sess := range sessions {
-				if !sess.IsSubagent {
-					count++
-				}
+		for _, sess := range sessions {
+			if !sess.IsSubagent {
+				count++
 			}
 		}
 		_, canDelete := rd.(reader.SessionDeleter)
@@ -816,33 +814,33 @@ func (s *Server) handleExportSession(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var md strings.Builder
-		md.WriteString(fmt.Sprintf("# %s\n\n", detail.Name))
+		fmt.Fprintf(&md, "# %s\n\n", detail.Name)
 		if detail.Repository != "" {
-			md.WriteString(fmt.Sprintf("**Repo:** %s", detail.Repository))
+			fmt.Fprintf(&md, "**Repo:** %s", detail.Repository)
 			if detail.Branch != "" {
-				md.WriteString(fmt.Sprintf(" @%s", detail.Branch))
+				fmt.Fprintf(&md, " @%s", detail.Branch)
 			}
 			md.WriteString("\n")
 		}
-		md.WriteString(fmt.Sprintf("**Model:** %s | **Turns:** %d | **Todos:** %d/%d done\n\n",
+		fmt.Fprintf(&md, "**Model:** %s | **Turns:** %d | **Todos:** %d/%d done\n\n",
 			detail.ModelName, len(detail.Turns),
-			countDone(detail.Todos), len(detail.Todos)))
+			countDone(detail.Todos), len(detail.Todos))
 		md.WriteString("---\n\n")
 
 		for _, t := range detail.Turns {
-			md.WriteString(fmt.Sprintf("## Turn %d\n\n", t.TurnIndex))
+			fmt.Fprintf(&md, "## Turn %d\n\n", t.TurnIndex)
 			if t.UserMessage != "" {
-				md.WriteString(fmt.Sprintf("**User:** %s\n\n", t.UserMessage))
+				fmt.Fprintf(&md, "**User:** %s\n\n", t.UserMessage)
 			}
 			if t.AssistantMessage != "" {
-				md.WriteString(fmt.Sprintf("**Assistant:** %s\n\n", t.AssistantMessage))
+				fmt.Fprintf(&md, "**Assistant:** %s\n\n", t.AssistantMessage)
 			}
 			if len(t.ToolNames) > 0 {
-				md.WriteString(fmt.Sprintf("*Tools: %s*\n\n", strings.Join(t.ToolNames, ", ")))
+				fmt.Fprintf(&md, "*Tools: %s*\n\n", strings.Join(t.ToolNames, ", "))
 			}
-			md.WriteString(fmt.Sprintf("*%d tokens | %s*\n\n---\n\n",
+			fmt.Fprintf(&md, "*%d tokens | %s*\n\n---\n\n",
 				t.TokenUsage.PromptTokens+t.TokenUsage.CompletionTokens,
-				formatDur(t.DurationMs)))
+				formatDur(t.DurationMs))
 		}
 
 		filename := fmt.Sprintf("session-%s.md", id[:8])

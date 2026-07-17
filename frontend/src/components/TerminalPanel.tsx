@@ -73,7 +73,6 @@ function dbg(tag: string, info?: Record<string, unknown>) {
   if (!TERM_DEBUG) return
   const t = (performance.now() / 1000).toFixed(3)
   const payload = { platform: TEMP_PLATFORM, ...(info ?? {}) }
-  // eslint-disable-next-line no-console
   console.debug('[si-term]', t, tag, payload)
 }
 
@@ -283,7 +282,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       try {
         webglOk = !!document.createElement('canvas').getContext('webgl2')
       } catch {
-        webglOk = false
+        // keep webglOk false when WebGL2 probe throws
       }
       if (webglOk) {
         try {

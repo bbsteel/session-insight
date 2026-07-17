@@ -681,7 +681,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         // estimate below drifts badly on sessions with uneven turn lengths.
         const turnPos = positionsData?.positions.find(p => p.kind === 'turn' && p.turn_index === index)
         const jumpDbg = (info: Record<string, unknown>) => {
-          // eslint-disable-next-line no-console
           if (localStorage.getItem('si-term-debug') === '1') console.log('[si-jump]', JSON.stringify(info))
         }
         if (turnPos) {
@@ -721,7 +720,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     }
     if (scrollToTopRef) {
       scrollToTopRef.current = (top: number) => {
-        // eslint-disable-next-line no-console
         if (localStorage.getItem('si-term-debug') === '1') console.log('[si-scroll-top]', JSON.stringify({ top, line: Math.floor(top / TERMINAL_LINE_HEIGHT) }))
         termControlRef.current?.scrollToLine(Math.floor(top / TERMINAL_LINE_HEIGHT))
       }
@@ -958,7 +956,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     const barCount = turns.length
     if (barCount === 0) return
     const base = jumpBaseRef.current
-    let targetIndex = -1
+    let targetIndex: number
 
     if (target === 'turn') {
       targetIndex = Math.max(0, Math.min(base + direction, barCount - 1))
@@ -1176,7 +1174,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                       checked={!hiddenAnomalyTypes.has(type)}
                       onChange={() => setHiddenAnomalyTypes(prev => {
                         const next = new Set(prev)
-                        prev.has(type) ? next.delete(type) : next.add(type)
+                        if (prev.has(type)) next.delete(type)
+                        else next.add(type)
                         return next
                       })}
                       className="h-3 w-3"

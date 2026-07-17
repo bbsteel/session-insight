@@ -7,9 +7,9 @@ import "strings"
 func IsEditTool(name string) bool {
 	switch name {
 	case "Edit", "str_replace_editor", // Claude
-		"edit",          // OpenCode
-		"edit_file",     // Chrys
-		"apply_patch",   // Codex, Copilot
+		"edit",           // OpenCode
+		"edit_file",      // Chrys
+		"apply_patch",    // Codex, Copilot
 		"search_replace": // Grok Build
 		return true
 	}

@@ -1,0 +1,45 @@
+# golangci-lint v2 — deeper static checks for the GH automated review gate.
+# Complements CodeQL (security) and go vet / tsc (already in CI).
+version: "2"
+
+run:
+  build-tags:
+    - sqlite_fts5
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  # errcheck is valuable but floods historical best-effort paths
+  # (Close/Rollback/Encode, fire-and-forget settings). Re-enable after audit.
+  disable:
+    - errcheck
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - frontend/
+      - third_party$
+      - builtin$
+      - examples$
+    rules:
+      - path: _test\.go
+        linters:
+          - dupl
+          - gosec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      - frontend/

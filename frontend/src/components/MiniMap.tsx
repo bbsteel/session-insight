@@ -257,7 +257,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
   // contentOffset drives the markers layer transform in position mode; stored
   // as ref so PositionModeContent re-renders on scroll without extra state churn.
   const contentOffsetRef = useRef(0)
-  const [contentOffsetVersion, setContentOffsetVersion] = useState(0)
+  const [, setContentOffsetVersion] = useState(0)
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
   const weights = useMemo(() => computeTurnWeights(turns, billing), [turns, billing])
 

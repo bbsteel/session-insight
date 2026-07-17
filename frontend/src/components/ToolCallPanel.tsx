@@ -176,7 +176,8 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
   const toggleName = (name: string) => {
     setSelected(prev => {
       const next = new Set(prev)
-      next.has(name) ? next.delete(name) : next.add(name)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
       return next
     })
   }
@@ -184,7 +185,8 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
   const toggleExpanded = (key: string) => {
     setExpanded(prev => {
       const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }

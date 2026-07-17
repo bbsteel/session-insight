@@ -431,9 +431,7 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 				})
 			}
 
-			for _, ag := range aParts.Agents {
-				turn.Subagents = append(turn.Subagents, ag)
-			}
+			turn.Subagents = append(turn.Subagents, aParts.Agents...)
 		}
 
 		if hasTurnTiming {

@@ -51,8 +51,11 @@ function titleCaseToken(token: string): string {
 
 function cleanModelName(name: string): string {
   return name
+    // Strip ANSI CSI sequences and other control bytes that sometimes leak into model labels.
+    // eslint-disable-next-line no-control-regex -- intentional control-char cleanup
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
     .replace(/\[(?:\d{1,3};)*\d{1,3}m\]/g, '')
+    // eslint-disable-next-line no-control-regex -- intentional control-char cleanup
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
     .trim()
 }
