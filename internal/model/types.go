@@ -9,15 +9,13 @@ func SessionRevision(s Session) int64 {
 	return s.UpdatedAt.UnixNano()
 }
 
-// LiveWindow is how recently a session must have been active to count as
-// "live" (活跃中). This is a presence heuristic — "recently active", not a
-// literal "process is running now" — so a single uniform window is applied to
-// every agent regardless of how it records activity.
+// LiveWindow is the common freshness upper bound for live-session detection.
+// Readers may refine recent sessions with their agent-specific process,
+// heartbeat, lock, or in-progress signals through reader.IsSessionLive.
 const LiveWindow = 5 * time.Minute
 
-// IsSessionLive reports whether a session counts as live, based purely on how
-// long ago it was last active. Must be evaluated at serve time (relative to
-// now), never stored, so liveness decays correctly as a session goes idle.
+// IsSessionLive is the timestamp-only fallback and upper-bound check. API code
+// should use reader.IsSessionLive so agent-specific capabilities can refine it.
 func IsSessionLive(updatedAt time.Time) bool {
 	return time.Since(updatedAt) < LiveWindow
 }

@@ -134,6 +134,38 @@ func TestListAndGetSession(t *testing.T) {
 	}
 }
 
+func TestBuildSessionIgnoresBackgroundRecapActivity(t *testing.T) {
+	root := t.TempDir()
+	id := "abababab-bbbb-cccc-dddd-eeeeeeeeeeee"
+	lastActive := time.Now().Add(-2 * model.LiveWindow).Truncate(time.Second)
+	recapTime := time.Now().Truncate(time.Second)
+	loc := writeSession(t, root, "proj", id, summaryFile{
+		LastActiveAt: lastActive.Format(time.RFC3339),
+		UpdatedAt:    recapTime.Format(time.RFC3339),
+	}, sampleUpdatesClosed(), sampleEventsClosed())
+
+	for _, name := range []string{"updates.jsonl", "events.jsonl"} {
+		if err := os.Chtimes(filepath.Join(loc.Dir, name), lastActive, lastActive); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
+	}
+	if err := os.Chtimes(loc.SummaryPath, recapTime, recapTime); err != nil {
+		t.Fatalf("chtimes summary: %v", err)
+	}
+
+	sum, err := readSummary(loc.SummaryPath)
+	if err != nil {
+		t.Fatalf("readSummary: %v", err)
+	}
+	session := New(root).buildSession(loc, sum)
+	if !session.UpdatedAt.Equal(lastActive) {
+		t.Fatalf("updated_at=%s, want interactive activity %s", session.UpdatedAt, lastActive)
+	}
+	if model.IsSessionLive(session.UpdatedAt) {
+		t.Fatal("background recap must not reactivate a completed session")
+	}
+}
+
 func TestRenderEventsFromUpdates(t *testing.T) {
 	root := t.TempDir()
 	id := "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -240,6 +272,21 @@ func TestLiveRevision(t *testing.T) {
 	}
 	if rev2 <= rev1 {
 		t.Errorf("revision should increase: %d -> %d", rev1, rev2)
+	}
+
+	// A background recap only rewrites summary.json; it does not change the
+	// terminal transcript and must not look like live output.
+	summaryPath := filepath.Join(loc.Dir, "summary.json")
+	recapTime := now.Add(time.Hour)
+	if err := os.Chtimes(summaryPath, recapTime, recapTime); err != nil {
+		t.Fatalf("chtimes summary: %v", err)
+	}
+	rev3, err := r.LiveRevision(id)
+	if err != nil {
+		t.Fatalf("LiveRevision3: %v", err)
+	}
+	if rev3 != rev2 {
+		t.Fatalf("summary-only recap advanced live revision: %d -> %d", rev2, rev3)
 	}
 }
 
