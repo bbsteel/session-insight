@@ -24,6 +24,8 @@ interface ToolEntry {
 interface Props {
   positions: PositionsResponse | null
   building: boolean
+  pinned?: boolean
+  onPinnedChange?: (pinned: boolean) => void
   // 外部筛选请求(分析页 Tool Usage chip):token 变化时应用 name 筛选。
   filterRequest?: { name: string; token: number } | null
   onJump: (lineStart: number, logicalStart?: number) => void
@@ -122,7 +124,7 @@ const summaryClampStyle: React.CSSProperties = {
 
 const WIDE_STORAGE_KEY = 'si-toolpanel-wide'
 
-export default function ToolCallPanel({ positions, building, filterRequest, onJump, onClose }: Props) {
+export default function ToolCallPanel({ positions, building, pinned = false, onPinnedChange, filterRequest, onJump, onClose }: Props) {
   const panelRef = useRef<HTMLElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -135,17 +137,16 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
-  // The panel is an in-terminal floating layer, so clicks outside it do not
-  // bubble through a shared modal backdrop. Listen at the document level and
-  // use the panel ref to keep all controls inside the panel interactive.
+  // Floating overlay: close on outside click unless pinned.
   useEffect(() => {
+    if (pinned) return
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target
       if (target instanceof Node && !panelRef.current?.contains(target)) onClose()
     }
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [onClose])
+  }, [onClose, pinned])
 
   // 应用来自分析页的筛选请求:只按该工具筛选,并清掉文字过滤避免叠加后空结果。
   useEffect(() => {
@@ -218,6 +219,19 @@ export default function ToolCallPanel({ positions, building, filterRequest, onJu
           {filtering ? `${visible.length}/${entries.length}` : entries.length}
         </span>
         <span className="flex-1" />
+        <button
+          onClick={() => onPinnedChange?.(!pinned)}
+          className={`h-6 rounded px-1.5 text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+            pinned
+              ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+          }`}
+          title={pinned ? '取消钉住（点击外部可关闭）' : '钉住面板（点击外部不关闭）'}
+          aria-pressed={pinned}
+          aria-label={pinned ? '取消钉住导航面板' : '钉住导航面板'}
+        >
+          {pinned ? '📌 已钉住' : '📌 钉住'}
+        </button>
         <button
           onClick={toggleWide}
           className="h-6 rounded px-1.5 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"

@@ -13,7 +13,7 @@ import {
   shouldShowLanguageSupportBanner,
 } from '../codeReaderSupport'
 import type { CodeReaderHandle } from './CodeReader'
-import ThemeToggle from './ThemeToggle'
+
 
 const CodeReader = lazy(() => import('./CodeReader'))
 
@@ -230,7 +230,6 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
         >
           查找
         </button>
-        <ThemeToggle />
       </header>
       <div className="flex min-h-0 flex-1">
         <aside className="w-[280px] flex-shrink-0 overflow-auto border-r border-[var(--border-default)] bg-[var(--bg-surface)] py-1">

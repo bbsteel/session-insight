@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SessionInsight</title>
+    <!-- Apply theme before paint to avoid light/dark flash (default: light). -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('recap-theme') || localStorage.getItem('session-insight-theme') || 'light'
+          var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) document.documentElement.classList.add('dark')
+          else document.documentElement.classList.remove('dark')
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

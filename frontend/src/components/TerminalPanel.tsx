@@ -262,6 +262,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // rewrite (and its anchor scroll) has painted.
     let removeSnapshot: (() => void) | null = null
     let hasWrittenOnce = false
+    // Opening a session should land at the start (top). Cleared once the user
+    // scrolls away, jumps, or live-follow pins the viewport to the bottom.
+    let openAtTop = true
+    // While rewriting, xterm briefly parks at the bottom; ignore those scrolls
+    // so they don't cancel open-at-top before we re-anchor to line 0.
+    let writingContent = false
     let disposeSearchResultsRef: { dispose(): void } | null = null
 
     waitForTerminalFont().then(() => {
@@ -656,6 +662,7 @@ const snapshotTerminal = () => {
         clearHoverDecoration()
         const rewriteStart = performance.now()
         const wroteBytes = (foldView?.text ?? rawAnsi).length
+        writingContent = true
         term.reset()
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
         term.write(foldView?.text ?? rawAnsi, () => {
@@ -664,7 +671,14 @@ const snapshotTerminal = () => {
           injectFoldRows()
           injectProgressRow()
           queueMetrics()
-          afterWrite?.()
+          if (afterWrite) {
+            afterWrite()
+          } else if (openAtTop && !followOutputRef.current) {
+            // xterm leaves the viewport at the bottom after a large write;
+            // keep the session-open default at the start until the user moves.
+            term.scrollToLine(0)
+          }
+          writingContent = false
           // Two frames: one for xterm's render, one to be past the paint.
           let removedInRaf = false
           requestAnimationFrame(() => requestAnimationFrame(() => { removeSnapshot?.(); removedInRaf = true }))
@@ -688,6 +702,7 @@ const snapshotTerminal = () => {
 
       const toggleFold = (fold: FoldRange) => {
         if (!rawAnsi) return
+        openAtTop = false
         // Keep the toggled header at the same on-screen row across the rewrite.
         const beforeRow = toDisplayLine(fold.headerDisplay)
         const viewportOffset = beforeRow - term.buffer.active.viewportY
@@ -709,6 +724,7 @@ const snapshotTerminal = () => {
           if (!collapsed && collapsedKeys.has(k)) { collapsedKeys.delete(k); changed = true }
         }
         if (!changed) return
+        openAtTop = false
         const anchor = anchorOriginalRow ?? toOriginalLine(term.buffer.active.viewportY)
         const viewportOffset = toDisplayLine(anchor) - term.buffer.active.viewportY
         recompose(() => {
@@ -868,7 +884,10 @@ const snapshotTerminal = () => {
             if (disposed) return
             rawAnsi = ansi
             foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys) : null
-            writeComposed(() => { if (foldView) onFoldChangeRef.current?.() })
+            writeComposed(() => {
+              if (foldView) onFoldChangeRef.current?.()
+              if (openAtTop && !followOutputRef.current) term.scrollToLine(0)
+            })
           })
           .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
       }
@@ -912,8 +931,14 @@ const snapshotTerminal = () => {
 
       if (controlRef) {
         controlRef.current = {
-          scrollToLine: (line) => term.scrollToLine(line),
-          scrollToLineCentered: (line) => term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2))),
+          scrollToLine: (line) => {
+            if (line > 0) openAtTop = false
+            term.scrollToLine(line)
+          },
+          scrollToLineCentered: (line) => {
+            openAtTop = false
+            term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2)))
+          },
           getMetrics,
           setLineMatchers: (matchers) => {
             lineMatchers = matchers
@@ -974,6 +999,7 @@ const snapshotTerminal = () => {
             // Pin to bottom when already there, or when live-follow is on
             // (explicit tail -f mode for active sessions).
             const pinBottom = followOutputRef.current || buf.viewportY >= buf.baseY
+            if (pinBottom) openAtTop = false
 
             // Pure append: rendering is deterministic, so as long as nothing
             // structural changed upstream (an in-progress group header's n/m
@@ -990,6 +1016,7 @@ const snapshotTerminal = () => {
                 resolve()
               }))
               if (pinBottom) term.scrollToBottom()
+              else if (openAtTop) term.scrollToLine(0)
               return 'appended'
             }
 
@@ -998,6 +1025,7 @@ const snapshotTerminal = () => {
             foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys) : null
             await new Promise<void>(resolve => writeComposed(() => {
               if (pinBottom) term.scrollToBottom()
+              else if (openAtTop) term.scrollToLine(0)
               else term.scrollToLine(keepRow)
               resolve()
             }))
@@ -1009,6 +1037,9 @@ const snapshotTerminal = () => {
       }
 
       disposeOnScroll = term.onScroll(() => {
+        // User (or intentional programmatic) scroll away from the top ends
+        // open-at-top mode. Ignore mid-rewrite scrolls (xterm's bottom park).
+        if (!writingContent && openAtTop && term.buffer.active.viewportY > 0) openAtTop = false
         clearHoverDecoration()
         if (tooltipEl) tooltipEl.style.display = 'none'
         if (xtermScreen) xtermScreen.style.cursor = ''

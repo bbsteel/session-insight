@@ -17,6 +17,8 @@ interface UserMessageEntry {
 interface Props {
   positions: PositionsResponse | null
   building: boolean
+  pinned?: boolean
+  onPinnedChange?: (pinned: boolean) => void
   onJump: (lineStart: number, logicalStart?: number) => void
   onClose: () => void
 }
@@ -50,7 +52,7 @@ const summaryClampStyle: React.CSSProperties = {
 
 const WIDE_STORAGE_KEY = 'si-userpanel-wide'
 
-export default function UserMessagePanel({ positions, building, onJump, onClose }: Props) {
+export default function UserMessagePanel({ positions, building, pinned = false, onPinnedChange, onJump, onClose }: Props) {
   const panelRef = useRef<HTMLElement>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -61,15 +63,16 @@ export default function UserMessagePanel({ positions, building, onJump, onClose 
     return !w
   })
 
-  // 面板是覆盖在终端上的浮层,点击外部关闭,同时保留面板内部交互。
+  // 面板是覆盖在终端上的浮层;未钉住时点击外部关闭,钉住后保持打开。
   useEffect(() => {
+    if (pinned) return
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target
       if (target instanceof Node && !panelRef.current?.contains(target)) onClose()
     }
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [onClose])
+  }, [onClose, pinned])
 
   const entries = useMemo(
     () => (positions?.positions ?? []).filter(p => p.kind === 'user').map((p, i) => toEntry(p, i + 1)),
@@ -95,6 +98,19 @@ export default function UserMessagePanel({ positions, building, onJump, onClose 
           {filtering ? `${visible.length}/${entries.length}` : entries.length}
         </span>
         <span className="flex-1" />
+        <button
+          onClick={() => onPinnedChange?.(!pinned)}
+          className={`h-6 rounded px-1.5 text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+            pinned
+              ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+          }`}
+          title={pinned ? '取消钉住（点击外部可关闭）' : '钉住面板（点击外部不关闭）'}
+          aria-pressed={pinned}
+          aria-label={pinned ? '取消钉住导航面板' : '钉住导航面板'}
+        >
+          {pinned ? '📌 已钉住' : '📌 钉住'}
+        </button>
         <button
           onClick={toggleWide}
           className="h-6 rounded px-1.5 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
