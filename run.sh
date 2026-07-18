@@ -52,13 +52,16 @@ Commands:
   stop        停止本工作树后台进程
   restart     重启本工作树（stop + start）
   status      查看本工作树状态，并列出所有实例（编号 / PID / 端口 / 启动时间）
-  kill <n…>   按 status 列表编号停止实例（可多个，例如: kill 1 3）
+  kill <n…>   按 status 列表编号停止实例（编号每次重算，kill 前请先 status；例: kill 1 3）
   all         构建 + 运行
   log         查看后台日志
 
 Linked worktrees automatically use an OS-assigned random port and an isolated
 database under .runtime/. The primary checkout continues to use port 8080 and
 ~/.session-insight. PORT and SI_DATA_DIR may be set to override these defaults.
+Instance numbers in status/kill are rebuilt each run and may change; always run
+status immediately before kill. Only related checkouts (this repo's worktrees)
+are killable; same-named binaries elsewhere are listed as non-killable.
 EOF
   exit 0
 }
@@ -220,10 +223,30 @@ process_port_from_ss() {
   ' || true
 }
 
-process_port_from_environ() {
+process_env_var() {
   local pid="$1"
+  local name="$2"
   if [[ -r "/proc/$pid/environ" ]]; then
-    tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n 's/^PORT=//p' | head -1 || true
+    tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n "s/^${name}=//p" | head -1 || true
+  fi
+}
+
+process_port_from_environ() {
+  process_env_var "$1" "PORT"
+}
+
+process_data_dir() {
+  # Prefer the live process environ, then the shell default for this checkout.
+  local pid="$1"
+  local data_dir
+  data_dir=$(process_env_var "$pid" "SI_DATA_DIR")
+  if [[ -z "$data_dir" && -n "${SI_DATA_DIR:-}" ]]; then
+    data_dir="$SI_DATA_DIR"
+  fi
+  if [[ -n "$data_dir" ]]; then
+    printf '%s\n' "$data_dir"
+  else
+    printf '%s\n' "~/.session-insight"
   fi
 }
 
@@ -311,6 +334,7 @@ INSTANCE_PORTS=()
 INSTANCE_URLS=()
 INSTANCE_STARTEDS=()
 INSTANCE_NOTES=()
+INSTANCE_KILLABLE=() # "1" if ./run.sh kill may stop it; "0" for external same-named binaries
 INSTANCE_STALE_LINES=()
 
 push_instance() {
@@ -323,6 +347,7 @@ push_instance() {
   local url="$7"
   local started="$8"
   local note="$9"
+  local killable="${10:-1}"
   INSTANCE_PIDS+=("$pid")
   INSTANCE_BINS+=("$bin")
   INSTANCE_CHECKOUTS+=("$checkout")
@@ -332,6 +357,7 @@ push_instance() {
   INSTANCE_URLS+=("$url")
   INSTANCE_STARTEDS+=("$started")
   INSTANCE_NOTES+=("$note")
+  INSTANCE_KILLABLE+=("$killable")
 }
 
 checkout_note() {
@@ -367,14 +393,17 @@ collect_instances() {
   INSTANCE_URLS=()
   INSTANCE_STARTEDS=()
   INSTANCE_NOTES=()
+  INSTANCE_KILLABLE=()
   INSTANCE_STALE_LINES=()
 
   local -A listed_pids=()
+  local -A related_checkouts=()
   local checkout pid_file url_file log_file pid bin started note
   local _url _port
 
   while IFS= read -r checkout; do
     [[ -z "$checkout" || ! -d "$checkout" ]] && continue
+    related_checkouts["$checkout"]=1
     {
       read -r pid_file
       read -r url_file
@@ -406,13 +435,15 @@ collect_instances() {
     resolve_instance_url_port "$pid" "$url_file" "$log_file"
     started=$(process_start_time "$pid")
     [[ -z "$started" ]] && started="-"
-    push_instance "$pid" "$bin" "$checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note"
+    push_instance "$pid" "$bin" "$checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note" "1"
     listed_pids["$pid"]=1
   done < <(list_related_checkouts)
 
-  # Catch live binaries not covered by pid files / worktree list (orphans).
+  # Surface other live session-insight binaries. Only related-checkout orphans
+  # are killable; same-named processes outside this repo's worktrees are listed
+  # for visibility but marked non-killable.
   if [[ -d /proc ]]; then
-    local proc exe orphan_pid orphan_checkout orphan_bin
+    local proc exe orphan_pid orphan_checkout orphan_bin killable
     for proc in /proc/[0-9]*; do
       orphan_pid=${proc#/proc/}
       [[ -n "${listed_pids[$orphan_pid]+x}" ]] && continue
@@ -426,24 +457,30 @@ collect_instances() {
       pid_file=""
       url_file=""
       log_file=""
-      if [[ -f "$orphan_checkout/.runtime/session-insight.url" || -f "$orphan_checkout/session-insight.url" ||
-            -f "$orphan_checkout/.runtime/session-insight.pid" || -f "$orphan_checkout/session-insight.pid" ]]; then
-        {
-          read -r pid_file
-          read -r url_file
-          read -r log_file
-        } < <(runtime_files_for_checkout "$orphan_checkout")
+      if [[ -n "${related_checkouts[$orphan_checkout]+x}" ]]; then
+        killable="1"
+        note=$(checkout_note "$orphan_checkout")
+        if [[ -n "$note" ]]; then
+          note="$note, no pid file"
+        else
+          note="no pid file"
+        fi
+        if [[ -f "$orphan_checkout/.runtime/session-insight.url" || -f "$orphan_checkout/session-insight.url" ||
+              -f "$orphan_checkout/.runtime/session-insight.pid" || -f "$orphan_checkout/session-insight.pid" ]]; then
+          {
+            read -r pid_file
+            read -r url_file
+            read -r log_file
+          } < <(runtime_files_for_checkout "$orphan_checkout")
+        fi
+      else
+        killable="0"
+        note="external, non-killable"
       fi
       resolve_instance_url_port "$orphan_pid" "$url_file" "$log_file"
       started=$(process_start_time "$orphan_pid")
       [[ -z "$started" ]] && started="-"
-      note=$(checkout_note "$orphan_checkout")
-      if [[ -n "$note" ]]; then
-        note="$note, no pid file"
-      else
-        note="no pid file"
-      fi
-      push_instance "$orphan_pid" "$orphan_bin" "$orphan_checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note"
+      push_instance "$orphan_pid" "$orphan_bin" "$orphan_checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note" "$killable"
       listed_pids["$orphan_pid"]=1
     done
   fi
@@ -489,7 +526,8 @@ do_instances() {
     done
     echo
     echo "Total: $count instance(s)"
-    echo "Stop by number: $0 kill <n> [n...]"
+    echo "Stop by number: $0 kill <n> [n...]  (numbers are ephemeral — run status first)"
+    echo "Only related-checkout rows are killable; external same-named binaries are listed only."
   fi
 
   if [[ "${#INSTANCE_STALE_LINES[@]}" -gt 0 ]]; then
@@ -499,6 +537,29 @@ do_instances() {
     for line in "${INSTANCE_STALE_LINES[@]}"; do
       echo "  - $line"
     done
+  fi
+}
+
+# Remove pid/url runtime files only when the pid file still names this pid.
+cleanup_runtime_files_for_pid() {
+  local pid="$1"
+  local pid_file="$2"
+  local url_file="$3"
+
+  if [[ -z "$pid_file" || ! -f "$pid_file" ]]; then
+    return 0
+  fi
+
+  local file_pid
+  file_pid=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
+  if [[ "$file_pid" != "$pid" ]]; then
+    # Replacement process (or empty/unrelated file) — leave records alone.
+    return 0
+  fi
+
+  rm -f "$pid_file"
+  if [[ -n "$url_file" && -f "$url_file" ]]; then
+    rm -f "$url_file"
   fi
 }
 
@@ -513,30 +574,26 @@ stop_listed_instance() {
   local url_file="${INSTANCE_URL_FILES[$idx]}"
   local port="${INSTANCE_PORTS[$idx]}"
   local url="${INSTANCE_URLS[$idx]}"
+  local killable="${INSTANCE_KILLABLE[$idx]:-0}"
 
   echo "==> Stopping #$num  PID=$pid  port=$port  $url"
   echo "    Checkout: $checkout"
 
+  if [[ "$killable" != "1" ]]; then
+    echo "ERROR: instance #$num is external/non-killable (not a related checkout of this repo)"
+    return 1
+  fi
+
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "    Process already exited"
-    [[ -n "$pid_file" ]] && rm -f "$pid_file"
-    [[ -n "$url_file" ]] && rm -f "$url_file"
+    cleanup_runtime_files_for_pid "$pid" "$pid_file" "$url_file"
     return 0
   fi
 
-  if [[ -n "$bin" ]] && ! pid_matches_bin "$pid" "$bin"; then
-    # Orphan / renamed binary: only kill if exe still looks like session-insight.
-    local exe=""
-    if [[ -r "/proc/$pid/exe" ]]; then
-      exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
-    fi
-    case "$exe" in
-      */session-insight|*/session-insight\ \(deleted\)) ;;
-      *)
-        echo "ERROR: refusing to stop PID $pid — not a session-insight binary for $checkout"
-        return 1
-        ;;
-    esac
+  # Require the process still to be this checkout's binary — no basename-only fallback.
+  if [[ -z "$bin" ]] || ! pid_matches_bin "$pid" "$bin"; then
+    echo "ERROR: refusing to stop PID $pid — not the session-insight binary for $checkout"
+    return 1
   fi
 
   kill "$pid" 2>/dev/null || true
@@ -549,24 +606,7 @@ stop_listed_instance() {
     return 1
   fi
 
-  # Only remove runtime files if they still point at this pid (or are empty orphans).
-  if [[ -n "$pid_file" && -f "$pid_file" ]]; then
-    local file_pid
-    file_pid=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
-    if [[ -z "$file_pid" || "$file_pid" == "$pid" ]]; then
-      rm -f "$pid_file"
-    fi
-  fi
-  if [[ -n "$url_file" && -f "$url_file" ]]; then
-    # Drop URL when we stopped the process that owned this checkout's runtime files.
-    if [[ -n "$pid_file" && ! -f "$pid_file" ]] || [[ -z "$pid_file" ]]; then
-      rm -f "$url_file"
-    elif [[ -f "$pid_file" ]]; then
-      local remain
-      remain=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
-      [[ "$remain" == "$pid" || -z "$remain" ]] && rm -f "$url_file"
-    fi
-  fi
+  cleanup_runtime_files_for_pid "$pid" "$pid_file" "$url_file"
   echo "    Stopped"
   return 0
 }
@@ -575,6 +615,8 @@ do_kill() {
   if [[ "$#" -eq 0 ]]; then
     echo "Usage: $0 kill <n> [n...]"
     echo "  n is the # column from \`$0 status\` (All instances table)."
+    echo "  Numbers are rebuilt each run and may change — run status immediately before kill."
+    echo "  External same-named binaries are listed but cannot be killed."
     echo
     do_instances
     return 1
@@ -635,11 +677,7 @@ do_status() {
       echo "  Port:    $_port"
       echo "  Started: $started"
       echo "  URL:     $_url"
-      if [[ -n "$SI_DATA_DIR" ]]; then
-        echo "  Data:    $SI_DATA_DIR"
-      else
-        echo "  Data:    ~/.session-insight"
-      fi
+      echo "  Data:    $(process_data_dir "$pid")"
       echo "  Checkout: $ROOT_DIR"
     else
       echo "SessionInsight is NOT running (stale PID file: ${pid:-empty})"
