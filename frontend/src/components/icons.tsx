@@ -114,3 +114,58 @@ export function MoonIcon({ className, ...rest }: IconProps) {
     </Icon>
   )
 }
+
+export function AppearanceIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <circle cx="6" cy="6" r="2.5" />
+      <path d="M9.5 3.5a3 3 0 0 1 0 5M12 9.5a3 3 0 0 1 0-5" />
+      <path d="M11.5 12.5a3 3 0 0 0 2-2" />
+    </Icon>
+  )
+}
+
+export function NavigationIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="m11 5-5 2.5 2.5 2.5L11 5Z" />
+    </Icon>
+  )
+}
+
+export function SearchIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M10.5 10.5 14 14" />
+    </Icon>
+  )
+}
+
+export function TerminalIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <path d="M3.5 6.5 6 8 3.5 9.5M7.5 9.5h3" />
+    </Icon>
+  )
+}
+
+export function EditorIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <path d="M4 3 1 8l3 5M12 3l3 5-3 5" />
+    </Icon>
+  )
+}
+
+export function SparklesIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <path d="M8 1v3M8 12v3M3 8h3M10 8h3M4.5 4.5l2 2M9.5 9.5l2 2M4.5 11.5l2-2M9.5 2.5l2 2" />
+    </Icon>
+  )
+}
+
+
