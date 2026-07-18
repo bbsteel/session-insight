@@ -174,3 +174,38 @@ func TestIndexer_SearchHitsNewRoles(t *testing.T) {
 		}
 	}
 }
+
+func TestToolSummariesPreferRenderInputsUnderCap(t *testing.T) {
+	// Many bare tool names first would push a late render command past the cap
+	// if names were appended before render inputs.
+	names := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		names = append(names, "ToolNamePad"+strings.Repeat("x", 20))
+	}
+	detail := &model.SessionDetail{
+		Turns: []model.TurnVM{{
+			TurnIndex: 0,
+			ToolNames: names,
+		}},
+	}
+	render := []model.RenderEvent{{
+		Type: "ToolInvocation", TurnIndex: 0, ToolName: "Bash",
+		ToolInput: map[string]any{"command": "unique_acceptance_cmd_pull13"},
+	}}
+	byTurn := toolSummariesByTurn(detail, render)
+	got := byTurn[0]
+	if !strings.Contains(got, "unique_acceptance_cmd_pull13") {
+		t.Fatalf("render command lost under name flood: %q", got[:min(200, len(got))])
+	}
+	// After truncate in buildTurnTexts path:
+	texts := buildTurnTexts(model.Session{ID: "s"}, detail, render)
+	var tool string
+	for _, row := range texts {
+		if row.Role == "tool" {
+			tool = row.Content
+		}
+	}
+	if !strings.Contains(tool, "unique_acceptance_cmd_pull13") {
+		t.Fatalf("capped tool row missing render command: len=%d head=%q", len(tool), tool[:min(120, len(tool))])
+	}
+}

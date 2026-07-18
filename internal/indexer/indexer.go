@@ -159,12 +159,11 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 	}
 
 	// Render events carry tool inputs (command/path/query) that TurnVM often
-	// omits; best-effort only — missing events still index turn-level fields.
-	var renderEvents []model.RenderEvent
-	if evts, err := r.GetRenderEvents(sess.ID); err != nil {
-		log.Printf("[indexer] %s/%s: GetRenderEvents: %v", agentType, sess.ID, err)
-	} else {
-		renderEvents = evts
+	// omits. Fail the session (do not advance the watermark) so a transient
+	// error is retried on the next cycle instead of locking in a partial index.
+	renderEvents, err := r.GetRenderEvents(sess.ID)
+	if err != nil {
+		return false, fmt.Errorf("get render events: %w", err)
 	}
 
 	turns := buildTurnTexts(persisted, detail, renderEvents)
@@ -365,6 +364,8 @@ func turnErrorText(t model.TurnVM) string {
 }
 
 // toolSummariesByTurn merges TurnVM tool names/details with render-event inputs.
+// Render-event summaries (command/path/query) are appended first so the tool
+// content cap prefers high-signal inputs over bare tool-name fallbacks.
 func toolSummariesByTurn(detail *model.SessionDetail, renderEvents []model.RenderEvent) map[int]string {
 	parts := map[int][]string{}
 	add := func(turn int, s string) {
@@ -373,6 +374,30 @@ func toolSummariesByTurn(detail *model.SessionDetail, renderEvents []model.Rende
 			return
 		}
 		parts[turn] = append(parts[turn], s)
+	}
+
+	for _, ev := range renderEvents {
+		// SI readers emit PascalCase "ToolInvocation"; skip results/stdout.
+		if ev.Type == "ToolResult" || ev.Type == "tool_result" {
+			continue
+		}
+		isTool := ev.Type == "ToolInvocation" ||
+			ev.Type == "tool_use" || ev.Type == "tool_call" ||
+			ev.Type == "function_call" || ev.Type == "custom_tool_call" ||
+			(ev.ToolName != "" && len(ev.ToolInput) > 0)
+		if !isTool {
+			continue
+		}
+		var bits []string
+		if ev.ToolName != "" {
+			bits = append(bits, ev.ToolName)
+		}
+		if sum := summarizeToolInput(ev.ToolInput); sum != "" {
+			bits = append(bits, sum)
+		}
+		if len(bits) > 0 {
+			add(ev.TurnIndex, strings.Join(bits, " "))
+		}
 	}
 
 	for _, t := range detail.Turns {
@@ -402,30 +427,6 @@ func toolSummariesByTurn(detail *model.SessionDetail, renderEvents []model.Rende
 					add(t.TurnIndex, name)
 				}
 			}
-		}
-	}
-
-	for _, ev := range renderEvents {
-		// SI readers emit PascalCase "ToolInvocation"; skip results/stdout.
-		if ev.Type == "ToolResult" || ev.Type == "tool_result" {
-			continue
-		}
-		isTool := ev.Type == "ToolInvocation" ||
-			ev.Type == "tool_use" || ev.Type == "tool_call" ||
-			ev.Type == "function_call" || ev.Type == "custom_tool_call" ||
-			(ev.ToolName != "" && len(ev.ToolInput) > 0)
-		if !isTool {
-			continue
-		}
-		var bits []string
-		if ev.ToolName != "" {
-			bits = append(bits, ev.ToolName)
-		}
-		if sum := summarizeToolInput(ev.ToolInput); sum != "" {
-			bits = append(bits, sum)
-		}
-		if len(bits) > 0 {
-			add(ev.TurnIndex, strings.Join(bits, " "))
 		}
 	}
 

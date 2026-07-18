@@ -578,6 +578,8 @@ func migrate(conn *sql.DB) error {
 
 	// Version 25: expand FTS content (assistant / skill / tool summary / error).
 	// Clear watermarks so every session is re-indexed under the new shape.
+	// Leave turn_texts in place; UpsertTurns replaces rows per session as the
+	// indexer catches up (avoid a long exclusive wipe on startup).
 	if maxVersion < 25 {
 		if _, err := conn.Exec(`DELETE FROM index_watermarks`); err != nil {
 			return fmt.Errorf("v25 clear index_watermarks: %w", err)

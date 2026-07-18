@@ -59,8 +59,10 @@ func main() {
 	// 就是新数据（/api/sessions 直接从 SQLite 出），也不会跟索引轮抢 CPU。
 	idx.OnChanged = srv.NotifySessionsChanged
 
-	// 首次索引同步完成（10s 超时），保证服务启动时已有基础索引
-	initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 首次索引：schema 升级后会清空 watermark 并重扫全库（含 GetSession +
+	// GetRenderEvents），10s 往往不够。给足时间；若仍超时则 Kick 后台补完，
+	// 避免半成品索引被当成“已完成”却长期缺 assistant/tool 行。
+	initCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	initialIndexErr := idx.RunOnce(initCtx)
 	if initialIndexErr != nil {
 		log.Printf("initial indexing incomplete: %v", initialIndexErr)
