@@ -68,9 +68,11 @@ See [BUILD.md](BUILD.md) for the full Windows build guide (requires MSYS2 + ming
 | `SI_DATA_DIR` | `~/.session-insight` | Override the application database directory |
 | `CHRYS_SESSION_ROOT_DIR` | — | Override Chrys session root directory |
 
-When `run.sh` is executed from a linked Git worktree, it automatically uses an
-OS-assigned random loopback port and an isolated `.runtime/session-insight`
-data directory. The `Ready:` line reports the actual full application URL.
+When `run.sh` is executed from a linked Git worktree, it uses an OS-assigned
+random loopback port on the first run and reuses the same port on subsequent
+restarts (persisted to `.runtime/session-insight.port`), with an isolated
+`.runtime/session-insight` data directory. The `Ready:` line reports the
+actual full application URL.
 
 ## Privacy
 

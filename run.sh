@@ -6,10 +6,25 @@ FRONTEND_DIR="$ROOT_DIR/frontend"
 BIN_PATH="${BIN_PATH:-$ROOT_DIR/session-insight}"
 
 # A linked worktree is an isolated development instance. Keep its mutable
-# application state inside the worktree and let the OS assign a free port.
+# application state inside the worktree. The first run picks a free OS-assigned
+# loopback port and persists it to .runtime/session-insight.port so subsequent
+# restarts in the same worktree reuse it — the port stays stable within a
+# worktree across restarts, while different worktrees remain isolated.
 # The primary checkout retains the historical 8080 + ~/.session-insight setup.
 if [[ -f "$ROOT_DIR/.git" ]]; then
   RUNTIME_DIR="$ROOT_DIR/.runtime"
+  mkdir -p "$RUNTIME_DIR"
+  # Worktree-only: primary never sets or writes PORT_FILE (avoids a root-level
+  # untracked session-insight.port that is not gitignored).
+  PORT_FILE="$RUNTIME_DIR/session-insight.port"
+  # Reuse a previously-persisted port for this worktree; fall back to $PORT or
+  # 0 (OS-assigned) on the first run. A non-empty PORT env var always wins.
+  if [[ -z "${PORT:-}" && -f "$PORT_FILE" ]]; then
+    SAVED_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+    if [[ "$SAVED_PORT" =~ ^[0-9]+$ && "$SAVED_PORT" -ge 1 && "$SAVED_PORT" -le 65535 ]]; then
+      PORT="$SAVED_PORT"
+    fi
+  fi
   PORT="${PORT:-0}"
   SI_DATA_DIR="${SI_DATA_DIR:-$RUNTIME_DIR/session-insight}"
 else
@@ -56,9 +71,11 @@ Commands:
   all         构建 + 运行
   log         查看后台日志
 
-Linked worktrees automatically use an OS-assigned random port and an isolated
-database under .runtime/. The primary checkout continues to use port 8080 and
-~/.session-insight. PORT and SI_DATA_DIR may be set to override these defaults.
+Linked worktrees automatically use an OS-assigned random loopback port on the
+first run and reuse the same port on subsequent restarts (persisted to
+.runtime/session-insight.port), with an isolated database under .runtime/. The
+primary checkout continues to use port 8080 and ~/.session-insight. PORT and
+SI_DATA_DIR may be set to override these defaults.
 Instance numbers in status/kill are rebuilt each run and may change; always run
 status immediately before kill. Only related checkouts (this repo's worktrees)
 are killable; same-named binaries elsewhere are listed as non-killable.
@@ -136,6 +153,14 @@ do_start() {
     url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$LOG_FILE" 2>/dev/null | tail -1 || true)
     if [[ -n "$url" ]]; then
       printf '%s\n' "$url" >"$URL_FILE"
+      # Persist the bound port for linked worktrees only (PORT_FILE unset on primary).
+      if [[ -n "${PORT_FILE:-}" ]]; then
+        local bound_port
+        bound_port=$(port_from_url "$url")
+        if [[ "$bound_port" =~ ^[0-9]+$ && "$bound_port" -ge 1 && "$bound_port" -le 65535 ]]; then
+          printf '%s\n' "$bound_port" >"$PORT_FILE"
+        fi
+      fi
       echo "    Ready: $url"
       return 0
     fi
