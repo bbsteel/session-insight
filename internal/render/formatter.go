@@ -65,8 +65,8 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	}
 
 	p := profileFor(events)
-	if p.Name == "grok" {
-		computeGrokThoughtSummaries(events)
+	if p.Preprocess != nil {
+		p.Preprocess(events)
 	}
 	// chrys emits a turn's parallel invocations first and all results after;
 	// pair each invocation with its result so a per-tool fold covers input+output.
@@ -193,8 +193,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		badgeOffset   int // UTF-16 index in the header line where the "(N 行)" badge goes
 	}
 	var openToolFold *toolFoldState
-	var openGrokThoughtFold *toolFoldState
-	grokSidebar := ColNone
+	var openThoughtFold *ThoughtFold
 	closeToolFold := func() {
 		if openToolFold == nil {
 			return
@@ -223,39 +222,20 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				"badge_offset":   float64(f.badgeOffset),
 			},
 		})
-		if p.Name == "grok" {
-			grokSidebar = ColNone // reset after tool block
-		}
 	}
 
-	closeGrokThoughtFold := func() {
-		if openGrokThoughtFold == nil {
+	closeThoughtFold := func() {
+		if openThoughtFold == nil {
 			return
 		}
-		f := openGrokThoughtFold
-		openGrokThoughtFold = nil
-		if tb.CurrentLine() <= f.bodyDisplay {
+		f := openThoughtFold
+		openThoughtFold = nil
+		if p.Thought == nil {
 			return
 		}
-		endIncl := tb.CurrentLine() - 1
-		positions = append(positions, RenderPosition{
-			PositionKey: f.key,
-			Kind:        "fold",
-			TurnIndex:   f.turnIndex,
-			LineStart:   f.headerDisplay,
-			LineEnd:     &endIncl,
-			Label:       "thought",
-			Payload: map[string]any{
-				"level":          "thought",
-				"group_key":      f.groupKey,
-				"display_start":  float64(f.bodyDisplay),
-				"display_end":    float64(tb.CurrentLine()),
-				"logical_start":  float64(f.bodyLogical),
-				"logical_end":    float64(tb.CurrentLogicalLine()),
-				"header_logical": float64(f.headerLogical),
-			},
-		})
-		grokSidebar = ColNone // reset after thought block to prevent sidebar leak to following text
+		if pos := p.Thought.End(p, tb, f); pos != nil {
+			positions = append(positions, *pos)
+		}
 	}
 
 	// truncSeq numbers truncated output segments in document order; the
@@ -302,19 +282,17 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	for i, evt := range events {
 		if openFold != nil && i >= openFold.run.endIdx {
 			closeToolFold() // close the group's last tool before the group itself
-			closeGrokThoughtFold()
+			closeThoughtFold()
 			closeFold()
 		}
 
-		closeGrokThoughtFold()
-
 		if evt.Type == "RollbackStart" {
 			closeToolFold()
-			closeGrokThoughtFold()
+			closeThoughtFold()
 			closeFold()
 			count := metadataInt(evt.Metadata, "count")
 			resumeTurn := metadataInt(evt.Metadata, "resume_turn")
-			headerDisplay, headerLogical := writeRollbackHeader(tb, count, resumeTurn)
+			headerDisplay, headerLogical := writeRollbackHeader(p, tb, count, resumeTurn)
 			rollbackFolds = append(rollbackFolds, rollbackFoldState{
 				turnIndex:     evt.TurnIndex,
 				key:           fmt.Sprintf("rollback:%d:%d", evt.TurnIndex, headerDisplay),
@@ -329,7 +307,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		}
 		if evt.Type == "RollbackEnd" {
 			closeToolFold()
-			closeGrokThoughtFold()
+			closeThoughtFold()
 			closeFold()
 			closeRollbackFold()
 			prevTurnIndex = evt.TurnIndex
@@ -339,15 +317,15 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 		if evt.TurnIndex != prevTurnIndex {
 			closeToolFold() // never let a tool fold span a turn boundary
-			closeGrokThoughtFold()
+			closeThoughtFold()
 			rolledBack := evt.Type == "TurnBoundary" && metadataBool(evt.Metadata, "rolled_back")
 			if rolledBack {
 				original := metadataInt(evt.Metadata, "original_turn_index")
 				emit("turn", fmt.Sprintf("已回滚 · 原 Turn %d", original+1), "", evt.TurnIndex, map[string]any{"rolled_back": true, "original_turn_index": original})
-				writeRollbackSeparator(tb, original, cols)
+				writeRollbackSeparator(p, tb, original, cols)
 			} else {
 				emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
-				writeSeparator(tb, evt.TurnIndex, cols)
+				writeSeparator(p, tb, evt.TurnIndex, cols)
 			}
 			prevTurnIndex = evt.TurnIndex
 			prevDepth0Type = ""
@@ -397,11 +375,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			}
 			emit("user", "用户输入", "", evt.TurnIndex, userPayload)
 			userPosIdx := len(positions) - 1
-			userPrefix := prefix
-			if p.Name == "grok" && grokSidebar != ColNone {
-				userPrefix = prefix + fgWrap(p.BoxV, grokSidebar) + " "
-			}
-			writeUserPrompt(p, tb, evt, userPrefix, tsFor(evt, opts.TimestampUser))
+			writeUserPrompt(p, tb, evt, prefix, tsFor(evt, opts.TimestampUser))
 			// Record the inclusive end line of the user prompt body so the
 			// frontend can apply a highlight decoration across exactly those
 			// rows. Captured before the trailing blank line below so the
@@ -419,78 +393,36 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			// the assistant reply / tool output that follows.
 			tb.WriteString("\n")
 		case "ThinkingStart":
-			if p.Name == "grok" && evt.Text != "" {
-				// compact ◆ header
-				tb.WriteString(prefix)
-				if t := tsFor(evt, opts.TimestampAssistant); t != "" {
-					tb.WriteString(fgWrap(t+" ", ColMuted))
-				}
-				tb.WriteString(fgWrap("◆", ColMuted))
-				tb.WriteString(styled(" "+evt.Text, ColFg, ColNone, true, false))
-				tb.WriteString("\n")
-
-				// setup fold so body (following chunks with | ) can be collapsed by default
-				// like tool tfolds
-				hdrDisp := tb.CurrentLine() - 1
-				hdrLog := tb.CurrentLogicalLine() - 1
-				bodyDisp := tb.CurrentLine()
-				bodyLog := tb.CurrentLogicalLine()
-				openGrokThoughtFold = &toolFoldState{
-					turnIndex:     evt.TurnIndex,
-					key:           fmt.Sprintf("tfold:%d:%d", evt.TurnIndex, hdrDisp),
-					groupKey:      "",
-					headerDisplay: hdrDisp,
-					headerLogical: hdrLog,
-					bodyDisplay:   bodyDisp,
-					bodyLogical:   bodyLog,
-					badgeOffset:   0,
-				}
+			if p.Thought != nil && evt.Text != "" {
+				openThoughtFold = p.Thought.Start(p, tb, evt, prefix, tsFor(evt, opts.TimestampAssistant))
 			} else {
-				writeThinking(tb, evt, prefix)
+				writeThinking(p, tb, evt, prefix)
 			}
 		case "ThinkingChunk":
-			if p.Name == "grok" {
-				// write content so it's available when thought fold is expanded
-				// prefix with green │ to match native expanded sidebar
-				tb.WriteString(prefix)
-				tb.WriteString(fgWrap(p.BoxV, ColMuted))
-				tb.WriteString(" ")
-				tb.WriteString(italicWrap(fgWrap(sanitizeControlChars(evt.Text), ColMuted)))
-				tb.WriteString("\n")
+			if p.Thought != nil {
+				p.Thought.Chunk(p, tb, evt, prefix)
 			} else {
-				writeThinking(tb, evt, prefix)
+				writeThinking(p, tb, evt, prefix)
 			}
 		case "ThinkingEnd":
-			if p.Name == "grok" {
-				closeGrokThoughtFold()
-			}
+			closeThoughtFold()
 		case "TextChunk":
-			if p.Name == "grok" {
-				grokSidebar = ColNone // reset to prevent sidebar leak to plain text after blocks
-			}
-			textPrefix := prefix
-			if p.Name == "grok" && grokSidebar != ColNone {
-				textPrefix = prefix + fgWrap(p.BoxV, grokSidebar) + " "
-			}
 			if p.AssistantHeader && evt.Depth == 0 && prevDepth0Type != "TextChunk" {
 				if prevDepth0Type != "" {
 					tb.WriteString("\n")
 				}
-				if p.Name == "grok" && grokSidebar != ColNone {
-					tb.WriteString(prefix + fgWrap(p.BoxV, grokSidebar) + " ")
-				}
-				writeAssistantHeader(tb, agentLabel, tsFor(evt, opts.TimestampAssistant))
+				writeAssistantHeader(p, tb, agentLabel, tsFor(evt, opts.TimestampAssistant))
 			} else if evt.Depth == 0 && prevDepth0Type != "TextChunk" {
 				// Profiles without an assistant header line get the timestamp
 				// as its own muted line: prefixing the first markdown line
 				// would overflow the wrap width computed without the prefix.
 				if ts := tsFor(evt, opts.TimestampAssistant); ts != "" {
-					tb.WriteString(textPrefix)
-					tb.WriteString(fgWrap(ts, ColMuted))
+					tb.WriteString(prefix)
+					tb.WriteString(fgWrap(ts, p.Palette.Muted))
 					tb.WriteString("\n")
 				}
 			}
-			writeTextChunk(tb, evt, textPrefix, cols)
+			writeTextChunk(p, tb, evt, prefix, cols)
 		case "ToolInvocation":
 			onEdit := func(filePath string) {
 				seq := editSeqByTurn[evt.TurnIndex]
@@ -500,9 +432,6 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			outcome := outcomes[evt.ToolCallID]
 			toolTS := tsFor(evt, opts.TimestampTool)
 			failed := outcome.status != "" && outcome.status != "ok"
-			if p.Name == "grok" {
-				grokSidebar = ColNone // reset for new tool bullet
-			}
 			// Every depth-0 tool call gets a "tool" position anchored to its
 			// header line — the tool-call panel's data source. Nested
 			// (depth>0) subagent tools are skipped: their TurnIndex is local
@@ -554,8 +483,8 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				emit("error", "工具错误", "error", evt.TurnIndex, map[string]any{"tool": evt.ToolName, "exit_code": evt.ExitCode, "kind": evt.ErrorKind})
 			}
 			resultPrefix := prefix
-			if p.Name == "grok" && evt.Depth == 0 {
-				resultPrefix = prefix + "  " // match the indent of input box under ◆ header
+			if evt.Depth == 0 && p.ResultIndent != "" {
+				resultPrefix = prefix + p.ResultIndent
 			}
 			writeToolResult(p, tb, evt, resultPrefix, bWidth, makeOnTrunc(evt.TurnIndex))
 			closeToolFold() // finalize the per-tool fold immediately after its result, so following assistant text is not swallowed into the fold (fixes folding assistant messages)
@@ -570,7 +499,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		}
 	}
 	closeToolFold()
-	closeGrokThoughtFold()
+	closeThoughtFold()
 	closeFold()
 	for len(rollbackFolds) > 0 {
 		closeRollbackFold()
@@ -592,7 +521,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 26
+const FormatVersion int64 = 28
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
@@ -893,59 +822,22 @@ func writeToolGroupHeader(p *Profile, sb *trackingBuilder, g toolRun) {
 	if p.GroupHeaderStats && len(g.stats) > 0 {
 		label += " · " + formatRunStats(g.stats)
 	}
-	sb.WriteString(styled(label, ColWarning, ColNone, true, false))
+	sb.WriteString(styled(label, p.Palette.Warning, ColNone, true, false))
 	sb.WriteString("\n")
 }
 
-func writeAssistantHeader(sb *trackingBuilder, label string, ts string) {
+func writeAssistantHeader(p *Profile, sb *trackingBuilder, label string, ts string) {
 	if label == "" {
 		label = "Agent"
 	}
 	if ts != "" {
-		sb.WriteString(fgWrap(ts+" ", ColMuted))
+		sb.WriteString(fgWrap(ts+" ", p.Palette.Muted))
 	}
-	sb.WriteString(styled("◇ "+sanitizeControlChars(label), ColSuccessBright, ColNone, false, false))
+	sb.WriteString(styled("◇ "+sanitizeControlChars(label), p.Palette.SuccessBright, ColNone, false, false))
 	sb.WriteString("\n")
 }
 
-// computeGrokThoughtSummaries post-processes the event list for grok to set
-// a compact "Thought for Xs" summary on ThinkingStart events (duration from
-// start to corresponding ThinkingEnd in same turn). This lets the terminal
-// view show only the ◆ header line (matching native Grok TUI), while the
-// detailed thought chunks can be suppressed in writing for the list view.
-func computeGrokThoughtSummaries(events []model.RenderEvent) {
-	for i := range events {
-		e := &events[i]
-		if e.Type != "ThinkingStart" || e.AgentType != "grok" {
-			continue
-		}
-		startTs := e.Timestamp
-		turn := e.TurnIndex
-		for j := i + 1; j < len(events); j++ {
-			if events[j].TurnIndex != turn {
-				break
-			}
-			if events[j].Type == "ThinkingEnd" {
-				if !events[j].Timestamp.IsZero() && !startTs.IsZero() {
-					d := events[j].Timestamp.Sub(startTs).Seconds()
-					if d < 0 {
-						d = 0
-					}
-					e.Text = fmt.Sprintf("Thought for %.1fs", d)
-				}
-				break
-			}
-			if events[j].Type == "ThinkingStart" {
-				break
-			}
-		}
-		if e.Text == "" {
-			e.Text = "Thought"
-		}
-	}
-}
-
-func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
+func writeSeparator(p *Profile, sb *trackingBuilder, turnIdx int, termWidth int) {
 	// A turn start must be findable at a glance when scrolling or after a
 	// jump: solid inverse-video badge followed by a heavy rule, instead of
 	// the earlier single muted line that blended into the transcript.
@@ -959,12 +851,12 @@ func writeSeparator(sb *trackingBuilder, turnIdx int, termWidth int) {
 	// fg slot to its bright variant, which this palette repurposes (slot 7→15
 	// is the Claude-blue bold fg) — that once made the label invisible on its
 	// own background. ColBg as fg guarantees contrast on any accent color.
-	sb.WriteString(styled(label, ColBg, ColBanner, false, false))
-	sb.WriteString(fgWrap(strings.Repeat("━", rest), ColBanner))
+	sb.WriteString(styled(label, p.Palette.Bg, p.Palette.Banner, false, false))
+	sb.WriteString(fgWrap(strings.Repeat("━", rest), p.Palette.Banner))
 	sb.WriteString("\n")
 }
 
-func writeRollbackHeader(sb *trackingBuilder, count, resumeTurn int) (headerDisplay, headerLogical int) {
+func writeRollbackHeader(p *Profile, sb *trackingBuilder, count, resumeTurn int) (headerDisplay, headerLogical int) {
 	label := fmt.Sprintf("▼ ↩ 已回滚 %d 个 turn", count)
 	if resumeTurn > 0 {
 		label += fmt.Sprintf(" · CLI 从第 %d 轮恢复", resumeTurn)
@@ -972,20 +864,20 @@ func writeRollbackHeader(sb *trackingBuilder, count, resumeTurn int) (headerDisp
 	sb.WriteString("\n")
 	headerDisplay = sb.CurrentLine()
 	headerLogical = sb.CurrentLogicalLine()
-	sb.WriteString(styled(label, ColWarning, ColNone, true, false))
+	sb.WriteString(styled(label, p.Palette.Warning, ColNone, true, false))
 	sb.WriteString("\n")
 	return headerDisplay, headerLogical
 }
 
-func writeRollbackSeparator(sb *trackingBuilder, originalTurnIdx int, termWidth int) {
+func writeRollbackSeparator(p *Profile, sb *trackingBuilder, originalTurnIdx int, termWidth int) {
 	label := fmt.Sprintf(" 已回滚 · 原第 %d 轮 ", originalTurnIdx+1)
 	rest := termWidth - displayWidth(label)
 	if rest < 1 {
 		rest = 1
 	}
 	sb.WriteString("\n")
-	sb.WriteString(styled(label, ColMuted, ColNone, false, false))
-	sb.WriteString(fgWrap(strings.Repeat("╌", rest), ColMuted))
+	sb.WriteString(styled(label, p.Palette.Muted, ColNone, false, false))
+	sb.WriteString(fgWrap(strings.Repeat("╌", rest), p.Palette.Muted))
 	sb.WriteString("\n")
 }
 
@@ -1017,30 +909,30 @@ func writeUserPrompt(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 	if p.UserHeader != "" {
 		sb.WriteString(prefix)
 		if ts != "" {
-			sb.WriteString(fgWrap(ts+" ", ColMuted))
+			sb.WriteString(fgWrap(ts+" ", p.Palette.Muted))
 		}
-		sb.WriteString(styled(p.UserHeader, ColUser, ColNone, true, false))
+		sb.WriteString(styled(p.UserHeader, p.Palette.User, ColNone, true, false))
 		sb.WriteString("\n")
 		for _, line := range strings.Split(sanitizeControlChars(evt.Text), "\n") {
 			sb.WriteString(prefix)
-			sb.WriteString(fgWrap(line, ColFg))
+			sb.WriteString(fgWrap(line, p.Palette.Fg))
 			sb.WriteString("\n")
 		}
 		return
 	}
-	prompt := fgWrap("> ", ColUser) + fgWrap(sanitizeControlChars(evt.Text), ColFg)
+	prompt := fgWrap("> ", p.Palette.User) + fgWrap(sanitizeControlChars(evt.Text), p.Palette.Fg)
 	for i, line := range strings.Split(prompt, "\n") {
 		sb.WriteString(prefix)
 		if i == 0 && ts != "" {
-			sb.WriteString(fgWrap(ts+" ", ColMuted))
+			sb.WriteString(fgWrap(ts+" ", p.Palette.Muted))
 		}
 		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
 }
 
-func writeThinking(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
-	text := italicWrap(fgWrap(sanitizeControlChars(evt.Text), ColMuted))
+func writeThinking(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string) {
+	text := italicWrap(fgWrap(sanitizeControlChars(evt.Text), p.Palette.Muted))
 	for _, line := range strings.Split(text, "\n") {
 		if line == "" {
 			sb.WriteString("\n")
@@ -1052,7 +944,7 @@ func writeThinking(sb *trackingBuilder, evt model.RenderEvent, prefix string) {
 	}
 }
 
-func writeTextChunk(sb *trackingBuilder, evt model.RenderEvent, prefix string, termWidth int) {
+func writeTextChunk(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, termWidth int) {
 	text := sanitizeControlChars(evt.Text)
 	lines := strings.Split(text, "\n")
 
@@ -1065,11 +957,11 @@ func writeTextChunk(sb *trackingBuilder, evt model.RenderEvent, prefix string, t
 			sb.WriteString(prefix)
 			switch {
 			case isDiffAdd(line):
-				sb.WriteString(bgWrap(fgWrap(padRight(line, termWidth), ColFg), ColDiffAdd))
+				sb.WriteString(bgWrap(fgWrap(padRight(line, termWidth), p.Palette.Fg), p.Palette.DiffAdd))
 			case isDiffDel(line):
-				sb.WriteString(bgWrap(fgWrap(padRight(line, termWidth), ColFg), ColDiffDel))
+				sb.WriteString(bgWrap(fgWrap(padRight(line, termWidth), p.Palette.Fg), p.Palette.DiffDel))
 			default:
-				sb.WriteString(fgWrap(line, ColFg))
+				sb.WriteString(fgWrap(line, p.Palette.Fg))
 			}
 			if i < len(lines)-1 {
 				sb.WriteString("\n")
@@ -1079,7 +971,7 @@ func writeTextChunk(sb *trackingBuilder, evt model.RenderEvent, prefix string, t
 		return
 	}
 
-	for _, line := range renderMarkdownDoc(text, ColFg, termWidth) {
+	for _, line := range renderMarkdownDoc(text, p.Palette.Fg, termWidth) {
 		sb.WriteString(prefix)
 		sb.WriteString(line)
 		sb.WriteString("\n")
@@ -1128,7 +1020,7 @@ func writeBoxTop(p *Profile, sb *trackingBuilder, prefix, header string, bWidth 
 	if fillLen < 1 {
 		fillLen = 1
 	}
-	top := p.BoxTL + p.BoxH + p.BoxH + header + strings.Repeat(p.BoxH, fillLen) + p.BoxTR
+	top := p.Box.TL + p.Box.H + p.Box.H + header + strings.Repeat(p.Box.H, fillLen) + p.Box.TR
 	sb.WriteString(prefix)
 	sb.WriteString(fgWrap(top, borderColor))
 	sb.WriteString("\n")
@@ -1147,17 +1039,17 @@ func writeBoxBottom(p *Profile, sb *trackingBuilder, prefix, footer string, bWid
 		if fillLen < 0 {
 			fillLen = 0
 		}
-		left := strings.Repeat(p.BoxH, fillLen)
-		right := strings.Repeat(p.BoxH, 2)
+		left := strings.Repeat(p.Box.H, fillLen)
+		right := strings.Repeat(p.Box.H, 2)
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(p.BoxBL+left, borderColor))
+		sb.WriteString(fgWrap(p.Box.BL+left, borderColor))
 		sb.WriteString(styled(footer, borderColor, ColNone, true, false))
-		sb.WriteString(fgWrap(right+p.BoxBR, borderColor))
+		sb.WriteString(fgWrap(right+p.Box.BR, borderColor))
 		sb.WriteString("\n")
 	} else {
-		body := strings.Repeat(p.BoxH, inner)
+		body := strings.Repeat(p.Box.H, inner)
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(p.BoxBL+body+p.BoxBR, borderColor))
+		sb.WriteString(fgWrap(p.Box.BL+body+p.Box.BR, borderColor))
 		sb.WriteString("\n")
 	}
 }
@@ -1168,9 +1060,9 @@ func writeBoxRow(p *Profile, sb *trackingBuilder, prefix, content string, bWidth
 	for _, wl := range wrapInBox(content, contentWidth) {
 		wl = padRight(wl, contentWidth)
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(p.BoxV, borderColor))
+		sb.WriteString(fgWrap(p.Box.V, borderColor))
 		sb.WriteString(fgWrap(wl, contentColor))
-		sb.WriteString(fgWrap(p.BoxV, borderColor))
+		sb.WriteString(fgWrap(p.Box.V, borderColor))
 		sb.WriteString("\n")
 	}
 }
@@ -1205,9 +1097,6 @@ func promoteBoxHeader(input map[string]any) (string, map[string]any) {
 func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool, durationMs int64, ts string, failed bool) (bodyDisplay, bodyLogical, headerBadgeOffset int) {
 	if model.IsEditTool(evt.ToolName) {
 		if evt.ToolName == "apply_patch" {
-			// apply_patch carries a raw patch string (under args/input/patch),
-			// not pre-normalised file_path/old_string/new_string.  Parse it
-			// into per-file EditCalls and render each as its own diff block.
 			calls := model.ExtractEditCalls(evt)
 			for _, call := range calls {
 				if onEditStart != nil {
@@ -1218,6 +1107,13 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 					"file_path":  call.FilePath,
 					"old_string": call.OldString,
 					"new_string": call.NewString,
+				}
+				if p.ToolBullet {
+					bullet := p.Bullet
+					if bullet == nil {
+						bullet = defaultBullet{}
+					}
+					bullet.WriteEditHeader(p, sb, prefix, ts, evt.ToolName)
 				}
 				writeEditDiff(p, sb, syn, prefix, bWidth)
 			}
@@ -1230,17 +1126,12 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 			if onEditStart != nil {
 				onEditStart(filePath)
 			}
-			if p.Name == "grok" {
-				// write ◆ for grok edits too, for consistent bullet style
-				// full name "SearchReplace", with timestamp like other bullets
-				editLabel := "SearchReplace"
-				if ts != "" {
-					sb.WriteString(prefix)
-					sb.WriteString(fgWrap(ts+" ", ColMuted))
+			if p.ToolBullet {
+				bullet := p.Bullet
+				if bullet == nil {
+					bullet = defaultBullet{}
 				}
-				sb.WriteString(prefix)
-				sb.WriteString(styled("◆ "+editLabel, ColFg, ColNone, true, false))
-				sb.WriteString("\n")
+				bullet.WriteEditHeader(p, sb, prefix, ts, evt.ToolName)
 			}
 			writeEditDiff(p, sb, evt, prefix, bWidth)
 			return 0, 0, 0
@@ -1248,131 +1139,43 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	}
 
 	toolName := sanitizeControlChars(evt.ToolName)
-	input := evt.ToolInput
 
-	borderColor := ColTool
-	if evt.ToolName == "Agent" || evt.ToolName == "Task" {
-		borderColor = ColSubagent
-	}
-	if evt.ToolName == "Skill" {
-		borderColor = ColSkill // magenta/violet — skill accent (native Grok accent_skill)
-	}
-	if p.Name == "grok" && toolName == "Run" {
-		borderColor = ColSuccess // green for success run tools
-		if failed {
-			borderColor = ColErrorBright // red for failed
+	borderColor := categoryColor(p, toolName)
+	if p.ColorRule != nil {
+		if c, ok := p.ColorRule.ColorFor(p, toolName, failed); ok {
+			borderColor = c
 		}
 	}
-	var header string
+
+	var purpose string
+	var inputForBox map[string]any
+	if p.ToolBullet {
+		purpose, inputForBox = promoteBoxHeader(evt.ToolInput)
+	} else {
+		inputForBox = evt.ToolInput
+	}
 
 	if p.ToolBullet {
-		var purpose string
-		if purpose, input = promoteBoxHeader(evt.ToolInput); purpose != "" {
-			header = " " + sanitizeControlChars(purpose) + " "
-		} else {
-			header = ""
+		bullet := p.Bullet
+		if bullet == nil {
+			bullet = defaultBullet{}
 		}
-		if p.Name == "grok" {
-			header = "" // do not repeat description in the inner tool box top; the ◆ header already shows it. Box will show the command in content.
-		}
+
 		sb.WriteString(prefix)
 		tsRun := ""
 		if ts != "" {
-			tsRun = fgWrap(ts+" ", ColMuted)
+			tsRun = fgWrap(ts+" ", p.Palette.Muted)
 			sb.WriteString(tsRun)
 		}
-		char := p.ToolBulletChar
-		if char == "" {
-			char = "•"
-		}
-		bulletColor := ColFg
-		if p.Name == "grok" {
-			bulletColor = ColSuccess
-		}
 		if asFoldHeader {
-			// Emit the name and the summary as two independent SGR runs so the
-			// client can splice the fold's "(N 行)" badge between them without any
-			// knowledge of this profile's byte shape: headerBadgeOffset marks the
-			// UTF-16 index just past the name run (right after its trailing reset),
-			// which is where the badge goes. Keeping name/summary in separate runs
-			// means the badge needs no style reopen — the summary run restyles
-			// itself. This is the ONLY place that encodes "where chrys's tool
-			// header ends"; the client stays profile-agnostic.
-			bullet := "▼ " + char + " "
-			if p.Name == "grok" || char == "◆" {
-				bullet = char + " "
-			}
-			if p.Name == "grok" && toolName == "Run" {
-				// ◆ color based on success/fail (green/red), text default (matches native)
-				c := ColSuccess
-				if failed {
-					c = ColErrorBright
-				}
-				diamondStr := fgWrap(char, c)
-				sb.WriteString(diamondStr)
-				nameRun := styled(" "+toolName, ColFg, ColNone, true, false)
-				sb.WriteString(nameRun)
-				headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(diamondStr) + utf16Len(nameRun)
-				sep := " "
-				if s := toolSummary(purpose, evt.ToolInput); s != "" {
-					sb.WriteString(styled(sep+s, ColFg, ColNone, true, false))
-				}
-			} else if p.Name == "grok" && toolName == "Skill" {
-				// Native: "Skill <name>" with skill name on accent_skill (ColSkill).
-				diamondStr := fgWrap(char, ColSkill)
-				sb.WriteString(diamondStr)
-				nameRun := styled(" "+toolName, ColFg, ColNone, true, false)
-				sb.WriteString(nameRun)
-				headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(diamondStr) + utf16Len(nameRun)
-				if s := toolSummary(purpose, evt.ToolInput); s != "" {
-					sb.WriteString(styled(" "+s, ColSkill, ColNone, true, false))
-				}
-			} else {
-				nameRun := styled(bullet+toolName, bulletColor, ColNone, true, false)
-				sb.WriteString(nameRun)
-				headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + utf16Len(nameRun)
-				sep := "  "
-				if s := toolSummary(purpose, evt.ToolInput); s != "" {
-					sb.WriteString(styled(sep+s, bulletColor, ColNone, true, false))
-				}
-			}
+			headerBadgeOffset = utf16Len(prefix) + utf16Len(tsRun) + bullet.WriteFoldHeader(p, sb, toolName, failed, purpose, evt.ToolInput)
 		} else {
-			if p.Name == "grok" && toolName == "Run" {
-				c := ColSuccess
-				if failed {
-					c = ColErrorBright
-				}
-				sb.WriteString(fgWrap(char, c))
-				sb.WriteString(styled(" "+toolName, ColFg, ColNone, true, false))
-			} else if p.Name == "grok" && toolName == "Skill" {
-				sb.WriteString(fgWrap(char, ColSkill))
-				sb.WriteString(styled(" "+toolName, ColFg, ColNone, true, false))
-				if s := toolSummary(purpose, evt.ToolInput); s != "" {
-					sb.WriteString(styled(" "+s, ColSkill, ColNone, true, false))
-				}
-			} else {
-				sb.WriteString(styled(char+" "+toolName, bulletColor, ColNone, true, false))
-			}
+			bullet.WriteInlineHeader(p, sb, toolName, failed, purpose, evt.ToolInput)
 		}
 		if durationMs > 0 {
-			sb.WriteString(fgWrap(" · "+fmtDurationShort(durationMs), ColMuted))
+			sb.WriteString(fgWrap(" · "+fmtDurationShort(durationMs), p.Palette.Muted))
 		}
 		sb.WriteString("\n")
-	} else {
-		// Box profiles carry the salient input arg, duration, and optional
-		// timestamp inside the top border's header: a prefix outside the box
-		// would misalign the border with the content rows beneath it.
-		parts := []string{fmt.Sprintf("Tool: %s", toolName)}
-		if s := toolSummary("", evt.ToolInput); s != "" {
-			parts = append(parts, truncateToWidth(s, 48))
-		}
-		if durationMs > 0 {
-			parts = append(parts, fmtDurationShort(durationMs))
-		}
-		if ts != "" {
-			parts = append(parts, ts)
-		}
-		header = " " + strings.Join(parts, " · ") + " "
 	}
 
 	// Body starts after the (possibly wrapped) header line: everything from
@@ -1380,16 +1183,20 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	bodyDisplay = sb.CurrentLine()
 	bodyLogical = sb.CurrentLogicalLine()
 
-	inputLines := formatToolInput(input)
-
-	boxPrefix := prefix
-	if p.Name == "grok" {
-		boxPrefix = prefix + "  " // indent box so not tight against left border
+	toolBox := p.ToolBox
+	if toolBox == nil {
+		toolBox = standardToolBox{}
 	}
+	header, suppress := toolBox.BuildHeader(p, inputForBox, toolName, purpose, durationMs, ts)
+	if suppress {
+		header = ""
+	}
+	boxPrefix := toolBox.BoxPrefix(p, prefix)
 
+	inputLines := formatToolInput(inputForBox)
 	writeBoxTop(p, sb, boxPrefix, header, bWidth, borderColor)
 	for _, il := range inputLines {
-		writeBoxRow(p, sb, boxPrefix, il, bWidth, borderColor, ColFg)
+		writeBoxRow(p, sb, boxPrefix, il, bWidth, borderColor, p.Palette.Fg)
 	}
 	writeBoxBottom(p, sb, boxPrefix, "", bWidth, borderColor)
 	return bodyDisplay, bodyLogical, headerBadgeOffset
@@ -1555,17 +1362,17 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 	// "│ ✓ │ first output line" — the branch marker appearing twice on one
 	// visual line.
 	sb.WriteString(prefix)
-	label, color := toolResultStatus(evt, ok)
+	label, color := toolResultStatus(p, evt, ok)
 	sb.WriteString(fgWrap(label, color))
 	sb.WriteString("\n")
 
 	if evt.Stdout != "" {
-		writeToolOutputFlat(sb, evt.Stdout, prefix, false, onTrunc)
+		writeToolOutputFlat(p, sb, evt.Stdout, prefix, false, onTrunc)
 	}
 	if evt.Stderr != "" {
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap("stderr:\n", ColWarning))
-		writeToolOutputFlat(sb, evt.Stderr, prefix, true, onTrunc)
+		sb.WriteString(fgWrap("stderr:\n", p.Palette.Warning))
+		writeToolOutputFlat(p, sb, evt.Stderr, prefix, true, onTrunc)
 	}
 	sb.WriteString("\n")
 }
@@ -1573,40 +1380,40 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 // toolResultStatus returns a display label and color for a tool result,
 // leveraging structured metadata (timeout, rejection, exit code) when
 // available, with a graceful fallback to the legacy ok/failed binary.
-func toolResultStatus(evt model.RenderEvent, ok bool) (string, Color) {
+func toolResultStatus(p *Profile, evt model.RenderEvent, ok bool) (string, Color) {
 	if evt.Rejected {
 		if evt.ErrorKind == "hook_denied" {
-			return "✗ Rejected (hook)", ColWarning
+			return "✗ Rejected (hook)", p.Palette.Warning
 		}
-		return "✗ Rejected", ColWarning
+		return "✗ Rejected", p.Palette.Warning
 	}
 	if evt.TimedOut {
 		if evt.TimeoutSeconds > 0 {
-			return fmt.Sprintf("✗ Timeout (%gs)", evt.TimeoutSeconds), ColErrorBright
+			return fmt.Sprintf("✗ Timeout (%gs)", evt.TimeoutSeconds), p.Palette.ErrorBright
 		}
-		return "✗ Timeout", ColErrorBright
+		return "✗ Timeout", p.Palette.ErrorBright
 	}
 	if !ok {
 		if evt.ExitCode != 0 {
-			return fmt.Sprintf("✗ Failed (exit %d)", evt.ExitCode), ColErrorBright
+			return fmt.Sprintf("✗ Failed (exit %d)", evt.ExitCode), p.Palette.ErrorBright
 		}
-		return "✗ Failed", ColErrorBright
+		return "✗ Failed", p.Palette.ErrorBright
 	}
-	return "✓", ColSuccessBright
+	return "✓", p.Palette.SuccessBright
 }
 
 // writeToolResultBox renders a tool result as a bordered "Output" box with a
 // Completed/Failed footer (chrys-native layout). Output-less results collapse
 // to a single status line so the transcript doesn't fill with empty boxes.
 func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, ok bool, onTrunc func()) {
-	borderColor := ColSuccessBright
+	borderColor := p.Palette.SuccessBright
 	footer := " Completed "
 	if !ok {
-		borderColor = ColErrorBright
+		borderColor = p.Palette.ErrorBright
 		footer = " Failed "
 		switch {
 		case evt.Rejected:
-			borderColor = ColWarning
+			borderColor = p.Palette.Warning
 			if evt.ErrorKind == "hook_denied" {
 				footer = " Rejected (hook) "
 			} else {
@@ -1626,9 +1433,9 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 	if evt.Stdout == "" && evt.Stderr == "" {
 		sb.WriteString(prefix)
 		if ok {
-			sb.WriteString(styled("✓ Completed", ColSuccessBright, ColNone, true, false))
+			sb.WriteString(styled("✓ Completed", p.Palette.SuccessBright, ColNone, true, false))
 		} else {
-			label, color := toolResultStatus(evt, ok)
+			label, color := toolResultStatus(p, evt, ok)
 			sb.WriteString(styled(label, color, ColNone, true, false))
 		}
 		sb.WriteString("\n\n")
@@ -1650,7 +1457,7 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 			}
 			// Same truncation copy as the flat layout: the expand affordance
 			// matches on this exact text.
-			writeBoxRow(p, sb, prefix, fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), bWidth, borderColor, ColWarning)
+			writeBoxRow(p, sb, prefix, fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), bWidth, borderColor, p.Palette.Warning)
 			return
 		}
 		for _, l := range lines {
@@ -1659,10 +1466,10 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 	}
 
 	if evt.Stdout != "" {
-		writeLines(evt.Stdout, ColFg)
+		writeLines(evt.Stdout, p.Palette.Fg)
 	}
 	if evt.Stderr != "" {
-		writeLines(evt.Stderr, ColErrorBright)
+		writeLines(evt.Stderr, p.Palette.ErrorBright)
 	}
 
 	writeBoxBottom(p, sb, prefix, footer, bWidth, borderColor)
@@ -1672,11 +1479,11 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 // writeToolOutputFlat writes tool output through the tracking builder
 // (byte-identical to the old string-building formatToolOutput) so the
 // truncation note's display row can be recorded via onTrunc at write time.
-func writeToolOutputFlat(sb *trackingBuilder, content string, prefix string, isError bool, onTrunc func()) {
+func writeToolOutputFlat(p *Profile, sb *trackingBuilder, content string, prefix string, isError bool, onTrunc func()) {
 	lines := strings.Split(sanitizeControlChars(content), "\n")
-	color := ColFg
+	color := p.Palette.Fg
 	if isError {
-		color = ColError
+		color = p.Palette.Error
 	}
 
 	if len(lines) > maxStdoutLines {
@@ -1692,7 +1499,7 @@ func writeToolOutputFlat(sb *trackingBuilder, content string, prefix string, isE
 			onTrunc()
 		}
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), ColWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("[+] %d 行被截断（点击展开）", remaining), p.Palette.Warning))
 		sb.WriteString("\n")
 		return
 	}
@@ -1754,44 +1561,44 @@ func writeAgentSpecific(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 			}
 		}
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 子agent转录加载失败: %s", reason), ColWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 子agent转录加载失败: %s", reason), p.Palette.Warning))
 		sb.WriteString("\n")
 	case "skill_invoked":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("⚙ %s", sanitizeControlChars(evt.Text)), ColSkill))
+		sb.WriteString(fgWrap(fmt.Sprintf("⚙ %s", sanitizeControlChars(evt.Text)), p.Palette.Skill))
 		sb.WriteString("\n")
 	case "subagent_started":
 		sb.WriteString(prefix)
 		if p.SubagentBadge {
 			// Bold is safe here: slot 6's bright pair (14) mirrors it in the
 			// default themes, and agent skins must keep 6/14 in sync.
-			sb.WriteString(styled(fmt.Sprintf("◉ %s", sanitizeControlChars(evt.Text)), ColSubagent, ColNone, true, false))
+			sb.WriteString(styled(fmt.Sprintf("◉ %s", sanitizeControlChars(evt.Text)), p.Palette.Subagent, ColNone, true, false))
 		} else {
-			sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), ColSubagent))
+			sb.WriteString(fgWrap(fmt.Sprintf("@ %s", sanitizeControlChars(evt.Text)), p.Palette.Subagent))
 		}
 		sb.WriteString("\n")
 	case "subagent_summary":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(sanitizeControlChars(evt.Text), ColMuted))
+		sb.WriteString(fgWrap(sanitizeControlChars(evt.Text), p.Palette.Muted))
 		sb.WriteString("\n")
 	case "model_change":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("↪ model: %s", sanitizeControlChars(evt.Text)), ColWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("↪ model: %s", sanitizeControlChars(evt.Text)), p.Palette.Warning))
 		sb.WriteString("\n")
 	case "interrupted":
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 中断: %s", sanitizeControlChars(evt.Text)), ColErrorBright))
+		sb.WriteString(fgWrap(fmt.Sprintf("⚠ 中断: %s", sanitizeControlChars(evt.Text)), p.Palette.ErrorBright))
 		sb.WriteString("\n")
 	case "in_progress":
 		// A turn still running (chrys in-flight checkpoint). Neutral, not an
 		// error; two leading spaces reserve a cell for the frontend's spinning
 		// hourglass overlay (raw render without a frontend still reads fine).
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap("  推理中…", ColMuted))
+		sb.WriteString(fgWrap("  推理中…", p.Palette.Muted))
 		sb.WriteString("\n")
 	default:
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(fmt.Sprintf("[agent:%s]", evt.Subtype), ColWarning))
+		sb.WriteString(fgWrap(fmt.Sprintf("[agent:%s]", evt.Subtype), p.Palette.Warning))
 		sb.WriteString("\n")
 	}
 }
@@ -1972,7 +1779,7 @@ func lcsLineDiff(old, new []string) []struct {
 func writeEditDiff(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int) {
 	const maxDiffLines = 40
 
-	borderColor := ColTool
+	borderColor := p.Palette.Tool
 	contentWidth := bWidth - 2
 
 	str := func(key string) string {
@@ -2012,18 +1819,18 @@ func writeEditDiff(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefi
 	writeDiffLine := func(content string, fgColor, bgColor Color) {
 		body := padRight(content, contentWidth)
 		sb.WriteString(prefix)
-		sb.WriteString(fgWrap(p.BoxV, borderColor))
+		sb.WriteString(fgWrap(p.Box.V, borderColor))
 		if bgColor != ColNone {
 			sb.WriteString(bgWrap(fgWrap(body, fgColor), bgColor))
 		} else {
 			sb.WriteString(fgWrap(body, fgColor))
 		}
-		sb.WriteString(fgWrap(p.BoxV, borderColor))
+		sb.WriteString(fgWrap(p.Box.V, borderColor))
 		sb.WriteString("\n")
 	}
 
 	summary := fmt.Sprintf("  -%d lines, +%d lines", nDel, nAdd)
-	writeDiffLine(summary, ColMuted, ColNone)
+	writeDiffLine(summary, p.Palette.Muted, ColNone)
 
 	shown, truncated := 0, 0
 	for _, op := range ops {
@@ -2039,16 +1846,16 @@ func writeEditDiff(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefi
 		switch op.kind {
 		case 0: // equal
 			sigil = "  "
-			fgColor = ColFg
+			fgColor = p.Palette.Fg
 			bgColor = ColNone
 		case 1: // remove
 			sigil = "- "
-			fgColor = ColFg
-			bgColor = ColDiffDel
+			fgColor = p.Palette.Fg
+			bgColor = p.Palette.DiffDel
 		case 2: // add
 			sigil = "+ "
-			fgColor = ColFg
-			bgColor = ColDiffAdd
+			fgColor = p.Palette.Fg
+			bgColor = p.Palette.DiffAdd
 		}
 		content := sigil + op.text
 		if displayWidth(content) > contentWidth {
@@ -2058,7 +1865,7 @@ func writeEditDiff(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefi
 		shown++
 	}
 	if truncated > 0 {
-		writeDiffLine(fmt.Sprintf("  … 省略 %d 行", truncated), ColWarning, ColNone)
+		writeDiffLine(fmt.Sprintf("  … 省略 %d 行", truncated), p.Palette.Warning, ColNone)
 	}
 
 	writeBoxBottom(p, sb, prefix, "", bWidth, borderColor)

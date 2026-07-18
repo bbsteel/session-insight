@@ -1,0 +1,159 @@
+# CodeRabbit — free-tier workflow fine-tune for session-insight
+# Docs: https://docs.coderabbit.ai/reference/configuration
+#
+# Maps 1:1 to CodeRabbit UI "Fine-tune the way CodeRabbit integrates":
+#   Review profile              → reviews.profile
+#   Request changes on PR       → reviews.request_changes_workflow
+#   Summarize your PR           → reviews.high_level_summary
+#   Customize with your guides  → reviews.path_instructions + knowledge_base
+#   Include/exclude files       → reviews.path_filters
+#
+# Soft review only. Merge gate remains CI (CodeQL, golangci-lint, ESLint, tests).
+# YAML on the PR branch is what CodeRabbit uses for that review.
+
+language: en-US
+enable_free_tier: true
+
+reviews:
+  # ── Set your review profile ──────────────────────────────────────────
+  # quiet     = critical/major only (least noise)
+  # chill     = balanced (default here)
+  # assertive = more detailed / can feel nitpicky
+  profile: chill
+
+  # ── Let CodeRabbit request changes on your PR ────────────────────────
+  # When true: CR can leave "request changes" and auto-approve after
+  # comments are resolved + checks pass. Keep false so AI never blocks merge;
+  # humans (or CI) remain the gate.
+  request_changes_workflow: false
+
+  # ── Summarize your PR ────────────────────────────────────────────────
+  # High-level summary auto-written into the PR description (or placeholder).
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  high_level_summary_instructions: |
+    Write a concise PR summary for a local desktop developer tool (Go + React).
+    Use bullets: What changed, Why it matters, Risk / test notes.
+    Do not invent mobile UX. Prefer English. Keep under ~120 words.
+  high_level_summary_in_walkthrough: false
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  poem: false
+  in_progress_fortune: false
+  review_status: true
+  commit_status: true
+  fail_commit_status: false
+
+  # ── Include or exclude files from review ─────────────────────────────
+  # Glob patterns; '!' excludes. Also used for sparse-checkout hints.
+  # Do NOT exclude frontend/dist: main.go //go:embed needs that tree for Go
+  # typecheck (CodeRabbit golangci-lint tool + local analysis). Dist is
+  # gitignored; CI materializes it via npm run build before golangci-lint.
+  path_filters:
+    - "!**/node_modules/**"
+    - "!**/*.min.js"
+    - "!**/*.map"
+    - "!assets/screenshots/**"
+    - "!.runtime/**"
+    - "!docs/**"
+    - "!frontend/scripts/**"
+    - "!frontend/package-lock.json"
+
+  # ── Customize review with your own guides ────────────────────────────
+  path_instructions:
+    - path: "internal/**/*.go"
+      instructions: |
+        Local desktop session viewer (Go backend). Focus on:
+        - Session parsing correctness, SQLite FTS, delete/live safety
+        - Privacy: no secrets/tokens/session bodies in logs or API errors
+        - Build tag sqlite_fts5 and //go:embed frontend/dist
+        - Small, testable changes; never invent mobile UX
+        Skip style already covered by golangci-lint / gofmt.
+
+    - path: "frontend/src/**/*.{ts,tsx}"
+      instructions: |
+        React + TypeScript desktop UI (not mobile-first). Focus on:
+        - Terminal hit-testing must use xterm APIs (markers/decorations);
+          no hand-rolled DOM row overlay math
+        - Replay / minimap / sidebar / scroll-sync correctness
+        - Do not break agent-filter, code-reader, or bookmark flows
+        Skip pure formatting covered by ESLint / tsc.
+
+    - path: "main.go"
+      instructions: |
+        Entry + embed of frontend/dist. Flag embed path mistakes and
+        accidental public exposure of local data dirs.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        Keep hard gates: ESLint, tsc, frontend tests/build, golangci-lint,
+        go vet, go test, CodeQL. Do not suggest removing them.
+        Linked-worktree runtime isolation is intentional.
+
+    - path: "run.sh"
+      instructions: |
+        Primary checkout: port 8080 + default data dir.
+        Linked worktrees: random port + .runtime/.
+        Never suggest killing processes by broad name/port scans.
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    ignore_title_keywords:
+      - WIP
+      - "DO NOT MERGE"
+      - "[skip cr]"
+      - "[skip review]"
+    base_branches:
+      - main
+
+  tools:
+    golangci-lint:
+      enabled: true
+      config_file: ".golangci.yml"
+    eslint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    github-checks:
+      enabled: true
+
+  pre_merge_checks:
+    # Advisory only — free UI checks must not block merge
+    title:
+      mode: warning
+      requirements: |
+        Prefer imperative, concise English titles (~50–72 chars),
+        e.g. "Add …", "Fix …", "Wire …".
+    description:
+      mode: off
+    docstrings:
+      mode: off
+    issue_assessment:
+      mode: off
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    autofix:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  code_guidelines:
+    enabled: true
+    # Learned from these guideline files during review (free-tier knowledge base)
+    filePatterns:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "**/AGENTS.md"
