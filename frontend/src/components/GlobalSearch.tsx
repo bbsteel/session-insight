@@ -3,7 +3,8 @@ import { fetchSearch, fetchSettings, saveSettings } from '../api'
 import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
-import ThemeToggle from './ThemeToggle'
+import ThemeToggle, { ThemeSwitch } from './ThemeToggle'
+import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
 import {
   defaultBannerColor,
   getBannerColorOverride,
@@ -158,6 +159,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const savedFileExtsRef = useRef('')
   // 终端消息时间戳前缀:哪些消息类型显示 HH:MM:SS(服务端渲染选项)。
   const [tsKinds, setTsKinds] = useState<string[]>([])
+  const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -446,8 +448,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           </div>
         )}
       </div>
-      <div className="ml-auto flex items-center gap-1">
-        <ThemeToggle />
+      <div className="ml-auto flex items-center gap-1.5">
+        <ThemeSwitch />
         <div ref={settingsRef} className="relative">
           <button
             onClick={() => setShowSettings(v => !v)}
@@ -462,8 +464,32 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
             ⚙
           </button>
           {showSettings && (
-            <div className="absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[240px] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg">
-              <div className="mb-2 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">搜索设置</div>
+            <div className="absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[260px] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg">
+              <div className="mb-2 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">外观</div>
+              <ThemeToggle />
+              <div className="mt-1 text-meta text-[var(--text-muted)]">默认浅色；跟随系统时随 OS 深/浅切换</div>
+              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                会话导航
+              </div>
+              <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
+                打开时展开
+                <select
+                  value={navOpenPref}
+                  onChange={e => {
+                    const next = e.target.value as NavOpenPref
+                    setNavOpenPref(next)
+                    setNavOpenPrefState(next)
+                  }}
+                  className="h-7 max-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-1.5 text-helper text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
+                  aria-label="打开会话时展开导航"
+                >
+                  <option value="user">用户消息</option>
+                  <option value="tool">工具调用</option>
+                  <option value="off">不展开</option>
+                </select>
+              </label>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">打开会话时展开导航面板并启用钉住（点击外部不关闭）</div>
+              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">搜索设置</div>
               <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
                 历史记录条数
                 <input

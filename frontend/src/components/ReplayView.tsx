@@ -20,6 +20,7 @@ import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
+import { getNavOpenPref } from '../navPrefs'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -71,6 +72,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [edits, setEdits] = useState<EditCall[]>([])
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [showUserPanel, setShowUserPanel] = useState(false)
+  // When pinned, click-outside does not close the nav overlay.
+  const [navPinned, setNavPinned] = useState(false)
   const [showAIPanel, setShowAIPanel] = useState(false)
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
@@ -315,6 +318,30 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   useEffect(() => {
     if (!sessionIsLive && followOutput) setFollowOutput(false)
   }, [sessionIsLive, followOutput])
+
+  // On session open: optionally expand nav (user/tool) and pin it (settings).
+  useEffect(() => {
+    if (!sessionId) {
+      setShowUserPanel(false)
+      setShowToolPanel(false)
+      setNavPinned(false)
+      return
+    }
+    const pref = getNavOpenPref()
+    if (pref === 'user') {
+      setShowUserPanel(true)
+      setShowToolPanel(false)
+      setNavPinned(true)
+    } else if (pref === 'tool') {
+      setShowToolPanel(true)
+      setShowUserPanel(false)
+      setNavPinned(true)
+    } else {
+      setShowUserPanel(false)
+      setShowToolPanel(false)
+      setNavPinned(false)
+    }
+  }, [sessionId])
 
   // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
   // helper textarea, which stops keydown propagation before the bubble phase.
@@ -862,6 +889,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const handleJumpToTool = useCallback((name: string) => {
     setToolFilterRequest(prev => ({ name, token: (prev?.token ?? 0) + 1 }))
     setShowToolPanel(true)
+    setShowUserPanel(false)
+    setNavPinned(true)
     setViewMode('terminal')
   }, [])
 
@@ -1244,7 +1273,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           <button
             onClick={() => setShowUserPanel(v => {
               const next = !v
-              if (next) setShowToolPanel(false)
+              if (next) {
+                setShowToolPanel(false)
+                // Manual open keeps current pin; first open starts unpinned
+                // unless auto-open already pinned this session.
+              } else {
+                setNavPinned(false)
+              }
               return next
             })}
             className={`h-7 rounded-md border px-2 text-nav ${
@@ -1259,8 +1294,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           <button
             onClick={() => setShowToolPanel(v => {
               const next = !v
-              if (next) setShowUserPanel(false)
-              else setToolFilterRequest(null)
+              if (next) {
+                setShowUserPanel(false)
+              } else {
+                setToolFilterRequest(null)
+                setNavPinned(false)
+              }
               return next
             })}
             className={`h-7 rounded-md border px-2 text-nav ${
@@ -1376,8 +1415,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             <UserMessagePanel
               positions={positionsData}
               building={positionsBuilding}
+              pinned={navPinned}
+              onPinnedChange={setNavPinned}
               onJump={handlePanelJump}
-              onClose={() => setShowUserPanel(false)}
+              onClose={() => {
+                setShowUserPanel(false)
+                setNavPinned(false)
+              }}
             />
           )}
           {/* 浮层覆盖在终端右侧:不改变终端布局宽度,开关面板不会触发
@@ -1386,10 +1430,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             <ToolCallPanel
               positions={positionsData}
               building={positionsBuilding}
+              pinned={navPinned}
+              onPinnedChange={setNavPinned}
               filterRequest={toolFilterRequest}
               onJump={handlePanelJump}
               onClose={() => {
                 setShowToolPanel(false)
+                setNavPinned(false)
                 // 面板生命周期结束,清掉分析页带来的筛选请求,
                 // 避免下次手动打开时又套用旧筛选。
                 setToolFilterRequest(null)
