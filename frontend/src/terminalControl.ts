@@ -89,3 +89,18 @@ export interface TerminalContextMenuEvent {
   /** Path-bearing fold header: offer 展开/收起 alongside open-file in fileOnly menu. */
   foldKey?: string
 }
+
+// A user-message range to highlight in the terminal buffer. lineStart/lineEnd
+// are original render rows (positions API); logicalStart/logicalEnd are the
+// '\n'-split source rows that stay exact when collapsed-fold badges shift
+// display rows. text is the user's prompt text for the sticky top bar.
+export interface UserHighlightRange {
+  key: string
+  lineStart: number
+  lineEnd?: number
+  logicalStart?: number
+  logicalEnd?: number
+  text: string
+  tsMs?: number | null
+  seq?: number
+}

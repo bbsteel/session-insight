@@ -9,17 +9,40 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader"
 )
 
+// IndexStatusProvider exposes FTS indexer progress for the search UI.
+type IndexStatusProvider interface {
+	SnapshotProgress() IndexProgress
+}
+
+// IndexProgress mirrors indexer.Progress without importing that package
+// into every handler file (avoids cycles). Values match indexer.Progress JSON.
+type IndexProgress struct {
+	State   string `json:"state"`
+	Done    int    `json:"done"`
+	Total   int    `json:"total"`
+	Percent int    `json:"percent"`
+	Message string `json:"message,omitempty"`
+}
+
 type Server struct {
 	DB      *db.DB
 	Readers []reader.BaseSessionReader
 	Mux     *http.ServeMux
 	events  *eventHub
 
+	// indexStatus is optional; when set, GET /api/index/status reports progress.
+	indexStatus IndexStatusProvider
+
 	// listRev 是会话列表的修订号，作为 /api/sessions 的 ETag：索引轮落库、
 	// 书签/标题变更都会 bump，内容没变的重拉直接 304。startNano 隔离进程
 	// 重启，避免新进程撞上浏览器缓存的旧 ETag。
 	listRev   atomic.Int64
 	startNano int64
+}
+
+// SetIndexStatus wires the indexer progress provider (call before Serve).
+func (s *Server) SetIndexStatus(p IndexStatusProvider) {
+	s.indexStatus = p
 }
 
 type SessionSummary struct {
@@ -69,6 +92,7 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/sessions/{id}/analytics", s.handleSessionAnalytics)
 	s.Mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	s.Mux.HandleFunc("GET /api/search", s.handleSearch)
+	s.Mux.HandleFunc("GET /api/index/status", s.handleIndexStatus)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExportSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/render", s.handleRenderSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/edits", s.handleSessionEdits)

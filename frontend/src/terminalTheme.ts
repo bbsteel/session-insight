@@ -157,7 +157,7 @@ export function terminalTheme(isDark: boolean, agentType?: string): ITheme {
 }
 
 // useIsDark tracks the global theme by observing the `.dark` class that
-// ThemeToggle toggles on <html>, so the terminal re-skins in sync with the UI
+// theme.ts applies on <html>, so the terminal re-skins in sync with the UI
 // without any prop drilling.
 export function useIsDark(): boolean {
   const [isDark, setIsDark] = useState(() =>

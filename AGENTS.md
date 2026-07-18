@@ -10,19 +10,63 @@
 
 All code and docs changes land on `main` **only via pull request**. Do not commit product work directly onto `main`, and do not `git push origin main` for feature or fix delivery.
 
+### Always update `main` before creating a feature branch (required)
+
+**Before** `git switch -c` / `git checkout -b` for any new `feat/*`, `fix/*`, `docs/*`, or `chore/*` branch:
+
+1. `git fetch origin` so remote refs are current.
+2. Confirm the base is latest remote main — prefer creating from `origin/main` directly (no stale local `main` required).
+3. Only then create the feature branch.
+
+Do **not** branch off an outdated local `main`, an old feature branch, or the previous task’s HEAD without fetching first. Stale bases cause avoidable conflicts with open PRs and may fail GitHub’s “require branch up to date before merging” protection when the branch is still behind the target at merge time.
+
+Recommended one-liner (preferred — does not require checking out local `main`):
+
+```bash
+git fetch origin && git switch -c my-branch origin/main
+```
+
+If you intentionally keep a local `main` checkout in sync first:
+
+```bash
+git fetch origin && git switch main && git pull --ff-only origin main && git switch -c my-branch
+```
+
 For **every** change set (including small fixes and agent-instruction edits):
 
-1. **Start from up-to-date `main`**: `git fetch origin` and base the branch on `origin/main` (or the primary checkout’s `main` after it matches remote when that is the agreed base).
+1. **Update remote knowledge, then branch from latest `main`**: `git fetch origin`, then base the branch on **`origin/main`** (or local `main` only after it is fast-forwarded to match remote). Prefer `git switch -c <branch> origin/main` so the new branch tracks current remote history without a local merge step. Never skip the fetch when starting a new task or a new branch.
 2. **Create a dedicated branch** with a clear prefix, e.g. `feat/…`, `fix/…`, `docs/…`, `chore/…`. Prefer one logical change per branch.
 3. **Commit only on that branch.** Do not leave finished work solely as commits on `main`.
 4. **Open a PR into `main`** (`gh pr create` or equivalent). Default to **not** merging unless the user explicitly asks to merge.
 5. **Push the branch**, not `main`, when publishing the change for review.
-6. After merge (by user or explicit request), continue the next task from a **new** branch off updated `main`.
+6. After merge (by user or explicit request), continue the next task from a **new** branch off updated **`origin/main`** (fetch first). Do not merge the feature branch into local `main` as a substitute for the remote PR merge. Do not reuse the previous feature branch as the base for the next task without rebasing onto fresh `origin/main`.
+
+### Local `main` is remote-only (required)
+
+Local `main` is a **mirror of `origin/main`**, not a place to integrate feature work.
+
+**Forbidden** (unless the user explicitly orders that exact exception for that action):
+
+- `git merge <feature-branch>` (or `git merge --no-ff`, squash-merge, or cherry-pick of a whole feature) **into local `main`**
+- `git rebase <feature-branch>` onto local `main` as a way to “land” work
+- Any workflow that lands feature/docs commits on local `main` and then `git push origin main` to publish them
+- Treating “merge locally then push `main`” as an alternative to a PR
+
+**Required** when local `main` must move forward:
+
+- `git fetch origin`
+- Update local `main` **only** by fast-forward from the remote, e.g. `git switch main && git pull --ff-only origin main`, or `git switch main && git reset --hard origin/main` when a hard reset is appropriate and the user has not forbidden it for that checkout
+- If fast-forward is impossible, **stop** and fix the situation (do not invent a local merge of feature branches onto `main` to “catch up”)
+
+**Allowed** integration path: open/merge a PR on the remote; then refresh local `main` from `origin/main` as above. Merging a PR with `gh pr merge` (or the GitHub UI) updates **remote** `main`; that is not a local merge into `main`.
+
+After a remote merge, **do not** automatically `git switch main && git pull` unless the user asked to sync local `main` or the next step clearly requires an up-to-date local `main` checkout. Prefer basing the next branch on `origin/main` after `git fetch`.
 
 Exceptions (must still prefer a branch when practical):
 
 - User explicitly orders a direct commit or direct push to `main` for that action.
 - Emergency hotfix the user scopes as “commit on main now” — still prefer a branch + fast PR when time allows.
+- User explicitly orders a one-off local merge into `main` — still do not `git push origin main` unless they also ordered that push.
 
 When the working tree already has uncommitted or local-only work on `main` that belongs to the current task, **move it onto a feature branch before committing** (e.g. create branch from current HEAD, or `git switch -c` then commit). Do not “finish on main and PR later” as the default path.
 

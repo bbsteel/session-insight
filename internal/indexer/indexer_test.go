@@ -77,6 +77,11 @@ func TestIndexer_FirstRun(t *testing.T) {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
+	prog := ix.SnapshotProgress()
+	if prog.State != "idle" || prog.Percent != 100 || prog.Done != 1 || prog.Total != 1 {
+		t.Fatalf("progress after run: %+v", prog)
+	}
+
 	results, err := database.SearchTurns("hello", 30)
 	if err != nil {
 		t.Fatalf("SearchTurns: %v", err)
@@ -346,7 +351,14 @@ func TestIndexer_GetSessionFailure(t *testing.T) {
 	}
 
 	ix := New(database, []reader.BaseSessionReader{mr})
-	_ = ix.RunOnce(context.Background())
+	err = ix.RunOnce(context.Background())
+	if err == nil {
+		t.Fatal("expected RunOnce to surface session errors")
+	}
+	prog := ix.SnapshotProgress()
+	if prog.Message != "completed_with_errors" {
+		t.Fatalf("progress message = %q, want completed_with_errors", prog.Message)
+	}
 
 	_, exists, err := database.GetWatermark("test", "s1")
 	if err != nil {
@@ -475,8 +487,12 @@ func TestIndexer_GetSessionFailurePreservesOrphan(t *testing.T) {
 	var calls int32
 	mr.getSessionCalls = &calls
 
-	if err := ix.RunOnce(context.Background()); err != nil {
-		t.Fatalf("RunOnce: %v", err)
+	// s1 fails GetSession; cycle reports errors but must not orphan s2 (still listed).
+	if err := ix.RunOnce(context.Background()); err == nil {
+		t.Fatal("expected RunOnce error when s1 GetSession fails")
+	}
+	if msg := ix.SnapshotProgress().Message; msg != "completed_with_errors" {
+		t.Fatalf("progress message = %q, want completed_with_errors", msg)
 	}
 
 	// s2 should STILL be searchable — GetSession failure must not trigger orphan deletion

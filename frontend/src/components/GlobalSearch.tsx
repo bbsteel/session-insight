@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchSearch, fetchSettings, saveSettings } from '../api'
+import { fetchIndexStatus, fetchSearch, fetchSettings, saveSettings, type IndexStatus } from '../api'
 import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
-import ThemeToggle from './ThemeToggle'
+import ThemeToggle, { ThemeSwitch } from './ThemeToggle'
+import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
 import {
   defaultBannerColor,
   getBannerColorOverride,
@@ -143,6 +144,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
+  const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const [history, setHistory] = useState<HistoryEntry[]>([])
@@ -158,6 +160,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const savedFileExtsRef = useRef('')
   // 终端消息时间戳前缀:哪些消息类型显示 HH:MM:SS(服务端渲染选项)。
   const [tsKinds, setTsKinds] = useState<string[]>([])
+  const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -172,6 +175,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
     return () => window.removeEventListener('si-open-ai-settings', open)
   }, [])
 
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
   const isHistoryMode = !query.trim()
   const visibleHistory = sortAndTrim(history, historyLimit)
   const listLength = isHistoryMode ? visibleHistory.length : results.length
@@ -222,6 +226,30 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
     }
   }
 
+  // Poll indexer progress: fast while running, slow when idle (to catch the next cycle).
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = () => {
+      fetchIndexStatus()
+        .then(s => {
+          if (cancelled) return
+          setIndexStatus(s)
+          const ms = s.state === 'running' ? 400 : 4000
+          timer = setTimeout(tick, ms)
+        })
+        .catch(() => {
+          if (cancelled) return
+          timer = setTimeout(tick, 8000)
+        })
+    }
+    tick()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
   useEffect(() => {
     if (!query.trim()) {
       setResults([])
@@ -237,6 +265,25 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
     }, 250)
     return () => clearTimeout(debounceRef.current)
   }, [query])
+
+  const indexing = indexStatus?.state === 'running'
+  const indexLabel = indexing
+    ? `索引进行中… ${Math.min(100, Math.max(0, indexStatus?.percent ?? 0))}%` +
+      (indexStatus && indexStatus.total > 0 ? ` (${indexStatus.done}/${indexStatus.total})` : '')
+    : indexStatus?.message === 'completed_with_errors'
+      ? '索引完成（部分会话失败，将重试）'
+      : null
+  const searchPlaceholder = indexing
+    ? indexLabel!
+    : `全文搜索... (${isMac ? '⌘K' : 'Ctrl+K'})`
+  // Polite live region: announce progress even when the dropdown is closed.
+  const indexAriaLive = indexing
+    ? indexLabel
+    : indexStatus?.message === 'completed_with_errors'
+      ? '全文索引完成，部分会话失败，稍后将重试'
+      : indexStatus?.message === 'ready' && (indexStatus.total ?? 0) > 0
+        ? '全文索引已就绪'
+        : ''
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -332,7 +379,6 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
     }
   }
 
-  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((isMac ? e.metaKey : e.ctrlKey) && e.key === 'k') { e.preventDefault(); inputRef.current?.focus() }
@@ -348,7 +394,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
         <input
           ref={inputRef}
           type="search"
-          placeholder={`全文搜索... (${isMac ? '⌘K' : 'Ctrl+K'})`}
+          placeholder={searchPlaceholder}
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -357,8 +403,25 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
           aria-label="全文搜索"
         />
+        {indexing && (
+          <div
+            className="pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-b-md bg-[var(--accent-blue)] transition-[width] duration-300"
+            style={{ width: `${Math.min(100, Math.max(2, indexStatus?.percent ?? 0))}%` }}
+            aria-hidden="true"
+          />
+        )}
+        {/* Always mounted so screen readers hear index progress without opening the dropdown. */}
+        <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {indexAriaLive}
+        </div>
         {open && (
           <div className="absolute top-full left-0 right-0 mt-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-30 max-h-[400px] overflow-y-auto">
+            {indexLabel && (
+              <div className="border-b border-[var(--border-muted)] px-3 py-1.5 text-meta text-[var(--text-muted)]">
+                {indexLabel}
+                {indexing && <span className="ml-1 text-[var(--text-muted)]">· 可先搜已完成部分</span>}
+              </div>
+            )}
             {isHistoryMode ? (
               <>
                 <div className="sticky top-0 bg-[var(--bg-surface)] px-3 pt-2 pb-1 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
@@ -446,8 +509,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           </div>
         )}
       </div>
-      <div className="ml-auto flex items-center gap-1">
-        <ThemeToggle />
+      <div className="ml-auto flex items-center gap-1.5">
+        <ThemeSwitch />
         <div ref={settingsRef} className="relative">
           <button
             onClick={() => setShowSettings(v => !v)}
@@ -462,8 +525,32 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
             ⚙
           </button>
           {showSettings && (
-            <div className="absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[240px] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg">
-              <div className="mb-2 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">搜索设置</div>
+            <div className="absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[260px] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg">
+              <div className="mb-2 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">外观</div>
+              <ThemeToggle />
+              <div className="mt-1 text-meta text-[var(--text-muted)]">默认浅色；跟随系统时随 OS 深/浅切换</div>
+              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                会话导航
+              </div>
+              <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
+                打开时展开
+                <select
+                  value={navOpenPref}
+                  onChange={e => {
+                    const next = e.target.value as NavOpenPref
+                    setNavOpenPref(next)
+                    setNavOpenPrefState(next)
+                  }}
+                  className="h-7 max-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-1.5 text-helper text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
+                  aria-label="打开会话时展开导航"
+                >
+                  <option value="user">用户消息</option>
+                  <option value="tool">工具调用</option>
+                  <option value="off">不展开</option>
+                </select>
+              </label>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">打开会话时展开导航面板并启用钉住（点击外部不关闭）</div>
+              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">搜索设置</div>
               <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
                 历史记录条数
                 <input
