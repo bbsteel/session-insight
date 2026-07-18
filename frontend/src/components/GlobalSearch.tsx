@@ -473,7 +473,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
         onOpenAISettings={() => setShowAISettings(true)}
       />
     )}
-    {showAISettings && <AISettingsModal onClose={() => setShowAISettings(false)} />}
+    {showAISettings && <AISettingsModal onClose={() => { setShowAISettings(false); setShowSettings(true) }} />}
     </>
   )
 }

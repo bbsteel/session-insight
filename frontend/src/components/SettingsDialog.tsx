@@ -37,9 +37,9 @@ interface TabDef {
 const TABS: TabDef[] = [
   { id: 'appearance', label: '外观', icon: AppearanceIcon },
   { id: 'navigation', label: '会话导航', icon: NavigationIcon },
-  { id: 'search', label: '搜索', icon: SearchIcon },
+  { id: 'search', label: '全文搜索', icon: SearchIcon },
   { id: 'terminal', label: '终端外观', icon: TerminalIcon },
-  { id: 'editor', label: '编辑器', icon: EditorIcon },
+  { id: 'editor', label: '文件查看器', icon: EditorIcon },
   { id: 'ai', label: 'AI', icon: SparklesIcon },
 ]
 
@@ -360,17 +360,19 @@ export default function SettingsDialog({
               <div className="space-y-4">
                 <div className={sectionBox}>
                   <label className="block text-helper font-medium text-[var(--text-primary)]">
-                    打开文件命令
+                    打开文件的程序
                     <input
                       type="text"
                       value={editorCommand}
-                      placeholder={editorCommandDefault || 'code --goto {path}:{line}'}
+                      placeholder={editorCommandDefault || '默认使用系统默认编辑器（如 code / xdg-open）'}
                       onChange={e => setEditorCommand(e.target.value)}
                       onBlur={() => void persistEditorCommand()}
                       className={`${inputCls} mt-1.5 w-full font-mono text-meta`}
                     />
                   </label>
-                  <div className={sectionDesc}>占位符 {'{path}'}、{'{line}'}；留空自动探测（code → xdg-open）</div>
+                  <div className={sectionDesc}>
+                    自定义打开文件时使用的程序；留空则使用系统默认。占位符：{'{path}'}、{'{line}'}
+                  </div>
                 </div>
 
                 <div className={sectionBox}>
