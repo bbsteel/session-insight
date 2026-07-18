@@ -309,9 +309,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // the last logical line). Falls back to display-line mapping when logical
     // coordinates are unavailable or out of range.
     const resolveUserEndRow = (origLine: number, logical: number | undefined, buf: IBuffer): number => {
-      if (typeof logical === 'number' && logical <= logicalRows.length) {
-        if (logical < logicalRows.length) {
-          return Math.max(0, logicalRows[logical] - 1)
+      if (typeof logical === 'number') {
+        const composed = foldView ? foldView.toComposedLogical(logical) : logical
+        if (composed < logicalRows.length) {
+          return Math.max(0, logicalRows[composed] - 1)
         }
         return Math.max(0, buf.length - 1)
       }
