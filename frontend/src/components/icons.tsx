@@ -23,28 +23,30 @@ function Icon({ className, children, ...rest }: IconProps & { children: ReactNod
 }
 
 /**
- * Geometric push-pin: bold angular head with hollow triangle, thick shaft.
- * Same path for both states — unpinned tilted (ref pose), pinned vertical (needle down).
+ * Bold geometric push-pin: diamond head (hollow via stroke) + needle.
+ * Unpinned is diagonal (reference pose); pinned is the same shape, vertical.
+ * Uses stroke (not a filled evenodd blob) so it stays legible at ~14px.
  */
 export function PinIcon({ filled, className, ...rest }: IconProps & { filled?: boolean }) {
   const cls = className ?? 'h-3.5 w-3.5 shrink-0'
-  // Drawn upright (needle down). Unpinned: diagonal like the reference image.
   const rot = filled ? 0 : -40
   return (
-    <svg className={cls} viewBox="0 0 16 16" aria-hidden {...rest}>
-      <g transform={`rotate(${rot} 8 8)`}>
-        {/*
-          Bold mitered silhouette (head → shoulders → shaft → tip) with a
-          triangular cutout pointing toward the tip — same family as the
-          product reference, original coordinates.
-        */}
-        <path
-          fill="currentColor"
-          fillRule="evenodd"
-          d={
-            'M8 .9 13.1 6l-2.15 2.15 2.35 2.35-3.05 3.05-.05.05V15.1H5.8v-1.55L2.75 10.5l2.35-2.35L2.95 6 8 .9Zm0 3.55L6.05 6.4 8 8.35 9.95 6.4 8 4.45Z'
-          }
-        />
+    <svg
+      className={cls}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.6}
+      strokeLinejoin="miter"
+      strokeMiterlimit={2}
+      aria-hidden
+      {...rest}
+    >
+      <g transform={`rotate(${rot} 12 12)`}>
+        {/* Angular head ring — white center is the hole */}
+        <path d="M12 2.2 19.2 9.4 12 16.6 4.8 9.4Z" />
+        {/* Needle */}
+        <path d="M12 16.6V21.8" strokeLinecap="square" />
       </g>
     </svg>
   )
