@@ -10,7 +10,7 @@ import (
 // TurnText 是一条待索引的内容行。
 type TurnText struct {
 	TurnIndex int    // -1 表示 meta 行
-	Role      string // 'user' | 'assistant' | 'meta'
+	Role      string // 'meta' | 'user' | 'assistant' | 'skill' | 'tool' | 'error'
 	Content   string
 }
 
