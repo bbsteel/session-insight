@@ -77,6 +77,11 @@ func TestIndexer_FirstRun(t *testing.T) {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
+	prog := ix.SnapshotProgress()
+	if prog.State != "idle" || prog.Percent != 100 || prog.Done != 1 || prog.Total != 1 {
+		t.Fatalf("progress after run: %+v", prog)
+	}
+
 	results, err := database.SearchTurns("hello", 30)
 	if err != nil {
 		t.Fatalf("SearchTurns: %v", err)

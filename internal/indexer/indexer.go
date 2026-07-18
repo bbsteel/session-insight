@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -15,6 +16,17 @@ import (
 
 const IndexInterval = 3 * time.Minute
 
+// Progress is a snapshot of the current (or last completed) index cycle.
+// Percent is 0–100; when State is "idle", Percent is 100 after a successful
+// pass and 0 before the first cycle has finished.
+type Progress struct {
+	State   string `json:"state"` // "idle" | "running"
+	Done    int    `json:"done"`
+	Total   int    `json:"total"`
+	Percent int    `json:"percent"`
+	Message string `json:"message,omitempty"`
+}
+
 type Indexer struct {
 	db      *db.DB
 	readers []reader.BaseSessionReader
@@ -24,10 +36,49 @@ type Indexer struct {
 	// SSE 通知挂在这里而不是文件监听回调上：等数据落库后再让侧栏重拉，
 	// 既不会读到旧数据，也不会跟正在跑的索引轮抢 CPU。
 	OnChanged func()
+
+	// OnProgress（可选）在进度变化时调用（开始/步进/结束），供 UI 轮询或 SSE。
+	OnProgress func(Progress)
+
+	progressMu sync.Mutex
+	progress   Progress
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Indexer {
-	return &Indexer{db: database, readers: readers, kick: make(chan struct{}, 1)}
+	return &Indexer{
+		db:      database,
+		readers: readers,
+		kick:    make(chan struct{}, 1),
+		progress: Progress{
+			State:   "idle",
+			Percent: 0,
+			Message: "waiting",
+		},
+	}
+}
+
+// SnapshotProgress returns a copy of the latest progress snapshot.
+func (ix *Indexer) SnapshotProgress() Progress {
+	ix.progressMu.Lock()
+	defer ix.progressMu.Unlock()
+	return ix.progress
+}
+
+func (ix *Indexer) setProgress(p Progress) {
+	if p.Total > 0 {
+		p.Percent = (p.Done * 100) / p.Total
+		if p.Percent > 100 {
+			p.Percent = 100
+		}
+	} else if p.State == "idle" {
+		p.Percent = 100
+	}
+	ix.progressMu.Lock()
+	ix.progress = p
+	ix.progressMu.Unlock()
+	if ix.OnProgress != nil {
+		ix.OnProgress(p)
+	}
 }
 
 // Kick 请求 RunBackground 尽快跑一轮增量索引（文件监听器在会话文件变化时
@@ -64,18 +115,79 @@ func (ix *Indexer) RunBackground(ctx context.Context) {
 }
 
 func (ix *Indexer) indexOnce(ctx context.Context) error {
-	var errs []string
-	changed := 0
+	// Pre-count sessions so the UI can show a stable percentage.
+	type agentSessions struct {
+		reader   reader.BaseSessionReader
+		sessions []model.Session
+		listErr  error
+	}
+	planned := make([]agentSessions, 0, len(ix.readers))
+	total := 0
 	for _, r := range ix.readers {
 		if ctx.Err() != nil {
+			ix.setProgress(Progress{State: "idle", Message: "cancelled"})
 			return ctx.Err()
 		}
-		n, err := ix.indexReader(ctx, r)
+		sessions, err := r.ListSessions()
+		if err != nil {
+			log.Printf("[indexer] %s: ListSessions error: %v", r.AgentType(), err)
+			planned = append(planned, agentSessions{reader: r, listErr: err})
+			continue
+		}
+		planned = append(planned, agentSessions{reader: r, sessions: sessions})
+		total += len(sessions)
+	}
+
+	ix.setProgress(Progress{
+		State:   "running",
+		Done:    0,
+		Total:   total,
+		Message: "indexing",
+	})
+
+	var errs []string
+	changed := 0
+	done := 0
+	for _, item := range planned {
+		if ctx.Err() != nil {
+			ix.setProgress(Progress{
+				State:   "idle",
+				Done:    done,
+				Total:   total,
+				Message: "cancelled",
+			})
+			return ctx.Err()
+		}
+		if item.listErr != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", item.reader.AgentType(), item.listErr))
+			continue
+		}
+		n, err := ix.indexReaderSessions(ctx, item.reader, item.sessions, func() {
+			done++
+			ix.setProgress(Progress{
+				State:   "running",
+				Done:    done,
+				Total:   total,
+				Message: "indexing",
+			})
+		})
 		changed += n
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", r.AgentType(), err))
+			errs = append(errs, fmt.Sprintf("%s: %v", item.reader.AgentType(), err))
 		}
 	}
+
+	msg := "ready"
+	if len(errs) > 0 {
+		msg = "completed_with_errors"
+	}
+	ix.setProgress(Progress{
+		State:   "idle",
+		Done:    done,
+		Total:   total,
+		Message: msg,
+	})
+
 	if changed > 0 && ix.OnChanged != nil {
 		ix.OnChanged()
 	}
@@ -85,14 +197,14 @@ func (ix *Indexer) indexOnce(ctx context.Context) error {
 	return nil
 }
 
-// indexReader 返回本轮该 reader 实际变更的会话数（新增/更新/删除）。
-func (ix *Indexer) indexReader(ctx context.Context, r reader.BaseSessionReader) (int, error) {
-	sessions, err := r.ListSessions()
-	if err != nil {
-		log.Printf("[indexer] %s: ListSessions error: %v", r.AgentType(), err)
-		return 0, err
-	}
-
+// indexReaderSessions indexes a pre-listed session set for one agent.
+// onEach is called after each session attempt (success or failure) for progress.
+func (ix *Indexer) indexReaderSessions(
+	ctx context.Context,
+	r reader.BaseSessionReader,
+	sessions []model.Session,
+	onEach func(),
+) (int, error) {
 	changed := 0
 	knownIDs := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
@@ -106,6 +218,9 @@ func (ix *Indexer) indexReader(ctx context.Context, r reader.BaseSessionReader) 
 		}
 		if did {
 			changed++
+		}
+		if onEach != nil {
+			onEach()
 		}
 	}
 

@@ -699,6 +699,16 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(agents)
 }
 
+func (s *Server) handleIndexStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if s.indexStatus == nil {
+		json.NewEncoder(w).Encode(IndexProgress{State: "idle", Percent: 100, Message: "unavailable"})
+		return
+	}
+	json.NewEncoder(w).Encode(s.indexStatus.SnapshotProgress())
+}
+
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {

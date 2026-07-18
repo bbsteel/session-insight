@@ -124,6 +124,20 @@ export async function fetchSearch(q: string): Promise<SearchResult[]> {
   return res.json()
 }
 
+export interface IndexStatus {
+  state: 'idle' | 'running' | string
+  done: number
+  total: number
+  percent: number
+  message?: string
+}
+
+export async function fetchIndexStatus(): Promise<IndexStatus> {
+  const res = await fetch('/api/index/status')
+  if (!res.ok) throw new Error(`Index status failed: ${res.status}`)
+  return res.json()
+}
+
 // Resolves a (possibly cwd-relative) path to an absolute existing file, or
 // null — the context menu only offers "open in editor" for real files.
 export async function resolveFile(path: string, cwd: string): Promise<string | null> {
