@@ -3,7 +3,7 @@ import { fetchSearch, fetchSettings, saveSettings } from '../api'
 import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
-import ThemeToggle from './ThemeToggle'
+import ThemeToggle, { ThemeSwitch } from './ThemeToggle'
 import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
 import {
   defaultBannerColor,
@@ -448,7 +448,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           </div>
         )}
       </div>
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex items-center gap-1.5">
+        <ThemeSwitch />
         <div ref={settingsRef} className="relative">
           <button
             onClick={() => setShowSettings(v => !v)}

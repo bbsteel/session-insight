@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
+import { CloseIcon, NarrowIcon, PinIcon, WidenIcon } from './icons'
 
 // 用户消息管理面板:按时间序列出会话的所有用户消息(kind === 'user' 的
 // positions),支持文字过滤、点击跳转到终端对应行。数据全部来自 positions
@@ -98,11 +99,10 @@ export default function UserMessagePanel({ positions, building, pinned = false, 
           {filtering ? `${visible.length}/${entries.length}` : entries.length}
         </span>
         <span className="flex-1" />
-        {/* Header actions use text-nav (same as title / toolbar) — no emoji or
-            symbol glyphs that fall back to a different face next to Chinese. */}
+        {/* Header actions: text-nav + currentColor SVG (no emoji/symbol fallbacks). */}
         <button
           onClick={() => onPinnedChange?.(!pinned)}
-          className={`h-6 rounded px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+          className={`inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
             pinned
               ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
               : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -111,22 +111,24 @@ export default function UserMessagePanel({ positions, building, pinned = false, 
           aria-pressed={pinned}
           aria-label={pinned ? '取消钉住导航面板' : '钉住导航面板'}
         >
+          <PinIcon filled={pinned} />
           {pinned ? '已钉住' : '钉住'}
         </button>
         <button
           onClick={toggleWide}
-          className="h-6 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           title={wide ? '恢复标准宽度' : '加宽面板'}
         >
+          {wide ? <NarrowIcon /> : <WidenIcon />}
           {wide ? '标准' : '加宽'}
         </button>
         <button
           onClick={onClose}
-          className="h-6 w-6 rounded text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="inline-flex h-6 w-6 items-center justify-center rounded text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           title="关闭"
           aria-label="关闭用户消息面板"
         >
-          ×
+          <CloseIcon />
         </button>
       </div>
 
