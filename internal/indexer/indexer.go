@@ -199,6 +199,8 @@ func (ix *Indexer) indexOnce(ctx context.Context) error {
 
 // indexReaderSessions indexes a pre-listed session set for one agent.
 // onEach is called after each session attempt (success or failure) for progress.
+// Per-session errors are aggregated so the cycle ends as completed_with_errors
+// instead of ready+nil when some sessions fail (watermark not advanced for those).
 func (ix *Indexer) indexReaderSessions(
 	ctx context.Context,
 	r reader.BaseSessionReader,
@@ -206,15 +208,20 @@ func (ix *Indexer) indexReaderSessions(
 	onEach func(),
 ) (int, error) {
 	changed := 0
+	var sessionErrs []string
 	knownIDs := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
 		if ctx.Err() != nil {
+			if len(sessionErrs) > 0 {
+				return changed, fmt.Errorf("%w; also: %s", ctx.Err(), strings.Join(sessionErrs, "; "))
+			}
 			return changed, ctx.Err()
 		}
 		knownIDs = append(knownIDs, sess.ID)
 		did, err := ix.indexSession(r, sess)
 		if err != nil {
 			log.Printf("[indexer] %s/%s: index error: %v", r.AgentType(), sess.ID, err)
+			sessionErrs = append(sessionErrs, fmt.Sprintf("%s: %v", sess.ID, err))
 		}
 		if did {
 			changed++
@@ -230,6 +237,9 @@ func (ix *Indexer) indexReaderSessions(
 	if err != nil {
 		log.Printf("[indexer] %s: orphan cleanup error: %v", r.AgentType(), err)
 		// 孤儿清理失败不阻止其他 reader
+	}
+	if len(sessionErrs) > 0 {
+		return changed + removed, fmt.Errorf("session errors: %s", strings.Join(sessionErrs, "; "))
 	}
 	return changed + removed, nil
 }

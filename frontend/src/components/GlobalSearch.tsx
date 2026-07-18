@@ -270,10 +270,20 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const indexLabel = indexing
     ? `索引进行中… ${Math.min(100, Math.max(0, indexStatus?.percent ?? 0))}%` +
       (indexStatus && indexStatus.total > 0 ? ` (${indexStatus.done}/${indexStatus.total})` : '')
-    : null
+    : indexStatus?.message === 'completed_with_errors'
+      ? '索引完成（部分会话失败，将重试）'
+      : null
   const searchPlaceholder = indexing
     ? indexLabel!
     : `全文搜索... (${isMac ? '⌘K' : 'Ctrl+K'})`
+  // Polite live region: announce progress even when the dropdown is closed.
+  const indexAriaLive = indexing
+    ? indexLabel
+    : indexStatus?.message === 'completed_with_errors'
+      ? '全文索引完成，部分会话失败，稍后将重试'
+      : indexStatus?.message === 'ready' && (indexStatus.total ?? 0) > 0
+        ? '全文索引已就绪'
+        : ''
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -397,15 +407,19 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           <div
             className="pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-b-md bg-[var(--accent-blue)] transition-[width] duration-300"
             style={{ width: `${Math.min(100, Math.max(2, indexStatus?.percent ?? 0))}%` }}
-            aria-hidden
+            aria-hidden="true"
           />
         )}
+        {/* Always mounted so screen readers hear index progress without opening the dropdown. */}
+        <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {indexAriaLive}
+        </div>
         {open && (
           <div className="absolute top-full left-0 right-0 mt-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-30 max-h-[400px] overflow-y-auto">
-            {indexing && (
+            {indexLabel && (
               <div className="border-b border-[var(--border-muted)] px-3 py-1.5 text-meta text-[var(--text-muted)]">
                 {indexLabel}
-                <span className="ml-1 text-[var(--text-muted)]">· 可先搜已完成部分</span>
+                {indexing && <span className="ml-1 text-[var(--text-muted)]">· 可先搜已完成部分</span>}
               </div>
             )}
             {isHistoryMode ? (
