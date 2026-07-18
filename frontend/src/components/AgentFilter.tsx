@@ -109,7 +109,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
     <div className="px-3 pb-2 flex-shrink-0">
       <div
         ref={containerRef}
-        className="flex items-center gap-1 overflow-hidden"
+        className="flex items-center gap-1"
       >
         <button
           type="button"
