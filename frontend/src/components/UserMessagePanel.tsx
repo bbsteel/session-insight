@@ -98,9 +98,11 @@ export default function UserMessagePanel({ positions, building, pinned = false, 
           {filtering ? `${visible.length}/${entries.length}` : entries.length}
         </span>
         <span className="flex-1" />
+        {/* Header actions use text-nav (same as title / toolbar) — no emoji or
+            symbol glyphs that fall back to a different face next to Chinese. */}
         <button
           onClick={() => onPinnedChange?.(!pinned)}
-          className={`h-6 rounded px-1.5 text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+          className={`h-6 rounded px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
             pinned
               ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
               : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -109,14 +111,14 @@ export default function UserMessagePanel({ positions, building, pinned = false, 
           aria-pressed={pinned}
           aria-label={pinned ? '取消钉住导航面板' : '钉住导航面板'}
         >
-          {pinned ? '📌 已钉住' : '📌 钉住'}
+          {pinned ? '已钉住' : '钉住'}
         </button>
         <button
           onClick={toggleWide}
-          className="h-6 rounded px-1.5 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="h-6 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           title={wide ? '恢复标准宽度' : '加宽面板'}
         >
-          {wide ? '⇥ 标准' : '⇤ 加宽'}
+          {wide ? '标准' : '加宽'}
         </button>
         <button
           onClick={onClose}
