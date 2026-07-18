@@ -1,10 +1,10 @@
 import claudeColorIcon from '@lobehub/icons-static-svg/icons/claude-color.svg'
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude.svg'
-import codexIcon from '@lobehub/icons-static-svg/icons/codex.svg'
 import githubCopilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg'
 import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg'
 import openCodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg'
 const chrysIcon = '/icons/chrys-c.png'
+const codexBlossomIcon = '/icons/codex-blossom.svg'
 import { resolveAgentStyle } from '../agentStyles'
 
 interface AgentIconProps {
@@ -31,8 +31,8 @@ function resolveIcon(agentType?: string): AgentIconPair | null {
     dark: { src: claudeIcon, color: '#e8a48c' },
   }
   if (normalized.includes('codex')) return {
-    light: { src: codexIcon, color: '#111827' },
-    dark: { src: codexIcon, color: '#f7f7f8' },
+    light: { src: codexBlossomIcon },
+    dark: { src: codexBlossomIcon },
   }
   if (normalized.includes('copilot')) return {
     light: { src: githubCopilotIcon, color: '#24292f' },
@@ -43,8 +43,8 @@ function resolveIcon(agentType?: string): AgentIconPair | null {
     dark: { src: openCodeIcon, color: '#ffffff' },
   }
   if (normalized.includes('chrys')) return {
-    light: { src: chrysIcon, color: '#7c3aed' },
-    dark: { src: chrysIcon, color: '#d8b4fe' },
+    light: { src: chrysIcon, color: '#111111' },
+    dark: { src: chrysIcon, color: '#ffffff' },
   }
   if (normalized.includes('grok')) return {
     light: { src: grokIcon, color: '#111111' },
