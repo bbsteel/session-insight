@@ -531,13 +531,18 @@ register_discovered_binary() {
     else
       note="no pid file"
     fi
-    if [[ -f "$orphan_checkout/.runtime/session-insight.url" || -f "$orphan_checkout/session-insight.url" ||
-          -f "$orphan_checkout/.runtime/session-insight.pid" || -f "$orphan_checkout/session-insight.pid" ]]; then
-      {
-        read -r pid_file
-        read -r url_file
-        read -r log_file
-      } < <(runtime_files_for_checkout "$orphan_checkout")
+    {
+      read -r pid_file
+      read -r url_file
+      read -r log_file
+    } < <(runtime_files_for_checkout "$orphan_checkout")
+    # Only trust runtime files when they still name this live process.
+    local recorded_pid
+    recorded_pid=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
+    if [[ "$recorded_pid" != "$orphan_pid" ]]; then
+      pid_file=""
+      url_file=""
+      log_file=""
     fi
   else
     killable="0"
@@ -702,7 +707,9 @@ do_kill() {
       return 1
     fi
     num=$arg
-    if [[ "$num" -gt "$count" ]]; then
+    # Length + equal-length lexical compare: overflow-safe vs bash $((num-1)) wrap
+    # (e.g. 18446744073709551616 must not become idx=-1 and select the last row).
+    if [[ ${#num} -gt ${#count} ]] || { [[ ${#num} -eq ${#count} ]] && [[ "$num" > "$count" ]]; }; then
       echo "ERROR: instance #$num out of range (1-$count); run \`$0 status\` again"
       return 1
     fi
@@ -732,10 +739,7 @@ do_status() {
       started=$(process_start_time "$pid")
       [[ -z "$started" ]] && started="-"
       resolve_instance_url_port "$pid" "$URL_FILE" "$LOG_FILE"
-      if [[ "$_url" == "-" && "$PORT" != "0" ]]; then
-        _url="http://127.0.0.1:$PORT/"
-        _port="$PORT"
-      fi
+      # Do not invent URL/port from this shell's PORT when process metadata is unknown.
       echo "SessionInsight is running"
       echo "  PID:     $pid"
       echo "  Port:    $_port"
