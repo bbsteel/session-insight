@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchIndexStatus, fetchSearch, fetchSettings, saveSettings, type IndexStatus } from '../api'
+import { fetchIndexStatus, fetchSearch, type IndexStatus } from '../api'
 import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
-import ThemeToggle, { ThemeSwitch } from './ThemeToggle'
-import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
-import {
-  defaultBannerColor,
-  getBannerColorOverride,
-  setBannerColorOverride,
-  useIsDark,
-} from '../terminalTheme'
+import SettingsDialog from './SettingsDialog'
+import { ThemeSwitch } from './ThemeToggle'
 
 const HISTORY_KEY = 'search-history'
 const HISTORY_LIMIT_KEY = 'search-history-limit'
@@ -151,19 +145,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const [historyLimit, setHistoryLimit] = useState(readHistoryLimit)
   const [showSettings, setShowSettings] = useState(false)
   const [showAISettings, setShowAISettings] = useState(false)
-  const isDark = useIsDark()
-  const [bannerColor, setBannerColor] = useState<string | null>(getBannerColorOverride)
-  const [editorCommand, setEditorCommand] = useState('')
-  const [editorCommandDefault, setEditorCommandDefault] = useState('')
-  const savedEditorCommandRef = useRef('')
-  const [fileExts, setFileExts] = useState('')
-  const savedFileExtsRef = useRef('')
-  // 终端消息时间戳前缀:哪些消息类型显示 HH:MM:SS(服务端渲染选项)。
-  const [tsKinds, setTsKinds] = useState<string[]>([])
-  const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const settingsRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   // Other views (e.g. the AI panel's "去配置模型源" guidance) open the AI
@@ -179,52 +162,6 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const isHistoryMode = !query.trim()
   const visibleHistory = sortAndTrim(history, historyLimit)
   const listLength = isHistoryMode ? visibleHistory.length : results.length
-
-  // Editor command template lives server-side (the server executes it);
-  // loaded when the settings panel opens, saved on blur if changed.
-  useEffect(() => {
-    if (!showSettings) return
-    fetchSettings()
-      .then(s => {
-        setEditorCommand(s.editor_command)
-        setEditorCommandDefault(s.editor_command_default)
-        savedEditorCommandRef.current = s.editor_command
-        setFileExts(s.file_open_extensions ?? '')
-        savedFileExtsRef.current = s.file_open_extensions ?? ''
-        setTsKinds((s.timestamp_kinds ?? '').split(',').filter(Boolean))
-      })
-      .catch(() => {})
-  }, [showSettings])
-
-  const toggleTsKind = (kind: string) => {
-    const next = tsKinds.includes(kind) ? tsKinds.filter(k => k !== kind) : [...tsKinds, kind]
-    setTsKinds(next)
-    void saveSettings({ timestamp_kinds: next.join(',') })
-      .then(() => window.dispatchEvent(new Event('si-settings-changed')))
-      .catch(() => setTsKinds(tsKinds))
-  }
-
-  const persistEditorCommand = async () => {
-    const value = editorCommand.trim()
-    if (value === savedEditorCommandRef.current) return
-    try {
-      await saveSettings({ editor_command: value })
-      savedEditorCommandRef.current = value
-    } catch {
-      setEditorCommand(savedEditorCommandRef.current)
-    }
-  }
-
-  const persistFileExts = async () => {
-    const value = fileExts.trim()
-    if (value === savedFileExtsRef.current) return
-    try {
-      await saveSettings({ file_open_extensions: value })
-      savedFileExtsRef.current = value
-    } catch {
-      setFileExts(savedFileExtsRef.current)
-    }
-  }
 
   // Poll indexer progress: fast while running, slow when idle (to catch the next cycle).
   useEffect(() => {
@@ -288,7 +225,6 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
-      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) setShowSettings(false)
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
@@ -511,9 +447,9 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
       </div>
       <div className="ml-auto flex items-center gap-1.5">
         <ThemeSwitch />
-        <div ref={settingsRef} className="relative">
+        <div className="relative">
           <button
-            onClick={() => setShowSettings(v => !v)}
+            onClick={() => setShowSettings(true)}
             className={`h-7 w-7 rounded-md text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
               showSettings
                 ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
@@ -524,141 +460,19 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           >
             ⚙
           </button>
-          {showSettings && (
-            <div className="absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[260px] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg">
-              <div className="mb-2 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">外观</div>
-              <ThemeToggle />
-              <div className="mt-1 text-meta text-[var(--text-muted)]">默认浅色；跟随系统时随 OS 深/浅切换</div>
-              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                会话导航
-              </div>
-              <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
-                打开时展开
-                <select
-                  value={navOpenPref}
-                  onChange={e => {
-                    const next = e.target.value as NavOpenPref
-                    setNavOpenPref(next)
-                    setNavOpenPrefState(next)
-                  }}
-                  className="h-7 max-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-1.5 text-helper text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
-                  aria-label="打开会话时展开导航"
-                >
-                  <option value="user">用户消息</option>
-                  <option value="tool">工具调用</option>
-                  <option value="off">不展开</option>
-                </select>
-              </label>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">打开会话时展开导航面板并启用钉住（点击外部不关闭）</div>
-              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">搜索设置</div>
-              <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
-                历史记录条数
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={historyLimit}
-                  onChange={e => updateLimit(Number(e.target.value))}
-                  className="h-7 w-16 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
-                />
-              </label>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">钉住的记录不占用条数限制</div>
-              <button
-                onClick={clearHistory}
-                className="mt-3 h-7 w-full rounded-md border border-[var(--border-default)] text-helper text-[var(--accent-red,#e5534b)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)]"
-              >
-                清空搜索历史
-              </button>
-              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                终端外观
-              </div>
-              <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
-                Turn 横幅颜色
-                <span className="flex items-center gap-1.5">
-                  <input
-                    type="color"
-                    value={bannerColor ?? defaultBannerColor(isDark)}
-                    onChange={e => {
-                      setBannerColor(e.target.value)
-                      setBannerColorOverride(e.target.value)
-                    }}
-                    className="h-7 w-9 cursor-pointer rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5"
-                  />
-                  {bannerColor && (
-                    <button
-                      onClick={() => {
-                        setBannerColor(null)
-                        setBannerColorOverride(null)
-                      }}
-                      className="h-7 rounded-md border border-[var(--border-default)] px-2 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)]"
-                    >
-                      恢复默认
-                    </button>
-                  )}
-                </span>
-              </label>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">默认随深/浅主题，改动即时生效</div>
-              <div className="mt-3 text-helper text-[var(--text-primary)]">消息时间戳前缀</div>
-              <div className="mt-1 flex items-center gap-3">
-                {([['user', '用户输入'], ['assistant', '助手回复'], ['tool', '工具调用']] as const).map(([kind, label]) => (
-                  <label key={kind} className="flex cursor-pointer items-center gap-1.5 text-helper text-[var(--text-primary)]">
-                    <input
-                      type="checkbox"
-                      checked={tsKinds.includes(kind)}
-                      onChange={() => toggleTsKind(kind)}
-                      className="h-3.5 w-3.5 accent-[var(--accent-blue)]"
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">勾选的消息类型在终端里显示 HH:MM:SS，保存后立即重渲染</div>
-              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                编辑器
-              </div>
-              <label className="block text-helper text-[var(--text-primary)]">
-                打开文件命令
-                <input
-                  type="text"
-                  value={editorCommand}
-                  placeholder={editorCommandDefault || 'code --goto {path}:{line}'}
-                  onChange={e => setEditorCommand(e.target.value)}
-                  onBlur={() => void persistEditorCommand()}
-                  className="mt-1 h-7 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 font-mono text-meta text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
-                />
-              </label>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">
-                {'占位符 {path}、{line}；留空自动探测（code → xdg-open）'}
-              </div>
-              <label className="mt-3 block text-helper text-[var(--text-primary)]">
-                可打开文件类型
-                <input
-                  type="text"
-                  value={fileExts}
-                  placeholder="留空 = 默认代码/文本扩展名"
-                  onChange={e => setFileExts(e.target.value)}
-                  onBlur={() => void persistFileExts()}
-                  className="mt-1 h-7 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 font-mono text-meta text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
-                />
-              </label>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">
-                逗号分隔（如 go,ts,vue）；* 表示不限制。终端里只有这些类型的文件才会出现打开入口，改动刷新后生效
-              </div>
-              <div className="mb-2 mt-4 border-t border-[var(--border-muted)] pt-3 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                AI
-              </div>
-              <button
-                onClick={() => { setShowSettings(false); setShowAISettings(true) }}
-                className="h-7 w-full rounded-md border border-[var(--border-default)] text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
-              >
-                管理 AI 模型源…
-              </button>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">用于会话总结、会话标题与会话交接</div>
-            </div>
-          )}
         </div>
       </div>
     </header>
+    {showSettings && (
+      <SettingsDialog
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        historyLimit={historyLimit}
+        onHistoryLimitChange={updateLimit}
+        onClearHistory={clearHistory}
+        onOpenAISettings={() => setShowAISettings(true)}
+      />
+    )}
     {showAISettings && <AISettingsModal onClose={() => setShowAISettings(false)} />}
     </>
   )
