@@ -1010,9 +1010,10 @@ const snapshotTerminal = () => {
             const buf = term.buffer.active
             // Pin to bottom when already there, or when live-follow is on
             // (explicit tail -f mode for active sessions).
-            // While openAtTop is still active, never treat "parked at bottom
-            // after write" as a pin-bottom signal — that would defeat open-at-top.
-            const pinBottom = !openAtTop && (followOutputRef.current || buf.viewportY >= buf.baseY)
+            // Explicit follow-output always pins bottom. The openAtTop guard
+            // only blocks the "already at bottom" heuristic so a post-write
+            // park does not defeat open-at-top on first load.
+            const pinBottom = followOutputRef.current || (!openAtTop && buf.viewportY >= buf.baseY)
             if (pinBottom) openAtTop = false
 
             // Pure append: rendering is deterministic, so as long as nothing

@@ -1,5 +1,8 @@
 // App theme preference: light / dark / follow OS. Applied via the `.dark`
 // class on <html> (tailwind darkMode: 'class'). Default is light.
+//
+// NOTE: the FOUC-prevention IIFE in frontend/index.html mirrors
+// getThemePreference() + resolveIsDark() — keep both copies in sync.
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 
