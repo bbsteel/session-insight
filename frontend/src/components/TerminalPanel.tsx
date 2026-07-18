@@ -491,7 +491,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // container — React reconciliation would otherwise risk removing
       // xterm's elements on re-render.
       stickyBarEl = document.createElement('div')
-      stickyBarEl.className = 'si-sticky-user-msg si-user-msg-highlight'
+      stickyBarEl.className = 'si-sticky-user-msg'
       stickyBarEl.style.cssText = [
         'position:absolute', 'top:0', 'left:0', 'right:0',
         'display:none', 'align-items:center', 'gap:6px',
