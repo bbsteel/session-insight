@@ -4,7 +4,7 @@ import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePat
 import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
-import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import AIPanel from './AIPanel'
@@ -854,6 +854,35 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     [positionsData],
   )
 
+  // User-message ranges for the terminal: highlight decoration + sticky top
+  // bar. Mapped from positions (kind === 'user') to the shape TerminalPanel
+  // consumes. line_end / logical_end come from the backend (set when the user
+  // prompt body is fully written); they let the highlight paint exactly the
+  // prompt rows, not the trailing blank separator.
+  const userHighlightRanges = useMemo<UserHighlightRange[]>(
+    () => (positionsData?.positions ?? [])
+      .filter(p => p.kind === 'user')
+      .map((p, i) => {
+        const pl = p.payload ?? {}
+        const lineEnd = typeof p.line_end === 'number' ? p.line_end : undefined
+        const logicalStart = typeof pl.logical_start === 'number' ? pl.logical_start : undefined
+        const logicalEnd = typeof pl.logical_end === 'number' ? pl.logical_end : undefined
+        const text = typeof pl.text === 'string' ? pl.text : p.label
+        const tsMs = typeof pl.ts_ms === 'number' ? pl.ts_ms : null
+        return {
+          key: p.position_key,
+          lineStart: p.line_start,
+          lineEnd,
+          logicalStart,
+          logicalEnd,
+          text,
+          tsMs,
+          seq: i + 1,
+        }
+      }),
+    [positionsData],
+  )
+
   // 分析页 Tool Usage chip → 切回终端、打开工具面板并按该工具筛选。
   // token 递增让重复点击同一工具也能重新触发筛选。
   const [toolFilterRequest, setToolFilterRequest] = useState<{ name: string; token: number } | null>(null)
@@ -1377,6 +1406,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 onScrollMetrics={handleTerminalScrollMetrics}
                 onColsReady={handleColsReady}
                 controlRef={termControlRef}
+                userPositions={userHighlightRanges}
+                onJumpToUserMessage={handlePanelJump}
               />
             </Suspense>
           )}

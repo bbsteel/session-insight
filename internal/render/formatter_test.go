@@ -784,6 +784,51 @@ func TestTimestampOptions(t *testing.T) {
 	}
 }
 
+func TestUserPromptTrailingBlankLineAndLineEnd(t *testing.T) {
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
+		{Type: "UserPrompt", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "hello world"},
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "reply"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 80)
+	lines := strings.Split(ansi, "\n")
+
+	var userPos *RenderPosition
+	for i := range positions {
+		if positions[i].Kind == "user" {
+			userPos = &positions[i]
+			break
+		}
+	}
+	if userPos == nil {
+		t.Fatalf("expected a user position, got %+v", positions)
+	}
+	if userPos.LineEnd == nil {
+		t.Fatalf("user position must record LineEnd for highlight decoration")
+	}
+	if *userPos.LineEnd < userPos.LineStart {
+		t.Fatalf("LineEnd (%d) must be >= LineStart (%d)", *userPos.LineEnd, userPos.LineStart)
+	}
+	// The row right after the user body must be the trailing blank separator.
+	blankRow := *userPos.LineEnd + 1
+	if blankRow >= len(lines) {
+		t.Fatalf("blank row %d out of range (only %d lines)", blankRow, len(lines))
+	}
+	if stripANSIForTest(lines[blankRow]) != "" {
+		t.Errorf("expected empty line below user message, got %q at row %d", lines[blankRow], blankRow)
+	}
+	// logical_end must be recorded and >= logical_start for the frontend to
+	// resolve the highlight range through xterm's wrap state.
+	ls, _ := userPos.Payload["logical_start"].(float64)
+	le, ok := userPos.Payload["logical_end"].(float64)
+	if !ok {
+		t.Fatalf("user position must record logical_end, got %+v", userPos.Payload)
+	}
+	if int(le) < int(ls) {
+		t.Errorf("logical_end (%d) < logical_start (%d)", int(le), int(ls))
+	}
+}
+
 func TestParseTimestampKinds(t *testing.T) {
 	o := ParseTimestampKinds("tool, user, bogus")
 	if !o.TimestampUser || !o.TimestampTool || o.TimestampAssistant {

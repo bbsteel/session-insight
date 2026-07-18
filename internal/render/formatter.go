@@ -374,7 +374,24 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				userPayload["text"] = evt.Text
 			}
 			emit("user", "用户输入", "", evt.TurnIndex, userPayload)
+			userPosIdx := len(positions) - 1
 			writeUserPrompt(p, tb, evt, prefix, tsFor(evt, opts.TimestampUser))
+			// Record the inclusive end line of the user prompt body so the
+			// frontend can apply a highlight decoration across exactly those
+			// rows. Captured before the trailing blank line below so the
+			// highlight does not paint the separator.
+			userEndIncl := tb.CurrentLine() - 1
+			if userEndIncl < positions[userPosIdx].LineStart {
+				userEndIncl = positions[userPosIdx].LineStart
+			}
+			positions[userPosIdx].LineEnd = &userEndIncl
+			if positions[userPosIdx].Payload == nil {
+				positions[userPosIdx].Payload = map[string]any{}
+			}
+			positions[userPosIdx].Payload["logical_end"] = float64(tb.CurrentLogicalLine())
+			// Trailing blank line: visually separates the user message from
+			// the assistant reply / tool output that follows.
+			tb.WriteString("\n")
 		case "ThinkingStart":
 			if p.Thought != nil && evt.Text != "" {
 				openThoughtFold = p.Thought.Start(p, tb, evt, prefix, tsFor(evt, opts.TimestampAssistant))
@@ -504,7 +521,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 27
+const FormatVersion int64 = 28
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or

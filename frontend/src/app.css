@@ -288,3 +288,33 @@ body {
   0%, 40% { background-color: rgba(37, 99, 235, 0.32); }
   100% { background-color: rgba(37, 99, 235, 0); }
 }
+
+/* User-message highlight: light gray background across every row of a user
+   prompt range. The decoration element is rendered in xterm's 'top' layer
+   with the background set imperatively in onRender (survives xterm repaints);
+   this CSS is the fallback when the inline style is cleared. CSS variables
+   adapt to dark/light — light theme uses a darker slate tint at higher
+   opacity so the highlight is clearly visible on a near-white background. */
+.si-user-msg-highlight {
+  background: var(--si-user-msg-bg, rgba(100, 110, 130, 0.22)) !important;
+}
+.dark .si-user-msg-highlight {
+  background: var(--si-user-msg-bg, rgba(130, 130, 140, 0.18)) !important;
+}
+
+/* Sticky top user-message bar: sits at the top of the terminal viewport when
+   the user has scrolled past a user message. It uses the same translucent
+   highlight tint as the user-message rows, but over an opaque surface
+   background so the underlying terminal text does not show through. */
+.si-sticky-user-msg {
+  background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1000px rgba(100, 110, 130, 0.22);
+  color: var(--text-primary);
+}
+.dark .si-sticky-user-msg {
+  background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1000px rgba(130, 130, 140, 0.18);
+}
+.si-sticky-user-msg:hover {
+  color: var(--text-secondary) !important;
+}
