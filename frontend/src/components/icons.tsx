@@ -22,28 +22,45 @@ function Icon({ className, children, ...rest }: IconProps & { children: ReactNod
   )
 }
 
+/**
+ * Classic push-pin (thumbtack): round head with center dimple, short body, needle.
+ * Visual reference: common push-pin iconography (e.g. flaticon “push-pin” style).
+ * Paths are original geometry — not a copy of any commercial asset file.
+ */
 export function PinIcon({ filled, className, ...rest }: IconProps & { filled?: boolean }) {
+  const cls = className ?? 'h-3.5 w-3.5 shrink-0'
   if (filled) {
     return (
-      <svg
-        className={className ?? 'h-3.5 w-3.5 shrink-0'}
-        viewBox="0 0 16 16"
-        aria-hidden
-        {...rest}
-      >
+      <svg className={cls} viewBox="0 0 16 16" aria-hidden {...rest}>
         <path
           fill="currentColor"
-          d="M10.2 2.4 8.7 3.9l3.4 3.4 1.5-1.5a1.2 1.2 0 0 0 0-1.7l-1.7-1.7a1.2 1.2 0 0 0-1.7 0ZM8.2 4.4 3.5 9.1a1 1 0 0 0-.3.7v1.5h1.5a1 1 0 0 0 .7-.3l4.7-4.7-1.9-1.9ZM4.2 12.2 2.8 13.6"
+          fillRule="evenodd"
+          d="M8 1c-2.2 0-4 1.68-4 3.75 0 1.35.72 2.53 1.8 3.2L5.1 10.7c-.18.32.05.8.45.8h4.9c.4 0 .63-.48.45-.8l-.7-2.75c1.08-.67 1.8-1.85 1.8-3.2C12 2.68 10.2 1 8 1Zm0 1.55a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4ZM7.3 11.5h1.4v2.85a.7.7 0 0 1-1.4 0V11.5Z"
         />
       </svg>
     )
   }
   return (
-    <Icon className={className} {...rest}>
-      <path d="m10.1 2.5 3.4 3.4-1.4 1.4-3.4-3.4z" />
-      <path d="M8.2 4.4 3.5 9.1a1 1 0 0 0-.3.7v1.5h1.5a1 1 0 0 0 .7-.3l4.7-4.7" />
-      <path d="m4.2 12.2-1.4 1.4" />
-    </Icon>
+    <svg
+      className={cls}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...rest}
+    >
+      {/* Outer head */}
+      <circle cx="8" cy="4.75" r="3.1" />
+      {/* Center dimple (push-pin head button) */}
+      <circle cx="8" cy="4.75" r="1.15" />
+      {/* Body shoulders */}
+      <path d="M5.55 7.55 5.15 10.5h5.7l-.4-2.95" />
+      {/* Needle */}
+      <path d="M8 10.5v3.85" />
+    </svg>
   )
 }
 
