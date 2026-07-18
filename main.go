@@ -21,6 +21,21 @@ import (
 //go:embed frontend/dist
 var frontend embed.FS
 
+// indexStatusAdapter maps indexer.Progress to the server HTTP DTO without
+// coupling server ↔ indexer packages beyond this thin main-process wire-up.
+type indexStatusAdapter struct{ ix *indexer.Indexer }
+
+func (a indexStatusAdapter) SnapshotProgress() server.IndexProgress {
+	p := a.ix.SnapshotProgress()
+	return server.IndexProgress{
+		State:   p.State,
+		Done:    p.Done,
+		Total:   p.Total,
+		Percent: p.Percent,
+		Message: p.Message,
+	}
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -54,26 +69,16 @@ func main() {
 
 	idx := indexer.New(database, readers)
 	srv := server.New(database, readers)
+	srv.SetIndexStatus(indexStatusAdapter{idx})
 
 	// 索引轮产生实际变更后才通知：SSE 发出时数据已落库，侧栏重拉读到的
 	// 就是新数据（/api/sessions 直接从 SQLite 出），也不会跟索引轮抢 CPU。
 	idx.OnChanged = srv.NotifySessionsChanged
 
-	// 首次索引同步完成（10s 超时），保证服务启动时已有基础索引
-	initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	initialIndexErr := idx.RunOnce(initCtx)
-	if initialIndexErr != nil {
-		log.Printf("initial indexing incomplete: %v", initialIndexErr)
-	}
-	cancel()
-
-	// 后台增量更新
+	// 不阻塞 HTTP 启动：后台一个劲索引；搜索栏通过 /api/index/status 显示进度。
+	// Kick 立即跑首轮（schema 升级清空 watermark 后的全量重扫也走这里）。
 	go idx.RunBackground(context.Background())
-	// 首轮超时说明仍有迁移回填或旧会话待处理；立即补跑，不让它们等到
-	// 三分钟定时器或下一次文件变化。
-	if initialIndexErr != nil {
-		idx.Kick()
-	}
+	idx.Kick()
 
 	// 文件监听：会话文件一变 → 踢一轮增量索引（落库后由 OnChanged 通知侧栏）。
 	// 追加写走 5s 慢窗口——活跃会话的持续写入不再每 500ms 全量重索引，

@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 24
+const currentSchemaVersion = 25
 
 type DB struct {
 	conn *sql.DB
@@ -102,7 +102,7 @@ func migrate(conn *sql.DB) error {
 	    agent_type TEXT    NOT NULL,
 	    session_id TEXT    NOT NULL,
 	    turn_index INTEGER NOT NULL,
-	    role       TEXT    NOT NULL,   -- 'user' | 'meta' ('assistant' reserved, not currently indexed)
+	    role       TEXT    NOT NULL,   -- 'meta' | 'user' | 'assistant' | 'skill' | 'tool' | 'error'
 	    content    TEXT    NOT NULL,
 	    UNIQUE(agent_type, session_id, turn_index, role)
 	);
@@ -573,6 +573,16 @@ func migrate(conn *sql.DB) error {
 	} else if !hasHeaders {
 		if _, err := conn.Exec(`ALTER TABLE llm_providers ADD COLUMN headers TEXT NOT NULL DEFAULT ''`); err != nil {
 			return fmt.Errorf("v24 add llm_providers.headers: %w", err)
+		}
+	}
+
+	// Version 25: expand FTS content (assistant / skill / tool summary / error).
+	// Clear watermarks so every session is re-indexed under the new shape.
+	// Leave turn_texts in place; UpsertTurns replaces rows per session as the
+	// indexer catches up (avoid a long exclusive wipe on startup).
+	if maxVersion < 25 {
+		if _, err := conn.Exec(`DELETE FROM index_watermarks`); err != nil {
+			return fmt.Errorf("v25 clear index_watermarks: %w", err)
 		}
 	}
 
