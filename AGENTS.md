@@ -18,18 +18,18 @@ All code and docs changes land on `main` **only via pull request**. Do not commi
 2. Confirm the base is latest remote main — prefer creating from `origin/main` directly (no stale local `main` required).
 3. Only then create the feature branch.
 
-Do **not** branch off an outdated local `main`, an old feature branch, or the previous task’s HEAD without fetching first. Stale bases cause avoidable conflicts with open PRs and fail GitHub’s “require branch up to date before merging” protection on `main`.
+Do **not** branch off an outdated local `main`, an old feature branch, or the previous task’s HEAD without fetching first. Stale bases cause avoidable conflicts with open PRs and may fail GitHub’s “require branch up to date before merging” protection when the branch is still behind the target at merge time.
 
 Recommended one-liner (preferred — does not require checking out local `main`):
 
 ```bash
-git fetch origin && git switch -c <branch> origin/main
+git fetch origin && git switch -c my-branch origin/main
 ```
 
 If you intentionally keep a local `main` checkout in sync first:
 
 ```bash
-git fetch origin && git switch main && git pull --ff-only origin main && git switch -c <branch>
+git fetch origin && git switch main && git pull --ff-only origin main && git switch -c my-branch
 ```
 
 For **every** change set (including small fixes and agent-instruction edits):
