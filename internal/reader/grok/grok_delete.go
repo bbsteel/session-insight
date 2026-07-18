@@ -72,6 +72,33 @@ func (r *GrokReader) SessionRunning(id string) (bool, error) {
 	return shared.HasTrailingInProgress(events), nil
 }
 
+// SessionLive is the lightweight UI liveness signal. Grok maintains an
+// explicit active-session registry, so list requests need only validate its
+// matching PID instead of scanning /proc file descriptors or parsing the full
+// transcript. A missing registry means no Grok session is currently open.
+func (r *GrokReader) SessionLive(id string) (bool, error) {
+	if !validSessionID(id) {
+		return false, fmt.Errorf("invalid grok session id: %q", id)
+	}
+	data, err := os.ReadFile(r.activeSessionsPath())
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var list []activeSession
+	if err := json.Unmarshal(data, &list); err != nil {
+		return false, err
+	}
+	for _, session := range list {
+		if session.SessionID == id && session.PID > 0 && procfind.Alive(session.PID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type activeSession struct {
 	SessionID string `json:"session_id"`
 	PID       int    `json:"pid"`
