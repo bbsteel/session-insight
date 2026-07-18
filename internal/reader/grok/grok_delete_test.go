@@ -145,3 +145,31 @@ func TestSessionProcessesDeadActiveEntryIgnored(t *testing.T) {
 		t.Errorf("dead PID must be ignored, got %v", pids)
 	}
 }
+
+func TestSessionLiveUsesActiveRegistry(t *testing.T) {
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "sessions")
+	id := "live-session"
+	writeSession(t, sessionsDir, "proj", id, summaryFile{}, sampleUpdatesClosed(), "")
+	r := New(sessionsDir)
+
+	entries := []activeSession{{SessionID: id, PID: os.Getpid()}}
+	data, _ := json.Marshal(entries)
+	if err := os.WriteFile(filepath.Join(root, "active_sessions.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	live, err := r.SessionLive(id)
+	if err != nil || !live {
+		t.Fatalf("SessionLive()=(%v, %v), want (true, nil)", live, err)
+	}
+
+	entries[0].PID = 99999999
+	data, _ = json.Marshal(entries)
+	if err := os.WriteFile(filepath.Join(root, "active_sessions.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	live, err = r.SessionLive(id)
+	if err != nil || live {
+		t.Fatalf("SessionLive()=(%v, %v), want (false, nil)", live, err)
+	}
+}

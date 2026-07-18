@@ -72,7 +72,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if t, ok := overrides[key]; ok {
 			sess.Name = t
 		}
-		summary := sessionToSummary(sess)
+		summary := s.sessionToSummary(sess)
 		if bookmarked {
 			summary.BookmarkNote = bookmarkNote
 		}
@@ -104,8 +104,8 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, reader := range s.Readers {
-		detail, err := reader.GetSession(id)
+	for _, rd := range s.Readers {
+		detail, err := rd.GetSession(id)
 		if err != nil {
 			continue
 		}
@@ -113,9 +113,9 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Liveness is a serve-time presence heuristic; compute it here so all
-		// agents share one definition (see model.IsSessionLive).
-		detail.IsLive = model.IsSessionLive(detail.UpdatedAt)
+		// Resolve liveness at serve time through the reader's agent-specific
+		// process/heartbeat/in-progress capabilities.
+		detail.IsLive = reader.IsSessionLive(rd, detail.Session)
 		if s.DB != nil {
 			note, bookmarked, err := s.DB.GetBookmark(detail.AgentType, detail.ID)
 			if err != nil {
@@ -153,26 +153,33 @@ func (s *Server) titleOverrides() map[string]string {
 	return m
 }
 
-func sessionToSummary(s model.Session) SessionSummary {
+func (s *Server) sessionToSummary(session model.Session) SessionSummary {
+	isLive := model.IsSessionLive(session.UpdatedAt)
+	for _, rd := range s.Readers {
+		if rd.AgentType() == session.AgentType {
+			isLive = reader.IsSessionLive(rd, session)
+			break
+		}
+	}
 	return SessionSummary{
-		ID:                  s.ID,
-		AgentType:           s.AgentType,
-		Name:                s.Name,
-		ModelName:           s.ModelName,
-		ModelProvider:       s.ModelProvider,
-		Repository:          s.Repository,
-		Branch:              s.Branch,
-		Project:             s.Project,
-		CWD:                 s.CWD,
-		ResumeID:            s.ResumeID,
-		TurnCount:           s.TurnCount,
-		HistoricalTurnCount: s.HistoricalTurnCount,
-		RolledBackTurnCount: s.RolledBackTurnCount,
-		MessageCount:        s.MessageCount,
-		IsLive:              model.IsSessionLive(s.UpdatedAt),
-		Bookmarked:          s.Bookmarked,
-		CreatedAt:           model.FormatTime(s.CreatedAt),
-		UpdatedAt:           model.FormatTime(s.UpdatedAt),
+		ID:                  session.ID,
+		AgentType:           session.AgentType,
+		Name:                session.Name,
+		ModelName:           session.ModelName,
+		ModelProvider:       session.ModelProvider,
+		Repository:          session.Repository,
+		Branch:              session.Branch,
+		Project:             session.Project,
+		CWD:                 session.CWD,
+		ResumeID:            session.ResumeID,
+		TurnCount:           session.TurnCount,
+		HistoricalTurnCount: session.HistoricalTurnCount,
+		RolledBackTurnCount: session.RolledBackTurnCount,
+		MessageCount:        session.MessageCount,
+		IsLive:              isLive,
+		Bookmarked:          session.Bookmarked,
+		CreatedAt:           model.FormatTime(session.CreatedAt),
+		UpdatedAt:           model.FormatTime(session.UpdatedAt),
 	}
 }
 
@@ -248,7 +255,7 @@ func (s *Server) handleListBookmarks(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				if detail, e := rd.GetSession(bm.SessionID); e == nil && detail != nil {
-					ss = sessionToSummary(detail.Session)
+					ss = s.sessionToSummary(detail.Session)
 					ss.Bookmarked = true
 					ss.BookmarkNote = bm.Note
 					s.DB.UpdateBookmarkMeta(db.BookmarkedSession{
@@ -310,7 +317,7 @@ func (s *Server) handleBookmarkWrite(w http.ResponseWriter, r *http.Request, add
 					continue
 				}
 				if detail, e := rd.GetSession(id); e == nil && detail != nil {
-					ss := sessionToSummary(detail.Session)
+					ss := s.sessionToSummary(detail.Session)
 					s.DB.UpdateBookmarkMeta(db.BookmarkedSession{
 						AgentType:        agentType,
 						SessionID:        id,

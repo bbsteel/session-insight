@@ -49,13 +49,23 @@ type SessionProcessFinder interface {
 	SessionProcesses(id string) ([]int, error)
 }
 
+// SessionLivenessProvider is an optional, cheap reader capability for sidebar
+// and session-detail presence checks. Implementations run on list requests, so
+// they must use an agent-native lightweight signal (heartbeat/lock/registry),
+// not scan process file descriptors or parse a full transcript. An error makes
+// the shared resolver fall back to the timestamp window.
+type SessionLivenessProvider interface {
+	SessionLive(id string) (bool, error)
+}
+
 // SessionLivenessChecker is an optional reader capability for agents whose
 // process↔session mapping cannot be recovered from the OS (opencode keeps
 // busy state in a per-process in-memory map; chrys and copilot may hold no
 // file descriptor while idle). SessionRunning answers "does this session
 // look live" from the agent's own on-disk turn markers bounded by
-// model.LiveWindow. It yields no PIDs, so the server can only refuse
-// deletion (409 with an empty pid list) — never offer force-stop. Readers
+// model.LiveWindow. It is used as the delete safety fallback. It yields no
+// PIDs, so the server can refuse deletion but never offer force-stop from this
+// signal alone. Readers
 // with an exact PID source implement SessionProcessFinder instead;
 // implementing both is fine (the finder is consulted first).
 type SessionLivenessChecker interface {

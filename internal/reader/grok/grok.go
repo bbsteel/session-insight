@@ -190,7 +190,11 @@ func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile) model.Sessio
 	}
 	created := parseTS(sum.CreatedAt)
 	updated := parseTS(sum.UpdatedAt)
-	if la := parseTS(sum.LastActiveAt); la.After(updated) {
+	if la := parseTS(sum.LastActiveAt); !la.IsZero() {
+		// updated_at also advances when Grok writes a background session recap,
+		// sometimes hours after the interactive turn completed. last_active_at is
+		// the authoritative activity time when available; content mtimes below
+		// still capture writes that race slightly after it.
 		updated = la
 	}
 	// Prefer content-file mtime for LIVE badge / revision semantics.
@@ -383,7 +387,7 @@ func (r *GrokReader) LiveRevision(id string) (int64, error) {
 		return 0, err
 	}
 	var rev int64
-	for _, name := range []string{"updates.jsonl", "chat_history.jsonl", "events.jsonl", "summary.json"} {
+	for _, name := range []string{"updates.jsonl", "chat_history.jsonl", "events.jsonl"} {
 		info, err := os.Stat(filepath.Join(loc.Dir, name))
 		if err != nil {
 			continue
@@ -401,7 +405,7 @@ func (r *GrokReader) LiveRevision(id string) (int64, error) {
 
 func (r *GrokReader) lastContentWrite(dir string) time.Time {
 	var latest time.Time
-	for _, name := range []string{"updates.jsonl", "chat_history.jsonl", "events.jsonl", "summary.json"} {
+	for _, name := range []string{"updates.jsonl", "chat_history.jsonl", "events.jsonl"} {
 		if info, err := os.Stat(filepath.Join(dir, name)); err == nil {
 			if info.ModTime().After(latest) {
 				latest = info.ModTime()
