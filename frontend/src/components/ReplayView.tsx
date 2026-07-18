@@ -837,7 +837,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       .filter(p => p.kind === 'user')
       .map(p => {
         const pl = p.payload ?? {}
-        const lineEnd = typeof pl.line_end === 'number' ? pl.line_end : undefined
+        const lineEnd = typeof p.line_end === 'number' ? p.line_end : undefined
         const logicalStart = typeof pl.logical_start === 'number' ? pl.logical_start : undefined
         const logicalEnd = typeof pl.logical_end === 'number' ? pl.logical_end : undefined
         const text = typeof pl.text === 'string' ? pl.text : p.label

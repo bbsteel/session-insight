@@ -388,7 +388,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			if positions[userPosIdx].Payload == nil {
 				positions[userPosIdx].Payload = map[string]any{}
 			}
-			positions[userPosIdx].Payload["logical_end"] = float64(tb.CurrentLogicalLine() - 1)
+			positions[userPosIdx].Payload["logical_end"] = float64(tb.CurrentLogicalLine())
 			// Trailing blank line: visually separates the user message from
 			// the assistant reply / tool output that follows.
 			tb.WriteString("\n")

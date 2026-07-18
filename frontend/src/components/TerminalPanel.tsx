@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal, type IDecoration, type IMarker } from '@xterm/xterm'
+import { Terminal, type IBuffer, type IDecoration, type IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -303,6 +303,20 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       }
       return toDisplayLine(origLine)
     }
+    // Resolve the last buffer row of a user-message range. For the exclusive
+    // logical_end supplied by the backend, the final wrapped row is the row
+    // immediately before the next logical line (or the buffer tail if this is
+    // the last logical line). Falls back to display-line mapping when logical
+    // coordinates are unavailable or out of range.
+    const resolveUserEndRow = (origLine: number, logical: number | undefined, buf: IBuffer): number => {
+      if (typeof logical === 'number' && logical <= logicalRows.length) {
+        if (logical < logicalRows.length) {
+          return Math.max(0, logicalRows[logical] - 1)
+        }
+        return Math.max(0, buf.length - 1)
+      }
+      return toDisplayLine(origLine)
+    }
     // Apply background decorations for every user-message range. Called after
     // scanBuffer/injectFoldRows in every rewrite path and on prop change.
     const injectUserHighlights = () => {
@@ -312,11 +326,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       const buf = term.buffer.active
       for (const r of ranges) {
         const startRow = resolveUserRow(r.lineStart, r.logicalStart)
-        // lineEnd is inclusive on the original render; resolve through the
-        // same mapping. Fall back to a single-row highlight when missing.
+        // logical_end is exclusive on the backend; resolve to the final wrapped
+        // buffer row of the user message. Fall back to a single-row highlight
+        // when logical coordinates are unavailable.
         const endOrig = typeof r.lineEnd === 'number' ? r.lineEnd : r.lineStart
         const endLogical = typeof r.logicalEnd === 'number' ? r.logicalEnd : r.logicalStart
-        const endRow = resolveUserRow(endOrig, endLogical)
+        const endRow = resolveUserEndRow(endOrig, endLogical, buf)
         const first = Math.max(0, Math.min(startRow, endRow))
         const last = Math.max(startRow, endRow)
         // Skip ranges entirely outside the buffer (e.g. scrolled out of
@@ -371,7 +386,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       for (const r of ranges) {
         const endOrig = typeof r.lineEnd === 'number' ? r.lineEnd : r.lineStart
         const endLogical = typeof r.logicalEnd === 'number' ? r.logicalEnd : r.logicalStart
-        const endRow = resolveUserRow(endOrig, endLogical)
+        const endRow = resolveUserEndRow(endOrig, endLogical, buf)
         if (endRow < viewportTop) sticky = r
         else break
       }
@@ -406,6 +421,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       if (!r) return
       onJumpToUserMessageRef.current?.(r.lineStart, r.logicalStart)
     }
+    let onStickyKeyDown: (e: KeyboardEvent) => void = () => {}
 
     let onMouseMove: ((e: MouseEvent) => void) | null = null
     let onMouseLeave: (() => void) | null = null
@@ -502,6 +518,17 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         'border-bottom:1px solid var(--border-default)',
       ].join(';')
       stickyBarEl.title = '点击返回这条用户消息'
+      stickyBarEl.setAttribute('role', 'button')
+      stickyBarEl.setAttribute('tabindex', '0')
+      stickyBarEl.setAttribute('aria-label', '返回用户消息')
+      onStickyKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onStickyClick()
+        }
+      }
+      stickyBarEl.addEventListener('click', onStickyClick)
+      stickyBarEl.addEventListener('keydown', onStickyKeyDown)
       stickyLabelEl = document.createElement('span')
       stickyLabelEl.textContent = '↑ 用户消息'
       stickyLabelEl.style.cssText = [
@@ -515,7 +542,6 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       ].join(';')
       stickyBarEl.appendChild(stickyLabelEl)
       stickyBarEl.appendChild(stickyTextEl)
-      stickyBarEl.addEventListener('click', onStickyClick)
       container.appendChild(stickyBarEl)
 
       const xtermScreen = container.querySelector<HTMLElement>('.xterm-screen')
@@ -1329,6 +1355,7 @@ const snapshotTerminal = () => {
       tooltipEl?.remove()
       if (stickyBarEl) {
         stickyBarEl.removeEventListener('click', onStickyClick)
+        stickyBarEl.removeEventListener('keydown', onStickyKeyDown)
         stickyBarEl.remove()
         stickyBarEl = null
         stickyLabelEl = null
