@@ -23,43 +23,29 @@ function Icon({ className, children, ...rest }: IconProps & { children: ReactNod
 }
 
 /**
- * Classic push-pin (thumbtack): round head with center dimple, short body, needle.
- * Visual reference: common push-pin iconography (e.g. flaticon “push-pin” style).
- * Paths are original geometry — not a copy of any commercial asset file.
+ * Geometric push-pin: bold angular head with hollow triangle, thick shaft.
+ * Same path for both states — unpinned tilted (ref pose), pinned vertical (needle down).
  */
 export function PinIcon({ filled, className, ...rest }: IconProps & { filled?: boolean }) {
   const cls = className ?? 'h-3.5 w-3.5 shrink-0'
-  if (filled) {
-    return (
-      <svg className={cls} viewBox="0 0 16 16" aria-hidden {...rest}>
+  // Drawn upright (needle down). Unpinned: diagonal like the reference image.
+  const rot = filled ? 0 : -40
+  return (
+    <svg className={cls} viewBox="0 0 16 16" aria-hidden {...rest}>
+      <g transform={`rotate(${rot} 8 8)`}>
+        {/*
+          Bold mitered silhouette (head → shoulders → shaft → tip) with a
+          triangular cutout pointing toward the tip — same family as the
+          product reference, original coordinates.
+        */}
         <path
           fill="currentColor"
           fillRule="evenodd"
-          d="M8 1c-2.2 0-4 1.68-4 3.75 0 1.35.72 2.53 1.8 3.2L5.1 10.7c-.18.32.05.8.45.8h4.9c.4 0 .63-.48.45-.8l-.7-2.75c1.08-.67 1.8-1.85 1.8-3.2C12 2.68 10.2 1 8 1Zm0 1.55a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4ZM7.3 11.5h1.4v2.85a.7.7 0 0 1-1.4 0V11.5Z"
+          d={
+            'M8 .9 13.1 6l-2.15 2.15 2.35 2.35-3.05 3.05-.05.05V15.1H5.8v-1.55L2.75 10.5l2.35-2.35L2.95 6 8 .9Zm0 3.55L6.05 6.4 8 8.35 9.95 6.4 8 4.45Z'
+          }
         />
-      </svg>
-    )
-  }
-  return (
-    <svg
-      className={cls}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      {...rest}
-    >
-      {/* Outer head */}
-      <circle cx="8" cy="4.75" r="3.1" />
-      {/* Center dimple (push-pin head button) */}
-      <circle cx="8" cy="4.75" r="1.15" />
-      {/* Body shoulders */}
-      <path d="M5.55 7.55 5.15 10.5h5.7l-.4-2.95" />
-      {/* Needle */}
-      <path d="M8 10.5v3.85" />
+      </g>
     </svg>
   )
 }
