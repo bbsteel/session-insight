@@ -52,48 +52,30 @@ export function ThemeSelect() {
   )
 }
 
-/**
- * Header sun/moon segmented control (explicit light ↔ dark).
- * When preference is "system", the resolved scheme is shown as selected;
- * clicking a side commits to that explicit preference.
- */
+/** Header theme toggle. One click target switches the resolved light/dark mode. */
 export function ThemeSwitch() {
   const [pref, dark, setPref] = useThemePref()
+  const nextTheme: ThemePreference = dark ? 'light' : 'dark'
+  const currentLabel = dark ? '深色' : '浅色'
+  const nextLabel = dark ? '浅色' : '深色'
 
   return (
-    <div
-      role="group"
-      aria-label="主题"
-      title={pref === 'system' ? '当前跟随系统；点击可固定为浅色或深色' : dark ? '深色' : '浅色'}
-      className="inline-flex h-7 items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5 shadow-sm"
+    <button
+      type="button"
+      onClick={() => setPref(nextTheme)}
+      aria-pressed={dark}
+      aria-label={`切换到${nextLabel}主题`}
+      title={pref === 'system'
+        ? `当前跟随系统（${currentLabel}）；点击切换到${nextLabel}`
+        : `当前为${currentLabel}；点击切换到${nextLabel}`}
+      className="inline-flex h-7 w-8 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-primary)] shadow-sm transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
     >
-      <button
-        type="button"
-        onClick={() => setPref('light')}
-        aria-pressed={!dark}
-        aria-label="浅色主题"
-        className={`flex h-6 w-7 items-center justify-center rounded-full transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-          !dark
-            ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm'
-            : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-        }`}
-      >
-        <SunIcon className="h-3.5 w-3.5" />
-      </button>
-      <button
-        type="button"
-        onClick={() => setPref('dark')}
-        aria-pressed={dark}
-        aria-label="深色主题"
-        className={`flex h-6 w-7 items-center justify-center rounded-full transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-          dark
-            ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm'
-            : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-        }`}
-      >
+      {dark ? (
         <MoonIcon className="h-3.5 w-3.5" />
-      </button>
-    </div>
+      ) : (
+        <SunIcon className="h-3.5 w-3.5" />
+      )}
+    </button>
   )
 }
 
