@@ -491,17 +491,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // container — React reconciliation would otherwise risk removing
       // xterm's elements on re-render.
       stickyBarEl = document.createElement('div')
-      stickyBarEl.className = 'si-sticky-user-msg'
+      stickyBarEl.className = 'si-sticky-user-msg si-user-msg-highlight'
       stickyBarEl.style.cssText = [
         'position:absolute', 'top:0', 'left:0', 'right:0',
         'display:none', 'align-items:center', 'gap:6px',
         'padding:4px 12px', 'z-index:10', 'cursor:pointer',
-        'font-family:system-ui,-apple-system,sans-serif',
-        'font-size:12px', 'line-height:1.4',
+        `font-family:${TERMINAL_FONT_FAMILY}`,
+        `font-size:${TERMINAL_FONT_SIZE}px`, 'line-height:1.4',
         'white-space:nowrap', 'overflow:hidden',
         'border-bottom:1px solid var(--border-default)',
-        'background:var(--bg-surface)',
-        'color:var(--text-secondary)',
       ].join(';')
       stickyBarEl.title = '点击返回这条用户消息'
       stickyLabelEl = document.createElement('span')

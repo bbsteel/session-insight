@@ -303,9 +303,9 @@ body {
 }
 
 /* Sticky top user-message bar: sits at the top of the terminal viewport when
-   the user has scrolled past a user message. Hover feedback + truncated text
-   are styled inline in TerminalPanel; this just adds the hover background. */
+   the user has scrolled past a user message. It reuses the same translucent
+   highlight background as the user-message rows via the si-user-msg-highlight
+   class; hover only brightens the text so the background stays consistent. */
 .si-sticky-user-msg:hover {
-  background: var(--bg-surface-hover) !important;
   color: var(--text-primary) !important;
 }
