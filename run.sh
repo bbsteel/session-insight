@@ -223,12 +223,45 @@ process_port_from_ss() {
   ' || true
 }
 
+# True when we can observe this process's environment (not just that it is alive).
+process_env_readable() {
+  local pid="$1"
+  if [[ -r "/proc/$pid/environ" ]]; then
+    return 0
+  fi
+  # ps "e" may embed env after argv (Linux/BSD variants; not always available).
+  local line
+  line=$(ps eww -w -w -p "$pid" -o command= 2>/dev/null || true)
+  if [[ -z "$line" ]]; then
+    line=$(ps -E -w -w -p "$pid" -o command= 2>/dev/null || true)
+  fi
+  [[ -n "$line" && "$line" == *"="* ]]
+}
+
+# Print NAME=value lines from a process environment, if readable.
+process_env_lines() {
+  local pid="$1"
+  if [[ -r "/proc/$pid/environ" ]]; then
+    tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null || true
+    return 0
+  fi
+  local line
+  line=$(ps eww -w -w -p "$pid" -o command= 2>/dev/null || true)
+  if [[ -z "$line" ]]; then
+    line=$(ps -E -w -w -p "$pid" -o command= 2>/dev/null || true)
+  fi
+  if [[ -z "$line" ]]; then
+    return 1
+  fi
+  # Heuristic extract of KEY=value tokens (enough for PORT / SI_DATA_DIR).
+  printf '%s\n' "$line" | tr ' ' '\n' | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' || true
+  return 0
+}
+
 process_env_var() {
   local pid="$1"
   local name="$2"
-  if [[ -r "/proc/$pid/environ" ]]; then
-    tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n "s/^${name}=//p" | head -1 || true
-  fi
+  process_env_lines "$pid" 2>/dev/null | sed -n "s/^${name}=//p" | head -1 || true
 }
 
 process_port_from_environ() {
@@ -236,16 +269,21 @@ process_port_from_environ() {
 }
 
 process_data_dir() {
-  # Prefer the live process environ, then the shell default for this checkout.
+  # Report the *running process* data dir only. Never invent from this shell's
+  # SI_DATA_DIR when the process environment cannot be read.
   local pid="$1"
   local data_dir
-  data_dir=$(process_env_var "$pid" "SI_DATA_DIR")
-  if [[ -z "$data_dir" && -n "${SI_DATA_DIR:-}" ]]; then
-    data_dir="$SI_DATA_DIR"
+
+  if ! process_env_readable "$pid"; then
+    printf '%s\n' "-"
+    return
   fi
+
+  data_dir=$(process_env_var "$pid" "SI_DATA_DIR")
   if [[ -n "$data_dir" ]]; then
     printf '%s\n' "$data_dir"
   else
+    # Process env is readable and SI_DATA_DIR is empty → app default.
     printf '%s\n' "~/.session-insight"
   fi
 }
@@ -442,8 +480,10 @@ collect_instances() {
   # Surface other live session-insight binaries. Only related-checkout orphans
   # are killable; same-named processes outside this repo's worktrees are listed
   # for visibility but marked non-killable.
+  # Linux: /proc exe links. Portable fallback: ps argv (first token = binary path).
+  local orphan_pid orphan_exe orphan_checkout orphan_bin killable
+  local proc exe cmd first
   if [[ -d /proc ]]; then
-    local proc exe orphan_pid orphan_checkout orphan_bin killable
     for proc in /proc/[0-9]*; do
       orphan_pid=${proc#/proc/}
       [[ -n "${listed_pids[$orphan_pid]+x}" ]] && continue
@@ -452,38 +492,62 @@ collect_instances() {
         */session-insight|*/session-insight\ \(deleted\)) ;;
         *) continue ;;
       esac
-      orphan_checkout=$(dirname "${exe% (deleted)}")
-      orphan_bin="$orphan_checkout/session-insight"
-      pid_file=""
-      url_file=""
-      log_file=""
-      if [[ -n "${related_checkouts[$orphan_checkout]+x}" ]]; then
-        killable="1"
-        note=$(checkout_note "$orphan_checkout")
-        if [[ -n "$note" ]]; then
-          note="$note, no pid file"
-        else
-          note="no pid file"
-        fi
-        if [[ -f "$orphan_checkout/.runtime/session-insight.url" || -f "$orphan_checkout/session-insight.url" ||
-              -f "$orphan_checkout/.runtime/session-insight.pid" || -f "$orphan_checkout/session-insight.pid" ]]; then
-          {
-            read -r pid_file
-            read -r url_file
-            read -r log_file
-          } < <(runtime_files_for_checkout "$orphan_checkout")
-        fi
-      else
-        killable="0"
-        note="external, non-killable"
-      fi
-      resolve_instance_url_port "$orphan_pid" "$url_file" "$log_file"
-      started=$(process_start_time "$orphan_pid")
-      [[ -z "$started" ]] && started="-"
-      push_instance "$orphan_pid" "$orphan_bin" "$orphan_checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note" "$killable"
+      orphan_exe="${exe% (deleted)}"
+      register_discovered_binary "$orphan_pid" "$orphan_exe"
       listed_pids["$orphan_pid"]=1
     done
+  else
+    while read -r orphan_pid cmd; do
+      [[ -z "$orphan_pid" || ! "$orphan_pid" =~ ^[0-9]+$ ]] && continue
+      [[ -n "${listed_pids[$orphan_pid]+x}" ]] && continue
+      first=${cmd%% *}
+      case "$first" in
+        */session-insight) ;;
+        *) continue ;;
+      esac
+      register_discovered_binary "$orphan_pid" "$first"
+      listed_pids["$orphan_pid"]=1
+    done < <(ps -eo pid=,args= 2>/dev/null || true)
   fi
+}
+
+# Register a live binary discovered outside the pid-file walk.
+# Uses related_checkouts associative array from collect_instances.
+register_discovered_binary() {
+  local orphan_pid="$1"
+  local orphan_exe="$2"
+  local orphan_checkout orphan_bin killable note
+  local pid_file="" url_file="" log_file=""
+  local started _url _port
+
+  orphan_checkout=$(dirname "$orphan_exe")
+  orphan_bin="$orphan_checkout/session-insight"
+
+  if [[ -n "${related_checkouts[$orphan_checkout]+x}" ]]; then
+    killable="1"
+    note=$(checkout_note "$orphan_checkout")
+    if [[ -n "$note" ]]; then
+      note="$note, no pid file"
+    else
+      note="no pid file"
+    fi
+    if [[ -f "$orphan_checkout/.runtime/session-insight.url" || -f "$orphan_checkout/session-insight.url" ||
+          -f "$orphan_checkout/.runtime/session-insight.pid" || -f "$orphan_checkout/session-insight.pid" ]]; then
+      {
+        read -r pid_file
+        read -r url_file
+        read -r log_file
+      } < <(runtime_files_for_checkout "$orphan_checkout")
+    fi
+  else
+    killable="0"
+    note="external, non-killable"
+  fi
+
+  resolve_instance_url_port "$orphan_pid" "$url_file" "$log_file"
+  started=$(process_start_time "$orphan_pid")
+  [[ -z "$started" ]] && started="-"
+  push_instance "$orphan_pid" "$orphan_bin" "$orphan_checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note" "$killable"
 }
 
 print_instances_table_header() {
