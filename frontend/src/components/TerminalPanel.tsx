@@ -410,6 +410,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         return
       }
       stickyBarEl.style.display = 'flex'
+      if (stickyLabelEl) {
+        stickyLabelEl.textContent = `↑ 用户消息${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
+      }
       if (stickyTextEl) {
         const text = next.text || ''
         stickyTextEl.textContent = text

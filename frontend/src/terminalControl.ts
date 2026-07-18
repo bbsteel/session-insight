@@ -102,4 +102,5 @@ export interface UserHighlightRange {
   logicalEnd?: number
   text: string
   tsMs?: number | null
+  seq?: number
 }

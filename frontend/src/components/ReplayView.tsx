@@ -835,7 +835,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const userHighlightRanges = useMemo<UserHighlightRange[]>(
     () => (positionsData?.positions ?? [])
       .filter(p => p.kind === 'user')
-      .map(p => {
+      .map((p, i) => {
         const pl = p.payload ?? {}
         const lineEnd = typeof p.line_end === 'number' ? p.line_end : undefined
         const logicalStart = typeof pl.logical_start === 'number' ? pl.logical_start : undefined
@@ -850,6 +850,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           logicalEnd,
           text,
           tsMs,
+          seq: i + 1,
         }
       }),
     [positionsData],
