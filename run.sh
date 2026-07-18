@@ -47,13 +47,14 @@ usage() {
 Usage: $0 <command>
 
 Commands:
-  build    只构建（前端 + Go 二进制），不运行
-  start    后台启动已构建好的二进制，不重新构建
-  stop     停止后台运行的进程
-  restart  重启（stop + start）
-  status   查看运行状态
-  all      构建 + 运行
-  log      查看后台日志
+  build       只构建（前端 + Go 二进制），不运行
+  start       后台启动已构建好的二进制，不重新构建
+  stop        停止本工作树后台进程
+  restart     重启本工作树（stop + start）
+  status      查看本工作树状态，并列出所有实例（编号 / PID / 端口 / 启动时间）
+  kill <n…>   按 status 列表编号停止实例（可多个，例如: kill 1 3）
+  all         构建 + 运行
+  log         查看后台日志
 
 Linked worktrees automatically use an OS-assigned random port and an isolated
 database under .runtime/. The primary checkout continues to use port 8080 and
@@ -168,30 +169,488 @@ do_stop() {
   rm -f "$URL_FILE"
 }
 
+# Resolve pid/url/log paths for a checkout (primary vs linked worktree).
+runtime_files_for_checkout() {
+  local checkout="$1"
+  if [[ -f "$checkout/.git" ]]; then
+    printf '%s\n' \
+      "$checkout/.runtime/session-insight.pid" \
+      "$checkout/.runtime/session-insight.url" \
+      "$checkout/.runtime/session-insight.log"
+  else
+    printf '%s\n' \
+      "$checkout/session-insight.pid" \
+      "$checkout/session-insight.url" \
+      "$checkout/session-insight.log"
+  fi
+}
+
+pid_matches_bin() {
+  local pid="$1"
+  local bin="$2"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+  if [[ -r "/proc/$pid/exe" ]]; then
+    local exe
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+    [[ "$exe" == "$bin" || "$exe" == "$bin (deleted)" ]]
+    return
+  fi
+  local command
+  command=$(ps -p "$pid" -o command= 2>/dev/null || true)
+  [[ "$command" == "$bin" || "$command" == "$bin "* ]]
+}
+
+process_start_time() {
+  local pid="$1"
+  LC_ALL=C ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true
+}
+
+process_port_from_ss() {
+  local pid="$1"
+  # ss local address is host:port (IPv4) or [host]:port (IPv6).
+  ss -ltnp 2>/dev/null | awk -v needle="pid=$pid," '
+    index($0, needle) {
+      addr = $4
+      sub(/.*:/, "", addr)
+      print addr
+      exit
+    }
+  ' || true
+}
+
+process_port_from_environ() {
+  local pid="$1"
+  if [[ -r "/proc/$pid/environ" ]]; then
+    tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n 's/^PORT=//p' | head -1 || true
+  fi
+}
+
+port_from_url() {
+  local url="$1"
+  if [[ "$url" =~ :([0-9]+)/?$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
+
+resolve_instance_url_port() {
+  # Sets globals _url and _port for the caller.
+  local pid="$1"
+  local url_file="$2"
+  local log_file="${3:-}"
+  _url=""
+  _port=""
+
+  if [[ -n "$url_file" && -s "$url_file" ]]; then
+    _url=$(tr -d '\r\n' <"$url_file")
+    _port=$(port_from_url "$_url")
+  fi
+
+  if [[ -z "$_port" || "$_port" == "0" ]]; then
+    local env_port
+    env_port=$(process_port_from_environ "$pid")
+    if [[ -n "$env_port" && "$env_port" != "0" ]]; then
+      _port="$env_port"
+    fi
+  fi
+
+  if [[ -z "$_port" || "$_port" == "0" ]]; then
+    local ss_port
+    ss_port=$(process_port_from_ss "$pid")
+    if [[ -n "$ss_port" ]]; then
+      _port="$ss_port"
+    fi
+  fi
+
+  if [[ -z "$_url" && -n "$log_file" && -f "$log_file" ]]; then
+    _url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$log_file" 2>/dev/null | tail -1 || true)
+    if [[ -z "$_port" || "$_port" == "0" ]]; then
+      _port=$(port_from_url "$_url")
+    fi
+  fi
+
+  if [[ -z "$_url" && -n "$_port" && "$_port" != "0" ]]; then
+    _url="http://127.0.0.1:$_port/"
+  fi
+
+  if [[ -z "$_port" ]]; then
+    _port="-"
+  fi
+  if [[ -z "$_url" ]]; then
+    _url="-"
+  fi
+}
+
+list_related_checkouts() {
+  # Emit absolute checkout paths (primary + linked worktrees), unique, current first.
+  local -A seen=()
+  local path
+
+  printf '%s\n' "$ROOT_DIR"
+  seen["$ROOT_DIR"]=1
+
+  if command -v git &>/dev/null; then
+    while IFS= read -r path; do
+      [[ -z "$path" ]] && continue
+      path=$(cd "$path" 2>/dev/null && pwd || true)
+      [[ -z "$path" || -n "${seen[$path]+x}" ]] && continue
+      seen["$path"]=1
+      printf '%s\n' "$path"
+    done < <(git -C "$ROOT_DIR" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' || true)
+  fi
+}
+
+# Populated by collect_instances (parallel arrays, 0-based).
+INSTANCE_PIDS=()
+INSTANCE_BINS=()
+INSTANCE_CHECKOUTS=()
+INSTANCE_PID_FILES=()
+INSTANCE_URL_FILES=()
+INSTANCE_PORTS=()
+INSTANCE_URLS=()
+INSTANCE_STARTEDS=()
+INSTANCE_NOTES=()
+INSTANCE_STALE_LINES=()
+
+push_instance() {
+  local pid="$1"
+  local bin="$2"
+  local checkout="$3"
+  local pid_file="$4"
+  local url_file="$5"
+  local port="$6"
+  local url="$7"
+  local started="$8"
+  local note="$9"
+  INSTANCE_PIDS+=("$pid")
+  INSTANCE_BINS+=("$bin")
+  INSTANCE_CHECKOUTS+=("$checkout")
+  INSTANCE_PID_FILES+=("$pid_file")
+  INSTANCE_URL_FILES+=("$url_file")
+  INSTANCE_PORTS+=("$port")
+  INSTANCE_URLS+=("$url")
+  INSTANCE_STARTEDS+=("$started")
+  INSTANCE_NOTES+=("$note")
+}
+
+checkout_note() {
+  local checkout="$1"
+  local note=""
+  if [[ "$checkout" == "$ROOT_DIR" ]]; then
+    note="current"
+  fi
+  if [[ -f "$checkout/.git" ]]; then
+    if [[ -n "$note" ]]; then
+      note="$note, worktree"
+    else
+      note="worktree"
+    fi
+  else
+    if [[ -n "$note" ]]; then
+      note="$note, primary"
+    else
+      note="primary"
+    fi
+  fi
+  printf '%s\n' "$note"
+}
+
+# Fill INSTANCE_* arrays with live instances (stable order for status / kill).
+collect_instances() {
+  INSTANCE_PIDS=()
+  INSTANCE_BINS=()
+  INSTANCE_CHECKOUTS=()
+  INSTANCE_PID_FILES=()
+  INSTANCE_URL_FILES=()
+  INSTANCE_PORTS=()
+  INSTANCE_URLS=()
+  INSTANCE_STARTEDS=()
+  INSTANCE_NOTES=()
+  INSTANCE_STALE_LINES=()
+
+  local -A listed_pids=()
+  local checkout pid_file url_file log_file pid bin started note
+  local _url _port
+
+  while IFS= read -r checkout; do
+    [[ -z "$checkout" || ! -d "$checkout" ]] && continue
+    {
+      read -r pid_file
+      read -r url_file
+      read -r log_file
+    } < <(runtime_files_for_checkout "$checkout")
+
+    bin="$checkout/session-insight"
+    note=$(checkout_note "$checkout")
+
+    if [[ ! -f "$pid_file" ]]; then
+      continue
+    fi
+
+    pid=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
+    if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+      INSTANCE_STALE_LINES+=("invalid PID file: $pid_file")
+      continue
+    fi
+
+    if ! pid_matches_bin "$pid" "$bin"; then
+      if kill -0 "$pid" 2>/dev/null; then
+        INSTANCE_STALE_LINES+=("stale/unowned PID $pid in $pid_file (process alive but not this checkout binary)")
+      else
+        INSTANCE_STALE_LINES+=("stale PID file: $pid_file (pid $pid not running)")
+      fi
+      continue
+    fi
+
+    resolve_instance_url_port "$pid" "$url_file" "$log_file"
+    started=$(process_start_time "$pid")
+    [[ -z "$started" ]] && started="-"
+    push_instance "$pid" "$bin" "$checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note"
+    listed_pids["$pid"]=1
+  done < <(list_related_checkouts)
+
+  # Catch live binaries not covered by pid files / worktree list (orphans).
+  if [[ -d /proc ]]; then
+    local proc exe orphan_pid orphan_checkout orphan_bin
+    for proc in /proc/[0-9]*; do
+      orphan_pid=${proc#/proc/}
+      [[ -n "${listed_pids[$orphan_pid]+x}" ]] && continue
+      exe=$(readlink "$proc/exe" 2>/dev/null || true)
+      case "$exe" in
+        */session-insight|*/session-insight\ \(deleted\)) ;;
+        *) continue ;;
+      esac
+      orphan_checkout=$(dirname "${exe% (deleted)}")
+      orphan_bin="$orphan_checkout/session-insight"
+      pid_file=""
+      url_file=""
+      log_file=""
+      if [[ -f "$orphan_checkout/.runtime/session-insight.url" || -f "$orphan_checkout/session-insight.url" ||
+            -f "$orphan_checkout/.runtime/session-insight.pid" || -f "$orphan_checkout/session-insight.pid" ]]; then
+        {
+          read -r pid_file
+          read -r url_file
+          read -r log_file
+        } < <(runtime_files_for_checkout "$orphan_checkout")
+      fi
+      resolve_instance_url_port "$orphan_pid" "$url_file" "$log_file"
+      started=$(process_start_time "$orphan_pid")
+      [[ -z "$started" ]] && started="-"
+      note=$(checkout_note "$orphan_checkout")
+      if [[ -n "$note" ]]; then
+        note="$note, no pid file"
+      else
+        note="no pid file"
+      fi
+      push_instance "$orphan_pid" "$orphan_bin" "$orphan_checkout" "$pid_file" "$url_file" "$_port" "$_url" "$started" "$note"
+      listed_pids["$orphan_pid"]=1
+    done
+  fi
+}
+
+print_instances_table_header() {
+  printf '%-4s %-8s %-6s %-28s %-30s %s\n' "#" "PID" "PORT" "STARTED" "URL" "CHECKOUT"
+  printf '%-4s %-8s %-6s %-28s %-30s %s\n' "----" "--------" "------" "----------------------------" "------------------------------" "--------"
+}
+
+print_instance_row() {
+  local num="$1"
+  local pid="$2"
+  local port="$3"
+  local started="$4"
+  local url="$5"
+  local checkout="$6"
+  local note="${7:-}"
+  if [[ -n "$note" ]]; then
+    printf '%-4s %-8s %-6s %-28s %-30s %s  (%s)\n' "$num" "$pid" "$port" "$started" "$url" "$checkout" "$note"
+  else
+    printf '%-4s %-8s %-6s %-28s %-30s %s\n' "$num" "$pid" "$port" "$started" "$url" "$checkout"
+  fi
+}
+
+do_instances() {
+  collect_instances
+  local count="${#INSTANCE_PIDS[@]}"
+  local i
+
+  print_instances_table_header
+  if [[ "$count" -eq 0 ]]; then
+    echo "(no running SessionInsight instances found)"
+  else
+    for ((i = 0; i < count; i++)); do
+      print_instance_row "$((i + 1))" \
+        "${INSTANCE_PIDS[$i]}" \
+        "${INSTANCE_PORTS[$i]}" \
+        "${INSTANCE_STARTEDS[$i]}" \
+        "${INSTANCE_URLS[$i]}" \
+        "${INSTANCE_CHECKOUTS[$i]}" \
+        "${INSTANCE_NOTES[$i]}"
+    done
+    echo
+    echo "Total: $count instance(s)"
+    echo "Stop by number: $0 kill <n> [n...]"
+  fi
+
+  if [[ "${#INSTANCE_STALE_LINES[@]}" -gt 0 ]]; then
+    echo
+    echo "Stale / unmatched PID files:"
+    local line
+    for line in "${INSTANCE_STALE_LINES[@]}"; do
+      echo "  - $line"
+    done
+  fi
+}
+
+# Stop one collected instance by 0-based index. Re-validates ownership first.
+stop_listed_instance() {
+  local idx="$1"
+  local num=$((idx + 1))
+  local pid="${INSTANCE_PIDS[$idx]}"
+  local bin="${INSTANCE_BINS[$idx]}"
+  local checkout="${INSTANCE_CHECKOUTS[$idx]}"
+  local pid_file="${INSTANCE_PID_FILES[$idx]}"
+  local url_file="${INSTANCE_URL_FILES[$idx]}"
+  local port="${INSTANCE_PORTS[$idx]}"
+  local url="${INSTANCE_URLS[$idx]}"
+
+  echo "==> Stopping #$num  PID=$pid  port=$port  $url"
+  echo "    Checkout: $checkout"
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "    Process already exited"
+    [[ -n "$pid_file" ]] && rm -f "$pid_file"
+    [[ -n "$url_file" ]] && rm -f "$url_file"
+    return 0
+  fi
+
+  if [[ -n "$bin" ]] && ! pid_matches_bin "$pid" "$bin"; then
+    # Orphan / renamed binary: only kill if exe still looks like session-insight.
+    local exe=""
+    if [[ -r "/proc/$pid/exe" ]]; then
+      exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+    fi
+    case "$exe" in
+      */session-insight|*/session-insight\ \(deleted\)) ;;
+      *)
+        echo "ERROR: refusing to stop PID $pid — not a session-insight binary for $checkout"
+        return 1
+        ;;
+    esac
+  fi
+
+  kill "$pid" 2>/dev/null || true
+  sleep 0.5
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "ERROR: PID $pid is still running"
+    return 1
+  fi
+
+  # Only remove runtime files if they still point at this pid (or are empty orphans).
+  if [[ -n "$pid_file" && -f "$pid_file" ]]; then
+    local file_pid
+    file_pid=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
+    if [[ -z "$file_pid" || "$file_pid" == "$pid" ]]; then
+      rm -f "$pid_file"
+    fi
+  fi
+  if [[ -n "$url_file" && -f "$url_file" ]]; then
+    # Drop URL when we stopped the process that owned this checkout's runtime files.
+    if [[ -n "$pid_file" && ! -f "$pid_file" ]] || [[ -z "$pid_file" ]]; then
+      rm -f "$url_file"
+    elif [[ -f "$pid_file" ]]; then
+      local remain
+      remain=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
+      [[ "$remain" == "$pid" || -z "$remain" ]] && rm -f "$url_file"
+    fi
+  fi
+  echo "    Stopped"
+  return 0
+}
+
+do_kill() {
+  if [[ "$#" -eq 0 ]]; then
+    echo "Usage: $0 kill <n> [n...]"
+    echo "  n is the # column from \`$0 status\` (All instances table)."
+    echo
+    do_instances
+    return 1
+  fi
+
+  collect_instances
+  local count="${#INSTANCE_PIDS[@]}"
+  if [[ "$count" -eq 0 ]]; then
+    echo "No running SessionInsight instances to kill"
+    return 1
+  fi
+
+  local -A seen_idx=()
+  local -a targets=()
+  local arg num idx
+  for arg in "$@"; do
+    if [[ ! "$arg" =~ ^[1-9][0-9]*$ ]]; then
+      echo "ERROR: invalid instance number '$arg' (use positive integers from status)"
+      return 1
+    fi
+    num=$arg
+    if [[ "$num" -gt "$count" ]]; then
+      echo "ERROR: instance #$num out of range (1-$count); run \`$0 status\` again"
+      return 1
+    fi
+    idx=$((num - 1))
+    if [[ -n "${seen_idx[$idx]+x}" ]]; then
+      continue
+    fi
+    seen_idx["$idx"]=1
+    targets+=("$idx")
+  done
+
+  local failed=0
+  for idx in "${targets[@]}"; do
+    if ! stop_listed_instance "$idx"; then
+      failed=1
+    fi
+  done
+  return "$failed"
+}
+
 do_status() {
   if [[ -f "$PID_FILE" ]]; then
     local pid
-    pid=$(cat "$PID_FILE")
-    if pid_is_owned "$pid"; then
-      echo "SessionInsight is running (PID: $pid)"
-      if [[ -s "$URL_FILE" ]]; then
-        echo "URL: $(cat "$URL_FILE")"
-      elif [[ "$PORT" != "0" ]]; then
-        echo "URL: http://127.0.0.1:$PORT/"
-      else
-        echo "URL: pending; inspect $LOG_FILE"
+    pid=$(tr -d '[:space:]' <"$PID_FILE" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && pid_is_owned "$pid"; then
+      local started _url _port
+      started=$(process_start_time "$pid")
+      [[ -z "$started" ]] && started="-"
+      resolve_instance_url_port "$pid" "$URL_FILE" "$LOG_FILE"
+      if [[ "$_url" == "-" && "$PORT" != "0" ]]; then
+        _url="http://127.0.0.1:$PORT/"
+        _port="$PORT"
       fi
+      echo "SessionInsight is running"
+      echo "  PID:     $pid"
+      echo "  Port:    $_port"
+      echo "  Started: $started"
+      echo "  URL:     $_url"
       if [[ -n "$SI_DATA_DIR" ]]; then
-        echo "Data directory: $SI_DATA_DIR"
+        echo "  Data:    $SI_DATA_DIR"
       else
-        echo "Data directory: ~/.session-insight"
+        echo "  Data:    ~/.session-insight"
       fi
+      echo "  Checkout: $ROOT_DIR"
     else
-      echo "SessionInsight is NOT running (stale PID file: $pid)"
+      echo "SessionInsight is NOT running (stale PID file: ${pid:-empty})"
     fi
   else
-    echo "SessionInsight is NOT running"
+    echo "SessionInsight is NOT running in this checkout"
   fi
+
+  echo
+  echo "All instances:"
+  do_instances
 }
 
 do_log() {
@@ -219,6 +678,10 @@ case "$CMD" in
     ;;
   status)
     do_status
+    ;;
+  kill)
+    shift
+    do_kill "$@"
     ;;
   log)
     do_log
