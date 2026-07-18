@@ -14,12 +14,14 @@ BIN_PATH="${BIN_PATH:-$ROOT_DIR/session-insight}"
 if [[ -f "$ROOT_DIR/.git" ]]; then
   RUNTIME_DIR="$ROOT_DIR/.runtime"
   mkdir -p "$RUNTIME_DIR"
+  # Worktree-only: primary never sets or writes PORT_FILE (avoids a root-level
+  # untracked session-insight.port that is not gitignored).
   PORT_FILE="$RUNTIME_DIR/session-insight.port"
   # Reuse a previously-persisted port for this worktree; fall back to $PORT or
   # 0 (OS-assigned) on the first run. A non-empty PORT env var always wins.
   if [[ -z "${PORT:-}" && -f "$PORT_FILE" ]]; then
     SAVED_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
-    if [[ "$SAVED_PORT" =~ ^[0-9]+$ && "$SAVED_PORT" -gt 0 ]]; then
+    if [[ "$SAVED_PORT" =~ ^[0-9]+$ && "$SAVED_PORT" -ge 1 && "$SAVED_PORT" -le 65535 ]]; then
       PORT="$SAVED_PORT"
     fi
   fi
@@ -27,7 +29,6 @@ if [[ -f "$ROOT_DIR/.git" ]]; then
   SI_DATA_DIR="${SI_DATA_DIR:-$RUNTIME_DIR/session-insight}"
 else
   RUNTIME_DIR="$ROOT_DIR"
-  PORT_FILE="$RUNTIME_DIR/session-insight.port"
   PORT="${PORT:-8080}"
   SI_DATA_DIR="${SI_DATA_DIR:-}"
 fi
@@ -35,6 +36,14 @@ fi
 PID_FILE="$RUNTIME_DIR/session-insight.pid"
 LOG_FILE="$RUNTIME_DIR/session-insight.log"
 URL_FILE="$RUNTIME_DIR/session-insight.url"
+
+# Extract the port from a Ready URL like http://127.0.0.1:35723/
+port_from_url() {
+  local url="$1"
+  if [[ "$url" =~ :([0-9]+)/?$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
 
 pid_is_owned() {
   local pid="$1"
@@ -148,12 +157,13 @@ do_start() {
     url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$LOG_FILE" 2>/dev/null | tail -1 || true)
     if [[ -n "$url" ]]; then
       printf '%s\n' "$url" >"$URL_FILE"
-      # Persist the actual bound port so the next restart in this worktree
-      # reuses it (PORT=0 → OS-assigned → extract from the ready URL).
-      local bound_port
-      bound_port=$(sed -n 's|.*://127\.0\.0\.1:\([0-9]\+\)/.*|\1|p' <<<"$url" | tail -1 || true)
-      if [[ "$bound_port" =~ ^[0-9]+$ && "$bound_port" -gt 0 ]]; then
-        printf '%s\n' "$bound_port" >"$PORT_FILE"
+      # Persist the bound port for linked worktrees only (PORT_FILE unset on primary).
+      if [[ -n "${PORT_FILE:-}" ]]; then
+        local bound_port
+        bound_port=$(port_from_url "$url")
+        if [[ "$bound_port" =~ ^[0-9]+$ && "$bound_port" -ge 1 && "$bound_port" -le 65535 ]]; then
+          printf '%s\n' "$bound_port" >"$PORT_FILE"
+        fi
       fi
       echo "    Ready: $url"
       return 0
