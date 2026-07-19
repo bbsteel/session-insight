@@ -319,7 +319,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     setFollowOutput(false)
     autoFollowSessionRef.current = null
   }, [sessionId])
-  const sessionIsLive = !!(session && isSessionLive(session, now))
+  // The id guard keeps the previous session's detail from leaking its
+  // liveness into the header/follow state while the new session loads.
+  const sessionIsLive = !!(session && session.id === sessionId && isSessionLive(session, now))
   useEffect(() => {
     if (!sessionIsLive && followOutput) setFollowOutput(false)
   }, [sessionIsLive, followOutput])

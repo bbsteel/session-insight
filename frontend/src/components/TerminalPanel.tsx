@@ -989,6 +989,10 @@ const snapshotTerminal = () => {
         }
         applyProgressHint()
       }
+      // Replay a rising edge that fired while waitForTerminalFont was still
+      // pending: the ref was null then, so the followOutput effect dropped
+      // it and openAtTop would stay stuck true.
+      if (followOutputRef.current) followWakeRef.current(true)
 
       const writeComposed = (afterWrite?: () => void) => {
         if (hasWrittenOnce) snapshotTerminal()
