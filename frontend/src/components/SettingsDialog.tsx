@@ -544,6 +544,7 @@ export default function SettingsDialog({
                                 setUiFontSize(key)
                                 setUIFontSizePref(key)
                               }}
+                              aria-pressed={selected}
                               className={`h-7 px-3 rounded-md border text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                                 selected
                                   ? 'bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] border-[var(--accent-blue)] text-[var(--accent-blue)]'

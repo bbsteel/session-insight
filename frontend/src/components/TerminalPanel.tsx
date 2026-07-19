@@ -112,13 +112,12 @@ async function waitForTerminalFont(fontFamily: string, fontSize: number) {
   if (!document.fonts?.load) return
   try {
     await Promise.race([
-      document.fonts.load(`400 ${fontSize}px ${fontFamily}`),
+      document.fonts.load(`400 ${fontSize}px ${fontFamily}`).then(() => document.fonts.ready),
       new Promise<void>((resolve) => setTimeout(resolve, 2000)),
     ])
   } catch {
     // Ignore load failures; the fallback font stack will render immediately.
   }
-  await document.fonts.ready
 }
 
 type InteractionEntry = { matcher: TerminalLineMatcher<unknown>; data: unknown; matchIndex: number }

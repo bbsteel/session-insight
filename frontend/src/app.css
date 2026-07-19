@@ -194,7 +194,7 @@
   padding: 0.125em 0.375em;
   border-radius: 3px;
   font-size: 0.9em;
-  font-family: var(--font-mono-first), 'JetBrains Mono', 'Consolas', 'Menlo', 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono-first), 'JetBrains Mono', Consolas, Menlo, 'SF Mono', 'Fira Code', monospace;
   word-break: break-word;
 }
 
@@ -225,7 +225,7 @@ html.platform-apple * {
 
 body {
   /* Inter for Latin; Windows CJK prefers YaHei UI over legacy YaHei */
-  font-family: var(--font-sans-first), 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  font-family: var(--font-sans-first), Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   font-size: var(--text-body-size);
   line-height: 1.5;
   color: var(--text-primary);
