@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   fetchLatestGeneration, fetchLLMProviders, generateAI, NoProviderError,
-  parseHandoffMetadata, removeSessionTitle, setSessionTitle,
+  parseHandoffMetadata, removeSessionTitle, setSessionTitle, splitHandoffOutput,
   type AIGeneration, type AIKind, type LLMProvider,
 } from '../api'
 import MarkdownRenderer from './MarkdownRenderer'
@@ -71,6 +71,10 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
     setStates(prev => ({ ...prev, [kind]: { ...prev[kind], ...p } }))
   const st = states[tab]
   const defaultProvider = providers.find(p => p.is_default)
+  const handoff = tab === 'handoff' && st.generation
+    ? splitHandoffOutput(st.generation.content)
+    : null
+  const displayedContent = handoff ? handoff.content : st.generation?.content ?? ''
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -247,7 +251,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                   {st.busy ? '生成中…' : st.generation ? '重新生成' : (tab === 'summary' ? '生成总结' : tab === 'title' ? '生成标题' : '生成交接提示词')}
                 </button>
                 {!st.busy && st.generation && tab !== 'title' && (
-                  <button className={btnCls} onClick={() => copy(st.generation!.content)}>
+                  <button className={btnCls} onClick={() => copy(displayedContent)}>
                     {copied ? '已复制 ✓' : '复制'}
                   </button>
                 )}
@@ -327,7 +331,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
           {!st.busy && st.generation && tab !== 'title' && (
             <>
               {tab === 'handoff' && (() => {
-                const meta = parseHandoffMetadata(st.generation!.metadata)
+                const meta = parseHandoffMetadata(st.generation!.metadata) ?? handoff?.metadata
                 if (!meta) return null
                 return (
                   <div className="mb-3 rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] px-3 py-2">
@@ -363,7 +367,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                 )
               })()}
               <div className="prose-custom min-w-0 text-helper text-[var(--text-primary)]">
-                <MarkdownRenderer content={st.generation.content} />
+                <MarkdownRenderer content={displayedContent} />
               </div>
             </>
           )}
