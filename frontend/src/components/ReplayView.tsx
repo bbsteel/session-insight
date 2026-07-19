@@ -82,6 +82,24 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // live). Prevents detail refetches from re-enabling follow after the user
   // turned it off; reset by the session-switch effect below.
   const autoFollowSessionRef = useRef<string | null>(null)
+  // Per-session view memory: follow choice + scroll position, saved when
+  // switching away so switching back restores where the user left instead of
+  // re-opening at the default (top / auto-follow tail).
+  const sessionViewMemoryRef = useRef(new Map<string, { follow: boolean; wasLive: boolean; viewportLine: number | null }>())
+  const prevSessionIdRef = useRef<string | null>(null)
+  // Mirror read by the session-switch effect (it saves the outgoing
+  // session's effective follow value; state setters in the same render
+  // would race).
+  const followOutputRef = useRef(followOutput)
+  followOutputRef.current = followOutput
+  // Latest session detail as a ref: the session-switch effect reads the
+  // OUTGOING session's detail through it without taking session as a dep
+  // (a detail-arrival re-run would clobber the restored view state).
+  const sessionDetailRef = useRef<SessionDetail | null>(null)
+  sessionDetailRef.current = session
+  // One-shot scroll target passed to TerminalPanel when revisiting a session
+  // with follow off (buffer line the user left at); null = default position.
+  const [restoreScrollLine, setRestoreScrollLine] = useState<number | null>(null)
   // 时间戳前缀设置(后端 ts 渲染参数);null = 设置未加载,先不挂终端,
   // 避免渲染与 positions 用了不同的 ts 导致行号错位。
   const [tsKinds, setTsKinds] = useState<string | null>(null)
@@ -313,18 +331,47 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     return () => window.clearInterval(timer)
   }, [session?.is_live, session?.id])
 
-  // Follow is live-only: drop it when switching sessions or when the live
-  // window expires so a historical replay never keeps auto-scrolling.
+  // Session switch: save the outgoing session's view (follow choice + scroll
+  // position) and restore the incoming one's. A memory saved while the
+  // session was LIVE suppresses auto-follow on return — the user's explicit
+  // pause survives the round trip. Memories of non-live sessions only
+  // restore the scroll position, so a session that has since gone live still
+  // gets the fresh auto-follow behavior.
   useEffect(() => {
-    setFollowOutput(false)
-    autoFollowSessionRef.current = null
+    const prevId = prevSessionIdRef.current
+    if (prevId && prevId !== sessionId) {
+      // sessionIsLive is id-gated and already reads false for the outgoing
+      // session on this render, so compute outgoing liveness from the detail
+      // itself (still the outgoing session's at this point). Fallback: an
+      // engaged follow implies the session was live.
+      const prevDetail = sessionDetailRef.current
+      const outgoingLive = prevDetail && prevDetail.id === prevId
+        ? isSessionLive(prevDetail, Date.now())
+        : followOutputRef.current
+      const m = lastMetricsRef.current
+      sessionViewMemoryRef.current.set(prevId, {
+        follow: followOutputRef.current,
+        wasLive: outgoingLive,
+        viewportLine: m && m.scrollHeight > m.clientHeight
+          ? Math.round(m.scrollTop / TERMINAL_LINE_HEIGHT)
+          : null,
+      })
+    }
+    prevSessionIdRef.current = sessionId
+    const saved = sessionId ? sessionViewMemoryRef.current.get(sessionId) : undefined
+    autoFollowSessionRef.current = saved?.wasLive ? sessionId : null
+    setFollowOutput(saved?.wasLive ? saved.follow : false)
+    setRestoreScrollLine(saved?.viewportLine ?? null)
   }, [sessionId])
   // The id guard keeps the previous session's detail from leaking its
   // liveness into the header/follow state while the new session loads.
   const sessionIsLive = !!(session && session.id === sessionId && isSessionLive(session, now))
+  // Idle expiry only applies to the session actually loaded; during the
+  // stale-detail window after a switch this effect must not clear the
+  // restored follow state of the incoming session.
   useEffect(() => {
-    if (!sessionIsLive && followOutput) setFollowOutput(false)
-  }, [sessionIsLive, followOutput])
+    if (session && session.id === sessionId && !sessionIsLive && followOutput) setFollowOutput(false)
+  }, [sessionIsLive, followOutput, session, sessionId])
 
   // Opening an active session auto-engages follow (tail -f): the terminal
   // lands at the tail and the 跟随 button lights up. Fires at most once per
@@ -1432,6 +1479,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 tsKinds={tsKinds}
                 followOutput={followOutput && sessionIsLive}
                 onFollowDisable={() => setFollowOutput(false)}
+                initialScrollLine={restoreScrollLine}
                 onFoldChange={handleFoldChange}
                 onFoldPathActivate={(bufLine, meta) => openFilePopover(bufLine, meta, null)}
                 onContextMenu={handleTerminalContextMenu}

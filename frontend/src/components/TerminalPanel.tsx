@@ -102,6 +102,10 @@ interface Props {
   // Invoked by the follow-pause button next to the hourglass decoration so
   // the user can stop following without reaching for the header toolbar.
   onFollowDisable?: () => void
+  // One-shot buffer line to land on after the first write, used when
+  // revisiting a session with follow off (the position the user left at).
+  // Ignored when follow is on — the tail pin wins. Read once at mount.
+  initialScrollLine?: number | null
   onFoldChange?: () => void
   // Path-bearing fold headers (e.g. ◆ write … /path): open file menu instead
   // of only toggling the fold. foldKey is set so the menu can still expand.
@@ -146,7 +150,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -194,6 +198,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   onFoldPathActivateRef.current = onFoldPathActivate
   const onFollowDisableRef = useRef(onFollowDisable)
   onFollowDisableRef.current = onFollowDisable
+  // Read once at mount (revisit restore); not a mount-effect dep.
+  const initialScrollLineRef = useRef(initialScrollLine)
+  initialScrollLineRef.current = initialScrollLine
   // Live follow is read from a ref inside refreshContent so toggling does not
   // remount the terminal; only the next live-tail poll needs the new value.
   const followOutputRef = useRef(followOutput)
@@ -530,8 +537,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // Opening a session should land at the start (top). Cleared once the user
     // scrolls away, jumps, or live-follow pins the viewport to the bottom.
     // When follow is already on at mount (auto-follow for an active session),
-    // start pinned to the tail instead of the top.
-    let openAtTop = !followOutputRef.current
+    // start pinned to the tail instead; when revisiting with a saved scroll
+    // position (follow off), restore that line after the first write.
+    let pendingInitialScrollLine = followOutputRef.current ? null : initialScrollLineRef.current
+    let openAtTop = !followOutputRef.current && pendingInitialScrollLine == null
     // While rewriting, xterm briefly parks at the bottom; ignore those scrolls
     // so they don't cancel open-at-top before we re-anchor to line 0.
     let writingContent = false
@@ -1018,6 +1027,14 @@ const snapshotTerminal = () => {
           updateStickyUserMsg()
           queueMetrics()
           if (afterWrite) afterWrite()
+          // Revisit restore (first write only): land on the line the user
+          // left at. Runs while writingContent is still true and before the
+          // grace window, so the scroll handlers don't fight it.
+          if (pendingInitialScrollLine != null) {
+            openAtTop = false
+            term.scrollToLine(pendingInitialScrollLine)
+            pendingInitialScrollLine = null
+          }
           // Always re-assert top when openAtTop is active (afterWrite may only
           // notify folds / restore an anchor). xterm parks at the bottom after
           // large writes; without this, session open lands at the end.
