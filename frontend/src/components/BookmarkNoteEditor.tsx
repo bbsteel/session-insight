@@ -91,7 +91,7 @@ export default function BookmarkNoteEditor({
           disabled={saving}
           className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         >
-          {anchor ? '跳过' : '取消'}
+          {anchor ? '跳过直接收藏' : '取消'}
         </button>
         <button
           type="button"

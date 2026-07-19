@@ -636,7 +636,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           onClick={() => onSelect(session.id, session.agent_type)}
           onContextMenu={(e) => openContextMenu(e, session)}
           title="右键打开菜单"
-          className={`relative w-full text-left pl-2.5 pr-14 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
+          className={`relative w-full text-left pl-2.5 pr-20 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
             selected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
           style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
@@ -647,16 +647,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <div className="min-w-0 flex-1">
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
                 {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
-                {session.bookmarked && (
-                  <InstantTooltip
-                    text={session.bookmark_note?.trim() ? `已收藏：${session.bookmark_note.trim()}` : '已收藏'}
-                    placement="top"
-                  >
-                    <span className="inline-flex flex-shrink-0 text-[var(--accent-blue)]" aria-label="已收藏">
-                      <StarIcon size={12} filled strokeWidth={1.5} />
-                    </span>
-                  </InstantTooltip>
-                )}
                 <span className="truncate">{getSessionName(session)}</span>
               </div>
               <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
@@ -668,13 +658,33 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </div>
           </div>
         </button>
+        {session.bookmarked && session.bookmark_note?.trim() && (
+          <InstantTooltip
+            text={`收藏备注：${session.bookmark_note.trim()}`}
+            placement="top"
+            className="absolute right-[3.25rem] top-1.5 flex h-5 w-5 items-center justify-center text-[var(--text-secondary)]"
+          >
+            <button
+              type="button"
+              onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
+              className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              aria-label="编辑收藏备注"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 3.75h10.5L20 8.25v12H5z" />
+                <path d="M15.5 3.75v4.5H20" />
+                <path d="M8.5 13h7M8.5 16.5h5" />
+              </svg>
+            </button>
+          </InstantTooltip>
+        )}
         <InstantTooltip text={session.bookmarked ? '取消收藏' : '收藏'} placement="top">
           <button
             type="button"
             onClick={event => { void bookmarkFromRow(event, session) }}
             className={`absolute right-7 top-1.5 flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
               session.bookmarked
-                ? 'text-[var(--accent-blue)] opacity-0 hover:bg-[var(--bg-inset)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
+                ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
                 : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
             }`}
             aria-label={session.bookmarked ? '取消收藏' : '收藏'}
