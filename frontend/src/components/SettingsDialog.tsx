@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchSettings, saveSettings } from '../api'
 import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
+import { AVATAR_MAX_BYTES, setUserAvatar } from '../userAvatar'
 import {
   defaultBannerColor,
   getBannerColorOverride,
@@ -8,6 +9,7 @@ import {
   useIsDark,
 } from '../terminalTheme'
 import { ThemeSelect } from './ThemeToggle'
+import UserAvatar, { useUserAvatar } from './UserAvatar'
 import {
   AppearanceIcon,
   EditorIcon,
@@ -65,6 +67,31 @@ export default function SettingsDialog({
   const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
   const isDark = useIsDark()
   const [bannerColor, setBannerColor] = useState<string | null>(getBannerColorOverride)
+  const userAvatar = useUserAvatar()
+  const avatarFileRef = useRef<HTMLInputElement>(null)
+  const [avatarError, setAvatarError] = useState('')
+
+  // 上传自定义头像:仅校验类型和大小(≤200KB),原图以 data URL 存本地。
+  const handleAvatarFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // 允许再次选择同一文件
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setAvatarError('请选择图像文件')
+      return
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarError(`图像大小 ${Math.ceil(file.size / 1024)}KB,超过 200KB 上限,请压缩后再上传`)
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      setUserAvatar(typeof reader.result === 'string' ? reader.result : null)
+      setAvatarError('')
+    }
+    reader.onerror = () => setAvatarError('读取文件失败,请重试')
+    reader.readAsDataURL(file)
+  }
 
   // Load server-side settings whenever the dialog opens.
   useEffect(() => {
@@ -73,6 +100,7 @@ export default function SettingsDialog({
     setLoading(true)
     setNavOpenPrefState(getNavOpenPref())
     setBannerColor(getBannerColorOverride())
+    setAvatarError('')
     fetchSettings()
       .then(s => {
         setEditorCommand(s.editor_command)
@@ -236,13 +264,45 @@ export default function SettingsDialog({
             )}
 
             {activeTab === 'appearance' && (
-              <div className={sectionBox}>
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className={sectionTitle}>主题</div>
-                    <div className={sectionDesc}>默认浅色；跟随系统时随 OS 深/浅切换</div>
+              <div className="space-y-4">
+                <div className={sectionBox}>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className={sectionTitle}>主题</div>
+                      <div className={sectionDesc}>默认浅色；跟随系统时随 OS 深/浅切换</div>
+                    </div>
+                    <ThemeSelect />
                   </div>
-                  <ThemeSelect />
+                </div>
+                <div className={sectionBox}>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className={sectionTitle}>用户头像</div>
+                      <div className={sectionDesc}>交互消息面板中用户消息的图标；可上传图像（不超过 200KB）</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <UserAvatar size={32} />
+                      <button onClick={() => avatarFileRef.current?.click()} className={btnCls}>
+                        上传图像
+                      </button>
+                      {userAvatar && (
+                        <button onClick={() => { setUserAvatar(null); setAvatarError('') }} className={btnCls}>
+                          恢复默认
+                        </button>
+                      )}
+                      <input
+                        ref={avatarFileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        aria-label="上传用户头像图像"
+                        onChange={handleAvatarFile}
+                      />
+                    </div>
+                  </div>
+                  {avatarError && (
+                    <div className="mt-2 text-helper text-[var(--accent-red)]" role="alert">{avatarError}</div>
+                  )}
                 </div>
               </div>
             )}

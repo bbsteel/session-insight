@@ -1,0 +1,38 @@
+import { useSyncExternalStore } from 'react'
+import { getUserAvatar, subscribeUserAvatar } from '../userAvatar'
+import { UserIcon } from './icons'
+
+// 交互消息面板/设置共用的用户头像:设置了自定义图像则渲染圆形 img,
+// 否则渲染内置人头图标(蓝色圆底,与面板用户行的色彩语义一致)。
+export function useUserAvatar(): string | null {
+  return useSyncExternalStore(subscribeUserAvatar, getUserAvatar)
+}
+
+interface Props {
+  size?: number
+  className?: string
+}
+
+export default function UserAvatar({ size = 14, className = '' }: Props) {
+  const avatar = useUserAvatar()
+  if (avatar) {
+    return (
+      <img
+        src={avatar}
+        alt="用户头像"
+        className={`flex-shrink-0 rounded-full object-cover ${className}`}
+        style={{ width: size, height: size }}
+        draggable={false}
+      />
+    )
+  }
+  return (
+    <span
+      className={`inline-flex flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent-blue)]/10 text-[var(--accent-blue)] ${className}`}
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <UserIcon className="h-[62%] w-[62%]" />
+    </span>
+  )
+}
