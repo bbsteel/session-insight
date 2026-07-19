@@ -11,9 +11,12 @@ import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type UserHighlightRange } from '../terminalControl'
 import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
+import {
+  getTerminalFontStack,
+  useTerminalFont,
+  useTerminalFontSize,
+} from '../fontPrefs'
 
-const TERMINAL_FONT_FAMILY = '"JetBrains Mono", "Consolas", "Menlo", "SF Mono", monospace'
-const TERMINAL_FONT_SIZE = 13
 // Text the backend renders for a chrys turn still in progress; the frontend
 // finds this row and overlays a spinning hourglass. Keep in sync with the
 // formatter's "in_progress" case.
@@ -105,9 +108,16 @@ interface Props {
   onJumpToUserMessage?: (lineStart: number, logicalStart?: number) => void
 }
 
-async function waitForTerminalFont() {
+async function waitForTerminalFont(fontFamily: string, fontSize: number) {
   if (!document.fonts?.load) return
-  await document.fonts.load(`400 ${TERMINAL_FONT_SIZE}px ${TERMINAL_FONT_FAMILY}`)
+  try {
+    await Promise.race([
+      document.fonts.load(`400 ${fontSize}px ${fontFamily}`),
+      new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+    ])
+  } catch {
+    // Ignore load failures; the fallback font stack will render immediately.
+  }
   await document.fonts.ready
 }
 
@@ -147,6 +157,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     userPositionsVersionRef.current++
   }
   const isDark = useIsDark()
+  const terminalFont = useTerminalFont()
+  const terminalFontSize = useTerminalFontSize()
+  const terminalFontFamily = getTerminalFontStack(terminalFont)
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
   // WebGL renderer degraded to the DOM fallback (no hardware acceleration /
@@ -190,8 +203,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     const lineH = agent === "grok" ? 1.05 : 1.2
     const term = new Terminal({
       theme: terminalTheme(isDarkRef.current, agentTypeRef.current),
-      fontFamily: TERMINAL_FONT_FAMILY,
-      fontSize: TERMINAL_FONT_SIZE,
+      fontFamily: terminalFontFamily,
+      fontSize: terminalFontSize,
       lineHeight: lineH,
       allowProposedApi: true,
       scrollback: 20000,
@@ -448,7 +461,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let openAtTopGraceUntil = 0
     let disposeSearchResultsRef: { dispose(): void } | null = null
 
-    waitForTerminalFont().then(() => {
+    waitForTerminalFont(terminalFontFamily, terminalFontSize).then(() => {
       if (disposed) return
 
       term.open(container)
@@ -525,8 +538,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         'position:absolute', 'top:0', 'left:0', 'right:0',
         'display:none', 'align-items:center', 'gap:6px',
         'padding:4px 12px', 'z-index:10', 'cursor:pointer',
-        `font-family:${TERMINAL_FONT_FAMILY}`,
-        `font-size:${TERMINAL_FONT_SIZE}px`, 'line-height:1.4',
+        `font-family:${terminalFontFamily}`,
+        `font-size:${terminalFontSize}px`, 'line-height:1.4',
         'white-space:nowrap', 'overflow:hidden',
         'border-bottom:1px solid var(--border-default)',
       ].join(';')
@@ -1433,7 +1446,7 @@ const snapshotTerminal = () => {
       termRef.current = null
       term.dispose()
     }
-  }, [sessionId, tsKinds])
+  }, [sessionId, tsKinds, terminalFont, terminalFontFamily, terminalFontSize])
 
   useEffect(() => {
     if (termRef.current) {

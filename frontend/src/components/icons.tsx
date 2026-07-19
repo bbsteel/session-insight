@@ -181,4 +181,11 @@ export function SparklesIcon({ className, ...rest }: IconProps) {
   )
 }
 
+export function FontIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <path d="M4 13.5V3.5h1M4 3.5 2.5 2M4 3.5 5.5 2M8 13.5v-10M8 3.5 6.5 2M8 3.5 9.5 2M12 13.5V3.5h1M12 3.5 10.5 2M12 3.5 13.5 2" />
+    </Icon>
+  )
+}
 
