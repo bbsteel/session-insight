@@ -243,10 +243,11 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let rawAnsi = ''
     let foldRanges: FoldRange[] = foldsRef.current
     const collapsedKeys = new Set<string>()
-    // Tool folds default to collapsed (hide each tool's output, keep the compact
-    // header). defaultedKeys records which we've already auto-collapsed so a
-    // user's manual expand sticks while folds that first appear (session grew)
-    // still start collapsed.
+    // Folds default to collapsed: group folds ("▼ Tools (n/m)") show just the
+    // group header, tool folds hide each tool's input/output boxes behind the
+    // compact header. defaultedKeys records which we've already auto-collapsed
+    // so a user's manual expand sticks while folds that first appear (session
+    // grew) still start collapsed.
     const defaultedKeys = new Set<string>()
     let foldView: FoldView | null = null
     const toDisplayLine = (n: number) => (foldView ? foldView.toDisplay(n) : n)
@@ -1033,10 +1034,10 @@ const snapshotTerminal = () => {
         for (const k of [...defaultedKeys]) {
           if (!valid.has(k)) defaultedKeys.delete(k)
         }
-        // Default each newly-seen tool fold to collapsed.
+        // Default every newly-seen fold to collapsed (group, tool, rollback).
         let addedDefault = false
         for (const f of next) {
-          if ((f.level === 'tool' || f.level === 'rollback') && !defaultedKeys.has(f.key)) {
+          if (!defaultedKeys.has(f.key)) {
             defaultedKeys.add(f.key)
             collapsedKeys.add(f.key)
             addedDefault = true

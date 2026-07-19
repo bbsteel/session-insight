@@ -7,6 +7,9 @@ import (
 
 // standardToolBox renders the legacy tool input box: the box header is a full
 // "Tool: name · summary · duration · ts" line. Used by default and claude.
+// The summary is not pre-truncated: writeBoxTop caps the header at the box
+// width, so wider terminals show the full path/command instead of a fixed
+// 48-column excerpt.
 type standardToolBox struct{}
 
 func (standardToolBox) BoxPrefix(p *Profile, prefix string) string { return prefix }
@@ -15,7 +18,7 @@ func (standardToolBox) BuildHeader(p *Profile, input map[string]any, toolName, p
 	durationMs int64, ts string) (header string, suppress bool) {
 	parts := []string{fmt.Sprintf("Tool: %s", toolName)}
 	if s := toolSummary("", input); s != "" {
-		parts = append(parts, truncateToWidth(s, 48))
+		parts = append(parts, s)
 	}
 	if durationMs > 0 {
 		parts = append(parts, fmtDurationShort(durationMs))

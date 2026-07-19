@@ -256,9 +256,11 @@ func TestClaudeGroupHeaderStatsAndFolds(t *testing.T) {
 	if !strings.Contains(ansi, "╔") || strings.Contains(ansi, "╭") {
 		t.Errorf("claude must keep the default box charset")
 	}
-	// claude has no ToolBullet, so per-tool folds are disabled: only the single
-	// group fold is emitted (per-tool folds are a chrys-only affordance).
+	// claude has no ToolBullet but ToolFoldHeader: each non-edit tool gets its
+	// own fold whose header is the dedicated "▼ Tool: …" line above the box
+	// (Edit renders a diff and stays unfolded). 1 group fold + 2 tool folds.
 	var groupFolds, toolFolds int
+	groupKey := ""
 	for _, p := range positions {
 		if p.Kind != "fold" {
 			continue
@@ -266,12 +268,64 @@ func TestClaudeGroupHeaderStatsAndFolds(t *testing.T) {
 		switch p.Payload["level"] {
 		case "group":
 			groupFolds++
+			groupKey = p.PositionKey
 		case "tool":
 			toolFolds++
 		}
 	}
-	if groupFolds != 1 || toolFolds != 0 {
-		t.Errorf("claude should emit 1 group fold + 0 tool folds, got group=%d tool=%d", groupFolds, toolFolds)
+	if groupFolds != 1 || toolFolds != 2 {
+		t.Errorf("claude should emit 1 group fold + 2 tool folds, got group=%d tool=%d", groupFolds, toolFolds)
+	}
+	for _, p := range positions {
+		if p.Kind == "fold" && p.Payload["level"] == "tool" {
+			if gk, _ := p.Payload["group_key"].(string); gk != groupKey {
+				t.Errorf("tool fold group_key %q != group %q", gk, groupKey)
+			}
+		}
+	}
+	// Fold headers carry the full untruncated summary; the folded tool's box
+	// top no longer embeds a header.
+	for _, want := range []string{"▼ Tool: Grep · x", "▼ Tool: Bash · ls"} {
+		if !strings.Contains(stripANSIForTest(ansi), want) {
+			t.Errorf("claude tool fold header %q missing:\n%s", want, ansi[:min(len(ansi), 900)])
+		}
+	}
+	if strings.Contains(ansi, "╔══ Tool: Grep") {
+		t.Errorf("folded tool must not keep an embedded box-top header:\n%s", ansi[:min(len(ansi), 900)])
+	}
+}
+
+// The fold header keeps the full path (no 48-column truncation) so a collapsed
+// tool row still shows the whole invocation.
+func TestClaudeToolFoldHeaderFullPath(t *testing.T) {
+	ts := time.Now()
+	longPath := "/home/deck/projects/session-insight/.claude/worktrees/follow-mode-active-session/.runtime/shots/1-live-follow-on.png"
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "claude"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "claude", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "claude",
+			ToolName: "Read", ToolCallID: "c1", ToolInput: map[string]any{"file_path": longPath}},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "claude", ToolCallID: "c1", Stdout: "data"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 120)
+	plain := stripANSIForTest(ansi)
+
+	if !strings.Contains(plain, "▼ Tool: Read · "+longPath) {
+		t.Errorf("fold header should carry the full untruncated path:\n%s", plain)
+	}
+	// The fold header line is the tool fold's LineStart.
+	var fold *RenderPosition
+	for i := range positions {
+		if positions[i].Kind == "fold" && positions[i].Payload["level"] == "tool" {
+			fold = &positions[i]
+		}
+	}
+	if fold == nil {
+		t.Fatalf("claude tool fold missing: %+v", positions)
+	}
+	lines := strings.Split(ansi, "\n")
+	if !strings.Contains(stripANSIForTest(lines[fold.LineStart]), "▼ Tool: Read") {
+		t.Errorf("tool fold LineStart should point at the ▼ Tool header, got %q", lines[fold.LineStart])
 	}
 }
 

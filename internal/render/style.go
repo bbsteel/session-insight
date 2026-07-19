@@ -107,6 +107,12 @@ type Style struct {
 	ResultBox        bool
 	SubagentBadge    bool
 
+	// ToolFoldHeader gives box-style profiles (claude) the same per-tool fold
+	// affordance bullet profiles get from the bullet line: a dedicated
+	// "▼ Tool: Name · summary" line above the tool box doubles as the fold
+	// header, and the box top loses its embedded header for folded tools.
+	ToolFoldHeader bool
+
 	// ResultIndent is extra indentation applied to depth-0 tool results when
 	// the style uses per-tool bullets (e.g. grok indents results to line up
 	// under the bullet).

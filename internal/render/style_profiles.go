@@ -31,6 +31,8 @@ var chrysProfile = Profile{
 
 // claudeProfile keeps the default box layout but adds a grouped tool-run header
 // with category stats, mirroring Claude Code's own collapsed-tools summary.
+// Folded tools move the "Tool: …" header out of the box top onto a dedicated
+// "▼ Tool: …" fold line (ToolFoldHeader) so each tool collapses independently.
 var claudeProfile = Profile{
 	Name: "claude",
 	Style: Style{
@@ -38,6 +40,7 @@ var claudeProfile = Profile{
 		Palette:          DefaultPalette,
 		GroupToolRuns:    true,
 		GroupHeaderStats: true,
+		ToolFoldHeader:   true,
 		ToolBox:          standardToolBox{},
 	},
 }
