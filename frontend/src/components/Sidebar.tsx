@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { addBookmark, fetchAgents, fetchSearch, fetchSessions, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
+import { addBookmark, fetchAgents, fetchSearch, fetchSessions, fetchVersion, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
 import type { AgentInfo, SessionSummary } from '../types'
 import { applyBookmarkChange, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
@@ -11,6 +11,7 @@ import BookmarkNoteEditor, { type BookmarkNoteTarget } from './BookmarkNoteEdito
 import DeleteSessionDialog from './DeleteSessionDialog'
 import InstantTooltip from './InstantTooltip'
 import StarIcon from './StarIcon'
+import { InfoIcon } from './icons'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
 import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
@@ -89,6 +90,18 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   // 文本，内容匹配交给已有的 /api/search；null 表示无内容搜索结果可用，
   // 过滤时只按本地元数据字段匹配。
   const [contentHits, setContentHits] = useState<Set<string> | null>(null)
+  const [version, setVersion] = useState('')
+
+  // 版本号只取一次（进程生命周期内不变），失败时 footer 留空不打扰。
+  useEffect(() => {
+    let cancelled = false
+    void fetchVersion().then(info => {
+      if (!cancelled) setVersion(info.version)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // 输入防抖 250ms 后调 FTS，把内容命中并进过滤结果；失败静默降级为
   // 仅本地字段匹配（搜索框不该因后台接口抖动而报错）。
@@ -827,6 +840,25 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             )}
           />
         )}
+      </div>
+
+      {/* Footer: 常驻版本号，点击 ⓘ 打开设置「关于」 */}
+      <div className="flex flex-shrink-0 items-center justify-between border-t border-[var(--border-muted)] px-4 py-1.5">
+        <span className="truncate text-meta text-[var(--text-muted)]" data-testid="sidebar-version">
+          Session Insight{version ? ` ${version}` : ''}
+        </span>
+        <InstantTooltip text="关于 Session Insight" placement="top">
+          <button
+            type="button"
+            aria-label="关于 Session Insight"
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent('si-open-settings', { detail: { tab: 'about' } }))
+            }
+            className="ml-2 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          >
+            <InfoIcon className="h-3.5 w-3.5" />
+          </button>
+        </InstantTooltip>
       </div>
 
       {/* Resize handle (desktop only) */}

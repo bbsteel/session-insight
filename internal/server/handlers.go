@@ -716,6 +716,21 @@ func (s *Server) handleIndexStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.indexStatus.SnapshotProgress())
 }
 
+// handleVersion 返回构建期注入的版本信息。release 构建 Commit 为空，
+// 前端据此区分「关于」页是否展示开发构建信息。
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	version := s.Version
+	if version == "" {
+		version = "dev"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]string{
+		"version": version,
+		"commit":  s.Commit,
+	})
+}
+
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
