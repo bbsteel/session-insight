@@ -51,6 +51,18 @@ func TestParseHandoffOutput(t *testing.T) {
 			wantContent:  "先检查配置。\n\n```json\n{\"port\": 8080}\n```\n\n" + body,
 			wantMetadata: "",
 		},
+		{
+			name:         "null recommendations are preserved",
+			raw:          "```json\n{\"difficulty\":\"中等\",\"recommended\":null}\n```\n\n" + body,
+			wantContent:  "```json\n{\"difficulty\":\"中等\",\"recommended\":null}\n```\n\n" + body,
+			wantMetadata: "",
+		},
+		{
+			name:         "recommendation without executor is preserved",
+			raw:          "```json\n{\"difficulty\":\"中等\",\"recommended\":[{}]}\n```\n\n" + body,
+			wantContent:  "```json\n{\"difficulty\":\"中等\",\"recommended\":[{}]}\n```\n\n" + body,
+			wantMetadata: "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -15,5 +15,9 @@ assert.deepEqual(splitHandoffOutput(`说明配置。\n\n\`\`\`json\n{"port":8080
   content: `说明配置。\n\n\`\`\`json\n{"port":8080}\n\`\`\`\n\n${body}`,
   metadata: null,
 })
+for (const invalidRecommended of [null, [{}]]) {
+  const invalidContent = `\`\`\`json\n${JSON.stringify({ difficulty: '中等', recommended: invalidRecommended })}\n\`\`\`\n\n${body}`
+  assert.deepEqual(splitHandoffOutput(invalidContent), { content: invalidContent, metadata: null })
+}
 
 console.log('handoff output tests passed')

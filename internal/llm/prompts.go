@@ -161,14 +161,20 @@ func stripLeadingJSONFence(s string) (rest, body string) {
 // This prevents a JSON example in the handoff body from being stripped.
 func isHandoffMetadataJSON(raw string) bool {
 	var metadata struct {
-		Difficulty  string          `json:"difficulty"`
-		Recommended json.RawMessage `json:"recommended"`
+		Difficulty  string `json:"difficulty"`
+		Recommended []struct {
+			Executor string `json:"executor"`
+		} `json:"recommended"`
 	}
-	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata.Difficulty == "" || len(metadata.Recommended) == 0 {
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata.Difficulty == "" || metadata.Recommended == nil {
 		return false
 	}
-	var recommended []json.RawMessage
-	return json.Unmarshal(metadata.Recommended, &recommended) == nil
+	for _, recommendation := range metadata.Recommended {
+		if strings.TrimSpace(recommendation.Executor) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // buildTitleContext keeps only what identifies the task: metadata, every

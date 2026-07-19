@@ -293,7 +293,14 @@ export function parseHandoffMetadata(raw: string | undefined): HandoffMetadata |
 function isHandoffMetadata(value: unknown): value is HandoffMetadata {
   if (typeof value !== 'object' || value === null) return false
   const metadata = value as HandoffMetadata
-  return typeof metadata.difficulty === 'string' && Array.isArray(metadata.recommended)
+  return typeof metadata.difficulty === 'string'
+    && Array.isArray(metadata.recommended)
+    && metadata.recommended.every(item =>
+      typeof item === 'object'
+      && item !== null
+      && typeof (item as { executor?: unknown }).executor === 'string'
+      && (item as { executor: string }).executor.trim() !== ''
+    )
 }
 
 // splitHandoffOutput also repairs generations saved before the server learned
