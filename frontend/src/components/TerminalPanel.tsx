@@ -198,12 +198,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   // remount the terminal; only the next live-tail poll needs the new value.
   const followOutputRef = useRef(followOutput)
   followOutputRef.current = followOutput
-  // Assigned inside the mount effect; invoked on the follow rising edge to
-  // leave open-at-top mode and jump to the tail.
-  const followWakeRef = useRef<(() => void) | null>(null)
+  // Assigned inside the mount effect; invoked on either follow edge: the
+  // rising edge leaves open-at-top mode and jumps to the tail, and both
+  // edges re-apply the follow-pause chip next to the hourglass (created on
+  // rise, disposed on fall).
+  const followWakeRef = useRef<((on: boolean) => void) | null>(null)
   const prevFollowRef = useRef(followOutput)
   useEffect(() => {
-    if (followOutput && !prevFollowRef.current) followWakeRef.current?.()
+    if (followOutput !== prevFollowRef.current) followWakeRef.current?.(followOutput)
     prevFollowRef.current = followOutput
   }, [followOutput])
   // Assigned inside the mount effect once the terminal is live; the folds
@@ -303,17 +305,67 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // Spinning hourglass over a "turn in progress" row (chrys in-flight
     // checkpoint). One decoration, re-applied after every rewrite so it tracks
     // the row as the buffer changes; disposed when the marker text is gone.
-    // A second decoration to its right carries the follow-mode hint.
+    // A second decoration to its right carries the follow-pause button.
+    // NOTE: term.reset() (every writeComposed) discards the buffer WITHOUT
+    // disposing its markers, so any decoration anchored to a stale marker
+    // keeps rendering over the rewritten content at its old row until
+    // disposed — always clear these before a rewrite, not just after.
     let progressDecoration: IDecoration | null = null
     let progressHintDecoration: IDecoration | null = null
     let progressMarker: IMarker | null = null
+    const disposeProgressHint = () => {
+      progressHintDecoration?.dispose()
+      progressHintDecoration = null
+    }
     const clearProgress = () => {
       progressDecoration?.dispose()
-      progressHintDecoration?.dispose()
+      disposeProgressHint()
       progressMarker?.dispose()
       progressDecoration = null
-      progressHintDecoration = null
       progressMarker = null
+    }
+    // Follow-pause chip anchored to the progress marker, to the right of the
+    // hourglass. Created only while follow is on and disposed the moment it
+    // turns off (no visibility hacks — xterm fully owns the element), so the
+    // chip can never linger over unrelated rows.
+    const applyProgressHint = () => {
+      disposeProgressHint()
+      if (!followOutputRef.current || !progressMarker || progressMarker.isDisposed) return
+      let hintDecoration: IDecoration | undefined
+      try {
+        hintDecoration = term.registerDecoration({ marker: progressMarker, x: PROGRESS_HINT_X, width: PROGRESS_HINT_CELLS, height: 1, layer: 'top' })
+      } catch {
+        hintDecoration = undefined
+      }
+      if (!hintDecoration) return
+      hintDecoration.onRender(element => {
+        if (element.dataset.siFollowHint) return // onRender fires per xterm paint
+        element.dataset.siFollowHint = '1'
+        const bgIdle = 'color-mix(in srgb, var(--accent-green) 15%, transparent)'
+        const bgHover = 'color-mix(in srgb, var(--accent-green) 30%, transparent)'
+        element.style.pointerEvents = 'auto'
+        element.style.cursor = 'pointer'
+        element.style.whiteSpace = 'nowrap'
+        element.style.borderRadius = '3px'
+        element.style.padding = '0 4px'
+        element.style.color = 'var(--accent-green)'
+        element.style.background = bgIdle
+        element.textContent = PROGRESS_HINT_TEXT
+        element.title = '暂停跟随，自由浏览之前的消息'
+        element.addEventListener('mouseenter', () => { element.style.background = bgHover })
+        element.addEventListener('mouseleave', () => { element.style.background = bgIdle })
+        element.addEventListener('click', e => {
+          // Keep the click off the terminal's matcher hit-testing
+          // (xterm MouseService would resolve this row/column).
+          e.preventDefault()
+          e.stopPropagation()
+          // Instant feedback — React state (and the follow edge hook, which
+          // disposes again) catches up within a frame.
+          disposeProgressHint()
+          onFollowDisableRef.current?.()
+        })
+      })
+      progressHintDecoration = hintDecoration
     }
 
     // User-message highlight decorations: one per row of each user prompt
@@ -877,50 +929,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           })
           progressMarker = marker
           progressDecoration = decoration
-          // Follow-pause button to the right of the hourglass: a real click
-          // target (pointerEvents auto) that stops following, so the user
-          // watching a live tail can pause right there and browse history.
-          // Only visible while follow is on; visibility is re-evaluated on
-          // every paint so toggling 跟随 in the header reflects without a
-          // buffer rewrite. visibility:hidden elements receive no pointer
-          // events, so the hidden button never blocks terminal clicks.
-          let hintDecoration: IDecoration | undefined
-          try {
-            hintDecoration = term.registerDecoration({ marker, x: PROGRESS_HINT_X, width: PROGRESS_HINT_CELLS, height: 1, layer: 'top' })
-          } catch {
-            hintDecoration = undefined
-          }
-          if (hintDecoration) {
-            hintDecoration.onRender(element => {
-              if (!element.dataset.siFollowHint) {
-                element.dataset.siFollowHint = '1'
-                const bgIdle = 'color-mix(in srgb, var(--accent-green) 15%, transparent)'
-                const bgHover = 'color-mix(in srgb, var(--accent-green) 30%, transparent)'
-                element.style.pointerEvents = 'auto'
-                element.style.cursor = 'pointer'
-                element.style.display = 'flex'
-                element.style.alignItems = 'center'
-                element.style.whiteSpace = 'nowrap'
-                element.style.borderRadius = '3px'
-                element.style.padding = '0 4px'
-                element.style.color = 'var(--accent-green)'
-                element.style.background = bgIdle
-                element.textContent = PROGRESS_HINT_TEXT
-                element.title = '暂停跟随，自由浏览之前的消息'
-                element.addEventListener('mouseenter', () => { element.style.background = bgHover })
-                element.addEventListener('mouseleave', () => { element.style.background = bgIdle })
-                element.addEventListener('click', e => {
-                  // Keep the click off the terminal's matcher hit-testing
-                  // (xterm MouseService would resolve this row/column).
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onFollowDisableRef.current?.()
-                })
-              }
-              element.style.visibility = followOutputRef.current ? 'visible' : 'hidden'
-            })
-            progressHintDecoration = hintDecoration
-          }
+          // Follow-pause chip rides the same marker (only while follow is on).
+          applyProgressHint()
           break
         }
       }
@@ -968,17 +978,28 @@ const snapshotTerminal = () => {
         term.scrollToLine(0)
       }
 
-      // Rising edge of follow after mount: leave open-at-top mode and jump to
-      // the tail. (Follow already on at mount takes the openAtTop=false init
-      // above and parks at the bottom on the initial write instead.)
-      followWakeRef.current = () => {
-        openAtTop = false
-        if (hasWrittenOnce) term.scrollToBottom()
+      // Follow edge hook: on the rising edge leave open-at-top mode and jump
+      // to the tail (follow already on at mount takes the openAtTop=false
+      // init above and parks at the bottom on the initial write instead);
+      // both edges create/dispose the follow-pause chip.
+      followWakeRef.current = (on: boolean) => {
+        if (on) {
+          openAtTop = false
+          if (hasWrittenOnce) term.scrollToBottom()
+        }
+        applyProgressHint()
       }
 
       const writeComposed = (afterWrite?: () => void) => {
         if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
+        // term.reset() below discards the buffer without disposing its
+        // markers (xterm BufferSet.reset swaps in a fresh Buffer), leaving
+        // decorations anchored to stale rows painted over the new content
+        // until the post-write re-inject disposes them. Clear them up front
+        // so the rewrite window never shows ghost overlays.
+        clearProgress()
+        clearUserHighlights()
         const rewriteStart = performance.now()
         const wroteBytes = (foldView?.text ?? rawAnsi).length
         writingContent = true
