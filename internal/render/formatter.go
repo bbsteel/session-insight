@@ -443,7 +443,10 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 					emit("assistant", "助手回复", "", evt.TurnIndex, assistantPayload)
 					openAssistantPos = len(positions) - 1
 				} else if openAssistantPos >= 0 && openAssistantPos < len(positions) {
-					if cur, _ := positions[openAssistantPos].Payload["text"].(string); len([]rune(cur)) < assistantSummaryMaxRunes {
+					// Inclusive cap: an exact-fit first chunk (== max runes, no
+					// marker yet) must still accept a continuation so the
+					// combined text gets the truncation marker.
+					if cur, _ := positions[openAssistantPos].Payload["text"].(string); len([]rune(cur)) <= assistantSummaryMaxRunes {
 						positions[openAssistantPos].Payload["text"] = truncateRunes(cur+evt.Text, assistantSummaryMaxRunes)
 					}
 				}

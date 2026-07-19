@@ -886,3 +886,30 @@ func TestAssistantPositionsPerTextBlock(t *testing.T) {
 		t.Errorf("long reply must be capped at %d runes + ellipsis, got %d runes", assistantSummaryMaxRunes, len(r))
 	}
 }
+
+// A first chunk that exactly fills the cap (no truncation marker yet) must
+// still merge a continuation chunk, marking the combined text as truncated.
+func TestAssistantSummaryExactCapContinuation(t *testing.T) {
+	ts := time.Now()
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, Depth: 0},
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: strings.Repeat("甲", assistantSummaryMaxRunes)},
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: "tail"},
+	}
+	_, positions := FormatEventsWithPositions(events, 80)
+	var asst *RenderPosition
+	for i := range positions {
+		if positions[i].Kind == "assistant" {
+			asst = &positions[i]
+			break
+		}
+	}
+	if asst == nil {
+		t.Fatalf("expected an assistant position, got %+v", positions)
+	}
+	got, _ := asst.Payload["text"].(string)
+	if r := []rune(got); len(r) != assistantSummaryMaxRunes+1 || !strings.HasSuffix(got, "…") {
+		t.Errorf("exact-cap chunk + continuation must be %d runes + ellipsis, got %d runes (suffix %q)",
+			assistantSummaryMaxRunes, len(r), got[max(0, len(got)-6):])
+	}
+}
