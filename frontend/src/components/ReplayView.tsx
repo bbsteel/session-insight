@@ -833,7 +833,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   }, [searchTarget, sessionId, folds])
 
   // 面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
-  // 工具面板和用户消息面板共用同一套动效。
+  // 工具面板和交互消息面板共用同一套动效。
   const handlePanelJump = useCallback((lineStart: number, logicalStart?: number) => {
     const ctrl = termControlRef.current
     if (!ctrl) return
@@ -849,8 +849,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     [positionsData],
   )
 
-  const userMessageCount = useMemo(
-    () => (positionsData?.positions ?? []).filter(p => p.kind === 'user').length,
+  const interactionCount = useMemo(
+    () => (positionsData?.positions ?? []).filter(p => p.kind === 'user' || p.kind === 'assistant').length,
     [positionsData],
   )
 
@@ -1287,9 +1287,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
             } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            title="用户消息面板"
+            title="交互消息面板"
           >
-            用户消息{userMessageCount > 0 ? ` ${userMessageCount}` : ''}
+            交互消息{interactionCount > 0 ? ` ${interactionCount}` : ''}
           </button>
           <button
             onClick={() => setShowToolPanel(v => {

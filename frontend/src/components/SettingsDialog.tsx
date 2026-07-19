@@ -303,7 +303,7 @@ export default function SettingsDialog({
                     className={selectCls}
                     aria-label="打开会话时展开导航"
                   >
-                    <option value="user">用户消息</option>
+                    <option value="user">交互消息</option>
                     <option value="tool">工具调用</option>
                     <option value="off">不展开</option>
                   </select>
