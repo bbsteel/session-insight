@@ -65,11 +65,15 @@ export default function SettingsDialog({
   const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
   const isDark = useIsDark()
   const [bannerColor, setBannerColor] = useState<string | null>(getBannerColorOverride)
+  const [drag, setDrag] = useState({ x: 0, y: 0 })
+  const dragStartRef = useRef({ x: 0, y: 0 })
+  const dragCleanupRef = useRef<(() => void) | null>(null)
 
   // Load server-side settings whenever the dialog opens.
   useEffect(() => {
     if (!open) return
     setActiveTab('appearance')
+    setDrag({ x: 0, y: 0 })
     setLoading(true)
     setNavOpenPrefState(getNavOpenPref())
     setBannerColor(getBannerColorOverride())
@@ -95,6 +99,41 @@ export default function SettingsDialog({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
+  // Remove drag listeners if the dialog unmounts mid-drag.
+  useEffect(() => {
+    return () => dragCleanupRef.current?.()
+  }, [])
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (target.closest('button, a, input, select, textarea')) return
+    e.preventDefault()
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // Capture may not be supported; fall back to window listeners.
+    }
+    dragStartRef.current = { x: e.clientX - drag.x, y: e.clientY - drag.y }
+
+    const onMove = (ev: PointerEvent) => {
+      setDrag({ x: ev.clientX - dragStartRef.current.x, y: ev.clientY - dragStartRef.current.y })
+    }
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    const onUp = () => {
+      cleanup()
+      dragCleanupRef.current = null
+    }
+    dragCleanupRef.current = cleanup
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
 
   const toggleTsKind = (kind: string) => {
     const next = tsKinds.includes(kind) ? tsKinds.filter(k => k !== kind) : [...tsKinds, kind]
@@ -173,6 +212,7 @@ export default function SettingsDialog({
     >
       <div
         className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-xl shadow-2xl w-[min(760px,94vw)] h-[min(640px,88vh)] flex overflow-hidden"
+        style={{ transform: `translate(${drag.x}px, ${drag.y}px)` }}
         onClick={e => e.stopPropagation()}
       >
         {/* Left sidebar: vertical tabs */}
@@ -217,7 +257,10 @@ export default function SettingsDialog({
 
         {/* Right content */}
         <div className="flex min-w-0 flex-1 flex-col bg-[var(--bg-surface)]">
-          <div className="flex flex-shrink-0 items-center justify-between border-b border-[var(--border-muted)] px-5 py-3">
+          <div
+            className="flex flex-shrink-0 cursor-move select-none items-center justify-between border-b border-[var(--border-muted)] px-5 py-3"
+            onPointerDown={startDrag}
+          >
             <h2 id="settings-title" className="text-body font-semibold text-[var(--text-primary)]">
               {activeTabDef.label}
             </h2>
