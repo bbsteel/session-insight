@@ -22,6 +22,12 @@ func TestParseHandoffOutput(t *testing.T) {
 			wantMetadata: meta,
 		},
 		{
+			name:         "preamble before metadata is discarded",
+			raw:          "我会核对当前工作区的改动与分支状态，再整理交接提示词。\n\n```json\n" + meta + "\n```\n\n" + body,
+			wantContent:  body,
+			wantMetadata: meta,
+		},
+		{
 			name:         "no metadata block",
 			raw:          body,
 			wantContent:  body,
@@ -37,6 +43,12 @@ func TestParseHandoffOutput(t *testing.T) {
 			name:         "unclosed fence degrades to full content",
 			raw:          "```json\n" + meta,
 			wantContent:  "```json\n" + meta,
+			wantMetadata: "",
+		},
+		{
+			name:         "unrelated json in body is preserved",
+			raw:          "先检查配置。\n\n```json\n{\"port\": 8080}\n```\n\n" + body,
+			wantContent:  "先检查配置。\n\n```json\n{\"port\": 8080}\n```\n\n" + body,
 			wantMetadata: "",
 		},
 	}

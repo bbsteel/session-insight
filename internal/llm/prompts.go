@@ -114,36 +114,61 @@ func BuildPrompt(kind GenerationKind, detail *model.SessionDetail, handoffCandid
 
 // ParseHandoffOutput splits a handoff generation into the pasteable prompt
 // body and the metadata JSON the model was asked to emit as a leading
-// fenced json block. Models are unreliable formatters: when the block is
-// missing or malformed the whole output is kept as content and metadata is
-// empty — the feature degrades, never fails the generation.
+// fenced json block. A few providers prepend a one-line acknowledgement
+// before the block, so the first JSON fence is also accepted when it is the
+// first code fence in the response. Models are unreliable formatters: when
+// the block is missing or malformed the whole output is kept as content and
+// metadata is empty — the feature degrades, never fails the generation.
 func ParseHandoffOutput(raw string) (content, metadataJSON string) {
 	trimmed := strings.TrimSpace(raw)
 	rest, block := stripLeadingJSONFence(trimmed)
 	if block == "" {
 		return trimmed, ""
 	}
-	if !json.Valid([]byte(block)) {
+	if !isHandoffMetadataJSON(block) {
 		return trimmed, ""
 	}
 	return strings.TrimSpace(rest), block
 }
 
-// stripLeadingJSONFence removes a leading ```json ... ``` fence, returning
-// the remainder and the fence body ("" when no leading fence is present).
+// stripLeadingJSONFence removes the first ```json ... ``` fence when it is
+// the first code fence in the response, returning the remainder and the
+// fence body ("" when no matching fence is present). Any prose before a
+// valid metadata fence is formatting noise and is deliberately dropped.
 func stripLeadingJSONFence(s string) (rest, body string) {
+	start := -1
 	for _, open := range []string{"```json\n", "```json\r\n"} {
-		if !strings.HasPrefix(s, open) {
-			continue
+		if i := strings.Index(s, open); i >= 0 && (start < 0 || i < start) {
+			start = i
 		}
-		inner := s[len(open):]
-		end := strings.Index(inner, "```")
-		if end < 0 {
-			return s, ""
-		}
-		return inner[end+3:], strings.TrimSpace(inner[:end])
 	}
-	return s, ""
+	if start < 0 || strings.Contains(s[:start], "```") {
+		return s, ""
+	}
+	openLen := len("```json\n")
+	if strings.HasPrefix(s[start:], "```json\r\n") {
+		openLen = len("```json\r\n")
+	}
+	inner := s[start+openLen:]
+	end := strings.Index(inner, "```")
+	if end < 0 {
+		return s, ""
+	}
+	return inner[end+3:], strings.TrimSpace(inner[:end])
+}
+
+// isHandoffMetadataJSON only accepts the schema we asked the model to emit.
+// This prevents a JSON example in the handoff body from being stripped.
+func isHandoffMetadataJSON(raw string) bool {
+	var metadata struct {
+		Difficulty  string          `json:"difficulty"`
+		Recommended json.RawMessage `json:"recommended"`
+	}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata.Difficulty == "" || len(metadata.Recommended) == 0 {
+		return false
+	}
+	var recommended []json.RawMessage
+	return json.Unmarshal(metadata.Recommended, &recommended) == nil
 }
 
 // buildTitleContext keeps only what identifies the task: metadata, every
