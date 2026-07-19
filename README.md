@@ -66,7 +66,7 @@ Useful runtime commands:
 
 ```bash
 ./run.sh status       # list the current app and linked-worktree instances
-./run.sh restart      # rebuild and restart this checkout
+./run.sh restart      # stop and start this checkout without rebuilding
 ./run.sh stop         # stop only this checkout's instance
 ```
 

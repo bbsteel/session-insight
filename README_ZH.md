@@ -66,7 +66,7 @@ bash run.sh all
 
 ```bash
 ./run.sh status       # 列出当前应用及 linked worktree 实例
-./run.sh restart      # 重新构建并重启当前 checkout
+./run.sh restart      # 不重新构建，只停止并启动当前 checkout
 ./run.sh stop         # 只停止当前 checkout 的实例
 ```
 
