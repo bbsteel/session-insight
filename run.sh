@@ -112,7 +112,12 @@ do_build() {
   # release 构建由 .github/workflows/release.yml 只注入 tag 版本号。
   local version commit dirty=""
   version=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
-  git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null || dirty="-dirty"
+  # git diff / git describe --dirty 都忽略未跟踪文件（如尚未 git add 的新 .go
+  # 源码），用 git status 全量判定 dirty，避免新代码打进二进制却仍显示 clean。
+  if [[ -n "$(git status --porcelain --untracked-files=all 2>/dev/null)" ]]; then
+    dirty="-dirty"
+    [[ "$version" == *-dirty ]] || version="${version}-dirty"
+  fi
   commit="$(git rev-parse --short HEAD 2>/dev/null || echo "")${dirty}"
   go build -tags sqlite_fts5 -ldflags "-X main.version=${version} -X main.commit=${commit}" -o "$BIN_PATH" .
   echo "==> Build complete: $BIN_PATH"
