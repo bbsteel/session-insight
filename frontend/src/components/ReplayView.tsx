@@ -1415,6 +1415,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             <UserMessagePanel
               positions={positionsData}
               building={positionsBuilding}
+              agentType={session.agent_type}
               pinned={navPinned}
               onPinnedChange={setNavPinned}
               onJump={handlePanelJump}

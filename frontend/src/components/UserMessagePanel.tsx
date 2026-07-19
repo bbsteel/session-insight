@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
+import AgentIcon from './AgentIcon'
+import UserAvatar from './UserAvatar'
 import { CloseIcon, NarrowIcon, PinIcon, WidenIcon } from './icons'
 
 // 交互消息面板:按时间序列出会话的用户消息(kind === 'user')和助手回复
 // (kind === 'assistant',每个连续文本块一条),两类消息各有勾选项(默认全选,
-// 可单独打开),支持文字过滤、点击跳转到终端对应行。数据全部来自 positions
+// 可单独打开),支持文字过滤、点击跳转到终端对应行。用户消息用头像图标
+// (可在设置中自定义),助手回复用对应 agent 图标。数据全部来自 positions
 // API,不需要额外请求。助手回复文本由后端截断(400 字符),展示层再做 4 行
 // 折叠。以浮层形式覆盖在终端右侧,不占布局宽度。
 
@@ -23,6 +26,7 @@ interface InteractionEntry {
 interface Props {
   positions: PositionsResponse | null
   building: boolean
+  agentType?: string // 助手行图标用;会话未加载时退化为通用 agent 图标
   pinned?: boolean
   onPinnedChange?: (pinned: boolean) => void
   onJump: (lineStart: number, logicalStart?: number) => void
@@ -61,16 +65,12 @@ const WIDE_STORAGE_KEY = 'si-userpanel-wide'
 const KINDS_STORAGE_KEY = 'si-interaction-kinds'
 const ALL_KINDS: InteractionKind[] = ['user', 'assistant']
 
-const KIND_META: Record<InteractionKind, { label: string; chipCls: string; rowCls: string; borderColor: string }> = {
+const KIND_META: Record<InteractionKind, { rowCls: string; borderColor: string }> = {
   user: {
-    label: '用户',
-    chipCls: 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]',
     rowCls: 'bg-[color-mix(in_srgb,var(--accent-blue)_5%,transparent)]',
     borderColor: 'var(--accent-blue)',
   },
   assistant: {
-    label: '助手',
-    chipCls: 'bg-[var(--accent-green)]/10 text-[var(--accent-green)]',
     rowCls: 'bg-[color-mix(in_srgb,var(--accent-green)_6%,transparent)]',
     borderColor: 'var(--accent-green)',
   },
@@ -88,7 +88,7 @@ function loadKinds(): InteractionKind[] {
   return ALL_KINDS
 }
 
-export default function UserMessagePanel({ positions, building, pinned = false, onPinnedChange, onJump, onClose }: Props) {
+export default function UserMessagePanel({ positions, building, agentType, pinned = false, onPinnedChange, onJump, onClose }: Props) {
   const panelRef = useRef<HTMLElement>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -244,8 +244,10 @@ export default function UserMessagePanel({ positions, building, pinned = false, 
                   {e.tsMs !== null ? fmtTime(e.tsMs) : ''}
                 </div>
                 <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1.5">
-                  <span className={`mt-px flex-shrink-0 rounded px-1 text-meta leading-4 ${meta.chipCls}`}>
-                    {meta.label}
+                  <span className="mt-px flex-shrink-0" title={e.kind === 'user' ? '用户消息' : '助手回复'}>
+                    {e.kind === 'user'
+                      ? <UserAvatar size={14} />
+                      : <AgentIcon agentType={agentType} size={14} />}
                   </span>
                   <span className="min-w-0 flex-1 font-mono text-helper text-[var(--text-secondary)]" style={summaryClampStyle} title={e.label}>
                     {e.label}

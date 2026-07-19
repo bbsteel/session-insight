@@ -39,8 +39,8 @@ const panelRows = page => panel(page).locator('div[title^="跳转到终端第"]'
 const kindCheckbox = (page, label) => panel(page).locator(`input[aria-label="显示${label}"]`)
 
 async function chipCounts(page) {
-  const user = await panel(page).locator('span:text-is("用户")').count()
-  const assistant = await panel(page).locator('span:text-is("助手")').count()
+  const user = await panel(page).locator('div[title^="跳转到终端第"]:has(span[title="用户消息"])').count()
+  const assistant = await panel(page).locator('div[title^="跳转到终端第"]:has(span[title="助手回复"])').count()
   return { user, assistant }
 }
 
@@ -104,12 +104,12 @@ async function run() {
     check('message text capped at 401 chars', longest <= 401, `longest=${longest}`)
 
     // 5. User and assistant rows use different (non-transparent) backgrounds.
-    const bgOf = async (chipText) => {
-      const row = panel(page).locator(`div[title^="跳转到终端第"]:has(span:text-is("${chipText}"))`).first()
+    const bgOf = async (kindTitle) => {
+      const row = panel(page).locator(`div[title^="跳转到终端第"]:has(span[title="${kindTitle}"])`).first()
       return row.evaluate(el => getComputedStyle(el.parentElement).backgroundColor)
     }
-    const bgUser = await bgOf('用户')
-    const bgAsst = await bgOf('助手')
+    const bgUser = await bgOf('用户消息')
+    const bgAsst = await bgOf('助手回复')
     check('user/assistant rows have different backgrounds', bgUser !== bgAsst, `user=${bgUser} assistant=${bgAsst}`)
     check('row backgrounds are not fully transparent', !/rgba\(0, 0, 0, 0\)/.test(bgUser) && !/rgba\(0, 0, 0, 0\)/.test(bgAsst), `user=${bgUser} assistant=${bgAsst}`)
 
