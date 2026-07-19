@@ -145,6 +145,9 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const [historyLimit, setHistoryLimit] = useState(readHistoryLimit)
   const [showSettings, setShowSettings] = useState(false)
   const [showAISettings, setShowAISettings] = useState(false)
+  // 侧边栏版本号点击 ⓘ 时经 si-open-settings 事件要求定位到「关于」Tab；
+  // 关闭后复位，避免下次从齿轮按钮打开还停在「关于」。
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'about' | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
@@ -156,6 +159,17 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
     const open = () => setShowAISettings(true)
     window.addEventListener('si-open-ai-settings', open)
     return () => window.removeEventListener('si-open-ai-settings', open)
+  }, [])
+
+  // 侧边栏 footer 的版本号/ⓘ 通过该事件打开设置弹窗（可指定定位 Tab）。
+  useEffect(() => {
+    const open = (e: Event) => {
+      const tab = (e as CustomEvent<{ tab?: string }>).detail?.tab
+      setSettingsInitialTab(tab === 'about' ? 'about' : undefined)
+      setShowSettings(true)
+    }
+    window.addEventListener('si-open-settings', open)
+    return () => window.removeEventListener('si-open-settings', open)
   }, [])
 
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
@@ -467,11 +481,15 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
     {showSettings && (
       <SettingsDialog
         open={showSettings}
-        onClose={() => setShowSettings(false)}
+        onClose={() => {
+          setShowSettings(false)
+          setSettingsInitialTab(undefined)
+        }}
         historyLimit={historyLimit}
         onHistoryLimitChange={updateLimit}
         onClearHistory={clearHistory}
         onOpenAISettings={() => setShowAISettings(true)}
+        initialTab={settingsInitialTab}
       />
     )}
     {showAISettings && <AISettingsModal onClose={() => { setShowAISettings(false); setShowSettings(true) }} />}

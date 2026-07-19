@@ -189,3 +189,13 @@ export function FontIcon({ className, ...rest }: IconProps) {
   )
 }
 
+export function InfoIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>
+      <circle cx="8" cy="8" r="6.5" />
+      <path d="M8 7.2v4" />
+      <circle cx="8" cy="4.6" r="0.4" fill="currentColor" stroke="none" />
+    </Icon>
+  )
+}
+

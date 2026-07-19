@@ -127,7 +127,7 @@ jobs:
           mkdir -p "${package_dir}"
           go build -trimpath \
             -tags "sqlite_fts5 netgo osusergo" \
-            -ldflags='-s -w -linkmode external -extldflags "-static"' \
+            -ldflags="-s -w -X main.version=${RELEASE_TAG} -linkmode external -extldflags '-static'" \
             -o "${package_dir}/session-insight" .
           cp README.md README_ZH.md LICENSE "${package_dir}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
@@ -145,7 +145,7 @@ jobs:
           package="session-insight-${version}-${TARGET}"
           package_dir="dist/${package}"
           mkdir -p "${package_dir}"
-          go build -trimpath -tags sqlite_fts5 -ldflags="-s -w" -o "${package_dir}/session-insight" .
+          go build -trimpath -tags sqlite_fts5 -ldflags="-s -w -X main.version=${RELEASE_TAG}" -o "${package_dir}/session-insight" .
           cp README.md README_ZH.md LICENSE "${package_dir}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
 
@@ -162,7 +162,7 @@ jobs:
           $package = "session-insight-$version-$env:TARGET"
           $packageDir = Join-Path dist $package
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          go build -trimpath -tags sqlite_fts5 -ldflags="-s -w" -o "$packageDir/session-insight.exe" .
+          go build -trimpath -tags sqlite_fts5 -ldflags="-s -w -X main.version=$env:RELEASE_TAG" -o "$packageDir/session-insight.exe" .
           Copy-Item README.md, README_ZH.md, LICENSE -Destination $packageDir
           Compress-Archive -Path $packageDir -DestinationPath "dist/$package.zip"
 
