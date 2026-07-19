@@ -52,12 +52,16 @@ export function ThemeSelect() {
   )
 }
 
-/** Header theme toggle. One click target switches the resolved light/dark mode. */
+/** Header theme toggle. Shows both sun and moon icons; the active one is framed. */
 export function ThemeSwitch() {
   const [pref, dark, setPref] = useThemePref()
   const nextTheme: ThemePreference = dark ? 'light' : 'dark'
   const currentLabel = dark ? '深色' : '浅色'
   const nextLabel = dark ? '浅色' : '深色'
+
+  const activeIconBox =
+    'flex h-5 w-6 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm'
+  const inactiveIcon = 'flex h-5 w-6 items-center justify-center rounded-full text-[var(--text-muted)]'
 
   return (
     <button
@@ -68,13 +72,16 @@ export function ThemeSwitch() {
       title={pref === 'system'
         ? `当前跟随系统（${currentLabel}）；点击切换到${nextLabel}`
         : `当前为${currentLabel}；点击切换到${nextLabel}`}
-      className="inline-flex h-7 w-8 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-primary)] shadow-sm transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+      className="inline-flex h-7 w-14 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-primary)] shadow-sm transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
     >
-      {dark ? (
-        <MoonIcon className="h-3.5 w-3.5" />
-      ) : (
-        <SunIcon className="h-3.5 w-3.5" />
-      )}
+      <span className="flex w-full items-center justify-between px-1">
+        <span className={dark ? inactiveIcon : activeIconBox}>
+          <SunIcon className="h-3.5 w-3.5" />
+        </span>
+        <span className={dark ? activeIconBox : inactiveIcon}>
+          <MoonIcon className="h-3.5 w-3.5" />
+        </span>
+      </span>
     </button>
   )
 }
