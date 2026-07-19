@@ -669,11 +669,35 @@ func pairToolRuns(events []model.RenderEvent) []model.RenderEvent {
 }
 
 // pairRun reorders one run: [inv1 inv2 … res1 res2 …] → [inv1 res1 inv2 res2 …].
-// Depth>0 / AgentSpecific events (a spliced sub-agent transcript) accumulate
-// into the block of the result they precede. Results with no matching
+// It operates at the shallowest tool depth in run, then recursively pairs any
+// deeper transcript accumulated before a result. This matters for chrys
+// sub-agents: their own parallel calls live at Depth 1+ and otherwise remain in
+// the source's batched call×N → result×N order. Results with no matching
 // invocation and any trailing remainder keep their order at the end so nothing
 // is dropped or reordered across turns.
 func pairRun(run []model.RenderEvent) []model.RenderEvent {
+	targetDepth := -1
+	firstInvocation := -1
+	for i, e := range run {
+		if e.Type != "ToolInvocation" && e.Type != "ToolResult" {
+			continue
+		}
+		if targetDepth < 0 || e.Depth < targetDepth {
+			targetDepth = e.Depth
+			firstInvocation = -1
+		}
+		if e.Depth == targetDepth && e.Type == "ToolInvocation" && firstInvocation < 0 {
+			firstInvocation = i
+		}
+	}
+	if targetDepth < 0 || firstInvocation < 0 {
+		return append([]model.RenderEvent(nil), run...)
+	}
+
+	// Keep bookkeeping before the first call (for example subagent_started) in
+	// place. Only the tool-bearing suffix participates in pairing.
+	prefix := run[:firstInvocation]
+	run = run[firstInvocation:]
 	order := make([]string, 0, len(run))
 	invByID := make(map[string]model.RenderEvent, len(run))
 	blockByID := make(map[string][]model.RenderEvent, len(run))
@@ -682,20 +706,20 @@ func pairRun(run []model.RenderEvent) []model.RenderEvent {
 
 	for _, e := range run {
 		switch {
-		case e.Depth == 0 && e.Type == "ToolInvocation":
+		case e.Depth == targetDepth && e.Type == "ToolInvocation":
 			if len(pending) > 0 { // orphan block with no owning result
-				leftover = append(leftover, pending...)
+				leftover = append(leftover, pairRun(pending)...)
 				pending = nil
 			}
 			invByID[e.ToolCallID] = e
 			order = append(order, e.ToolCallID)
-		case e.Depth == 0 && e.Type == "ToolResult":
+		case e.Depth == targetDepth && e.Type == "ToolResult":
 			block := make([]model.RenderEvent, 0, len(pending)+1)
-			block = append(block, pending...)
+			block = append(block, pairRun(pending)...)
 			block = append(block, e)
 			pending = nil
 			if _, ok := invByID[e.ToolCallID]; ok {
-				blockByID[e.ToolCallID] = block
+				blockByID[e.ToolCallID] = append(blockByID[e.ToolCallID], block...)
 			} else {
 				leftover = append(leftover, block...)
 			}
@@ -703,9 +727,10 @@ func pairRun(run []model.RenderEvent) []model.RenderEvent {
 			pending = append(pending, e)
 		}
 	}
-	leftover = append(leftover, pending...)
+	leftover = append(leftover, pairRun(pending)...)
 
 	out := make([]model.RenderEvent, 0, len(run))
+	out = append(out, prefix...)
 	for _, id := range order {
 		out = append(out, invByID[id])
 		out = append(out, blockByID[id]...)
