@@ -110,6 +110,11 @@ export default function SettingsDialog({
     const target = e.target as HTMLElement
     if (target.closest('button, a, input, select, textarea')) return
     e.preventDefault()
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // Capture may not be supported; fall back to window listeners.
+    }
     dragStartRef.current = { x: e.clientX - drag.x, y: e.clientY - drag.y }
 
     const onMove = (ev: PointerEvent) => {
