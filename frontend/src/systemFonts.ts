@@ -58,7 +58,7 @@ const POISON_FALLBACK = '__si_font_probe_fallback__'
 function widthFor(family: string | null, fallback: string): number {
   const ctx = getProbeContext()
   if (!ctx) return 0
-  const familyPart = family ? `"${family.replace(/"/g, '\\"')}", ` : ''
+  const familyPart = family ? `"${family.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}", ` : ''
   ctx.font = `${PROBE_SIZE}px ${familyPart}${fallback}`
   return ctx.measureText(PROBE_SAMPLE).width
 }
@@ -81,7 +81,7 @@ export function isFontFamilyAvailable(family: string): boolean {
 export function isMonospaceFamily(family: string): boolean {
   const ctx = getProbeContext()
   if (!ctx) return false
-  const escaped = family.replace(/"/g, '\\"')
+  const escaped = family.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   ctx.font = `${PROBE_SIZE}px "${escaped}", ${POISON_FALLBACK}`
   const i = ctx.measureText('iiiiiiiiii').width
   const W = ctx.measureText('MMMMMMMMMM').width

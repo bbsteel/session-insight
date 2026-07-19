@@ -72,7 +72,7 @@ function quoteFontName(name: string): string {
   // CSS font-family values must be quoted if they contain spaces or special
   // characters. By always quoting we keep the CSS variable safe for any
   // installed font family name.
-  const escaped = name.replace(/"/g, '\\"')
+  const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   return `"${escaped}"`
 }
 
@@ -170,11 +170,11 @@ export function useUIFontSize(): string {
 }
 
 export function getTerminalFontStack(first: string): string {
-  const escaped = first.replace(/"/g, '\\"')
+  const escaped = first.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   return `"${escaped}", "JetBrains Mono", "Consolas", "Menlo", "SF Mono", "Fira Code", monospace`
 }
 
 export function getUIFontStack(first: string): string {
-  const escaped = first.replace(/"/g, '\\"')
+  const escaped = first.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
   return `"${escaped}", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif`
 }
