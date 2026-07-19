@@ -53,6 +53,40 @@ func TestParseHandoffOutput(t *testing.T) {
 	}
 }
 
+func TestBuildPromptTitleIncludesAllUserMessages(t *testing.T) {
+	d := makeDetail(5, 20)
+	d.Turns[0].UserMessage = "早期运维操作"
+	d.Turns[4].UserMessage = "后期主要讨论推广"
+	prompt, err := BuildPrompt(KindTitle, d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"早期运维操作", "后期主要讨论推广"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("title prompt missing %q\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "已省略") {
+		t.Errorf("small session should not elide user messages:\n%s", prompt)
+	}
+}
+
+func TestBuildPromptTitleElidesMiddleWithinBudget(t *testing.T) {
+	// Many long user messages: the head pair and as many trailing
+	// messages as the budget allows must survive; the middle elides.
+	d := makeDetail(40, 400)
+	prompt, err := BuildPrompt(KindTitle, d, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "已省略") {
+		t.Errorf("oversized session should carry an elision marker:\n%s", prompt)
+	}
+	if got := strings.Count(prompt, "用户消息: "); got >= 40 {
+		t.Errorf("expected elision, but all 40 user messages present")
+	}
+}
+
 func TestBuildPromptHandoffIncludesCandidates(t *testing.T) {
 	detail := makeDetail(2, 100)
 	prompt, err := BuildPrompt(KindHandoff, detail, []string{"Claude Code CLI（本机已安装）", "gpt-5（用户最近使用过的模型）"})
