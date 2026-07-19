@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
@@ -42,6 +42,7 @@ if (!sessionTitle) throw new Error('--session-title is required; run with --help
 const baseURL = options.get('--base-url') ?? 'http://127.0.0.1:8080'
 const publicRoot = options.get('--public-root') ?? '/workspace/session-insight'
 const privateHome = homedir()
+const privateUsername = basename(privateHome)
 const publicHome = '/home/user'
 const outputDir = resolve(repoRoot, 'assets/screenshots')
 mkdirSync(outputDir, { recursive: true })
@@ -69,6 +70,9 @@ function sanitized(text) {
     .replaceAll(escapedPath(privateHome), escapedPath(publicHome))
     .replaceAll(repoRoot, publicRoot)
     .replaceAll(privateHome, publicHome)
+    // ANSI styling can split a path around escape sequences before it reaches
+    // the browser. Replacing the username itself closes that remaining gap.
+    .replaceAll(privateUsername, 'user')
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, 'developer@example.com')
 }
 
@@ -110,6 +114,20 @@ try {
   await context.addInitScript(() => {
     localStorage.setItem('sidebar-width', '300')
     localStorage.setItem('recap-theme', 'light')
+    // Screenshots use a stable session snapshot, so keep the UI in the
+    // connected state without opening the live SSE stream.
+    class ScreenshotEventSource {
+      onopen = null
+      onerror = null
+
+      constructor() {
+        queueMicrotask(() => this.onopen?.())
+      }
+
+      addEventListener() {}
+      close() {}
+    }
+    Object.defineProperty(window, 'EventSource', { value: ScreenshotEventSource })
   })
 
   const replay = await context.newPage()
@@ -119,14 +137,34 @@ try {
   await replay.getByText(sessionTitle, { exact: true }).first().click()
   await replay.getByRole('button', { name: '分析', exact: true }).waitFor()
   await replay.waitForTimeout(1800)
+  const interactionPanel = replay.locator('aside:has(button[aria-label="关闭交互消息面板"])')
+  if (await interactionPanel.isVisible()) {
+    await interactionPanel.getByRole('button', { name: '关闭交互消息面板' }).click()
+  }
   await replay.screenshot({
     path: resolve(outputDir, 'replay.png'),
     clip: { x: 0, y: 0, width: 1600, height: 640 },
   })
 
+  await replay.locator('button[title="交互消息面板"]').click()
+  await interactionPanel.waitFor({ state: 'visible' })
+  await interactionPanel.locator('div[title^="跳转到终端第"]').first().waitFor()
+  await replay.screenshot({ path: resolve(outputDir, 'interaction.png') })
+  await interactionPanel.getByRole('button', { name: '关闭交互消息面板' }).click()
+
   await replay.getByRole('button', { name: '分析', exact: true }).click()
   await replay.waitForTimeout(1800)
   await replay.screenshot({ path: resolve(outputDir, 'analytics.png') })
+
+  const settings = await context.newPage()
+  await installSanitizer(settings)
+  await settings.goto(baseURL, { waitUntil: 'domcontentloaded' })
+  await settings.getByPlaceholder('过滤会话...').fill(sessionTitle)
+  await settings.getByRole('button', { name: '设置', exact: true }).click()
+  const settingsDialog = settings.getByRole('dialog')
+  await settingsDialog.getByRole('button', { name: '字体', exact: true }).click()
+  await settingsDialog.getByText('界面字体', { exact: true }).waitFor()
+  await settings.screenshot({ path: resolve(outputDir, 'settings.png') })
 
   const reader = await context.newPage()
   await installSanitizer(reader)
@@ -139,6 +177,7 @@ try {
 
   await Promise.all([
     replay.unrouteAll({ behavior: 'wait' }),
+    settings.unrouteAll({ behavior: 'wait' }),
     reader.unrouteAll({ behavior: 'wait' }),
   ])
 } finally {

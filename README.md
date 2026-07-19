@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml/badge.svg)](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml)
 
-A local-first web app for browsing and analyzing AI coding agent sessions through terminal-native replay. It reconstructs ANSI-styled conversations, tool calls, and code output in an interactive terminal, while session discovery, indexing, search, and replay stay on your machine. AI generation is opt-in and may send selected session context to a provider you configure.
+A local-first web app for browsing, replaying, and analyzing AI coding agent sessions. It reconstructs ANSI-styled conversations, tool calls, and code output in an interactive terminal, while discovery, indexing, search, and replay stay on your machine. AI generation is opt-in and only uses a provider you configure.
 
 [中文](README_ZH.md)
 
@@ -12,16 +12,21 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 
 ## Highlights
 
-- **Multi-agent session library** — auto-discover and index sessions from five coding agents, with live list refresh and live tail for active sessions
-- **Terminal replay and navigation** — replay ANSI output, fold tool calls, highlight code, use the semantic minimap, and jump between user messages, turns, anomalies, and compaction points
-- **Search and organization** — full-text search across sessions, in-terminal regex/case/whole-word search, project and agent filters, plus bookmarks with notes
+- **Multi-agent session library** — auto-discover and index sessions from six coding agents, with live list refresh, accurate active-state detection, and live tail for running sessions
+- **Terminal-native replay** — preserve ANSI output, formatted assistant text, tool calls, code, and errors; fold noisy details and follow active sessions as they grow
+- **Fast session navigation** — start at the first prompt, keep the current user message visible while scrolling, use the semantic minimap, or jump through the combined user/assistant interaction panel
+- **Search and organization** — search metadata, prompts, assistant replies, skills, tool inputs, and errors across sessions while background indexing reports progress; narrow results by project or agent and keep bookmarks with notes
 - **Tool, diff, and code inspection** — filter tool calls and jump to their source turn; inspect inline or side-by-side diffs; open referenced files in the structured code reader or your editor
 - **Usage analytics** — inspect prompt, output, and cache tokens, cost estimates, tool usage, errors, anomalies, continuation pressure, and per-turn trends
 - **Session lifecycle tools** — export sessions, copy shell-specific resume commands, and safely delete sessions with running-process protection and supported force-stop flows
 - **Optional AI assistance** — generate summaries, titles, and handoff prompts through a configured OpenAI-compatible API or local ACP agent
-- **Desktop-friendly UI** — resizable panels and dark/light themes for a local developer workflow
+- **Desktop personalization** — use light or dark themes, recognizable agent icons, a custom user avatar, resizable panels, and independent UI/terminal font and size controls
 
 ## More Screenshots
+
+| Interaction messages | Settings and fonts |
+|:--:|:--:|
+| ![Combined user and assistant message navigation](assets/screenshots/interaction.png) | ![Settings center with UI and terminal font controls](assets/screenshots/settings.png) |
 
 | Session analytics | Structured code reader |
 |:--:|:--:|
@@ -38,6 +43,7 @@ Session Insight auto-discovers sessions from the following agents:
 | [GitHub Copilot](https://github.com/features/copilot) | `~/.copilot/session-state/` |
 | [opencode](https://opencode.ai) | opencode SQLite database (auto-resolved) |
 | [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
+| [Grok](https://grok.com) | `~/.grok/sessions/` |
 
 ## Getting Started
 
@@ -55,6 +61,14 @@ bash run.sh all
 ```
 
 The app starts at **http://127.0.0.1:8080** and opens automatically in your browser.
+
+Useful runtime commands:
+
+```bash
+./run.sh status       # list the current app and linked-worktree instances
+./run.sh restart      # rebuild and restart this checkout
+./run.sh stop         # stop only this checkout's instance
+```
 
 ### Windows
 
