@@ -690,13 +690,17 @@ func pairRun(run []model.RenderEvent) []model.RenderEvent {
 			firstInvocation = i
 		}
 	}
-	if targetDepth < 0 || firstInvocation < 0 {
+	if targetDepth < 0 {
 		return append([]model.RenderEvent(nil), run...)
+	}
+	if firstInvocation < 0 {
+		return pairDeeperSegments(run, targetDepth)
 	}
 
 	// Keep bookkeeping before the first call (for example subagent_started) in
-	// place. Only the tool-bearing suffix participates in pairing.
-	prefix := run[:firstInvocation]
+	// place, while still pairing any deeper calls around an orphan result in
+	// that prefix. Only the tool-bearing suffix participates at targetDepth.
+	prefix := pairDeeperSegments(run[:firstInvocation], targetDepth)
 	run = run[firstInvocation:]
 	order := make([]string, 0, len(run))
 	invByID := make(map[string]model.RenderEvent, len(run))
@@ -736,6 +740,24 @@ func pairRun(run []model.RenderEvent) []model.RenderEvent {
 		out = append(out, blockByID[id]...)
 	}
 	return append(out, leftover...)
+}
+
+// pairDeeperSegments preserves tool events at depth as hard boundaries while
+// recursively pairing the deeper spans around them. It handles a shallow
+// orphan ToolResult without letting that malformed event disable otherwise
+// valid nested call/result pairing.
+func pairDeeperSegments(events []model.RenderEvent, depth int) []model.RenderEvent {
+	out := make([]model.RenderEvent, 0, len(events))
+	start := 0
+	for i, e := range events {
+		if e.Depth != depth || (e.Type != "ToolInvocation" && e.Type != "ToolResult") {
+			continue
+		}
+		out = append(out, pairRun(events[start:i])...)
+		out = append(out, e)
+		start = i + 1
+	}
+	return append(out, pairRun(events[start:])...)
 }
 
 // toolRun summarizes one contiguous run of tool events for the group header.

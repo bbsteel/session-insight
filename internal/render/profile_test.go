@@ -412,6 +412,35 @@ func TestChrysPairsNestedBatchedToolResults(t *testing.T) {
 	}
 }
 
+func TestChrysPairsNestedToolsAfterShallowOrphanResult(t *testing.T) {
+	ts := time.Now()
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "chrys"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", Text: "hi"},
+		// A malformed shallow result must stay in place without preventing the
+		// valid depth-1 batch after it from being paired.
+		{EventID: "orphan", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "chrys", ToolCallID: "missing", Stdout: "ORPHAN"},
+		{EventID: "read-a-inv", Type: "ToolInvocation", TurnIndex: 0, Depth: 1, Timestamp: ts, AgentType: "chrys",
+			ToolName: "read_file", ToolCallID: "read-a", ToolInput: map[string]any{"path": "a.ts"}},
+		{EventID: "read-b-inv", Type: "ToolInvocation", TurnIndex: 0, Depth: 1, Timestamp: ts, AgentType: "chrys",
+			ToolName: "read_file", ToolCallID: "read-b", ToolInput: map[string]any{"path": "b.ts"}},
+		{EventID: "read-a-res", Type: "ToolResult", TurnIndex: 0, Depth: 1, Timestamp: ts, AgentType: "chrys", ToolCallID: "read-a", Stdout: "CONTENT_A"},
+		{EventID: "read-b-res", Type: "ToolResult", TurnIndex: 0, Depth: 1, Timestamp: ts, AgentType: "chrys", ToolCallID: "read-b", Stdout: "CONTENT_B"},
+	}
+
+	ansi, _ := FormatEventsWithPositions(events, 120)
+	plain := stripANSIForTest(ansi)
+	ordered := []string{"ORPHAN", "a.ts", "CONTENT_A", "b.ts", "CONTENT_B"}
+	last := -1
+	for _, marker := range ordered {
+		idx := strings.Index(plain, marker)
+		if idx <= last {
+			t.Fatalf("deeper tools were not paired after shallow orphan; %q at %d after %d:\n%s", marker, idx, last, plain)
+		}
+		last = idx
+	}
+}
+
 func TestFencedCodeBlockHighlight(t *testing.T) {
 	text := "before\n```go\npackage main\n\nfunc main() {}\n```\nafter"
 	events := []model.RenderEvent{
