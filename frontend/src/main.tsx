@@ -10,9 +10,11 @@ import '@xterm/xterm/css/xterm.css'
 import App from './App'
 import './app.css'
 import { initTheme } from './theme'
+import { initFonts } from './fontPrefs'
 
-// Apply theme before first paint (default light; stored preference wins).
+// Apply theme and fonts before first paint (defaults win; stored preferences override).
 initTheme()
+initFonts()
 
 // macOS/iOS: enable grayscale font smoothing (ClearType on Windows must stay default)
 if (typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent)) {

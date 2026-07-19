@@ -3,16 +3,33 @@ import { fetchSettings, saveSettings } from '../api'
 import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
 import { AVATAR_MAX_BYTES, setUserAvatar } from '../userAvatar'
 import {
+  DEFAULT_TERMINAL_FONT,
+  DEFAULT_TERMINAL_FONT_SIZE,
+  DEFAULT_UI_FONT,
+  DEFAULT_UI_FONT_SIZE,
+  getTerminalFont,
+  getTerminalFontSize,
+  getUIFont,
+  getUIFontSize,
+  onFontChange,
+  setTerminalFont as setTerminalFontPref,
+  setTerminalFontSize as setTerminalFontSizePref,
+  setUIFont as setUIFontPref,
+  setUIFontSize as setUIFontSizePref,
+} from '../fontPrefs'
+import {
   defaultBannerColor,
   getBannerColorOverride,
   setBannerColorOverride,
   useIsDark,
 } from '../terminalTheme'
+import FontPicker from './FontPicker'
 import { ThemeSelect } from './ThemeToggle'
 import UserAvatar, { useUserAvatar } from './UserAvatar'
 import {
   AppearanceIcon,
   EditorIcon,
+  FontIcon,
   NavigationIcon,
   SearchIcon,
   SparklesIcon,
@@ -28,7 +45,7 @@ interface Props {
   onOpenAISettings: () => void
 }
 
-type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'editor' | 'ai'
+type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai'
 
 interface TabDef {
   id: TabId
@@ -41,6 +58,7 @@ const TABS: TabDef[] = [
   { id: 'navigation', label: '会话导航', icon: NavigationIcon },
   { id: 'search', label: '全文搜索', icon: SearchIcon },
   { id: 'terminal', label: '终端外观', icon: TerminalIcon },
+  { id: 'fonts', label: '字体', icon: FontIcon },
   { id: 'editor', label: '文件查看器', icon: EditorIcon },
   { id: 'ai', label: 'AI', icon: SparklesIcon },
 ]
@@ -65,6 +83,10 @@ export default function SettingsDialog({
   const savedFileExtsRef = useRef('')
   const [tsKinds, setTsKinds] = useState<string[]>([])
   const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
+  const [uiFont, setUiFont] = useState(getUIFont)
+  const [uiFontSize, setUiFontSize] = useState(getUIFontSize)
+  const [terminalFont, setTerminalFont] = useState(getTerminalFont)
+  const [terminalFontSize, setTerminalFontSize] = useState(getTerminalFontSize)
   const isDark = useIsDark()
   const [bannerColor, setBannerColor] = useState<string | null>(getBannerColorOverride)
   const [drag, setDrag] = useState({ x: 0, y: 0 })
@@ -125,6 +147,10 @@ export default function SettingsDialog({
     setNavOpenPrefState(getNavOpenPref())
     setBannerColor(getBannerColorOverride())
     setAvatarError('')
+    setUiFont(getUIFont())
+    setUiFontSize(getUIFontSize())
+    setTerminalFont(getTerminalFont())
+    setTerminalFontSize(getTerminalFontSize())
     fetchSettings()
       .then(s => {
         setEditorCommand(s.editor_command)
@@ -137,6 +163,16 @@ export default function SettingsDialog({
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [open])
+
+  // Keep local font state in sync when changed from another tab or component.
+  useEffect(() => {
+    return onFontChange(() => {
+      setUiFont(getUIFont())
+      setUiFontSize(getUIFontSize())
+      setTerminalFont(getTerminalFont())
+      setTerminalFontSize(getTerminalFontSize())
+    })
+  }, [])
 
   // Close on Escape.
   useEffect(() => {
@@ -475,6 +511,109 @@ export default function SettingsDialog({
                       </label>
                     ))}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'fonts' && (
+              <div className="space-y-4">
+                <div className={sectionBox}>
+                  <div className="text-body font-semibold text-[var(--text-primary)] mb-3">界面字体</div>
+                  <div className="space-y-3">
+                    <FontPicker
+                      label="字体"
+                      value={uiFont}
+                      onChange={next => {
+                        setUiFont(next)
+                        setUIFontPref(next)
+                      }}
+                    />
+                    <div>
+                      <div className="text-helper text-[var(--text-primary)]">字号</div>
+                      <div className="mt-1 flex items-center gap-2">
+                        {[
+                          { key: 'small', label: '小' },
+                          { key: 'medium', label: '中' },
+                          { key: 'large', label: '大' },
+                        ].map(({ key, label }) => {
+                          const selected = uiFontSize === key
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => {
+                                setUiFontSize(key)
+                                setUIFontSizePref(key)
+                              }}
+                              aria-pressed={selected}
+                              className={`h-7 px-3 rounded-md border text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                                selected
+                                  ? 'bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] border-[var(--accent-blue)] text-[var(--accent-blue)]'
+                                  : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={sectionBox}>
+                  <div className="text-body font-semibold text-[var(--text-primary)] mb-3">终端字体</div>
+                  <div className="space-y-3">
+                    <FontPicker
+                      label="字体"
+                      value={terminalFont}
+                      monospaceOnly
+                      onChange={next => {
+                        setTerminalFont(next)
+                        setTerminalFontPref(next)
+                      }}
+                    />
+                    <div>
+                      <div className="text-helper text-[var(--text-primary)]">字号</div>
+                      <div className="mt-1 flex items-center gap-3">
+                        <input
+                          type="range"
+                          min={10}
+                          max={20}
+                          step={1}
+                          value={terminalFontSize}
+                          onChange={e => {
+                            const size = Number(e.target.value)
+                            setTerminalFontSize(size)
+                            setTerminalFontSizePref(size)
+                          }}
+                          className="h-7 flex-1 accent-[var(--accent-blue)]"
+                          aria-label="终端字号"
+                        />
+                        <span className="w-10 text-right text-helper text-[var(--text-primary)] tabular-nums">
+                          {terminalFontSize}px
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-4">
+                  <div className={sectionDesc}>提示：使用 ↑ / ↓ 可实时预览效果</div>
+                  <button
+                    onClick={() => {
+                      setUiFont(DEFAULT_UI_FONT)
+                      setUIFontPref(DEFAULT_UI_FONT)
+                      setUiFontSize(DEFAULT_UI_FONT_SIZE)
+                      setUIFontSizePref(DEFAULT_UI_FONT_SIZE)
+                      setTerminalFont(DEFAULT_TERMINAL_FONT)
+                      setTerminalFontPref(DEFAULT_TERMINAL_FONT)
+                      setTerminalFontSize(DEFAULT_TERMINAL_FONT_SIZE)
+                      setTerminalFontSizePref(DEFAULT_TERMINAL_FONT_SIZE)
+                    }}
+                    className={btnCls}
+                  >
+                    恢复默认字体
+                  </button>
                 </div>
               </div>
             )}

@@ -3,6 +3,22 @@
 @tailwind utilities;
 
 :root {
+  /* Dynamic font preferences (overridden by fontPrefs.ts at startup). */
+  --font-sans-first: 'Inter';
+  --font-mono-first: 'JetBrains Mono';
+  --ui-font-scale: 1;
+  --terminal-font-size: 13px;
+
+  /* Dynamic font size hierarchy, scaled by --ui-font-scale. */
+  --text-agent-size:   calc(8px  * var(--ui-font-scale));
+  --text-section-size: calc(9px  * var(--ui-font-scale));
+  --text-meta-size:    calc(10px * var(--ui-font-scale));
+  --text-helper-size:  calc(11px * var(--ui-font-scale));
+  --text-nav-size:     calc(12px * var(--ui-font-scale));
+  --text-body-size:    calc(13px * var(--ui-font-scale));
+  --text-prose-size:   calc(14px * var(--ui-font-scale));
+  --text-card-size:    calc(20px * var(--ui-font-scale));
+
   /* Surface */
   --bg-primary: #f5f6f8;
   --bg-surface: #ffffff;
@@ -178,7 +194,7 @@
   padding: 0.125em 0.375em;
   border-radius: 3px;
   font-size: 0.9em;
-  font-family: 'JetBrains Mono', 'Consolas', 'Menlo', 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono-first), 'JetBrains Mono', Consolas, Menlo, 'SF Mono', 'Fira Code', monospace;
   word-break: break-word;
 }
 
@@ -193,7 +209,7 @@
 .prose-custom pre code {
   background: none;
   padding: 0;
-  font-size: 13px;
+  font-size: var(--text-body-size);
   color: inherit;
 }
 
@@ -209,8 +225,8 @@ html.platform-apple * {
 
 body {
   /* Inter for Latin; Windows CJK prefers YaHei UI over legacy YaHei */
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
-  font-size: 13px;
+  font-family: var(--font-sans-first), Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  font-size: var(--text-body-size);
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-primary);
