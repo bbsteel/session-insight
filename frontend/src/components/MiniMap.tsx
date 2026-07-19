@@ -70,6 +70,7 @@ function positionEventKind(position: MiniMapPosition): MiniMapEventKind | null {
 const positionKindToEventKind: Record<MiniMapPosition['kind'], MiniMapEventKind | null> = {
   turn: null,
   user: 'user',
+  assistant: null,  // assistant entries feed the interaction panel, not minimap markers
   error: 'anomaly',
   compaction: 'compaction',
   edit: null,

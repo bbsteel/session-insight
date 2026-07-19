@@ -19,6 +19,20 @@ func utf16Len(s string) int { return len(utf16.Encode([]rune(s))) }
 
 const maxStdoutLines = 10
 
+// assistantSummaryMaxRunes caps the reply preview stored in an "assistant"
+// position payload — full replies can be thousands of runes and would bloat
+// the positions response. The panel also line-clamps what it renders.
+const assistantSummaryMaxRunes = 400
+
+// truncateRunes caps s at max runes, marking truncation with "…".
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
 // RenderPosition is one MiniMap marker emitted during ANSI formatting.
 type RenderPosition struct {
 	PositionKey string
@@ -94,6 +108,11 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	// header ("◇ <label>") is emitted once per contiguous text block, not
 	// once per TextChunk.
 	prevDepth0Type := ""
+	// openAssistantPos indexes the "assistant" position of the text block
+	// currently being rendered (-1 = none); continuation TextChunks append
+	// to its summary text so the panel preview is not limited to the first
+	// chunk of a multi-chunk reply.
+	openAssistantPos := -1
 
 	// openFold tracks the tool run currently being rendered so its body's
 	// line extent (display rows AND logical lines, both needed by the
@@ -407,6 +426,28 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		case "ThinkingEnd":
 			closeThoughtFold()
 		case "TextChunk":
+			// Emit one "assistant" position per contiguous depth-0 text block
+			// (same boundary rule as the assistant header below) so the
+			// interaction panel can list assistant replies alongside user
+			// messages. The summary text is capped — replies can be
+			// arbitrarily long.
+			if evt.Depth == 0 {
+				if prevDepth0Type != "TextChunk" {
+					assistantPayload := map[string]any{}
+					if !evt.Timestamp.IsZero() {
+						assistantPayload["ts_ms"] = float64(evt.Timestamp.UnixMilli())
+					}
+					if s := truncateRunes(evt.Text, assistantSummaryMaxRunes); s != "" {
+						assistantPayload["text"] = s
+					}
+					emit("assistant", "助手回复", "", evt.TurnIndex, assistantPayload)
+					openAssistantPos = len(positions) - 1
+				} else if openAssistantPos >= 0 && openAssistantPos < len(positions) {
+					if cur, _ := positions[openAssistantPos].Payload["text"].(string); len([]rune(cur)) < assistantSummaryMaxRunes {
+						positions[openAssistantPos].Payload["text"] = truncateRunes(cur+evt.Text, assistantSummaryMaxRunes)
+					}
+				}
+			}
 			if p.AssistantHeader && evt.Depth == 0 && prevDepth0Type != "TextChunk" {
 				if prevDepth0Type != "" {
 					tb.WriteString("\n")
@@ -521,7 +562,9 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
-const FormatVersion int64 = 28
+// It also covers position-set changes (e.g. a new position kind), since
+// positions are cached under the same key.
+const FormatVersion int64 = 29
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
