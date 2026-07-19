@@ -71,6 +71,28 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
   const [followOutput, setFollowOutput] = useState(false)
+  // Session id that already auto-engaged follow on open (null = not yet / not
+  // live). Prevents detail refetches from re-enabling follow after the user
+  // turned it off; reset by the session-switch effect below.
+  const autoFollowSessionRef = useRef<string | null>(null)
+  // Per-session view memory: follow choice + scroll position, saved when
+  // switching away so switching back restores where the user left instead of
+  // re-opening at the default (top / auto-follow tail).
+  const sessionViewMemoryRef = useRef(new Map<string, { follow: boolean; wasLive: boolean; viewportLine: number | null }>())
+  const prevSessionIdRef = useRef<string | null>(null)
+  // Mirror read by the session-switch effect (it saves the outgoing
+  // session's effective follow value; state setters in the same render
+  // would race).
+  const followOutputRef = useRef(followOutput)
+  followOutputRef.current = followOutput
+  // Latest session detail as a ref: the session-switch effect reads the
+  // OUTGOING session's detail through it without taking session as a dep
+  // (a detail-arrival re-run would clobber the restored view state).
+  const sessionDetailRef = useRef<SessionDetail | null>(null)
+  sessionDetailRef.current = session
+  // One-shot scroll target passed to TerminalPanel when revisiting a session
+  // with follow off (buffer line the user left at); null = default position.
+  const [restoreScrollLine, setRestoreScrollLine] = useState<number | null>(null)
   // 时间戳前缀设置(后端 ts 渲染参数);null = 设置未加载,先不挂终端,
   // 避免渲染与 positions 用了不同的 ts 导致行号错位。
   const [tsKinds, setTsKinds] = useState<string | null>(null)
@@ -85,6 +107,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const visibleRangeLabelRef = useRef<HTMLSpanElement>(null)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const lastMetricsRef = useRef<ScrollMetrics>()
+  // Scroll metrics are emitted only while the terminal view is active. Keep
+  // their source session alongside them so a stale terminal callback cannot
+  // become the saved scroll position for a different session on navigation.
+  const lastMetricsSessionIdRef = useRef<string | null>(null)
 
   // Matcher callbacks read positions through a ref: matchers are registered
   // once (on cols-ready) but must see the latest positions and fold mapping.
@@ -302,15 +328,60 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     return () => window.clearInterval(timer)
   }, [session?.is_live, session?.id])
 
-  // Follow is live-only: drop it when switching sessions or when the live
-  // window expires so a historical replay never keeps auto-scrolling.
+  // Session switch: save the outgoing session's view (follow choice + scroll
+  // position) and restore the incoming one's. A memory saved while the
+  // session was LIVE suppresses auto-follow on return — the user's explicit
+  // pause survives the round trip. Memories of non-live sessions only
+  // restore the scroll position, so a session that has since gone live still
+  // gets the fresh auto-follow behavior.
   useEffect(() => {
-    setFollowOutput(false)
+    const prevId = prevSessionIdRef.current
+    if (prevId && prevId !== sessionId) {
+      // sessionIsLive is id-gated and already reads false for the outgoing
+      // session on this render, so compute outgoing liveness from the detail
+      // itself (still the outgoing session's at this point). Fallback: an
+      // engaged follow implies the session was live.
+      const prevDetail = sessionDetailRef.current
+      const outgoingLive = prevDetail && prevDetail.id === prevId
+        ? isSessionLive(prevDetail, Date.now())
+        : followOutputRef.current
+      const m = lastMetricsRef.current
+      sessionViewMemoryRef.current.set(prevId, {
+        follow: followOutputRef.current,
+        wasLive: outgoingLive,
+        viewportLine: m && lastMetricsSessionIdRef.current === prevId && m.scrollHeight > m.clientHeight
+          ? Math.round(m.scrollTop / TERMINAL_LINE_HEIGHT)
+          : null,
+      })
+    }
+    prevSessionIdRef.current = sessionId
+    const saved = sessionId ? sessionViewMemoryRef.current.get(sessionId) : undefined
+    autoFollowSessionRef.current = saved?.wasLive ? sessionId : null
+    setFollowOutput(saved?.wasLive ? saved.follow : false)
+    setRestoreScrollLine(saved?.viewportLine ?? null)
   }, [sessionId])
-  const sessionIsLive = !!(session && isSessionLive(session, now))
+  // The id guard keeps the previous session's detail from leaking its
+  // liveness into the header/follow state while the new session loads.
+  const sessionIsLive = !!(session && session.id === sessionId && isSessionLive(session, now))
+  // Idle expiry only applies to the session actually loaded; during the
+  // stale-detail window after a switch this effect must not clear the
+  // restored follow state of the incoming session.
   useEffect(() => {
-    if (!sessionIsLive && followOutput) setFollowOutput(false)
-  }, [sessionIsLive, followOutput])
+    if (session && session.id === sessionId && !sessionIsLive && followOutput) setFollowOutput(false)
+  }, [sessionIsLive, followOutput, session, sessionId])
+
+  // Opening an active session auto-engages follow (tail -f): the terminal
+  // lands at the tail and the 跟随 button lights up. Fires at most once per
+  // session open — later detail refetches (live growth) must not re-enable it
+  // after the user turned it off to browse history. The id guard skips the
+  // stale detail of the previously selected session while the new one loads.
+  useEffect(() => {
+    if (!session || !sessionId || session.id !== sessionId) return
+    if (autoFollowSessionRef.current === sessionId) return
+    if (!isSessionLive(session, Date.now())) return
+    autoFollowSessionRef.current = sessionId
+    setFollowOutput(true)
+  }, [session, sessionId])
 
   // On session open: optionally expand nav (user/tool) and pin it (settings).
   useEffect(() => {
@@ -963,6 +1034,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // MiniMap stays in sync even though there's no DOM scroller to observe.
   const handleTerminalScrollMetrics = useCallback((metrics: ScrollMetrics) => {
     lastMetricsRef.current = metrics
+    lastMetricsSessionIdRef.current = sessionDetailRef.current?.id ?? null
     const range = getVisibleTurnRange(metrics, turns.length)
     miniMapControlRef?.current?.updateViewport(metrics, range)
     if (range && !isSameVisibleRange(visibleRangeRef.current, range)) {
@@ -1127,32 +1199,38 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             分析
           </button>
-          {sessionIsLive && (
-            <>
-              <span className="text-[var(--border-default)]">|</span>
-              <button
-                onClick={() => {
-                  setFollowOutput(v => {
-                    const next = !v
-                    if (next) {
-                      const ctrl = termControlRef.current
-                      if (ctrl) {
-                        const metrics = ctrl.getMetrics()
-                        ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
-                      }
-                    }
-                    return next
-                  })
-                }}
-                className={`h-7 rounded-md px-2 text-nav ${followOutput ? 'text-[var(--accent-green)] bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)]' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-                title={followOutput ? '关闭跟随：停止自动滚到底部' : '跟随输出（类似 tail -f）：活跃会话有新内容时自动滚到底部'}
-                aria-pressed={followOutput}
-                aria-label={followOutput ? '关闭跟随输出' : '开启跟随输出'}
-              >
-                {followOutput ? '● 跟随' : '跟随'}
-              </button>
-            </>
-          )}
+          <span className="text-[var(--border-default)]">|</span>
+          <button
+            onClick={() => {
+              setFollowOutput(v => {
+                const next = !v
+                if (next) {
+                  const ctrl = termControlRef.current
+                  if (ctrl) {
+                    const metrics = ctrl.getMetrics()
+                    ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
+                  }
+                }
+                return next
+              })
+            }}
+            disabled={!sessionIsLive}
+            className={`h-7 rounded-md px-2 inline-flex items-center gap-1 text-nav ${followOutput ? 'text-[var(--accent-green)] bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)]' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title={
+              !sessionIsLive
+                ? '跟随输出（类似 tail -f）：仅活跃会话可用'
+                : followOutput
+                  ? '关闭跟随：停止自动滚到底部'
+                  : '跟随输出（类似 tail -f）：活跃会话有新内容时自动滚到底部'
+            }
+            aria-pressed={followOutput}
+            aria-label={followOutput ? '关闭跟随输出' : '开启跟随输出'}
+          >
+            {followOutput && (
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />
+            )}
+            跟随
+          </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
           <span className="text-[var(--border-default)]">|</span>
@@ -1323,6 +1401,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 folds={folds}
                 tsKinds={tsKinds}
                 followOutput={followOutput && sessionIsLive}
+                onFollowDisable={() => setFollowOutput(false)}
+                initialScrollLine={restoreScrollLine}
                 onFoldChange={handleFoldChange}
                 onFoldPathActivate={(bufLine, meta) => openFilePopover(bufLine, meta, null)}
                 onContextMenu={handleTerminalContextMenu}
