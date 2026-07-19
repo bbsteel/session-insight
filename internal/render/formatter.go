@@ -82,9 +82,10 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	if p.Preprocess != nil {
 		p.Preprocess(events)
 	}
-	// chrys emits a turn's parallel invocations first and all results after;
-	// pair each invocation with its result so a per-tool fold covers input+output.
-	if p.ToolBullet {
+	// Profiles with per-tool folds emit a turn's parallel invocations first and
+	// all results after (chrys batches; claude can too); pair each invocation
+	// with its result so a per-tool fold covers input+output of the same call.
+	if p.ToolBullet || p.ToolFoldHeader {
 		events = pairToolRuns(events)
 	}
 	groupStarts := computeToolRuns(p, events)
@@ -494,10 +495,12 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			if evt.Depth == 0 {
 				closeToolFold()
 			}
-			// Per-tool folds need the bullet line as their "▼ …" header, so
-			// they're limited to bullet profiles (chrys). Non-bullet profiles
-			// (claude/codex) keep the existing group-only fold.
-			if evt.Depth == 0 && p.ToolBullet && !model.IsEditTool(evt.ToolName) {
+			// Per-tool folds need a "▼ …" header line that stays visible when
+			// collapsed: the bullet line for bullet profiles (chrys/grok), a
+			// dedicated "▼ Tool: Name summary" line for box profiles with
+			// ToolFoldHeader (claude). Profiles with neither keep the
+			// existing group-only fold (codex/default).
+			if evt.Depth == 0 && (p.ToolBullet || p.ToolFoldHeader) && !model.IsEditTool(evt.ToolName) {
 				headerDisplay := tb.CurrentLine()
 				headerLogical := tb.CurrentLogicalLine()
 				bodyD, bodyL, badgeOff := writeToolInvocation(p, tb, evt, prefix, bWidth, onEdit, true, outcome.durationMs, toolTS, failed)
@@ -567,7 +570,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 // shifts line numbers, so cached line positions keyed on it are invalidated.
 // It also covers position-set changes (e.g. a new position kind), since
 // positions are cached under the same key.
-const FormatVersion int64 = 29
+const FormatVersion int64 = 30
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
@@ -1179,11 +1182,12 @@ func promoteBoxHeader(input map[string]any) (string, map[string]any) {
 }
 
 // writeToolInvocation renders a tool's input. When asFoldHeader is true (a
-// non-edit tool inside a group) the bullet line becomes the fold header
-// "▼ • Name summary" and the returned (bodyDisplay, bodyLogical) mark the line
-// just past it — the caller folds [body … tool end) so only the header shows
-// when collapsed. Edit tools ignore asFoldHeader (they render diffs, no bullet)
-// and return (0, 0).
+// non-edit tool inside a group) the bullet line ("▼ • Name summary") or, for
+// box profiles with ToolFoldHeader, a dedicated "▼ Tool: Name · summary" line
+// becomes the fold header and the returned (bodyDisplay, bodyLogical) mark
+// the line just past it — the caller folds [body … tool end) so only the
+// header shows when collapsed. Edit tools ignore asFoldHeader (they render
+// diffs, no header) and return (0, 0).
 // durationMs (0 = unknown) and ts ("" = disabled) enrich the header line so
 // the invocation's cost and wall-clock moment are readable without expanding
 // anything. Edit tools render as diffs and currently skip both.
@@ -1269,6 +1273,11 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 			sb.WriteString(fgWrap(" · "+fmtDurationShort(durationMs), p.Palette.Muted))
 		}
 		sb.WriteString("\n")
+	} else if asFoldHeader {
+		// Box profile with per-tool folds (claude): the "▼ Tool: Name · summary"
+		// line above the box is the fold header; the box top loses its embedded
+		// header so the collapsed row is the only place the summary shows.
+		headerBadgeOffset = writeBoxFoldHeader(p, sb, prefix, toolName, borderColor, evt.ToolInput, durationMs, ts)
 	}
 
 	// Body starts after the (possibly wrapped) header line: everything from
@@ -1281,7 +1290,7 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 		toolBox = standardToolBox{}
 	}
 	header, suppress := toolBox.BuildHeader(p, inputForBox, toolName, purpose, durationMs, ts)
-	if suppress {
+	if suppress || (asFoldHeader && !p.ToolBullet) {
 		header = ""
 	}
 	boxPrefix := toolBox.BoxPrefix(p, prefix)
@@ -1293,6 +1302,33 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	}
 	writeBoxBottom(p, sb, boxPrefix, "", bWidth, borderColor)
 	return bodyDisplay, bodyLogical, headerBadgeOffset
+}
+
+// writeBoxFoldHeader renders the fold header line for box-style profiles
+// (claude): "▼ Tool: Name · summary · duration", mirroring the bullet fold
+// header of bullet profiles. The summary is NOT width-truncated — the full
+// path/command stays on the header and soft-wraps when long, so the collapsed
+// row shows the whole invocation. Returns the UTF-16 index just past the tool
+// name run for the frontend's "(N 行)" badge splice.
+func writeBoxFoldHeader(p *Profile, sb *trackingBuilder, prefix, toolName string, c Color, input map[string]any, durationMs int64, ts string) int {
+	sb.WriteString(prefix)
+	off := utf16Len(prefix)
+	if ts != "" {
+		tsRun := fgWrap(ts+" ", p.Palette.Muted)
+		sb.WriteString(tsRun)
+		off += utf16Len(tsRun)
+	}
+	nameRun := styled("▼ Tool: "+toolName, c, ColNone, true, false)
+	sb.WriteString(nameRun)
+	off += utf16Len(nameRun)
+	if s := toolSummary("", input); s != "" {
+		sb.WriteString(styled(" · "+s, c, ColNone, false, false))
+	}
+	if durationMs > 0 {
+		sb.WriteString(fgWrap(" · "+fmtDurationShort(durationMs), p.Palette.Muted))
+	}
+	sb.WriteString("\n")
+	return off
 }
 
 // toolSummary returns a compact one-line description for a tool's fold header:
