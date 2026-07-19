@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse, SessionBillingSummary, TurnVM } from '../types'
 import {
+  getPositionViewportFrame,
   getScrollBoundaryTop,
   getScrollTopFromTrackPosition,
   getViewportFrame,
@@ -8,6 +9,7 @@ import {
   type ScrollMetrics,
 } from '../minimapGeometry'
 import { getMiniMapEventKind, getMiniMapTurnPositionPercent, getTokenPressureTone, type MiniMapEventKind, type TokenPressureTone } from '../minimapSemantics'
+import { TERMINAL_LINE_HEIGHT } from '../terminalControl'
 import type { VisibleTurnRange } from '../scrollSync'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
@@ -270,16 +272,14 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
     const totalLines = positions.total_lines
     const trackLength = trackLengthRef.current
     const contentHeight = computeContentHeight(totalLines, trackLength)
-    const lineHeight = 16
-    const viewportLine = scrollTop / lineHeight
-    const rows = Math.round(clientHeight / lineHeight)
-    const scrollRatio = clamp(viewportLine / Math.max(totalLines - rows, 1), 0, 1)
-    const offset = scrollRatio * Math.max(contentHeight - trackLength, 0)
-    const vpTopInContent = (viewportLine / totalLines) * contentHeight
-    // Min height must match getViewportFrame's minLength (drag geometry).
-    const vpHeight = clamp((rows / totalLines) * contentHeight, 48, trackLength)
-    const vpTop = clamp(vpTopInContent - offset, 0, Math.max(0, trackLength - vpHeight))
-    return { top: vpTop, height: vpHeight, offset }
+    return getPositionViewportFrame({
+      scrollTop,
+      clientHeight,
+      totalLines,
+      trackLength,
+      contentHeight,
+      lineHeight: TERMINAL_LINE_HEIGHT,
+    })
   }
 
   function applyPositionViewport(scrollTop: number, clientHeight: number) {
@@ -348,7 +348,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
   }
 
   function scrollToLine(line: number) {
-    scrollToTopRef?.current?.(line * 16, 'auto')
+    scrollToTopRef?.current?.(line * TERMINAL_LINE_HEIGHT, 'auto')
   }
 
   function scrollToBoundary(boundary: ScrollBoundary) {

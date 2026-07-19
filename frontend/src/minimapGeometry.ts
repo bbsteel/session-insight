@@ -9,6 +9,10 @@ export interface ViewportFrame {
   height: number
 }
 
+export interface PositionViewportFrame extends ViewportFrame {
+  offset: number
+}
+
 export type ScrollBoundary = 'top' | 'bottom'
 
 function clamp(n: number, min: number, max: number): number {
@@ -32,6 +36,38 @@ export function getViewportFrame(metrics: ScrollMetrics, trackLength: number, mi
   const top = clamp((metrics.scrollTop / maxScroll) * maxTop, 0, maxTop)
 
   return { top, height }
+}
+
+export function getPositionViewportFrame({
+  scrollTop,
+  clientHeight,
+  totalLines,
+  trackLength,
+  contentHeight,
+  lineHeight,
+  minLength = 48,
+}: {
+  scrollTop: number
+  clientHeight: number
+  totalLines: number
+  trackLength: number
+  contentHeight: number
+  lineHeight: number
+  minLength?: number
+}): PositionViewportFrame {
+  if (totalLines <= 0 || trackLength <= 0 || contentHeight <= 0 || lineHeight <= 0) {
+    return { top: 0, height: Math.max(trackLength, 0), offset: 0 }
+  }
+
+  const viewportLine = scrollTop / lineHeight
+  const rows = Math.round(clientHeight / lineHeight)
+  const scrollRatio = clamp(viewportLine / Math.max(totalLines - rows, 1), 0, 1)
+  const offset = scrollRatio * Math.max(contentHeight - trackLength, 0)
+  const viewportTopInContent = (viewportLine / totalLines) * contentHeight
+  const height = clamp((rows / totalLines) * contentHeight, minLength, trackLength)
+  const top = clamp(viewportTopInContent - offset, 0, Math.max(0, trackLength - height))
+
+  return { top, height, offset }
 }
 
 export function getScrollTopFromTrackPosition({

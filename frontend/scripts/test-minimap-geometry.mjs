@@ -4,7 +4,7 @@ import path from 'node:path'
 
 const compiledModule = path.join('/tmp', 'session-insight-minimapGeometry.mjs')
 
-const { getScrollBoundaryTop, getScrollTopFromTrackPosition, getViewportFrame } = await import(pathToFileURL(compiledModule).href)
+const { getPositionViewportFrame, getScrollBoundaryTop, getScrollTopFromTrackPosition, getViewportFrame } = await import(pathToFileURL(compiledModule).href)
 
 function approx(actual, expected) {
   assert.ok(Math.abs(actual - expected) < 0.001, `expected ${actual} to be close to ${expected}`)
@@ -36,6 +36,23 @@ const scrollTop = getScrollTopFromTrackPosition({
 })
 
 approx(scrollTop, 615.3846153846155)
+
+const totalLines = 3188
+const terminalRows = 60
+const terminalLineHeight = 14
+const trackLength = 754
+const contentHeight = Math.min(totalLines * 0.6, trackLength * 4)
+const positionFrameAtBottom = getPositionViewportFrame({
+  scrollTop: (totalLines - terminalRows) * terminalLineHeight,
+  clientHeight: terminalRows * terminalLineHeight,
+  totalLines,
+  trackLength,
+  contentHeight,
+  lineHeight: terminalLineHeight,
+})
+
+approx(positionFrameAtBottom.top + positionFrameAtBottom.height, trackLength)
+approx(positionFrameAtBottom.offset, contentHeight - trackLength)
 
 assert.equal(getScrollBoundaryTop(metrics, 'top'), 0)
 assert.equal(getScrollBoundaryTop(metrics, 'bottom'), 800)
