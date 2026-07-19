@@ -24,6 +24,15 @@ const PROGRESS_ROW_TEXT = '推理中…'
 // The live progress row sits at the transcript tail; only scan this many rows
 // up from the bottom to find it (historical sessions have none).
 const PROGRESS_SCAN_ROWS = 400
+// Follow-mode hint rendered to the right of the hourglass on the in-progress
+// row (backend renders "  推理中…": 2 spaces + 6 cells of 推理中 + 1 cell …,
+// so the row text ends at cell 8; the hint starts one cell later). Shown only
+// while live follow is on — it tells the user how to pause and browse freely.
+const PROGRESS_HINT_X = 10
+const PROGRESS_HINT_TEXT = '跟随中 · 点击「跟随」暂停'
+// Cell width of PROGRESS_HINT_TEXT (CJK glyphs and 「」 are double-width),
+// plus one cell of slack so the last glyph never clips.
+const PROGRESS_HINT_CELLS = 26
 
 // Diagnostic instrumentation for the intermittent "scroll → blank screen,
 // recovers after a few clicks" symptom. Logs are prefixed [si-term] so they
@@ -184,6 +193,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   // remount the terminal; only the next live-tail poll needs the new value.
   const followOutputRef = useRef(followOutput)
   followOutputRef.current = followOutput
+  // Assigned inside the mount effect; invoked on the follow rising edge to
+  // leave open-at-top mode and jump to the tail.
+  const followWakeRef = useRef<(() => void) | null>(null)
+  const prevFollowRef = useRef(followOutput)
+  useEffect(() => {
+    if (followOutput && !prevFollowRef.current) followWakeRef.current?.()
+    prevFollowRef.current = followOutput
+  }, [followOutput])
   // Assigned inside the mount effect once the terminal is live; the folds
   // prop effect below routes updated fold ranges into that closure.
   const applyFoldsRef = useRef<((folds: FoldRange[]) => void) | null>(null)
@@ -281,12 +298,16 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // Spinning hourglass over a "turn in progress" row (chrys in-flight
     // checkpoint). One decoration, re-applied after every rewrite so it tracks
     // the row as the buffer changes; disposed when the marker text is gone.
+    // A second decoration to its right carries the follow-mode hint.
     let progressDecoration: IDecoration | null = null
+    let progressHintDecoration: IDecoration | null = null
     let progressMarker: IMarker | null = null
     const clearProgress = () => {
       progressDecoration?.dispose()
+      progressHintDecoration?.dispose()
       progressMarker?.dispose()
       progressDecoration = null
+      progressHintDecoration = null
       progressMarker = null
     }
 
@@ -451,7 +472,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let hasWrittenOnce = false
     // Opening a session should land at the start (top). Cleared once the user
     // scrolls away, jumps, or live-follow pins the viewport to the bottom.
-    let openAtTop = true
+    // When follow is already on at mount (auto-follow for an active session),
+    // start pinned to the tail instead of the top.
+    let openAtTop = !followOutputRef.current
     // While rewriting, xterm briefly parks at the bottom; ignore those scrolls
     // so they don't cancel open-at-top before we re-anchor to line 0.
     let writingContent = false
@@ -849,6 +872,30 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           })
           progressMarker = marker
           progressDecoration = decoration
+          // Follow-mode hint to the right of the hourglass. Only visible
+          // while follow is on; visibility is re-evaluated on every paint so
+          // toggling 跟随 in the header reflects without a buffer rewrite.
+          let hintDecoration: IDecoration | undefined
+          try {
+            hintDecoration = term.registerDecoration({ marker, x: PROGRESS_HINT_X, width: PROGRESS_HINT_CELLS, height: 1, layer: 'top' })
+          } catch {
+            hintDecoration = undefined
+          }
+          if (hintDecoration) {
+            hintDecoration.onRender(element => {
+              if (!element.dataset.siFollowHint) {
+                element.dataset.siFollowHint = '1'
+                element.style.pointerEvents = 'none'
+                element.style.display = 'flex'
+                element.style.alignItems = 'center'
+                element.style.whiteSpace = 'nowrap'
+                element.style.color = 'var(--text-muted)'
+                element.textContent = PROGRESS_HINT_TEXT
+              }
+              element.style.visibility = followOutputRef.current ? 'visible' : 'hidden'
+            })
+            progressHintDecoration = hintDecoration
+          }
           break
         }
       }
@@ -894,6 +941,14 @@ const snapshotTerminal = () => {
       const stickOpenAtTop = () => {
         if (!openAtTop || followOutputRef.current) return
         term.scrollToLine(0)
+      }
+
+      // Rising edge of follow after mount: leave open-at-top mode and jump to
+      // the tail. (Follow already on at mount takes the openAtTop=false init
+      // above and parks at the bottom on the initial write instead.)
+      followWakeRef.current = () => {
+        openAtTop = false
+        if (hasWrittenOnce) term.scrollToBottom()
       }
 
       const writeComposed = (afterWrite?: () => void) => {
@@ -1442,6 +1497,7 @@ const snapshotTerminal = () => {
       if (controlRef) controlRef.current = null
       applyFoldsRef.current = null
       applyUserHighlightsRef.current = null
+      followWakeRef.current = null
       termRef.current = null
       term.dispose()
     }

@@ -78,6 +78,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
   const [followOutput, setFollowOutput] = useState(false)
+  // Session id that already auto-engaged follow on open (null = not yet / not
+  // live). Prevents detail refetches from re-enabling follow after the user
+  // turned it off; reset by the session-switch effect below.
+  const autoFollowSessionRef = useRef<string | null>(null)
   // 时间戳前缀设置(后端 ts 渲染参数);null = 设置未加载,先不挂终端,
   // 避免渲染与 positions 用了不同的 ts 导致行号错位。
   const [tsKinds, setTsKinds] = useState<string | null>(null)
@@ -313,11 +317,25 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // window expires so a historical replay never keeps auto-scrolling.
   useEffect(() => {
     setFollowOutput(false)
+    autoFollowSessionRef.current = null
   }, [sessionId])
   const sessionIsLive = !!(session && isSessionLive(session, now))
   useEffect(() => {
     if (!sessionIsLive && followOutput) setFollowOutput(false)
   }, [sessionIsLive, followOutput])
+
+  // Opening an active session auto-engages follow (tail -f): the terminal
+  // lands at the tail and the 跟随 button lights up. Fires at most once per
+  // session open — later detail refetches (live growth) must not re-enable it
+  // after the user turned it off to browse history. The id guard skips the
+  // stale detail of the previously selected session while the new one loads.
+  useEffect(() => {
+    if (!session || !sessionId || session.id !== sessionId) return
+    if (autoFollowSessionRef.current === sessionId) return
+    if (!isSessionLive(session, Date.now())) return
+    autoFollowSessionRef.current = sessionId
+    setFollowOutput(true)
+  }, [session, sessionId])
 
   // On session open: optionally expand nav (user/tool) and pin it (settings).
   useEffect(() => {
