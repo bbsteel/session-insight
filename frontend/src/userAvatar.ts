@@ -16,8 +16,9 @@ export function getUserAvatar(): string | null {
   }
 }
 
-// dataUrl 为 null 时恢复默认图标。
-export function setUserAvatar(dataUrl: string | null): void {
+// dataUrl 为 null 时恢复默认图标。返回是否持久化成功(localStorage 不可用
+// 或已满时为 false),调用方应据此提示用户而不是静默保持旧头像。
+export function setUserAvatar(dataUrl: string | null): boolean {
   try {
     if (dataUrl) {
       localStorage.setItem(AVATAR_KEY, dataUrl)
@@ -25,8 +26,9 @@ export function setUserAvatar(dataUrl: string | null): void {
       localStorage.removeItem(AVATAR_KEY)
     }
     window.dispatchEvent(new Event(CHANGED_EVENT))
+    return true
   } catch {
-    // 配额满等异常:忽略,头像保持旧值
+    return false
   }
 }
 

@@ -72,6 +72,9 @@ export default function SettingsDialog({
   const dragCleanupRef = useRef<(() => void) | null>(null)
   const userAvatar = useUserAvatar()
   const avatarFileRef = useRef<HTMLInputElement>(null)
+  // 单调递增的读取序号:连续快速选择两张图时,先开始的 FileReader 可能
+  // 后完成,序号过期即丢弃,避免旧读取覆盖新选择(或覆盖中途的恢复默认)。
+  const avatarReadSeq = useRef(0)
   const [avatarError, setAvatarError] = useState('')
 
   // 上传自定义头像:仅校验类型和大小(≤200KB),原图以 data URL 存本地。
@@ -87,13 +90,30 @@ export default function SettingsDialog({
       setAvatarError(`图像大小 ${Math.ceil(file.size / 1024)}KB,超过 200KB 上限,请压缩后再上传`)
       return
     }
+    const readId = ++avatarReadSeq.current
     const reader = new FileReader()
     reader.onload = () => {
-      setUserAvatar(typeof reader.result === 'string' ? reader.result : null)
-      setAvatarError('')
+      if (readId !== avatarReadSeq.current) return
+      if (setUserAvatar(typeof reader.result === 'string' ? reader.result : null)) {
+        setAvatarError('')
+      } else {
+        setAvatarError('头像保存失败：浏览器本地存储不可用或已满')
+      }
     }
-    reader.onerror = () => setAvatarError('读取文件失败,请重试')
+    reader.onerror = () => {
+      if (readId !== avatarReadSeq.current) return
+      setAvatarError('读取文件失败,请重试')
+    }
     reader.readAsDataURL(file)
+  }
+
+  const handleAvatarReset = () => {
+    avatarReadSeq.current++ // 使进行中的读取失效,避免覆盖本次还原
+    if (setUserAvatar(null)) {
+      setAvatarError('')
+    } else {
+      setAvatarError('头像保存失败：浏览器本地存储不可用或已满')
+    }
   }
 
   // Load server-side settings whenever the dialog opens.
@@ -329,7 +349,7 @@ export default function SettingsDialog({
                         上传图像
                       </button>
                       {userAvatar && (
-                        <button onClick={() => { setUserAvatar(null); setAvatarError('') }} className={btnCls}>
+                        <button onClick={handleAvatarReset} className={btnCls}>
                           恢复默认
                         </button>
                       )}
