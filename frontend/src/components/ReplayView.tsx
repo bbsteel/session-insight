@@ -114,6 +114,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const visibleRangeLabelRef = useRef<HTMLSpanElement>(null)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const lastMetricsRef = useRef<ScrollMetrics>()
+  // Scroll metrics are emitted only while the terminal view is active. Keep
+  // their source session alongside them so a stale terminal callback cannot
+  // become the saved scroll position for a different session on navigation.
+  const lastMetricsSessionIdRef = useRef<string | null>(null)
 
   // Matcher callbacks read positions through a ref: matchers are registered
   // once (on cols-ready) but must see the latest positions and fold mapping.
@@ -352,7 +356,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       sessionViewMemoryRef.current.set(prevId, {
         follow: followOutputRef.current,
         wasLive: outgoingLive,
-        viewportLine: m && m.scrollHeight > m.clientHeight
+        viewportLine: m && lastMetricsSessionIdRef.current === prevId && m.scrollHeight > m.clientHeight
           ? Math.round(m.scrollTop / TERMINAL_LINE_HEIGHT)
           : null,
       })
@@ -1041,6 +1045,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // MiniMap stays in sync even though there's no DOM scroller to observe.
   const handleTerminalScrollMetrics = useCallback((metrics: ScrollMetrics) => {
     lastMetricsRef.current = metrics
+    lastMetricsSessionIdRef.current = sessionDetailRef.current?.id ?? null
     const range = getVisibleTurnRange(metrics, turns.length)
     miniMapControlRef?.current?.updateViewport(metrics, range)
     if (range && !isSameVisibleRange(visibleRangeRef.current, range)) {
