@@ -116,6 +116,7 @@ func parseUpdatesRender(path string) ([]model.RenderEvent, bool, error) {
 		turnIndex    = -1
 		turnOpen     bool
 		pendingTools = map[string]string{} // toolCallId -> ToolInvocation EventID
+		resultIdx    = map[string]int{}    // toolCallId -> index of its (single) ToolResult in events
 		inThought    bool
 	)
 
@@ -256,6 +257,23 @@ func parseUpdatesRender(path string) ([]model.RenderEvent, bool, error) {
 			if u.Status == "failed" || u.Status == "error" {
 				exit = 1
 			}
+			// Long-running commands stream cumulative output snapshots as
+			// in_progress updates. Coalesce them into the single ToolResult
+			// for this call — one output box per tool, not one per snapshot.
+			// Last snapshot wins (the terminal-status update carries the
+			// fullest output and the real exit status); an empty payload on
+			// the final update keeps the previous snapshot's text.
+			if u.ToolCallID != "" {
+				if idx, ok := resultIdx[u.ToolCallID]; ok {
+					ev := &events[idx]
+					if stdout != "" {
+						ev.Stdout = stdout
+					}
+					ev.ExitCode = exit
+					ev.Timestamp = ts
+					continue
+				}
+			}
 			parent := ""
 			if u.ToolCallID != "" {
 				parent = pendingTools[u.ToolCallID]
@@ -270,6 +288,9 @@ func parseUpdatesRender(path string) ([]model.RenderEvent, bool, error) {
 				ExitCode:      exit,
 				ParentEventID: parent,
 			})
+			if u.ToolCallID != "" {
+				resultIdx[u.ToolCallID] = len(events) - 1
+			}
 
 		case "turn_completed":
 			closeThought(ts)

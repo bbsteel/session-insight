@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
 import { addBookmark, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
-import type { EditCall, PositionsResponse, SessionDetail, TurnVM } from '../types'
+import type { EditCall, PositionsResponse, SessionDetail } from '../types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange } from '../terminalControl'
@@ -26,12 +26,8 @@ const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
-type JumpTarget = 'turn' | 'user' | 'anomaly' | 'compaction'
+type JumpTarget = 'turn' | 'user'
 type ViewMode = 'terminal' | 'analytics'
-
-function hasCompaction(turn: TurnVM): boolean {
-  return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false
-}
 
 interface Props {
   sessionId: string | null
@@ -58,12 +54,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
-  const [jumpTarget, setJumpTarget] = useState<JumpTarget>('user')
   const [showHelp, setShowHelp] = useState(false)
   const [showDiffModal, setShowDiffModal] = useState(false)
   const [initialDiffIdx, setInitialDiffIdx] = useState(0)
-  const [hiddenAnomalyTypes, setHiddenAnomalyTypes] = useState<Set<string>>(new Set())
-  const [showAnomalyFilter, setShowAnomalyFilter] = useState(false)
   const [terminalCols, setTerminalCols] = useState<number | null>(null)
   const [positionsData, setPositionsData] = useState<PositionsResponse | null>(null)
   const [positionsBuilding, setPositionsBuilding] = useState(false)
@@ -906,13 +899,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // 面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
   // 工具面板和交互消息面板共用同一套动效。
   const handlePanelJump = useCallback((lineStart: number, logicalStart?: number) => {
-    const ctrl = termControlRef.current
-    if (!ctrl) return
-    const line = typeof logicalStart === 'number'
-      ? ctrl.logicalToDisplayLine(logicalStart)
-      : Math.max(0, ctrl.toDisplayLine(lineStart))
-    ctrl.scrollToLineCentered(line)
-    ctrl.flashLines(line, 1)
+    // jumpToPosition defers when the live buffer hasn't caught up to the
+    // positions snapshot yet, instead of clamping onto the wrong row.
+    termControlRef.current?.jumpToPosition(lineStart, logicalStart)
   }, [])
 
   const toolCallCount = useMemo(
@@ -1070,21 +1059,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
   const jumpBaseRef = useRef(0)
 
-  const anomalyIndexes = useMemo(() => turns
-    .map((turn, index) => ({ turn, index }))
-    .filter(({ turn }) => {
-      const hasVisibleAnomaly = turn.anomalies?.some(a => !hiddenAnomalyTypes.has(a))
-      const hasVisibleError = turn.error_count > 0 && !hiddenAnomalyTypes.has('tool_failure')
-      return hasVisibleAnomaly || hasVisibleError
-    })
-    .map(({ index }) => index), [turns, hiddenAnomalyTypes])
-
   const userIndexes = useMemo(() => turns
     .map((turn, index) => turn.user_message ? index : -1)
-    .filter(index => index >= 0), [turns])
-
-  const compactionIndexes = useMemo(() => turns
-    .map((turn, index) => hasCompaction(turn) ? index : -1)
     .filter(index => index >= 0), [turns])
 
   function jump(direction: -1 | 1, target: JumpTarget) {
@@ -1096,10 +1072,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     if (target === 'turn') {
       targetIndex = Math.max(0, Math.min(base + direction, barCount - 1))
     } else {
-      const indexes = target === 'user' ? userIndexes : target === 'anomaly' ? anomalyIndexes : compactionIndexes
       const found = direction > 0
-        ? indexes.find(i => i > base)
-        : [...indexes].reverse().find(i => i < base)
+        ? userIndexes.find(i => i > base)
+        : [...userIndexes].reverse().find(i => i < base)
       if (found === undefined) return
       targetIndex = found
     }
@@ -1270,63 +1245,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             ✨ AI
           </button>
-        </div>
-        <span className="text-[var(--border-default)] mx-1">|</span>
-        <div className="flex items-center gap-1">
-          <select
-            value={jumpTarget}
-            onChange={e => setJumpTarget(e.target.value as JumpTarget)}
-            className="h-7 rounded-md border border-[var(--border-muted)] bg-[var(--bg-surface)] px-1.5 text-nav text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            title="跳转目标"
-            aria-label="跳转目标"
-          >
-            <option value="user">用户输入</option>
-            <option value="turn">轮次</option>
-            <option value="anomaly">异常</option>
-            <option value="compaction">压缩点</option>
-          </select>
-          <button
-            onClick={() => jump(-1, jumpTarget)}
-            className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            title="上一个"
-            aria-label="跳到上一个"
-          >←</button>
-          <button
-            onClick={() => jump(1, jumpTarget)}
-            className="h-7 w-7 rounded flex items-center justify-center text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            title="下一个"
-            aria-label="跳到下一个"
-          >→</button>
-          <div className="relative">
-            <button
-              onClick={() => setShowAnomalyFilter(v => !v)}
-              className={`h-7 rounded-md px-1.5 text-nav ${hiddenAnomalyTypes.size > 0 ? 'text-[var(--text-muted)]' : 'text-[var(--error)]'} hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-              title="异常过滤"
-              aria-label="异常过滤"
-            >
-              {anomalyIndexes.length}!
-            </button>
-            {showAnomalyFilter && (
-              <div className="absolute top-full left-0 mt-1 min-w-[150px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-md z-20">
-                {['tool_failure', 'duration_spike', 'continuation_nudge', 'missing_shutdown'].map(type => (
-                  <label key={type} className="flex cursor-pointer items-center gap-1.5 rounded-sm px-1 py-0.5 text-meta text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={!hiddenAnomalyTypes.has(type)}
-                      onChange={() => setHiddenAnomalyTypes(prev => {
-                        const next = new Set(prev)
-                        if (prev.has(type)) next.delete(type)
-                        else next.add(type)
-                        return next
-                      })}
-                      className="h-3 w-3"
-                    />
-                    {type.replace(/_/g, ' ')}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {isSessionLive(session, now) && (
