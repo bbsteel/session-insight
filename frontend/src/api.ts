@@ -290,6 +290,43 @@ export function parseHandoffMetadata(raw: string | undefined): HandoffMetadata |
   }
 }
 
+function isHandoffMetadata(value: unknown): value is HandoffMetadata {
+  if (typeof value !== 'object' || value === null) return false
+  const metadata = value as HandoffMetadata
+  return typeof metadata.difficulty === 'string'
+    && Array.isArray(metadata.recommended)
+    && metadata.recommended.every(item =>
+      typeof item === 'object'
+      && item !== null
+      && typeof (item as { executor?: unknown }).executor === 'string'
+      && (item as { executor: string }).executor.trim() !== ''
+    )
+}
+
+// splitHandoffOutput also repairs generations saved before the server learned
+// to tolerate a provider's one-line preamble before the metadata fence. The
+// first JSON fence must carry the handoff schema, so JSON examples in the
+// actual prompt remain untouched.
+export function splitHandoffOutput(raw: string): { content: string; metadata: HandoffMetadata | null } {
+  const content = raw.trim()
+  const starts = ['```json\n', '```json\r\n']
+  let start = -1
+  let open = ''
+  for (const candidate of starts) {
+    const index = content.indexOf(candidate)
+    if (index >= 0 && (start < 0 || index < start)) {
+      start = index
+      open = candidate
+    }
+  }
+  if (start < 0 || content.slice(0, start).includes('```')) return { content, metadata: null }
+  const fenceEnd = content.indexOf('```', start + open.length)
+  if (fenceEnd < 0) return { content, metadata: null }
+  const metadata = parseHandoffMetadata(content.slice(start + open.length, fenceEnd).trim())
+  if (!isHandoffMetadata(metadata)) return { content, metadata: null }
+  return { content: content.slice(fenceEnd + 3).trim(), metadata }
+}
+
 export type AIKind = 'summary' | 'title' | 'handoff'
 
 export async function fetchLLMProviders(): Promise<{ providers: LLMProvider[]; acp_agents: string[] }> {
