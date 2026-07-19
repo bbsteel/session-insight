@@ -55,7 +55,7 @@ export function getPositionViewportFrame({
   lineHeight: number
   minLength?: number
 }): PositionViewportFrame {
-  if (totalLines <= 0 || trackLength <= 0 || contentHeight <= 0 || lineHeight <= 0) {
+  if (totalLines <= 0 || trackLength <= 0 || contentHeight <= 0 || clientHeight <= 0 || lineHeight <= 0) {
     return { top: 0, height: Math.max(trackLength, 0), offset: 0 }
   }
 
@@ -63,9 +63,8 @@ export function getPositionViewportFrame({
   const rows = Math.round(clientHeight / lineHeight)
   const scrollRatio = clamp(viewportLine / Math.max(totalLines - rows, 1), 0, 1)
   const offset = scrollRatio * Math.max(contentHeight - trackLength, 0)
-  const viewportTopInContent = (viewportLine / totalLines) * contentHeight
   const height = clamp((rows / totalLines) * contentHeight, minLength, trackLength)
-  const top = clamp(viewportTopInContent - offset, 0, Math.max(0, trackLength - height))
+  const top = scrollRatio * Math.max(0, trackLength - height)
 
   return { top, height, offset }
 }

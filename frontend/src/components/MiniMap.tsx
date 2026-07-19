@@ -362,7 +362,9 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
     const rect = containerRef.current.getBoundingClientRect()
     const scrollMetrics = scrollMetricsRef.current
     if (scrollMetrics && scrollToTopRef?.current) {
-      const viewportFrame = getViewportFrame(scrollMetrics, rect.height)
+      const viewportFrame = usePositions
+        ? posViewport(scrollMetrics.scrollTop, scrollMetrics.clientHeight)
+        : getViewportFrame(scrollMetrics, rect.height)
       const nextScrollTop = getScrollTopFromTrackPosition({
         pointerPosition: clientY,
         trackStart: rect.top,
@@ -414,13 +416,19 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
     e.currentTarget.setPointerCapture(e.pointerId)
     const scrollMetrics = scrollMetricsRef.current
     const viewportFrame = containerRef.current && scrollMetrics
-      ? getViewportFrame(scrollMetrics, containerRef.current.getBoundingClientRect().height)
+      ? usePositions
+        ? posViewport(scrollMetrics.scrollTop, scrollMetrics.clientHeight)
+        : getViewportFrame(scrollMetrics, containerRef.current.getBoundingClientRect().height)
       : undefined
     if (containerRef.current && viewportFrame) {
       const rect = containerRef.current.getBoundingClientRect()
       const trackY = e.clientY - rect.top
       const insideViewport = trackY >= viewportFrame.top && trackY <= viewportFrame.top + viewportFrame.height
-      dragOffsetRef.current = insideViewport ? trackY - viewportFrame.top : viewportFrame.height / 2
+      if (insideViewport) {
+        dragOffsetRef.current = trackY - viewportFrame.top
+        return
+      }
+      dragOffsetRef.current = viewportFrame.height / 2
     } else {
       dragOffsetRef.current = 0
     }
