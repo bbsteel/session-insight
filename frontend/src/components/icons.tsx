@@ -23,6 +23,19 @@ function Icon({ className, children, ...rest }: IconProps & { children: ReactNod
 }
 
 /**
+ * Person bust: head circle + shoulders arc. Default user-message marker in
+ * the interaction panel (replaced by the custom avatar when one is set).
+ */
+export function UserIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="5.5" r="2.5" />
+      <path d="M3.5 13.5c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" />
+    </Icon>
+  )
+}
+
+/**
  * Bold geometric push-pin: diamond head (hollow via stroke) + needle.
  * Unpinned is diagonal (reference pose); pinned is the same shape, vertical.
  * Uses stroke (not a filled evenodd blob) so it stays legible at ~14px.

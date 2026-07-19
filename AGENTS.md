@@ -37,9 +37,10 @@ For **every** change set (including small fixes and agent-instruction edits):
 1. **Update remote knowledge, then branch from latest `main`**: `git fetch origin`, then base the branch on **`origin/main`** (or local `main` only after it is fast-forwarded to match remote). Prefer `git switch -c <branch> origin/main` so the new branch tracks current remote history without a local merge step. Never skip the fetch when starting a new task or a new branch.
 2. **Create a dedicated branch** with a clear prefix, e.g. `feat/…`, `fix/…`, `docs/…`, `chore/…`. Prefer one logical change per branch.
 3. **Commit only on that branch.** Do not leave finished work solely as commits on `main`.
-4. **Open a PR into `main`** (`gh pr create` or equivalent). Default to **not** merging unless the user explicitly asks to merge.
+4. **Open a PR into `main`** (`gh pr create` or equivalent). Create the PR as **ready for review** (non-draft); CodeRabbit does not review draft PRs. Default to **not** merging unless the user explicitly asks to merge.
 5. **Push the branch**, not `main`, when publishing the change for review.
 6. After merge (by user or explicit request), continue the next task from a **new** branch off updated **`origin/main`** (fetch first). Do not merge the feature branch into local `main` as a substitute for the remote PR merge. Do not reuse the previous feature branch as the base for the next task without rebasing onto fresh `origin/main`.
+7. **Delete the remote feature branch after the PR is merged** (e.g. `git push origin --delete <branch>`) to keep the repository tidy.
 
 ### Local `main` is remote-only (required)
 

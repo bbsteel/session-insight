@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 25
+const currentSchemaVersion = 26
 
 type DB struct {
 	conn *sql.DB
@@ -166,7 +166,7 @@ func migrate(conn *sql.DB) error {
 	    revision     INTEGER NOT NULL,
 	    cols         INTEGER NOT NULL,
 	    position_key TEXT    NOT NULL,
-	    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'compaction', 'error', 'edit', 'fold', 'trunc', 'tool')),
+	    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'assistant', 'compaction', 'error', 'edit', 'fold', 'trunc', 'tool')),
 	    turn_index   INTEGER NOT NULL,
 	    line_start   INTEGER NOT NULL,
 	    line_end     INTEGER,
@@ -583,6 +583,62 @@ func migrate(conn *sql.DB) error {
 	if maxVersion < 25 {
 		if _, err := conn.Exec(`DELETE FROM index_watermarks`); err != nil {
 			return fmt.Errorf("v25 clear index_watermarks: %w", err)
+		}
+	}
+
+	// Version 26: 'assistant' kind added to the position constraint
+	// (interaction panel lists assistant replies next to user messages).
+	// Same pattern as v6/v9: pure caches, drop and let the next positions
+	// request rebuild them with the widened CHECK. Runs in a transaction and
+	// propagates every error: a failed rebuild must not be followed by the
+	// version record below, or later startups would skip the migration with
+	// the old constraint (or missing tables) still in place.
+	if maxVersion < 26 {
+		tx, err := conn.Begin()
+		if err != nil {
+			return fmt.Errorf("v26 begin: %w", err)
+		}
+		stmts := []string{
+			`DROP TABLE IF EXISTS session_positions`,
+			`DROP TABLE IF EXISTS session_position_caches`,
+			`CREATE TABLE IF NOT EXISTS session_position_caches (
+			    agent_type   TEXT    NOT NULL,
+			    session_id   TEXT    NOT NULL,
+			    revision     INTEGER NOT NULL,
+			    cols         INTEGER NOT NULL,
+			    total_lines  INTEGER NOT NULL,
+			    generated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+			    PRIMARY KEY (agent_type, session_id, revision, cols)
+			)`,
+			`CREATE TABLE IF NOT EXISTS session_positions (
+			    agent_type   TEXT    NOT NULL,
+			    session_id   TEXT    NOT NULL,
+			    revision     INTEGER NOT NULL,
+			    cols         INTEGER NOT NULL,
+			    position_key TEXT    NOT NULL,
+			    kind         TEXT    NOT NULL CHECK (kind IN ('turn', 'user', 'assistant', 'compaction', 'error', 'edit', 'fold', 'trunc', 'tool')),
+			    turn_index   INTEGER NOT NULL,
+			    line_start   INTEGER NOT NULL,
+			    line_end     INTEGER,
+			    label        TEXT    NOT NULL DEFAULT '',
+			    severity     TEXT    NOT NULL DEFAULT '',
+			    payload_json TEXT    NOT NULL DEFAULT '{}',
+			    PRIMARY KEY (agent_type, session_id, revision, cols, position_key),
+			    FOREIGN KEY (agent_type, session_id, revision, cols)
+			        REFERENCES session_position_caches(agent_type, session_id, revision, cols)
+			        ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_session_positions_lookup
+			    ON session_positions(agent_type, session_id, revision, cols, line_start)`,
+		}
+		for _, stmt := range stmts {
+			if _, err := tx.Exec(stmt); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("v26 rebuild position caches: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("v26 commit: %w", err)
 		}
 	}
 

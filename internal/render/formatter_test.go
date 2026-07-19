@@ -841,3 +841,75 @@ func TestParseTimestampKinds(t *testing.T) {
 		t.Errorf("mask: got %d, want 5", o.Mask())
 	}
 }
+
+func TestAssistantPositionsPerTextBlock(t *testing.T) {
+	ts := time.Now()
+	long := strings.Repeat("长", assistantSummaryMaxRunes+50)
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, Depth: 0},
+		{Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: "q"},
+		// One reply split into two chunks → a single assistant position whose
+		// text merges both chunks.
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: "part one. "},
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: "part two."},
+		// A tool call in between starts a new block.
+		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, Depth: 0,
+			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "ls"}},
+		{Type: "ToolResult", TurnIndex: 0, Timestamp: ts, Depth: 0, ToolCallID: "c1", Stdout: "ok"},
+		// Oversized reply → summary is rune-capped and marked truncated.
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: long},
+		// Subagent text (depth > 0) gets no assistant position.
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 1, Text: "nested"},
+	}
+
+	_, positions := FormatEventsWithPositions(events, 80)
+	var assistant []RenderPosition
+	for _, p := range positions {
+		if p.Kind == "assistant" {
+			assistant = append(assistant, p)
+		}
+	}
+	if len(assistant) != 2 {
+		t.Fatalf("expected 2 assistant positions (one per text block), got %d: %+v", len(assistant), assistant)
+	}
+	if got, _ := assistant[0].Payload["text"].(string); got != "part one. part two." {
+		t.Errorf("continuation chunks must merge into the block summary, got %q", got)
+	}
+	if _, ok := assistant[0].Payload["ts_ms"].(float64); !ok {
+		t.Errorf("assistant position must record ts_ms, got %+v", assistant[0].Payload)
+	}
+	if _, ok := assistant[0].Payload["logical_start"].(float64); !ok {
+		t.Errorf("assistant position must record logical_start, got %+v", assistant[0].Payload)
+	}
+	got, _ := assistant[1].Payload["text"].(string)
+	if r := []rune(got); len(r) != assistantSummaryMaxRunes+1 || !strings.HasSuffix(got, "…") {
+		t.Errorf("long reply must be capped at %d runes + ellipsis, got %d runes", assistantSummaryMaxRunes, len(r))
+	}
+}
+
+// A first chunk that exactly fills the cap (no truncation marker yet) must
+// still merge a continuation chunk, marking the combined text as truncated.
+func TestAssistantSummaryExactCapContinuation(t *testing.T) {
+	ts := time.Now()
+	events := []model.RenderEvent{
+		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, Depth: 0},
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: strings.Repeat("甲", assistantSummaryMaxRunes)},
+		{Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Depth: 0, Text: "tail"},
+	}
+	_, positions := FormatEventsWithPositions(events, 80)
+	var asst *RenderPosition
+	for i := range positions {
+		if positions[i].Kind == "assistant" {
+			asst = &positions[i]
+			break
+		}
+	}
+	if asst == nil {
+		t.Fatalf("expected an assistant position, got %+v", positions)
+	}
+	got, _ := asst.Payload["text"].(string)
+	if r := []rune(got); len(r) != assistantSummaryMaxRunes+1 || !strings.HasSuffix(got, "…") {
+		t.Errorf("exact-cap chunk + continuation must be %d runes + ellipsis, got %d runes (suffix %q)",
+			assistantSummaryMaxRunes, len(r), got[max(0, len(got)-6):])
+	}
+}
