@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml/badge.svg)](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml)
 
-一款本地优先的 AI 编程 Agent 会话浏览、回放与分析工具。它在交互式终端中重现带 ANSI 样式的对话、工具调用和代码输出；会话发现、索引、搜索和回放均在本机运行。AI 生成功能需主动启用，且只使用你配置的模型服务。
+一款本地优先的 AI 编程 Agent 会话浏览、终端原生回放与分析工具。它在交互式终端中重现带 ANSI 样式的对话、工具调用和代码输出；会话发现、索引、搜索和回放均在本机运行。AI 生成功能需主动启用，且只使用你配置的模型服务。
 
 [English](README.md)
 
