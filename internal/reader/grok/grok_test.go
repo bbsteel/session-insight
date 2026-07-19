@@ -320,3 +320,84 @@ func hasInProgress(events []model.RenderEvent) bool {
 	}
 	return false
 }
+
+// Streaming tool_call_update snapshots for one call must coalesce into a
+// single ToolResult (one output box per tool), with the last snapshot's text
+// and the terminal status's exit code — not one box per snapshot.
+func TestStreamingToolUpdatesCoalesce(t *testing.T) {
+	root := t.TempDir()
+	id := "dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee"
+	updates := `{"timestamp":1700000000,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"run it"}}}}
+{"timestamp":1700000001,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"call-9","title":"run_terminal_command","rawInput":{"command":"long"},"_meta":{"x.ai/tool":{"name":"run_terminal_command"}}}}}
+{"timestamp":1700000002,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-9","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":"partial-1"}}]}}}
+{"timestamp":1700000003,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-9","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":"partial-1 partial-2"}}]}}}
+{"timestamp":1700000004,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-9","status":"completed","content":[{"type":"content","content":{"type":"text","text":"partial-1 partial-2 final"}}]}}}
+{"timestamp":1700000005,"method":"_x.ai/session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"turn_completed","stop_reason":"end_turn"}}}
+`
+	writeSession(t, root, "proj", id, summaryFile{}, updates, sampleEventsClosed())
+	r := New(root)
+
+	events, err := r.GetRenderEvents(id)
+	if err != nil {
+		t.Fatalf("GetRenderEvents: %v", err)
+	}
+	var results []model.RenderEvent
+	var invID string
+	for _, e := range events {
+		if e.Type == "ToolInvocation" && e.ToolCallID == "call-9" {
+			invID = e.EventID
+		}
+		if e.Type == "ToolResult" && e.ToolCallID == "call-9" {
+			results = append(results, e)
+		}
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 ToolResult for streamed call, got %d", len(results))
+	}
+	res := results[0]
+	if res.Stdout != "partial-1 partial-2 final" {
+		t.Errorf("stdout=%q, want final snapshot", res.Stdout)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("exit=%d, want 0", res.ExitCode)
+	}
+	if res.ParentEventID != invID {
+		t.Errorf("parent=%q, want invocation %q", res.ParentEventID, invID)
+	}
+}
+
+// A call whose early update carries output (status-less) and whose final
+// update reports failure must end as a single ToolResult with exit code 1 —
+// this is what colors the tool red instead of leaving a stale success.
+func TestLateFailureUpdatesExitCode(t *testing.T) {
+	root := t.TempDir()
+	id := "eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee"
+	updates := `{"timestamp":1700000000,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"go"}}}}
+{"timestamp":1700000001,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"call-10","title":"run_terminal_command","rawInput":{"command":"boom"},"_meta":{"x.ai/tool":{"name":"run_terminal_command"}}}}}
+{"timestamp":1700000002,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-10","content":[{"type":"content","content":{"type":"text","text":"working…"}}]}}}
+{"timestamp":1700000003,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-10","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Tool failed: blocked"}}]}}}
+{"timestamp":1700000004,"method":"_x.ai/session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"turn_completed","stop_reason":"end_turn"}}}
+`
+	writeSession(t, root, "proj", id, summaryFile{}, updates, sampleEventsClosed())
+	r := New(root)
+
+	events, err := r.GetRenderEvents(id)
+	if err != nil {
+		t.Fatalf("GetRenderEvents: %v", err)
+	}
+	var results []model.RenderEvent
+	for _, e := range events {
+		if e.Type == "ToolResult" && e.ToolCallID == "call-10" {
+			results = append(results, e)
+		}
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 ToolResult, got %d", len(results))
+	}
+	if results[0].ExitCode != 1 {
+		t.Errorf("exit=%d, want 1 after failed status", results[0].ExitCode)
+	}
+	if results[0].Stdout != "Tool failed: blocked" {
+		t.Errorf("stdout=%q, want failure payload", results[0].Stdout)
+	}
+}
