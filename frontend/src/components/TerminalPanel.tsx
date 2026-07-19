@@ -690,6 +690,35 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         activeHoverLine = bufLine
       }
 
+      // Deferred jump target: set when a panel jump arrives before the buffer
+      // contains the target logical line (live positions race the render).
+      // Flushed after every buffer scan; on expiry it falls back to the legacy
+      // clamping resolution so the click is never silently dropped.
+      let pendingJump: { lineStart: number; logicalStart?: number; deadline: number } | null = null
+      const execJump = (lineStart: number, logicalStart: number | undefined, allowClamp: boolean): boolean => {
+        let line: number
+        if (typeof logicalStart === 'number') {
+          if (!allowClamp && (logicalRows.length === 0 || logicalStart >= logicalRows.length)) return false
+          line = logicalToDisplayLine(logicalStart)
+        } else {
+          line = Math.max(0, toDisplayLine(lineStart))
+        }
+        openAtTop = false
+        term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2)))
+        flashLines(line, 1)
+        return true
+      }
+      const flushPendingJump = () => {
+        if (!pendingJump) return
+        const j = pendingJump
+        if (Date.now() > j.deadline) {
+          pendingJump = null
+          execJump(j.lineStart, j.logicalStart, true)
+          return
+        }
+        if (execJump(j.lineStart, j.logicalStart, false)) pendingJump = null
+      }
+
       // Scan the xterm.js buffer for all registered matchers and populate interactionMap.
       // Called after every render so buffer lines are the source of truth (no Go lineStart dependency).
       const scanBuffer = () => {
@@ -701,6 +730,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           }
           logicalRows = rows
         }
+        flushPendingJump()
         interactionMap.clear()
         rowValidity.clear()
         if (lineMatchers.length === 0) return
@@ -1228,6 +1258,11 @@ const snapshotTerminal = () => {
           toDisplayLine,
           logicalToDisplayLine,
           toOriginalLine,
+          jumpToPosition: (lineStart, logicalStart) => {
+            if (!execJump(lineStart, logicalStart, false)) {
+              pendingJump = { lineStart, logicalStart, deadline: Date.now() + 15000 }
+            }
+          },
           hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
           setFoldsCollapsed,
           getCollapsedFoldKeys: () => [...collapsedKeys],

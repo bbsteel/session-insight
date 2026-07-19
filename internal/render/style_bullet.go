@@ -42,12 +42,12 @@ type grokBullet struct{}
 func (grokBullet) Char() string { return "◆" }
 
 func (grokBullet) ColorForTool(p *Profile, toolName string, failed bool) Color {
+	// Failure wins over the per-tool color: a failed read_file/grep must not
+	// keep the success-green diamond (native TUI also marks failures red).
+	if failed {
+		return p.Palette.ErrorBright
+	}
 	switch toolName {
-	case "Run":
-		if failed {
-			return p.Palette.ErrorBright
-		}
-		return p.Palette.Success
 	case "Skill":
 		return p.Palette.Skill
 	}

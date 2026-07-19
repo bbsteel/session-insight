@@ -47,6 +47,12 @@ export interface TerminalControl {
   // badges change header wrap counts; prefer this for jump targets whenever
   // the position carries payload.logical_start.
   logicalToDisplayLine: (origLogical: number) => number
+  // Jump (scroll-centered + flash) to a positions-API anchor. When the
+  // logical line is not in the buffer yet — live positions can race ahead of
+  // the terminal render — the jump is deferred and fired after the next
+  // rewrite that contains it, instead of clamping to the buffer tail and
+  // flashing the wrong row.
+  jumpToPosition: (lineStart: number, logicalStart?: number) => void
   hiddenLineCount: () => number
   // Batch collapse/expand fold groups in a single rewrite. anchorOriginalRow
   // (original render row, e.g. the right-clicked row) stays put on screen;

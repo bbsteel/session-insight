@@ -141,3 +141,27 @@ func TestGrokRunFailedUsesErrorColor(t *testing.T) {
 		t.Errorf("missing ◆ Run header line")
 	}
 }
+
+// A failed non-Run tool (e.g. read_file) must also get the error-colored
+// diamond — previously ColorForTool returned success-green for every tool
+// except Run, so failed reads looked successful.
+func TestGrokFailedReadUsesErrorColor(t *testing.T) {
+	ts := time.Now()
+	evts := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "grok"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "grok", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "grok",
+			ToolName: "read_file", ToolCallID: "c1", ToolInput: map[string]any{"target_file": "/x"}},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "grok",
+			ToolCallID: "c1", ExitCode: 1, Stdout: "Error: is a directory"},
+	}
+	ansi := FormatEvents(evts, 100)
+	plain := stripANSIForTest(ansi)
+	line := lineForTool("read_file", plain, ansi)
+	if line == "" {
+		t.Fatalf("missing ◆ read_file header line")
+	}
+	if !hasFgColor(line, ColErrorBright) {
+		t.Errorf("expected error color on failed read_file: %q", stripANSIForTest(line))
+	}
+}

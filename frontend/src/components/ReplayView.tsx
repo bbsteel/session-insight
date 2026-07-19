@@ -835,13 +835,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // 面板点击跳转:优先逻辑行(折叠 badge 不会让它漂移),旧缓存回退显示行。
   // 工具面板和交互消息面板共用同一套动效。
   const handlePanelJump = useCallback((lineStart: number, logicalStart?: number) => {
-    const ctrl = termControlRef.current
-    if (!ctrl) return
-    const line = typeof logicalStart === 'number'
-      ? ctrl.logicalToDisplayLine(logicalStart)
-      : Math.max(0, ctrl.toDisplayLine(lineStart))
-    ctrl.scrollToLineCentered(line)
-    ctrl.flashLines(line, 1)
+    // jumpToPosition defers when the live buffer hasn't caught up to the
+    // positions snapshot yet, instead of clamping onto the wrong row.
+    termControlRef.current?.jumpToPosition(lineStart, logicalStart)
   }, [])
 
   const toolCallCount = useMemo(
