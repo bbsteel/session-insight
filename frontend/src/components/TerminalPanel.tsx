@@ -24,15 +24,15 @@ const PROGRESS_ROW_TEXT = '推理中…'
 // The live progress row sits at the transcript tail; only scan this many rows
 // up from the bottom to find it (historical sessions have none).
 const PROGRESS_SCAN_ROWS = 400
-// Follow-mode hint rendered to the right of the hourglass on the in-progress
-// row (backend renders "  推理中…": 2 spaces + 6 cells of 推理中 + 1 cell …,
-// so the row text ends at cell 8; the hint starts one cell later). Shown only
-// while live follow is on — it tells the user how to pause and browse freely.
+// Follow-mode button rendered to the right of the hourglass on the
+// in-progress row (backend renders "  推理中…": 2 spaces + 6 cells of 推理中 +
+// 1 cell …, so the row text ends at cell 8; the button starts one cell
+// later). Shown only while live follow is on; clicking it pauses follow.
 const PROGRESS_HINT_X = 10
-const PROGRESS_HINT_TEXT = '跟随中 · 点击「跟随」暂停'
-// Cell width of PROGRESS_HINT_TEXT (CJK glyphs and 「」 are double-width),
-// plus one cell of slack so the last glyph never clips.
-const PROGRESS_HINT_CELLS = 26
+const PROGRESS_HINT_TEXT = '跟随中 · 点击暂停'
+// Cell width of PROGRESS_HINT_TEXT (CJK glyphs are double-width), plus slack
+// for the button padding so the last glyph never clips.
+const PROGRESS_HINT_CELLS = 19
 
 // Diagnostic instrumentation for the intermittent "scroll → blank screen,
 // recovers after a few clicks" symptom. Logs are prefixed [si-term] so they
@@ -99,6 +99,9 @@ interface Props {
   // viewport to the bottom even if the user was scrolled up. Only meaningful
   // for active sessions; ReplayView gates the toggle on isSessionLive.
   followOutput?: boolean
+  // Invoked by the follow-pause button next to the hourglass decoration so
+  // the user can stop following without reaching for the header toolbar.
+  onFollowDisable?: () => void
   onFoldChange?: () => void
   // Path-bearing fold headers (e.g. ◆ write … /path): open file menu instead
   // of only toggling the fold. foldKey is set so the menu can still expand.
@@ -143,7 +146,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -189,6 +192,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   onContextMenuRef.current = onContextMenu
   const onFoldPathActivateRef = useRef(onFoldPathActivate)
   onFoldPathActivateRef.current = onFoldPathActivate
+  const onFollowDisableRef = useRef(onFollowDisable)
+  onFollowDisableRef.current = onFollowDisable
   // Live follow is read from a ref inside refreshContent so toggling does not
   // remount the terminal; only the next live-tail poll needs the new value.
   const followOutputRef = useRef(followOutput)
@@ -872,9 +877,13 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           })
           progressMarker = marker
           progressDecoration = decoration
-          // Follow-mode hint to the right of the hourglass. Only visible
-          // while follow is on; visibility is re-evaluated on every paint so
-          // toggling 跟随 in the header reflects without a buffer rewrite.
+          // Follow-pause button to the right of the hourglass: a real click
+          // target (pointerEvents auto) that stops following, so the user
+          // watching a live tail can pause right there and browse history.
+          // Only visible while follow is on; visibility is re-evaluated on
+          // every paint so toggling 跟随 in the header reflects without a
+          // buffer rewrite. visibility:hidden elements receive no pointer
+          // events, so the hidden button never blocks terminal clicks.
           let hintDecoration: IDecoration | undefined
           try {
             hintDecoration = term.registerDecoration({ marker, x: PROGRESS_HINT_X, width: PROGRESS_HINT_CELLS, height: 1, layer: 'top' })
@@ -885,12 +894,28 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
             hintDecoration.onRender(element => {
               if (!element.dataset.siFollowHint) {
                 element.dataset.siFollowHint = '1'
-                element.style.pointerEvents = 'none'
+                const bgIdle = 'color-mix(in srgb, var(--accent-green) 15%, transparent)'
+                const bgHover = 'color-mix(in srgb, var(--accent-green) 30%, transparent)'
+                element.style.pointerEvents = 'auto'
+                element.style.cursor = 'pointer'
                 element.style.display = 'flex'
                 element.style.alignItems = 'center'
                 element.style.whiteSpace = 'nowrap'
-                element.style.color = 'var(--text-muted)'
+                element.style.borderRadius = '3px'
+                element.style.padding = '0 4px'
+                element.style.color = 'var(--accent-green)'
+                element.style.background = bgIdle
                 element.textContent = PROGRESS_HINT_TEXT
+                element.title = '暂停跟随，自由浏览之前的消息'
+                element.addEventListener('mouseenter', () => { element.style.background = bgHover })
+                element.addEventListener('mouseleave', () => { element.style.background = bgIdle })
+                element.addEventListener('click', e => {
+                  // Keep the click off the terminal's matcher hit-testing
+                  // (xterm MouseService would resolve this row/column).
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onFollowDisableRef.current?.()
+                })
               }
               element.style.visibility = followOutputRef.current ? 'visible' : 'hidden'
             })

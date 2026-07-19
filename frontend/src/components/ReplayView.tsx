@@ -1170,32 +1170,38 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             分析
           </button>
-          {sessionIsLive && (
-            <>
-              <span className="text-[var(--border-default)]">|</span>
-              <button
-                onClick={() => {
-                  setFollowOutput(v => {
-                    const next = !v
-                    if (next) {
-                      const ctrl = termControlRef.current
-                      if (ctrl) {
-                        const metrics = ctrl.getMetrics()
-                        ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
-                      }
-                    }
-                    return next
-                  })
-                }}
-                className={`h-7 rounded-md px-2 text-nav ${followOutput ? 'text-[var(--accent-green)] bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)]' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-                title={followOutput ? '关闭跟随：停止自动滚到底部' : '跟随输出（类似 tail -f）：活跃会话有新内容时自动滚到底部'}
-                aria-pressed={followOutput}
-                aria-label={followOutput ? '关闭跟随输出' : '开启跟随输出'}
-              >
-                {followOutput ? '● 跟随' : '跟随'}
-              </button>
-            </>
-          )}
+          <span className="text-[var(--border-default)]">|</span>
+          <button
+            onClick={() => {
+              setFollowOutput(v => {
+                const next = !v
+                if (next) {
+                  const ctrl = termControlRef.current
+                  if (ctrl) {
+                    const metrics = ctrl.getMetrics()
+                    ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
+                  }
+                }
+                return next
+              })
+            }}
+            disabled={!sessionIsLive}
+            className={`h-7 rounded-md px-2 inline-flex items-center gap-1 text-nav ${followOutput ? 'text-[var(--accent-green)] bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)]' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title={
+              !sessionIsLive
+                ? '跟随输出（类似 tail -f）：仅活跃会话可用'
+                : followOutput
+                  ? '关闭跟随：停止自动滚到底部'
+                  : '跟随输出（类似 tail -f）：活跃会话有新内容时自动滚到底部'
+            }
+            aria-pressed={followOutput}
+            aria-label={followOutput ? '关闭跟随输出' : '开启跟随输出'}
+          >
+            {followOutput && (
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />
+            )}
+            跟随
+          </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
           <span className="text-[var(--border-default)]">|</span>
@@ -1423,6 +1429,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 folds={folds}
                 tsKinds={tsKinds}
                 followOutput={followOutput && sessionIsLive}
+                onFollowDisable={() => setFollowOutput(false)}
                 onFoldChange={handleFoldChange}
                 onFoldPathActivate={(bufLine, meta) => openFilePopover(bufLine, meta, null)}
                 onContextMenu={handleTerminalContextMenu}
