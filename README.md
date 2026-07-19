@@ -45,7 +45,27 @@ Session Insight auto-discovers sessions from the following agents:
 | [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
 | [Grok](https://grok.com) | `~/.grok/sessions/` |
 
-## Getting Started
+## Download and Run
+
+No Go or Node.js installation is required for the pre-built release.
+
+1. Open the [latest GitHub Release](https://github.com/bbsteel/session-insight/releases/latest).
+2. Download the archive for your platform:
+
+   | Platform | Archive name |
+   |----------|--------------|
+   | Linux x86-64 | `session-insight-*-linux-amd64.tar.gz` |
+   | Linux arm64 | `session-insight-*-linux-arm64.tar.gz` |
+   | macOS Intel | `session-insight-*-darwin-amd64.tar.gz` |
+   | macOS Apple Silicon | `session-insight-*-darwin-arm64.tar.gz` |
+   | Windows x86-64 | `session-insight-*-windows-amd64.zip` |
+
+3. Extract the archive and run `session-insight` (`session-insight.exe` on Windows).
+4. Open **http://127.0.0.1:8080** if the browser does not open automatically.
+
+Each archive includes the executable, both READMEs, and the license. To verify the download, get `checksums.txt` from the same Release and compare its matching entry with `sha256sum <archive>` on Linux/macOS or `Get-FileHash <archive> -Algorithm SHA256` in PowerShell.
+
+## Build from Source
 
 ### Prerequisites
 
@@ -93,16 +113,6 @@ actual full application URL.
 Core browsing features operate locally. AI features remain disabled until you configure a model provider and explicitly request a generation. A generation sends a bounded excerpt of the selected session to the configured OpenAI-compatible endpoint or ACP agent; an ACP agent may in turn contact its own model provider.
 
 API credentials are stored locally in the Session Insight SQLite database and are not returned to the browser after saving. Treat that local database as sensitive data.
-
-## Pre-compiled Binaries
-
-Versioned archives are published on the [GitHub Releases](https://github.com/bbsteel/session-insight/releases) page for:
-
-- Linux x86-64 and arm64
-- macOS Intel and Apple Silicon
-- Windows x86-64
-
-Each archive contains the executable, both READMEs, and the license. Download `checksums.txt` from the same release, then compare its matching entry with `sha256sum <archive>` on Linux/macOS or `Get-FileHash <archive> -Algorithm SHA256` in PowerShell.
 
 ## License
 
