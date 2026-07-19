@@ -1,6 +1,6 @@
 # README screenshot workflow
 
-The three images in this directory are reproducible captures of the running app, not hand-made mockups.
+The five images in this directory are reproducible captures of the running app, not hand-made mockups.
 
 ## Choose a session
 
@@ -9,10 +9,12 @@ Use a completed session from this repository that shows representative terminal 
 The current set intentionally contains:
 
 1. `replay.png` — the primary replay UI, tool calls, filters, and semantic minimap.
-2. `analytics.png` — token/cache totals, tool usage, findings, and per-turn charts.
-3. `code-reader.png` — the file tree, reader, search action, and document outline.
+2. `interaction.png` — combined user/assistant message navigation over terminal replay.
+3. `settings.png` — the settings center's UI and terminal font controls.
+4. `analytics.png` — token/cache totals, tool usage, findings, and per-turn charts.
+5. `code-reader.png` — the file tree, reader, search action, and document outline.
 
-Three images are enough to cover the main workflow without turning the project README into a gallery.
+Together they cover replay, navigation, personalization, analysis, and code inspection without turning the project README into an exhaustive gallery.
 
 ## Capture
 

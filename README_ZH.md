@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml/badge.svg)](https://github.com/bbsteel/session-insight/actions/workflows/ci.yml)
 
-一款本地优先的 AI 编程 Agent 会话浏览、终端化回放与分析工具。它在交互式终端中重现带 ANSI 样式的对话、工具调用和代码输出；会话发现、索引、搜索和回放均在本机运行。AI 生成功能需主动启用，并可能向你配置的模型服务发送选定的会话上下文。
+一款本地优先的 AI 编程 Agent 会话浏览、终端原生回放与分析工具。它在交互式终端中重现带 ANSI 样式的对话、工具调用和代码输出；会话发现、索引、搜索和回放均在本机运行。AI 生成功能需主动启用，且只使用你配置的模型服务。
 
 [English](README.md)
 
@@ -12,16 +12,21 @@
 
 ## 功能亮点
 
-- **多 Agent 会话库** — 自动发现并索引 5 种编程 Agent 的会话，会话列表实时刷新，活跃会话可实时追尾
-- **终端回放与导航** — 回放 ANSI 输出、折叠工具调用、高亮代码，并通过语义小地图在用户输入、Turn、异常和上下文压缩点之间跳转
-- **搜索与整理** — 跨会话全文搜索，终端内支持正则、大小写和全词搜索；可按项目和 Agent 筛选，并用带备注的收藏夹整理会话
+- **多 Agent 会话库** — 自动发现并索引 6 种编程 Agent 的会话，会话列表实时刷新，准确识别活跃状态，并实时追尾运行中的会话
+- **终端原生回放** — 保留 ANSI 输出、助手排版、工具调用、代码与错误信息；可折叠冗长细节，并持续跟随活跃会话
+- **快速会话导航** — 默认从首条提示词开始，通过滚动置顶的当前用户消息、语义小地图，或合并用户消息与助手回复的交互消息面板快速跳转
+- **搜索与整理** — 在后台索引并显示进度，可跨会话检索元数据、提示词、助手回复、Skill、工具输入和错误；支持项目与 Agent 筛选，以及带备注的收藏
 - **工具、Diff 与代码查看** — 筛选工具调用并跳回原 Turn；查看内联或并排 Diff；在结构化代码阅读器或本机编辑器中打开会话提及的文件
 - **用量分析** — 查看输入、输出和缓存 Token，费用估算、工具用量、错误、异常、续写压力与逐 Turn 趋势
 - **会话生命周期工具** — 导出会话、复制按 Shell 生成的恢复命令，以及在运行进程保护和可用的强制停止流程下安全删除会话
 - **可选 AI 辅助** — 通过配置的 OpenAI 兼容 API 或本机 ACP Agent 生成会话总结、标题和交接提示词
-- **桌面开发工具体验** — 支持可调整面板和深色 / 浅色主题
+- **桌面个性化** — 支持深色 / 浅色主题、Agent 图标、自定义用户头像、可调整面板，以及相互独立的界面/终端字体和字号
 
 ## 更多截图
+
+| 交互消息 | 设置与字体 |
+|:--:|:--:|
+| ![合并用户消息与助手回复的导航面板](assets/screenshots/interaction.png) | ![提供界面和终端字体控制的设置中心](assets/screenshots/settings.png) |
 
 | 会话分析 | 结构化代码阅读器 |
 |:--:|:--:|
@@ -38,6 +43,7 @@ Session Insight 自动发现以下 Agent 的会话数据：
 | [GitHub Copilot](https://github.com/features/copilot) | `~/.copilot/session-state/` |
 | [opencode](https://opencode.ai) | opencode SQLite 数据库（自动定位） |
 | [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
+| [Grok](https://grok.com) | `~/.grok/sessions/` |
 
 ## 快速开始
 
@@ -55,6 +61,14 @@ bash run.sh all
 ```
 
 启动后访问 **http://127.0.0.1:8080**，浏览器会自动打开。
+
+常用运行命令：
+
+```bash
+./run.sh status       # 列出当前应用及 linked worktree 实例
+./run.sh restart      # 不重新构建，只停止并启动当前 checkout
+./run.sh stop         # 只停止当前 checkout 的实例
+```
 
 ### Windows
 
