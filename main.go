@@ -21,6 +21,13 @@ import (
 //go:embed frontend/dist
 var frontend embed.FS
 
+// 构建期通过 -ldflags "-X main.version=… -X main.commit=…" 注入：
+// release 只注入 tag 版本号；本地 run.sh 构建同时注入 commit 等开发信息。
+var (
+	version = "dev"
+	commit  = ""
+)
+
 // indexStatusAdapter maps indexer.Progress to the server HTTP DTO without
 // coupling server ↔ indexer packages beyond this thin main-process wire-up.
 type indexStatusAdapter struct{ ix *indexer.Indexer }
@@ -69,6 +76,8 @@ func main() {
 
 	idx := indexer.New(database, readers)
 	srv := server.New(database, readers)
+	srv.Version = version
+	srv.Commit = commit
 	srv.SetIndexStatus(indexStatusAdapter{idx})
 
 	// 索引轮产生实际变更后才通知：SSE 发出时数据已落库，侧栏重拉读到的

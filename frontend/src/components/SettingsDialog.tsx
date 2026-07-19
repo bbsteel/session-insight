@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchSettings, saveSettings } from '../api'
+import { fetchSettings, fetchVersion, saveSettings, type VersionInfo } from '../api'
 import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
 import { AVATAR_MAX_BYTES, setUserAvatar } from '../userAvatar'
 import {
@@ -30,6 +30,7 @@ import {
   AppearanceIcon,
   EditorIcon,
   FontIcon,
+  InfoIcon,
   NavigationIcon,
   SearchIcon,
   SparklesIcon,
@@ -43,9 +44,11 @@ interface Props {
   onHistoryLimitChange: (n: number) => void
   onClearHistory: () => void
   onOpenAISettings: () => void
+  /** 打开时定位到的 Tab（如侧边栏版本号点击进入「关于」）；默认外观 */
+  initialTab?: TabId
 }
 
-type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai'
+type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai' | 'about'
 
 interface TabDef {
   id: TabId
@@ -61,7 +64,10 @@ const TABS: TabDef[] = [
   { id: 'fonts', label: '字体', icon: FontIcon },
   { id: 'editor', label: '文件查看器', icon: EditorIcon },
   { id: 'ai', label: 'AI', icon: SparklesIcon },
+  { id: 'about', label: '关于', icon: InfoIcon },
 ]
+
+const GITHUB_REPO_URL = 'https://github.com/bbsteel/session-insight'
 
 const HISTORY_LIMIT_MIN = 1
 const HISTORY_LIMIT_MAX = 50
@@ -73,6 +79,7 @@ export default function SettingsDialog({
   onHistoryLimitChange,
   onClearHistory,
   onOpenAISettings,
+  initialTab,
 }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>('appearance')
   const [loading, setLoading] = useState(false)
@@ -98,6 +105,7 @@ export default function SettingsDialog({
   // 后完成,序号过期即丢弃,避免旧读取覆盖新选择(或覆盖中途的恢复默认)。
   const avatarReadSeq = useRef(0)
   const [avatarError, setAvatarError] = useState('')
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null)
 
   // 上传自定义头像:仅校验类型和大小(≤200KB),原图以 data URL 存本地。
   const handleAvatarFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,7 +149,7 @@ export default function SettingsDialog({
   // Load server-side settings whenever the dialog opens.
   useEffect(() => {
     if (!open) return
-    setActiveTab('appearance')
+    setActiveTab(initialTab ?? 'appearance')
     setDrag({ x: 0, y: 0 })
     setLoading(true)
     setNavOpenPrefState(getNavOpenPref())
@@ -151,6 +159,7 @@ export default function SettingsDialog({
     setUiFontSize(getUIFontSize())
     setTerminalFont(getTerminalFont())
     setTerminalFontSize(getTerminalFontSize())
+    void fetchVersion().then(setVersionInfo)
     fetchSettings()
       .then(s => {
         setEditorCommand(s.editor_command)
@@ -162,7 +171,7 @@ export default function SettingsDialog({
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [open])
+  }, [open, initialTab])
 
   // Keep local font state in sync when changed from another tab or component.
   useEffect(() => {
@@ -309,31 +318,35 @@ export default function SettingsDialog({
               const Icon = tab.icon
               const selected = activeTab === tab.id
               return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`group relative w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-helper transition-all duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                    selected
-                      ? 'bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] font-medium text-[var(--accent-blue)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-                  }`}
-                  aria-current={selected ? 'page' : undefined}
-                >
-                  {selected && (
-                    <span
-                      className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--accent-blue)]"
-                      aria-hidden="true"
-                    />
+                <div key={tab.id}>
+                  {tab.id === 'about' && (
+                    <div className="my-2 border-t border-[var(--border-muted)]" aria-hidden="true" />
                   )}
-                  <Icon
-                    className={`h-4 w-4 shrink-0 ${
+                  <button
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`group relative w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-helper transition-all duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                       selected
-                        ? 'text-[var(--accent-blue)]'
-                        : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]'
+                        ? 'bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] font-medium text-[var(--accent-blue)]'
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
                     }`}
-                  />
-                  <span className="truncate">{tab.label}</span>
-                </button>
+                    aria-current={selected ? 'page' : undefined}
+                  >
+                    {selected && (
+                      <span
+                        className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--accent-blue)]"
+                        aria-hidden="true"
+                      />
+                    )}
+                    <Icon
+                      className={`h-4 w-4 shrink-0 ${
+                        selected
+                          ? 'text-[var(--accent-blue)]'
+                          : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]'
+                      }`}
+                    />
+                    <span className="truncate">{tab.label}</span>
+                  </button>
+                </div>
               )
             })}
           </nav>
@@ -664,6 +677,57 @@ export default function SettingsDialog({
                   <button onClick={handleOpenAISettings} className={primaryBtnCls}>
                     管理 AI 模型源…
                   </button>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'about' && (
+              <div className="space-y-4">
+                <div className={sectionBox}>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-body font-semibold text-[var(--text-primary)]">
+                      Session Insight
+                    </span>
+                    <span className="text-helper text-[var(--text-secondary)]" data-testid="about-version">
+                      {versionInfo?.version ?? '…'}
+                    </span>
+                  </div>
+                  {versionInfo?.commit && (
+                    <div className="mt-1 text-meta text-[var(--text-muted)]">
+                      开发构建 · {versionInfo.commit}
+                    </div>
+                  )}
+                  <div className={sectionDesc}>本地浏览与分析 AI 编程助手会话；数据不出本机</div>
+                </div>
+
+                <div className={sectionBox}>
+                  <div className={sectionTitle}>链接</div>
+                  <div className="mt-2 space-y-1.5">
+                    {(
+                      [
+                        ['GitHub 仓库', GITHUB_REPO_URL],
+                        ['版本发布（Releases）', `${GITHUB_REPO_URL}/releases`],
+                        ['问题反馈（Issues）', `${GITHUB_REPO_URL}/issues`],
+                      ] as const
+                    ).map(([label, url]) => (
+                      <div key={url}>
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-helper text-[var(--accent-blue)] hover:underline"
+                        >
+                          {label}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className={sectionBox}>
+                  <div className="text-meta text-[var(--text-muted)]">
+                    MIT License · © 2026 bbsteel
+                  </div>
                 </div>
               </div>
             )}

@@ -30,6 +30,11 @@ type Server struct {
 	Mux     *http.ServeMux
 	events  *eventHub
 
+	// Version/Commit 由 main 从 -ldflags 注入值转交；release 构建只有 Version，
+	// Commit 为空表示非开发构建，GET /api/version 据此决定是否回传 commit。
+	Version string
+	Commit  string
+
 	// indexStatus is optional; when set, GET /api/index/status reports progress.
 	indexStatus IndexStatusProvider
 
@@ -93,6 +98,7 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	s.Mux.HandleFunc("GET /api/search", s.handleSearch)
 	s.Mux.HandleFunc("GET /api/index/status", s.handleIndexStatus)
+	s.Mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExportSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/render", s.handleRenderSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/edits", s.handleSessionEdits)

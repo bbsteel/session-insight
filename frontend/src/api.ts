@@ -1,5 +1,26 @@
 import type { AgentInfo, EditCall, PositionsResponse, SearchResult, SessionDetail, SessionSummary } from './types'
 
+export interface VersionInfo {
+  version: string
+  /** 开发构建的 commit（含 -dirty 标记）；release 构建为空字符串 */
+  commit: string
+}
+
+// 版本信息在进程生命周期内不变，缓存一次请求供侧边栏 footer 与「关于」页共用。
+let versionPromise: Promise<VersionInfo> | null = null
+
+export function fetchVersion(): Promise<VersionInfo> {
+  if (!versionPromise) {
+    versionPromise = fetch('/api/version')
+      .then(res => {
+        if (!res.ok) throw new Error(`Failed to fetch version: ${res.status}`)
+        return readJson<VersionInfo>(res, 'version')
+      })
+      .catch(() => ({ version: 'dev', commit: '' }))
+  }
+  return versionPromise
+}
+
 export async function fetchSessions(agent?: string): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
   if (agent) params.set('agent', agent)

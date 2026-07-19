@@ -108,7 +108,13 @@ do_build() {
 
   echo "==> Building Go binary"
   export GOCACHE="${GOCACHE:-/tmp/session-insight-go-build}"
-  go build -tags sqlite_fts5 -o "$BIN_PATH" .
+  # 开发构建注入 describe 版本与 commit（dirty 时标记），关于页据此展示开发信息；
+  # release 构建由 .github/workflows/release.yml 只注入 tag 版本号。
+  local version commit dirty=""
+  version=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+  git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null || dirty="-dirty"
+  commit="$(git rev-parse --short HEAD 2>/dev/null || echo "")${dirty}"
+  go build -tags sqlite_fts5 -ldflags "-X main.version=${version} -X main.commit=${commit}" -o "$BIN_PATH" .
   echo "==> Build complete: $BIN_PATH"
 }
 
