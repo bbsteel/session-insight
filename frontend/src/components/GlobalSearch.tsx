@@ -450,7 +450,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
         <div className="relative">
           <button
             onClick={() => setShowSettings(true)}
-            className={`h-7 w-7 rounded-md text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+            className={`inline-flex h-7 w-auto items-center gap-1 rounded-md px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
               showSettings
                 ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
                 : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -458,7 +458,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
             title="设置"
             aria-label="设置"
           >
-            ⚙
+            <span aria-hidden="true">⚙</span>
+            <span>设置</span>
           </button>
         </div>
       </div>
