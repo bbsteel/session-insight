@@ -62,14 +62,14 @@ usage() {
 Usage: $0 <command>
 
 Commands:
-  build       只构建（前端 + Go 二进制），不运行
-  start       后台启动已构建好的二进制，不重新构建
-  stop        停止本工作树后台进程
-  restart     重启本工作树（stop + start）
-  status      查看本工作树状态，并列出所有实例（编号 / PID / 端口 / 启动时间）
-  kill <n…>   按 status 列表编号停止实例（编号每次重算，kill 前请先 status；例: kill 1 3）
-  all         构建 + 运行
-  log         查看后台日志
+  build       Build only (frontend + Go binary), do not run
+  start       Start the built binary in the background, do not rebuild
+  stop        Stop the background process for this worktree
+  restart     Restart this worktree (stop + start)
+  status      Show this worktree status and list all instances (# / PID / port / start time)
+  kill <n…>   Stop instances by their status list numbers (numbers are recalculated each run; run status before kill; e.g. kill 1 3)
+  all         Build + run
+  log         View background log
 
 Linked worktrees automatically use an OS-assigned random loopback port on the
 first run and reuse the same port on subsequent restarts (persisted to
