@@ -107,7 +107,7 @@ async function run() {
 
   try {
     const sessionId = await chooseSession(page)
-    console.log(`Using session ${sessionId}`)
+    console.log('Using a recorded session for replay navigation validation')
     await openSession(page, sessionId)
 
     let state = await navigationState(page)
