@@ -25,6 +25,11 @@ type acpClient struct {
 // headless CLI (see grokCLIClient) because it has no ACP server.
 var LocalAgents = []string{"claude", "codex", "gemini", "grok"}
 
+// codexACPAgentPackage is pinned for reproducible SI releases. The release
+// workflow compares it with the ACP registry and blocks a release when the
+// registry has moved, forcing the adapter upgrade through tests and review.
+const codexACPAgentPackage = "@agentclientprotocol/codex-acp@1.1.4"
+
 // LocalAgentLabel is a short UI/docs label for a local agent id.
 func LocalAgentLabel(agent string) string {
 	switch agent {
@@ -53,7 +58,7 @@ func acpCommand(agent string) ([]string, error) {
 	case "claude":
 		return []string{"npx", "-y", "@agentclientprotocol/claude-agent-acp@latest"}, nil
 	case "codex":
-		return []string{"npx", "-y", "@zed-industries/codex-acp@latest"}, nil
+		return []string{"npx", "-y", codexACPAgentPackage}, nil
 	case "gemini":
 		return []string{"gemini", "--experimental-acp"}, nil
 	default:
@@ -393,13 +398,9 @@ type acpSession struct {
 }
 
 func (s *acpSession) modelList() []Model {
-	if s.Models != nil && len(s.Models.AvailableModels) > 0 {
-		models := make([]Model, 0, len(s.Models.AvailableModels))
-		for _, m := range s.Models.AvailableModels {
-			models = append(models, Model{ID: m.ModelID, Label: m.Name, Description: m.Description})
-		}
-		return models
-	}
+	// Modern adapters may expose both configOptions (base model plus separate
+	// reasoning effort) and legacy models (one entry per model/effort pair).
+	// Prefer configOptions so SI presents the same base-model list as Zed.
 	for _, opt := range s.ConfigOptions {
 		if opt.ID != "model" && opt.Category != "model" {
 			continue
@@ -407,6 +408,13 @@ func (s *acpSession) modelList() []Model {
 		models := make([]Model, 0, len(opt.Options))
 		for _, o := range opt.Options {
 			models = append(models, Model{ID: o.Value, Label: o.Name, Description: o.Description})
+		}
+		return models
+	}
+	if s.Models != nil && len(s.Models.AvailableModels) > 0 {
+		models := make([]Model, 0, len(s.Models.AvailableModels))
+		for _, m := range s.Models.AvailableModels {
+			models = append(models, Model{ID: m.ModelID, Label: m.Name, Description: m.Description})
 		}
 		return models
 	}
@@ -569,16 +577,24 @@ func (c *acpClient) Generate(ctx context.Context, prompt string, onStatus Status
 // is an error — silently generating with the agent's default is exactly the
 // behavior this feature exists to avoid.
 func (c *acpClient) applyModel(ctx context.Context, conn *acpConn, sess *acpSession) error {
+	method, params, err := c.modelSelectionRequest(sess)
+	if err != nil || method == "" {
+		return err
+	}
+	return conn.call(ctx, method, params, nil)
+}
+
+func (c *acpClient) modelSelectionRequest(sess *acpSession) (string, map[string]any, error) {
+	if configID := sess.modelConfigID(); configID != "" {
+		return "session/set_config_option",
+			map[string]any{"sessionId": sess.SessionID, "configId": configID, "value": c.cfg.ModelID}, nil
+	}
 	if sess.Models != nil {
 		if sess.Models.CurrentModelID == c.cfg.ModelID {
-			return nil
+			return "", nil, nil
 		}
-		return conn.call(ctx, "session/set_model",
-			map[string]any{"sessionId": sess.SessionID, "modelId": c.cfg.ModelID}, nil)
+		return "session/set_model",
+			map[string]any{"sessionId": sess.SessionID, "modelId": c.cfg.ModelID}, nil
 	}
-	if configID := sess.modelConfigID(); configID != "" {
-		return conn.call(ctx, "session/set_config_option",
-			map[string]any{"sessionId": sess.SessionID, "configId": configID, "value": c.cfg.ModelID}, nil)
-	}
-	return fmt.Errorf("agent %q offers no model selection over ACP; refresh the model list", c.cfg.Agent)
+	return "", nil, fmt.Errorf("agent %q offers no model selection over ACP; refresh the model list", c.cfg.Agent)
 }

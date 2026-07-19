@@ -45,7 +45,27 @@ Session Insight 自动发现以下 Agent 的会话数据：
 | [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
 | [Grok](https://grok.com) | `~/.grok/sessions/` |
 
-## 快速开始
+## 下载并运行
+
+使用预编译版本无需安装 Go 或 Node.js。
+
+1. 打开[最新 GitHub Release](https://github.com/bbsteel/session-insight/releases/latest)。
+2. 下载对应平台的压缩包：
+
+   | 平台 | 压缩包名称 |
+   |------|------------|
+   | Linux x86-64 | `session-insight-*-linux-amd64.tar.gz` |
+   | Linux arm64 | `session-insight-*-linux-arm64.tar.gz` |
+   | macOS Intel | `session-insight-*-darwin-amd64.tar.gz` |
+   | macOS Apple 芯片 | `session-insight-*-darwin-arm64.tar.gz` |
+   | Windows x86-64 | `session-insight-*-windows-amd64.zip` |
+
+3. 解压后运行 `session-insight`（Windows 为 `session-insight.exe`）。
+4. 如果浏览器没有自动打开，请访问 **http://127.0.0.1:8080**。
+
+每个压缩包包含可执行文件、中英文 README 和许可证。需要校验下载时，可从同一个 Release 获取 `checksums.txt`，再将对应记录与 Linux/macOS 上的 `sha256sum <archive>` 或 PowerShell 中的 `Get-FileHash <archive> -Algorithm SHA256` 结果比较。
+
+## 从源码构建
 
 ### 环境依赖
 
@@ -91,16 +111,6 @@ loopback 端口，并在后续重启时复用同一端口（持久化到 `.runti
 核心浏览功能均在本机运行。AI 功能在你配置模型源并主动发起生成前不会启用。生成时，应用会把所选会话的一段受长度限制的上下文发送给配置的 OpenAI 兼容接口或 ACP Agent；ACP Agent 可能继续访问其自身的模型服务。
 
 API 凭据保存在本机 Session Insight SQLite 数据库中，保存后不会再返回给浏览器。请将该本地数据库视为敏感数据妥善保护。
-
-## 预编译二进制
-
-版本化压缩包会发布到 [GitHub Releases](https://github.com/bbsteel/session-insight/releases) 页面，支持：
-
-- Linux x86-64 和 arm64
-- macOS Intel 和 Apple Silicon
-- Windows x86-64
-
-每个压缩包都包含可执行文件、中英文 README 和许可证。可从同一个 Release 下载 `checksums.txt`，再将对应记录与 Linux/macOS 上的 `sha256sum <archive>` 或 PowerShell 中的 `Get-FileHash <archive> -Algorithm SHA256` 结果比较。
 
 ## 开源协议
 
