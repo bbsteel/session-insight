@@ -24,6 +24,15 @@ const PROGRESS_ROW_TEXT = '推理中…'
 // The live progress row sits at the transcript tail; only scan this many rows
 // up from the bottom to find it (historical sessions have none).
 const PROGRESS_SCAN_ROWS = 400
+// Follow-mode button rendered to the right of the hourglass on the
+// in-progress row (backend renders "  推理中…": 2 spaces + 6 cells of 推理中 +
+// 1 cell …, so the row text ends at cell 8; the button starts one cell
+// later). Shown only while live follow is on; clicking it pauses follow.
+const PROGRESS_HINT_X = 10
+const PROGRESS_HINT_TEXT = '跟随中 · 点击暂停'
+// Cell width of PROGRESS_HINT_TEXT (CJK glyphs are double-width), plus slack
+// for the button padding so the last glyph never clips.
+const PROGRESS_HINT_CELLS = 19
 
 // Diagnostic instrumentation for the intermittent "scroll → blank screen,
 // recovers after a few clicks" symptom. Logs are prefixed [si-term] so they
@@ -90,6 +99,13 @@ interface Props {
   // viewport to the bottom even if the user was scrolled up. Only meaningful
   // for active sessions; ReplayView gates the toggle on isSessionLive.
   followOutput?: boolean
+  // Invoked by the follow-pause button next to the hourglass decoration so
+  // the user can stop following without reaching for the header toolbar.
+  onFollowDisable?: () => void
+  // One-shot buffer line to land on after the first write, used when
+  // revisiting a session with follow off (the position the user left at).
+  // Ignored when follow is on — the tail pin wins. Read once at mount.
+  initialScrollLine?: number | null
   onFoldChange?: () => void
   // Path-bearing fold headers (e.g. ◆ write … /path): open file menu instead
   // of only toggling the fold. foldKey is set so the menu can still expand.
@@ -134,7 +150,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -180,10 +196,25 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   onContextMenuRef.current = onContextMenu
   const onFoldPathActivateRef = useRef(onFoldPathActivate)
   onFoldPathActivateRef.current = onFoldPathActivate
+  const onFollowDisableRef = useRef(onFollowDisable)
+  onFollowDisableRef.current = onFollowDisable
+  // Read once at mount (revisit restore); not a mount-effect dep.
+  const initialScrollLineRef = useRef(initialScrollLine)
+  initialScrollLineRef.current = initialScrollLine
   // Live follow is read from a ref inside refreshContent so toggling does not
   // remount the terminal; only the next live-tail poll needs the new value.
   const followOutputRef = useRef(followOutput)
   followOutputRef.current = followOutput
+  // Assigned inside the mount effect; invoked on either follow edge: the
+  // rising edge leaves open-at-top mode and jumps to the tail, and both
+  // edges re-apply the follow-pause chip next to the hourglass (created on
+  // rise, disposed on fall).
+  const followWakeRef = useRef<((on: boolean) => void) | null>(null)
+  const prevFollowRef = useRef(followOutput)
+  useEffect(() => {
+    if (followOutput !== prevFollowRef.current) followWakeRef.current?.(followOutput)
+    prevFollowRef.current = followOutput
+  }, [followOutput])
   // Assigned inside the mount effect once the terminal is live; the folds
   // prop effect below routes updated fold ranges into that closure.
   const applyFoldsRef = useRef<((folds: FoldRange[]) => void) | null>(null)
@@ -282,13 +313,67 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // Spinning hourglass over a "turn in progress" row (chrys in-flight
     // checkpoint). One decoration, re-applied after every rewrite so it tracks
     // the row as the buffer changes; disposed when the marker text is gone.
+    // A second decoration to its right carries the follow-pause button.
+    // NOTE: term.reset() (every writeComposed) discards the buffer WITHOUT
+    // disposing its markers, so any decoration anchored to a stale marker
+    // keeps rendering over the rewritten content at its old row until
+    // disposed — always clear these before a rewrite, not just after.
     let progressDecoration: IDecoration | null = null
+    let progressHintDecoration: IDecoration | null = null
     let progressMarker: IMarker | null = null
+    const disposeProgressHint = () => {
+      progressHintDecoration?.dispose()
+      progressHintDecoration = null
+    }
     const clearProgress = () => {
       progressDecoration?.dispose()
+      disposeProgressHint()
       progressMarker?.dispose()
       progressDecoration = null
       progressMarker = null
+    }
+    // Follow-pause chip anchored to the progress marker, to the right of the
+    // hourglass. Created only while follow is on and disposed the moment it
+    // turns off (no visibility hacks — xterm fully owns the element), so the
+    // chip can never linger over unrelated rows.
+    const applyProgressHint = () => {
+      disposeProgressHint()
+      if (!followOutputRef.current || !progressMarker || progressMarker.isDisposed) return
+      let hintDecoration: IDecoration | undefined
+      try {
+        hintDecoration = term.registerDecoration({ marker: progressMarker, x: PROGRESS_HINT_X, width: PROGRESS_HINT_CELLS, height: 1, layer: 'top' })
+      } catch {
+        hintDecoration = undefined
+      }
+      if (!hintDecoration) return
+      hintDecoration.onRender(element => {
+        if (element.dataset.siFollowHint) return // onRender fires per xterm paint
+        element.dataset.siFollowHint = '1'
+        const bgIdle = 'color-mix(in srgb, var(--accent-green) 15%, transparent)'
+        const bgHover = 'color-mix(in srgb, var(--accent-green) 30%, transparent)'
+        element.style.pointerEvents = 'auto'
+        element.style.cursor = 'pointer'
+        element.style.whiteSpace = 'nowrap'
+        element.style.borderRadius = '3px'
+        element.style.padding = '0 4px'
+        element.style.color = 'var(--accent-green)'
+        element.style.background = bgIdle
+        element.textContent = PROGRESS_HINT_TEXT
+        element.title = '暂停跟随，自由浏览之前的消息'
+        element.addEventListener('mouseenter', () => { element.style.background = bgHover })
+        element.addEventListener('mouseleave', () => { element.style.background = bgIdle })
+        element.addEventListener('click', e => {
+          // Keep the click off the terminal's matcher hit-testing
+          // (xterm MouseService would resolve this row/column).
+          e.preventDefault()
+          e.stopPropagation()
+          // Instant feedback — React state (and the follow edge hook, which
+          // disposes again) catches up within a frame.
+          disposeProgressHint()
+          onFollowDisableRef.current?.()
+        })
+      })
+      progressHintDecoration = hintDecoration
     }
 
     // User-message highlight decorations: one per row of each user prompt
@@ -452,7 +537,11 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let hasWrittenOnce = false
     // Opening a session should land at the start (top). Cleared once the user
     // scrolls away, jumps, or live-follow pins the viewport to the bottom.
-    let openAtTop = true
+    // When follow is already on at mount (auto-follow for an active session),
+    // start pinned to the tail instead; when revisiting with a saved scroll
+    // position (follow off), restore that line after the first write.
+    let pendingInitialScrollLine = followOutputRef.current ? null : initialScrollLineRef.current
+    let openAtTop = !followOutputRef.current && pendingInitialScrollLine == null
     // While rewriting, xterm briefly parks at the bottom; ignore those scrolls
     // so they don't cancel open-at-top before we re-anchor to line 0.
     let writingContent = false
@@ -894,6 +983,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           })
           progressMarker = marker
           progressDecoration = decoration
+          // Follow-pause chip rides the same marker (only while follow is on).
+          applyProgressHint()
           break
         }
       }
@@ -941,9 +1032,32 @@ const snapshotTerminal = () => {
         term.scrollToLine(0)
       }
 
+      // Follow edge hook: on the rising edge leave open-at-top mode and jump
+      // to the tail (follow already on at mount takes the openAtTop=false
+      // init above and parks at the bottom on the initial write instead);
+      // both edges create/dispose the follow-pause chip.
+      followWakeRef.current = (on: boolean) => {
+        if (on) {
+          openAtTop = false
+          if (hasWrittenOnce) term.scrollToBottom()
+        }
+        applyProgressHint()
+      }
+      // Replay a rising edge that fired while waitForTerminalFont was still
+      // pending: the ref was null then, so the followOutput effect dropped
+      // it and openAtTop would stay stuck true.
+      if (followOutputRef.current) followWakeRef.current(true)
+
       const writeComposed = (afterWrite?: () => void) => {
         if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
+        // term.reset() below discards the buffer without disposing its
+        // markers (xterm BufferSet.reset swaps in a fresh Buffer), leaving
+        // decorations anchored to stale rows painted over the new content
+        // until the post-write re-inject disposes them. Clear them up front
+        // so the rewrite window never shows ghost overlays.
+        clearProgress()
+        clearUserHighlights()
         const rewriteStart = performance.now()
         const wroteBytes = (foldView?.text ?? rawAnsi).length
         writingContent = true
@@ -958,6 +1072,14 @@ const snapshotTerminal = () => {
           updateStickyUserMsg()
           queueMetrics()
           if (afterWrite) afterWrite()
+          // Revisit restore (first write only): land on the line the user
+          // left at. Runs while writingContent is still true and before the
+          // grace window, so the scroll handlers don't fight it.
+          if (pendingInitialScrollLine != null) {
+            openAtTop = false
+            term.scrollToLine(pendingInitialScrollLine)
+            pendingInitialScrollLine = null
+          }
           // Always re-assert top when openAtTop is active (afterWrite may only
           // notify folds / restore an anchor). xterm parks at the bottom after
           // large writes; without this, session open lands at the end.
@@ -1505,6 +1627,7 @@ const snapshotTerminal = () => {
       if (controlRef) controlRef.current = null
       applyFoldsRef.current = null
       applyUserHighlightsRef.current = null
+      followWakeRef.current = null
       termRef.current = null
       term.dispose()
     }
