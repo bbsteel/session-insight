@@ -697,7 +697,12 @@ export default function SettingsDialog({
                       开发构建 · {versionInfo.commit}
                     </div>
                   )}
-                  <div className={sectionDesc}>本地浏览与分析 AI 编程助手会话；数据不出本机</div>
+                  <div className={sectionDesc}>
+                    本地优先的 AI 编程 Agent 会话浏览、终端原生回放与分析工具
+                  </div>
+                  <div className={sectionDesc}>
+                    会话发现、索引、搜索和回放均在本机运行；AI 生成功能需主动启用，只使用你配置的模型服务
+                  </div>
                 </div>
 
                 <div className={sectionBox}>
