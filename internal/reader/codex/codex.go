@@ -83,14 +83,14 @@ type codexPayload struct {
 	// turn_context
 	Model string `json:"model"`
 	// function_call / custom_tool_call
-	Name           string `json:"name"`
-	CustomToolName string `json:"custom_tool_name"`
-	CallID         string `json:"call_id"`
-	Output         string `json:"output"`
-	Success        bool   `json:"success"`
-	Status         string `json:"status"`
-	Stdout         string `json:"stdout"`
-	Stderr         string `json:"stderr"`
+	Name           string          `json:"name"`
+	CustomToolName string          `json:"custom_tool_name"`
+	CallID         string          `json:"call_id"`
+	Output         json.RawMessage `json:"output"`
+	Success        bool            `json:"success"`
+	Status         string          `json:"status"`
+	Stdout         string          `json:"stdout"`
+	Stderr         string          `json:"stderr"`
 	// token_count
 	Info *codexTokenCountInfo `json:"info"`
 	// task_complete / turn_aborted
@@ -99,10 +99,16 @@ type codexPayload struct {
 	Reason string `json:"reason"`
 	// thread_rolled_back
 	NumTurns int `json:"num_turns"`
+	// thread_goal_updated
+	Goal *codexGoal `json:"goal"`
 	// function_call arguments (JSON string)
 	Arguments string `json:"arguments"`
 	// custom_tool_call input (raw string)
 	Input string `json:"input"`
+}
+
+type codexGoal struct {
+	Objective string `json:"objective"`
 }
 
 type codexTokenCountInfo struct {
@@ -118,6 +124,9 @@ type codexTokenUsage struct {
 }
 
 var exitCodeRe = regexp.MustCompile(`Process exited with code (\d+)`)
+var applyPatchExecRe = regexp.MustCompile(`(?s)\b(?:const|let|var)\s+patch\s*=\s*("(?:\\.|[^"\\])*")\s*;.*?tools\.apply_patch\(\s*patch\s*\)`)
+var cellIDRe = regexp.MustCompile(`Script running with cell ID ([^\s]+)`)
+var execCommandRe = regexp.MustCompile(`(?s)tools\.exec_command\(\s*\{.*?["']?cmd["']?\s*:\s*("(?:\\.|[^"\\])*")`)
 
 // ---- helpers ----
 
@@ -129,6 +138,72 @@ func extractExitCode(output string) int {
 		return code
 	}
 	return 0
+}
+
+// outputText accepts both historical string outputs and the newer structured
+// input_text blocks emitted by functions.wait.
+func outputText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var blocks []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		parts := make([]string, 0, len(blocks))
+		for _, block := range blocks {
+			if block.Text != "" {
+				parts = append(parts, block.Text)
+			}
+		}
+		return strings.Join(parts, "")
+	}
+	return ""
+}
+
+func cellIDFromText(text string) string {
+	m := cellIDRe.FindStringSubmatch(text)
+	if len(m) == 2 {
+		return m[1]
+	}
+	return ""
+}
+
+// summarizeExecInput removes Codex's JavaScript bridge from the replay while
+// retaining the actual command the agent asked to run.
+func summarizeExecInput(name, input string) (string, map[string]any) {
+	if name != "exec" {
+		return name, parseArguments(input)
+	}
+	m := execCommandRe.FindStringSubmatch(input)
+	if len(m) != 2 {
+		return name, parseArguments(input)
+	}
+	var command string
+	if json.Unmarshal([]byte(m[1]), &command) != nil || command == "" {
+		return name, parseArguments(input)
+	}
+	return name, map[string]any{"command": command}
+}
+
+// unwrapApplyPatchExec recognises Codex's tool-wrapper form. Recent Codex
+// clients call apply_patch inside functions.exec JavaScript instead of
+// emitting apply_patch as the tool name. Preserve the underlying edit so the
+// replay uses the existing diff renderer rather than a generic exec box.
+func unwrapApplyPatchExec(name, input string) (toolName, toolInput string) {
+	if name != "exec" {
+		return name, input
+	}
+	m := applyPatchExecRe.FindStringSubmatch(input)
+	if len(m) != 2 {
+		return name, input
+	}
+	var patch string
+	if json.Unmarshal([]byte(m[1]), &patch) != nil || !strings.Contains(patch, "*** Begin Patch") {
+		return name, input
+	}
+	return "apply_patch", patch
 }
 
 func extractModelName(meta *codexSessionMeta) string {
@@ -478,6 +553,8 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 		foundProvider string
 		current       *codexTurnAttempt
 		turnStartTS   string
+		pendingGoal   string
+		lastGoal      string
 	)
 
 	scanner := bufio.NewScanner(f)
@@ -513,11 +590,22 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 				continue
 			}
 			switch p.Type {
+			case "thread_goal_updated":
+				if p.Goal != nil {
+					if objective := strings.TrimSpace(p.Goal.Objective); objective != "" && objective != lastGoal {
+						pendingGoal = objective
+						lastGoal = objective
+					}
+				}
 			case "task_started":
 				current = &codexTurnAttempt{turn: model.TurnVM{
 					TurnIndex: len(attempts),
 					Events:    []model.EventVM{},
 				}}
+				if pendingGoal != "" {
+					current.turn.UserMessage = pendingGoal
+					pendingGoal = ""
+				}
 				attempts = append(attempts, current)
 				active = append(active, current)
 				turnStartTS = evt.Timestamp
@@ -627,8 +715,9 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 					// this response_item), so appending here would duplicate it
 					// — the same reason codexToRenderEvents skips it.
 				case "user":
-					// system-context user message, not the actual user prompt
-					// skip to avoid overwriting user_message
+					// Ordinary user messages have a matching event_msg/user_message.
+					// Goal-mode objectives are carried by thread_goal_updated so they
+					// can be rendered once, instead of once per continuation turn.
 				}
 
 			case "reasoning":
@@ -649,7 +738,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 
 			case "function_call_output":
 				if current != nil {
-					exitCode := extractExitCode(p.Output)
+					exitCode := extractExitCode(outputText(p.Output))
 					isErr := exitCode != 0
 					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "function_call_output",
@@ -668,6 +757,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 					if name == "" {
 						name = p.CustomToolName
 					}
+					name, _ = unwrapApplyPatchExec(name, p.Input)
 					if name != "" {
 						current.turn.ToolNames = append(current.turn.ToolNames, name)
 					}
@@ -680,7 +770,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 
 			case "custom_tool_call_output":
 				if current != nil {
-					exitCode := extractExitCode(p.Output)
+					exitCode := extractExitCode(outputText(p.Output))
 					isErr := exitCode != 0
 					current.turn.Events = append(current.turn.Events, model.EventVM{
 						Type:      "custom_tool_call_output",
@@ -760,14 +850,21 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 // ---- RenderEvent adapter ----
 
 type codexRenderAttempt struct {
-	events        []model.RenderEvent
-	groups        []*codexRenderRollback
-	originalIndex int
+	events          []model.RenderEvent
+	groups          []*codexRenderRollback
+	originalIndex   int
+	hasUserPrompt   bool
+	goalPromptEvent int
 }
 
 type codexRenderRollback struct {
 	timestamp time.Time
 	removed   []*codexRenderAttempt
+}
+
+type codexCellTask struct {
+	toolCallID    string
+	parentEventID string
 }
 
 func codexRenderAttemptVisible(a *codexRenderAttempt) bool {
@@ -810,12 +907,17 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		eventCtr     int
 		pendingTools = make(map[string]string) // callID -> ToolInvocation EventID
 		completed    = make(map[string]bool)   // patch_apply_end already emitted the result
+		cellTasks    = make(map[string]codexCellTask)
+		waitTasks    = make(map[string]codexCellTask)
 
 		// Codex rollouts carry explicit turn brackets: task_started opens a
 		// turn, task_complete / turn_aborted closes it. An open bracket at
 		// EOF means the CLI is still working (or died mid-turn — the
 		// LiveWindow guard in shared.TrailingInProgress bounds that case).
-		turnOpen bool
+		turnOpen      bool
+		pendingGoal   string
+		pendingGoalTS time.Time
+		lastGoal      string
 	)
 
 	emit := func(evt model.RenderEvent) string {
@@ -851,9 +953,17 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				continue
 			}
 			switch p.Type {
+			case "thread_goal_updated":
+				if p.Goal != nil {
+					if objective := strings.TrimSpace(p.Goal.Objective); objective != "" && objective != lastGoal {
+						pendingGoal = objective
+						pendingGoalTS = ts
+						lastGoal = objective
+					}
+				}
 			case "task_started":
 				turnOpen = true
-				current = &codexRenderAttempt{}
+				current = &codexRenderAttempt{goalPromptEvent: -1}
 				attempts = append(attempts, current)
 				active = append(active, current)
 				emit(model.RenderEvent{
@@ -861,6 +971,18 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 					Timestamp: ts,
 					TurnIndex: len(attempts) - 1,
 				})
+				if pendingGoal != "" {
+					current.goalPromptEvent = len(current.events)
+					emit(model.RenderEvent{
+						Type:      "UserPrompt",
+						Timestamp: pendingGoalTS,
+						TurnIndex: len(attempts) - 1,
+						Text:      pendingGoal,
+					})
+					current.hasUserPrompt = true
+					pendingGoal = ""
+					pendingGoalTS = time.Time{}
+				}
 
 			case "task_complete", "turn_aborted":
 				turnOpen = false
@@ -891,12 +1013,19 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 
 			case "user_message":
 				if p.Message != "" {
+					// A direct user message in the same turn supersedes a goal
+					// update that was queued just before task_started.
+					if current.goalPromptEvent >= 0 {
+						current.events = append(current.events[:current.goalPromptEvent], current.events[current.goalPromptEvent+1:]...)
+						current.goalPromptEvent = -1
+					}
 					emit(model.RenderEvent{
 						Type:      "UserPrompt",
 						Timestamp: ts,
 						TurnIndex: len(attempts) - 1,
 						Text:      p.Message,
 					})
+					current.hasUserPrompt = true
 				}
 
 			case "agent_message":
@@ -939,22 +1068,53 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 			}
 			switch p.Type {
 			case "message":
-				// Skip: agent_message already covers the assistant text;
-				// response_item message blocks would duplicate it.
+				// agent_message already covers assistant text; response_item
+				// assistant blocks would duplicate it.
 			case "function_call":
+				input := parseArguments(p.Arguments)
+				if p.Name == "wait" {
+					if cellID, _ := input["cell_id"].(string); cellID != "" {
+						if task, ok := cellTasks[cellID]; ok {
+							waitTasks[p.CallID] = task
+							continue
+						}
+					}
+				}
 				invID := emit(model.RenderEvent{
 					Type:       "ToolInvocation",
 					Timestamp:  ts,
 					TurnIndex:  len(attempts) - 1,
 					ToolName:   p.Name,
 					ToolCallID: p.CallID,
-					ToolInput:  parseArguments(p.Arguments),
+					ToolInput:  input,
 				})
 				if p.CallID != "" {
 					pendingTools[p.CallID] = invID
 				}
 
 			case "function_call_output":
+				output := outputText(p.Output)
+				if task, ok := waitTasks[p.CallID]; ok {
+					delete(waitTasks, p.CallID)
+					if cellIDFromText(output) != "" {
+						continue
+					}
+					emit(model.RenderEvent{
+						Type:          "ToolResult",
+						Timestamp:     ts,
+						TurnIndex:     len(attempts) - 1,
+						ToolCallID:    task.toolCallID,
+						Stdout:        output,
+						ExitCode:      extractExitCode(output),
+						ParentEventID: task.parentEventID,
+					})
+					for cellID, active := range cellTasks {
+						if active == task {
+							delete(cellTasks, cellID)
+						}
+					}
+					continue
+				}
 				parentEventID := ""
 				if p.CallID != "" {
 					parentEventID = pendingTools[p.CallID]
@@ -965,8 +1125,8 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 					Timestamp:     ts,
 					TurnIndex:     len(attempts) - 1,
 					ToolCallID:    p.CallID,
-					Stdout:        p.Output,
-					ExitCode:      extractExitCode(p.Output),
+					Stdout:        output,
+					ExitCode:      extractExitCode(output),
 					ParentEventID: parentEventID,
 				})
 
@@ -979,19 +1139,29 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				if input == "" {
 					input = p.Arguments
 				}
+				name, input = unwrapApplyPatchExec(name, input)
+				name, toolInput := summarizeExecInput(name, input)
 				invID := emit(model.RenderEvent{
 					Type:       "ToolInvocation",
 					Timestamp:  ts,
 					TurnIndex:  len(attempts) - 1,
 					ToolName:   name,
 					ToolCallID: p.CallID,
-					ToolInput:  parseArguments(input),
+					ToolInput:  toolInput,
 				})
 				if p.CallID != "" {
 					pendingTools[p.CallID] = invID
 				}
 
 			case "custom_tool_call_output":
+				output := outputText(p.Output)
+				if cellID := cellIDFromText(output); cellID != "" {
+					if parentEventID := pendingTools[p.CallID]; parentEventID != "" {
+						cellTasks[cellID] = codexCellTask{toolCallID: p.CallID, parentEventID: parentEventID}
+						delete(pendingTools, p.CallID)
+						continue
+					}
+				}
 				if p.CallID != "" && completed[p.CallID] {
 					delete(completed, p.CallID)
 					continue
@@ -1006,8 +1176,8 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 					Timestamp:     ts,
 					TurnIndex:     len(attempts) - 1,
 					ToolCallID:    p.CallID,
-					Stdout:        p.Output,
-					ExitCode:      extractExitCode(p.Output),
+					Stdout:        output,
+					ExitCode:      extractExitCode(output),
 					ParentEventID: parentEventID,
 				})
 			}
