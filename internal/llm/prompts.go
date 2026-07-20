@@ -123,12 +123,56 @@ func ParseHandoffOutput(raw string) (content, metadataJSON string) {
 	trimmed := strings.TrimSpace(raw)
 	rest, block := stripLeadingJSONFence(trimmed)
 	if block == "" {
+		return normalizeHandoffBody(trimmed), ""
+	}
+	if !isHandoffMetadataJSON(block) || !startsHandoffHeading(rest) {
 		return trimmed, ""
 	}
-	if !isHandoffMetadataJSON(block) {
-		return trimmed, ""
+	return normalizeHandoffBody(rest), block
+}
+
+// normalizeHandoffBody repairs two common formatting slips without changing
+// ordinary Markdown in the generated prompt:
+//   - some models wrap the complete answer in one ```markdown fence;
+//   - some models restart their structured answer after a false start, leaving
+//     another valid metadata fence immediately before a fresh handoff heading.
+//
+// The second case is deliberately strict so JSON examples in the handoff body
+// remain untouched.
+func normalizeHandoffBody(raw string) string {
+	body := strings.TrimSpace(raw)
+	body = unwrapMarkdownFence(body)
+
+	searchFrom := 0
+	for searchFrom < len(body) {
+		rel := strings.Index(body[searchFrom:], "```json")
+		if rel < 0 {
+			break
+		}
+		start := searchFrom + rel
+		rest, block := stripLeadingJSONFence(body[start:])
+		if block != "" && isHandoffMetadataJSON(block) && startsHandoffHeading(rest) {
+			return normalizeHandoffBody(rest)
+		}
+		searchFrom = start + len("```json")
 	}
-	return strings.TrimSpace(rest), block
+	return body
+}
+
+func startsHandoffHeading(s string) bool {
+	trimmed := unwrapMarkdownFence(strings.TrimSpace(s))
+	return strings.HasPrefix(trimmed, "# 任务交接\n") || trimmed == "# 任务交接"
+}
+
+func unwrapMarkdownFence(s string) string {
+	for _, open := range []string{"```markdown\n", "```markdown\r\n", "```md\n", "```md\r\n"} {
+		if !strings.HasPrefix(s, open) || !strings.HasSuffix(s, "```") {
+			continue
+		}
+		inner := strings.TrimSuffix(strings.TrimPrefix(s, open), "```")
+		return strings.TrimSpace(inner)
+	}
+	return s
 }
 
 // stripLeadingJSONFence removes the first ```json ... ``` fence when it is

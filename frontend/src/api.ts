@@ -323,8 +323,47 @@ export function splitHandoffOutput(raw: string): { content: string; metadata: Ha
   const fenceEnd = content.indexOf('```', start + open.length)
   if (fenceEnd < 0) return { content, metadata: null }
   const metadata = parseHandoffMetadata(content.slice(start + open.length, fenceEnd).trim())
-  if (!isHandoffMetadata(metadata)) return { content, metadata: null }
-  return { content: content.slice(fenceEnd + 3).trim(), metadata }
+  const rest = content.slice(fenceEnd + 3)
+  if (!isHandoffMetadata(metadata) || !startsHandoffHeading(rest)) {
+    return { content: normalizeHandoffBody(content), metadata: null }
+  }
+  return { content: normalizeHandoffBody(rest), metadata }
+}
+
+function normalizeHandoffBody(raw: string): string {
+  const content = unwrapMarkdownFence(raw.trim())
+  let searchFrom = 0
+  while (searchFrom < content.length) {
+    const start = content.indexOf('```json', searchFrom)
+    if (start < 0) break
+    const nested = splitMetadataFence(content.slice(start))
+    if (nested && isHandoffMetadata(nested.metadata) && startsHandoffHeading(nested.rest)) {
+      return normalizeHandoffBody(nested.rest)
+    }
+    searchFrom = start + '```json'.length
+  }
+  return content
+}
+
+function splitMetadataFence(raw: string): { rest: string; metadata: HandoffMetadata | null } | null {
+  const match = /^```json(?:\r?\n)/.exec(raw)
+  if (!match) return null
+  const fenceEnd = raw.indexOf('```', match[0].length)
+  if (fenceEnd < 0) return null
+  return {
+    rest: raw.slice(fenceEnd + 3),
+    metadata: parseHandoffMetadata(raw.slice(match[0].length, fenceEnd).trim()),
+  }
+}
+
+function startsHandoffHeading(raw: string): boolean {
+  const content = unwrapMarkdownFence(raw.trim())
+  return content === '# 任务交接' || content.startsWith('# 任务交接\n')
+}
+
+function unwrapMarkdownFence(raw: string): string {
+  const match = /^```(?:markdown|md)\r?\n([\s\S]*)\r?\n```$/.exec(raw)
+  return match ? match[1].trim() : raw
 }
 
 export type AIKind = 'summary' | 'title' | 'handoff'

@@ -11,10 +11,17 @@ const fenced = `\`\`\`json\n${JSON.stringify(metadata)}\n\`\`\``
 
 assert.deepEqual(splitHandoffOutput(`${fenced}\n\n${body}`), { content: body, metadata })
 assert.deepEqual(splitHandoffOutput(`我会先核对现状。\n\n${fenced}\n\n${body}`), { content: body, metadata })
+assert.deepEqual(splitHandoffOutput(`${fenced}\n\n\`\`\`markdown\n${body}\n\`\`\``), { content: body, metadata })
+assert.deepEqual(splitHandoffOutput(`${fenced}\n\n# 任务交接\n\n错误的第一稿。\nPR: https://example.test/41${fenced}\n\n${body}`), {
+  content: body,
+  metadata,
+})
 assert.deepEqual(splitHandoffOutput(`说明配置。\n\n\`\`\`json\n{"port":8080}\n\`\`\`\n\n${body}`), {
   content: `说明配置。\n\n\`\`\`json\n{"port":8080}\n\`\`\`\n\n${body}`,
   metadata: null,
 })
+const handoffExample = `${body}\n\n示例：\n${fenced}\n\n继续执行测试。`
+assert.deepEqual(splitHandoffOutput(handoffExample), { content: handoffExample, metadata: null })
 for (const invalidRecommended of [null, [{}]]) {
   const invalidContent = `\`\`\`json\n${JSON.stringify({ difficulty: '中等', recommended: invalidRecommended })}\n\`\`\`\n\n${body}`
   assert.deepEqual(splitHandoffOutput(invalidContent), { content: invalidContent, metadata: null })

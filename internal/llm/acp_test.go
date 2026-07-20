@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +94,33 @@ func TestACPModelSelectionPrefersConfigOption(t *testing.T) {
 	want := map[string]any{"sessionId": "session-1", "configId": "model", "value": "gpt-5.6-terra"}
 	if !reflect.DeepEqual(params, want) {
 		t.Fatalf("params = %#v, want %#v", params, want)
+	}
+}
+
+func TestACPModelSelectionRejectsModelNoLongerAdvertised(t *testing.T) {
+	var sess acpSession
+	err := json.Unmarshal([]byte(`{
+		"sessionId":"session-1",
+		"configOptions":[{"id":"model","category":"model","options":[
+			{"value":"gpt-5.5","name":"GPT-5.5"},
+			{"value":"gpt-5.6-luna","name":"GPT-5.6-Luna"}
+		]}]
+	}`), &sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &acpClient{cfg: Config{Agent: "codex", ModelID: "gpt-5.4-mini"}}
+	method, params, err := client.modelSelectionRequest(&sess)
+	if err == nil {
+		t.Fatal("expected unavailable model error")
+	}
+	if method != "" || params != nil {
+		t.Fatalf("method = %q, params = %#v; want no selection request", method, params)
+	}
+	for _, want := range []string{"gpt-5.4-mini", "Codex CLI", "gpt-5.5", "gpt-5.6-luna"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err, want)
+		}
 	}
 }

@@ -585,6 +585,22 @@ func (c *acpClient) applyModel(ctx context.Context, conn *acpConn, sess *acpSess
 }
 
 func (c *acpClient) modelSelectionRequest(sess *acpSession) (string, map[string]any, error) {
+	models := sess.modelList()
+	if len(models) > 0 {
+		available := make([]string, 0, len(models))
+		selected := false
+		for _, model := range models {
+			available = append(available, model.ID)
+			if model.ID == c.cfg.ModelID {
+				selected = true
+			}
+		}
+		if !selected {
+			return "", nil, fmt.Errorf(
+				"model %q is no longer available from %s; refresh the model source and select one of: %s",
+				c.cfg.ModelID, LocalAgentLabel(c.cfg.Agent), strings.Join(available, ", "))
+		}
+	}
 	if configID := sess.modelConfigID(); configID != "" {
 		return "session/set_config_option",
 			map[string]any{"sessionId": sess.SessionID, "configId": configID, "value": c.cfg.ModelID}, nil

@@ -250,7 +250,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                 <button className={btnCls} disabled={st.busy} onClick={() => void generate(tab)}>
                   {st.busy ? '生成中…' : st.generation ? '重新生成' : (tab === 'summary' ? '生成总结' : tab === 'title' ? '生成标题' : '生成交接提示词')}
                 </button>
-                {!st.busy && st.generation && tab !== 'title' && (
+                {!st.busy && st.generation && tab === 'summary' && (
                   <button className={btnCls} onClick={() => copy(displayedContent)}>
                     {copied ? '已复制 ✓' : '复制'}
                   </button>
@@ -366,6 +366,13 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                   </div>
                 )
               })()}
+              {tab === 'handoff' && (
+                <div className="mb-2 flex justify-end">
+                  <button className={btnCls} onClick={() => copy(displayedContent)}>
+                    {copied ? '已复制 ✓' : '复制交接正文'}
+                  </button>
+                </div>
+              )}
               <div className="prose-custom min-w-0 text-helper text-[var(--text-primary)]">
                 <MarkdownRenderer content={displayedContent} />
               </div>

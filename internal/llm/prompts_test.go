@@ -28,6 +28,19 @@ func TestParseHandoffOutput(t *testing.T) {
 			wantMetadata: meta,
 		},
 		{
+			name:         "markdown wrapper is removed",
+			raw:          "```json\n" + meta + "\n```\n\n```markdown\n" + body + "\n```",
+			wantContent:  body,
+			wantMetadata: meta,
+		},
+		{
+			name: "restarted handoff replaces false start",
+			raw: "```json\n" + meta + "\n```\n\n# 任务交接\n\n错误的第一稿。\n" +
+				"PR: https://example.test/41```json\n" + meta + "\n```\n\n" + body,
+			wantContent:  body,
+			wantMetadata: meta,
+		},
+		{
 			name:         "no metadata block",
 			raw:          body,
 			wantContent:  body,
@@ -49,6 +62,12 @@ func TestParseHandoffOutput(t *testing.T) {
 			name:         "unrelated json in body is preserved",
 			raw:          "先检查配置。\n\n```json\n{\"port\": 8080}\n```\n\n" + body,
 			wantContent:  "先检查配置。\n\n```json\n{\"port\": 8080}\n```\n\n" + body,
+			wantMetadata: "",
+		},
+		{
+			name:         "handoff-shaped json example without fresh heading is preserved",
+			raw:          body + "\n\n示例：\n```json\n" + meta + "\n```\n\n继续执行测试。",
+			wantContent:  body + "\n\n示例：\n```json\n" + meta + "\n```\n\n继续执行测试。",
 			wantMetadata: "",
 		},
 		{
