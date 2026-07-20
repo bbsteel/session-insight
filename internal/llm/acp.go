@@ -596,9 +596,9 @@ func (c *acpClient) modelSelectionRequest(sess *acpSession) (string, map[string]
 			}
 		}
 		if !selected {
-			return "", nil, fmt.Errorf(
-				"model %q is no longer available from %s; refresh the model source and select one of: %s",
-				c.cfg.ModelID, LocalAgentLabel(c.cfg.Agent), strings.Join(available, ", "))
+			return "", nil, &ModelUnavailableError{
+				ModelID: c.cfg.ModelID, Agent: c.cfg.Agent, Available: available,
+			}
 		}
 	}
 	if configID := sess.modelConfigID(); configID != "" {

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
-import { splitHandoffOutput } from '/tmp/session-insight-handoff-output/api.js'
+import {
+  generateAI, ModelUnavailableError, splitHandoffOutput,
+} from '/tmp/session-insight-handoff-output/api.js'
 
 const metadata = {
   difficulty: '中等',
@@ -26,5 +28,21 @@ for (const invalidRecommended of [null, [{}]]) {
   const invalidContent = `\`\`\`json\n${JSON.stringify({ difficulty: '中等', recommended: invalidRecommended })}\n\`\`\`\n\n${body}`
   assert.deepEqual(splitHandoffOutput(invalidContent), { content: invalidContent, metadata: null })
 }
+
+const unavailableMessage = '模型「gpt-5.4-mini」已无法由 Codex CLI 使用；请刷新模型源并改选其他型号'
+globalThis.fetch = async () => new Response(
+  `event: error\ndata: ${JSON.stringify({
+    message: unavailableMessage,
+    code: 'model_unavailable',
+    provider_id: 17,
+  })}\n\n`,
+  { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+)
+await assert.rejects(
+  generateAI('session-1', 'handoff', () => {}),
+  error => error instanceof ModelUnavailableError
+    && error.message === unavailableMessage
+    && error.providerId === 17,
+)
 
 console.log('handoff output tests passed')

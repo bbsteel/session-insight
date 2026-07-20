@@ -2,6 +2,7 @@ package llm
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -118,7 +119,11 @@ func TestACPModelSelectionRejectsModelNoLongerAdvertised(t *testing.T) {
 	if method != "" || params != nil {
 		t.Fatalf("method = %q, params = %#v; want no selection request", method, params)
 	}
-	for _, want := range []string{"gpt-5.4-mini", "Codex CLI", "gpt-5.5", "gpt-5.6-luna"} {
+	var unavailable *ModelUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("error type = %T, want *ModelUnavailableError", err)
+	}
+	for _, want := range []string{"模型「gpt-5.4-mini」已无法", "Codex CLI", "gpt-5.5", "gpt-5.6-luna"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing %q", err, want)
 		}

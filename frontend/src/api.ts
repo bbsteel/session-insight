@@ -435,6 +435,13 @@ export async function fetchLatestGeneration(kind: AIKind, sessionId: string, age
 // callers show the "去配置模型" guidance instead of a plain error.
 export class NoProviderError extends Error {}
 
+export class ModelUnavailableError extends Error {
+  constructor(message: string, readonly providerId: number) {
+    super(message)
+    this.name = 'ModelUnavailableError'
+  }
+}
+
 // Runs one generation over SSE (POST + streamed response body — EventSource
 // can't POST, so the stream is parsed by hand). onStatus receives coarse
 // stage strings ("启动适配器", "请求模型", ...). providerId 0/undefined means
@@ -474,7 +481,13 @@ export async function generateAI(
       }
       if (!event || !data) continue
       if (event === 'status') onStatus((JSON.parse(data) as { stage: string }).stage)
-      else if (event === 'error') throw new Error((JSON.parse(data) as { message: string }).message)
+      else if (event === 'error') {
+        const payload = JSON.parse(data) as { message: string; code?: string; provider_id?: number }
+        if (payload.code === 'model_unavailable' && typeof payload.provider_id === 'number') {
+          throw new ModelUnavailableError(payload.message, payload.provider_id)
+        }
+        throw new Error(payload.message)
+      }
       else if (event === 'done') result = JSON.parse(data) as AIGeneration
     }
     if (done) break

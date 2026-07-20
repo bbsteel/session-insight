@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -532,6 +533,13 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		sendEvent("status", map[string]string{"stage": stage})
 	})
 	if err != nil {
+		var unavailable *llm.ModelUnavailableError
+		if errors.As(err, &unavailable) {
+			sendEvent("error", map[string]any{
+				"message": err.Error(), "code": "model_unavailable", "provider_id": provider.ID,
+			})
+			return
+		}
 		sendEvent("error", map[string]string{"message": err.Error()})
 		return
 	}

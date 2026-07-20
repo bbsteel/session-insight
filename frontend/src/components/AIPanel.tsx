@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  fetchLatestGeneration, fetchLLMProviders, generateAI, NoProviderError,
+  deleteLLMProvider, fetchLatestGeneration, fetchLLMProviders, generateAI,
+  ModelUnavailableError, NoProviderError,
   parseHandoffMetadata, removeSessionTitle, setSessionTitle, splitHandoffOutput,
   type AIGeneration, type AIKind, type LLMProvider,
 } from '../api'
@@ -36,9 +37,13 @@ interface TabState {
   stages: StageLine[]
   error: string | null
   noProvider: boolean
+  unavailableProviderId: number | null
 }
 
-const emptyTab: TabState = { generation: null, loaded: false, busy: false, stages: [], error: null, noProvider: false }
+const emptyTab: TabState = {
+  generation: null, loaded: false, busy: false, stages: [], error: null,
+  noProvider: false, unavailableProviderId: null,
+}
 
 // AnimatedDots cycles 1→2→3 dots for the in-flight stage line.
 function AnimatedDots() {
@@ -137,7 +142,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
       lastAt = performance.now()
       patch(kind, { stages: lines })
     }
-    patch(kind, { busy: true, stages: [], error: null, noProvider: false })
+    patch(kind, { busy: true, stages: [], error: null, noProvider: false, unavailableProviderId: null })
     setTitleApplied(false)
     try {
       const gen = await generateAI(sessionId, kind, onStage, ac.signal, providerId)
@@ -145,6 +150,12 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
     } catch (err) {
       if (ac.signal.aborted) return
       if (err instanceof NoProviderError) patch(kind, { busy: false, noProvider: true })
+      else if (err instanceof ModelUnavailableError) {
+        patch(kind, {
+          busy: false, stages: finalize(), error: err.message,
+          unavailableProviderId: err.providerId,
+        })
+      }
       else patch(kind, { busy: false, stages: finalize(), error: err instanceof Error ? err.message : String(err) })
     }
   }
@@ -182,6 +193,26 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
       broadcastTitle(null)
     } catch (err) {
       patch('title', { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  const removeUnavailableProvider = async () => {
+    const id = st.unavailableProviderId
+    if (id == null) return
+    const provider = providers.find(p => p.id === id)
+    const label = provider?.name ?? `#${id}`
+    if (!window.confirm(`删除已不可用的模型源「${label}」？`)) return
+    try {
+      await deleteLLMProvider(id)
+      const next = providers.filter(p => p.id !== id)
+      setProviders(next)
+      if (providerId === id) setProviderId(0)
+      patch(tab, {
+        error: null, unavailableProviderId: null, noProvider: next.length === 0,
+      })
+      window.dispatchEvent(new Event('si-ai-providers-changed'))
+    } catch (err) {
+      patch(tab, { error: `删除模型源失败：${err instanceof Error ? err.message : String(err)}` })
     }
   }
 
@@ -298,7 +329,19 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
             </div>
           )}
 
-          {st.error && <div className="mb-3 whitespace-pre-wrap break-all text-helper text-[var(--error)]">{st.error}</div>}
+          {st.error && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-[var(--error)] bg-[color-mix(in_srgb,var(--error)_6%,transparent)] px-3 py-2">
+              <div className="min-w-0 flex-1 whitespace-pre-wrap break-all text-helper text-[var(--error)]">{st.error}</div>
+              {st.unavailableProviderId != null && (
+                <button
+                  className={`${btnCls} flex-shrink-0 border-[var(--error)] text-[var(--error)]`}
+                  onClick={() => void removeUnavailableProvider()}
+                >
+                  删除此模型源
+                </button>
+              )}
+            </div>
+          )}
 
           {!st.noProvider && !st.generation && !st.busy && st.loaded && !st.error && (
             <div className="pt-8 text-center text-helper text-[var(--text-muted)]">
