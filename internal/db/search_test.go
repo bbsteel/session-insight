@@ -5,6 +5,7 @@ package db
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -96,6 +97,27 @@ func TestSearch_EnglishCaseInsensitive(t *testing.T) {
 	}
 	if !containsSession(results, "sess-1") {
 		t.Fatalf("expected sess-1 in results for 'Hello', got %v", results)
+	}
+}
+
+func TestSearch_SessionMetadataIdentifiers(t *testing.T) {
+	database := setupSearchDB(t)
+	defer database.Close()
+
+	const sessionID = "2337605b-8989-4a11-a5e4-29e924cc9656"
+	if err := database.UpsertSessionMeta("claude", sessionID, "/repo", "", "", "session-insight", "Tools 默认展开与显示完整路径", "", "", 0, 0, time.Time{}, time.Now()); err != nil {
+		t.Fatalf("UpsertSessionMeta: %v", err)
+	}
+
+	results, err := database.SearchTurns(sessionID, 30)
+	if err != nil {
+		t.Fatalf("SearchTurns(%q): %v", sessionID, err)
+	}
+	if len(results) == 0 || results[0].AgentType != "claude" || results[0].SessionID != sessionID {
+		t.Fatalf("expected direct session-ID result first, got %v", results)
+	}
+	if results[0].Match != "会话 ID: "+sessionID {
+		t.Fatalf("unexpected metadata match: %q", results[0].Match)
 	}
 }
 

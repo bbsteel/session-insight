@@ -44,6 +44,42 @@ func TestHandleListSessionsEmpty(t *testing.T) {
 	}
 }
 
+func TestHandleSearchIncludesMetadataForSessionIDMatch(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	const sessionID = "2337605b-8989-4a11-a5e4-29e924cc9656"
+	if err := database.UpsertSessionMeta("claude", sessionID, "/repo", "", "", "session-insight", "Tools 默认展开与显示完整路径", "", "", 0, 0, time.Time{}, time.Now()); err != nil {
+		t.Fatalf("UpsertSessionMeta: %v", err)
+	}
+
+	srv := New(database, nil)
+	req := httptest.NewRequest("GET", "/api/search?q="+sessionID, nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+
+	var results []struct {
+		SessionID string `json:"session_id"`
+		Name      string `json:"name"`
+		Project   string `json:"project"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&results); err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].SessionID != sessionID {
+		t.Fatalf("unexpected search results: %+v", results)
+	}
+	if results[0].Name != "Tools 默认展开与显示完整路径" || results[0].Project != "session-insight" {
+		t.Fatalf("metadata missing from search result: %+v", results[0])
+	}
+}
+
 func TestHandleListSessionsHidesSubagentsFromRootList(t *testing.T) {
 	database, err := db.Open(t.TempDir())
 	if err != nil {

@@ -124,6 +124,23 @@ func TestBuildTurnTexts_CapsAssistant(t *testing.T) {
 	}
 }
 
+func TestBuildTurnTexts_IndexesURLsBeyondAssistantCap(t *testing.T) {
+	const url = "https://github.com/bbsteel/session-insight/pull/41"
+	detail := &model.SessionDetail{
+		Turns: []model.TurnVM{{
+			TurnIndex:        0,
+			AssistantMessage: strings.Repeat("x", maxAssistantRunes+50) + " " + url,
+		}},
+	}
+	texts := buildTurnTexts(model.Session{ID: "x"}, detail, nil)
+	for _, row := range texts {
+		if row.Role == "link" && row.Content == url {
+			return
+		}
+	}
+	t.Fatalf("URL beyond assistant cap was not indexed: %+v", texts)
+}
+
 func TestSummarizeToolInput_SkipsUnknownKeys(t *testing.T) {
 	sum := summarizeToolInput(map[string]any{
 		"command":    "echo hi",

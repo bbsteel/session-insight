@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -340,7 +341,10 @@ const (
 	maxToolRunes      = 4096
 	maxErrorRunes     = 2048
 	maxFieldRunes     = 500
+	maxURLsPerTurn    = 32
 )
+
+var urlPattern = regexp.MustCompile(`https?://[^\s<>"\x60]+`)
 
 // highSignalToolInputKeys are short, searchable tool argument fields.
 // Long blobs (file bodies, patches, stdout) are intentionally omitted.
@@ -353,6 +357,7 @@ var highSignalToolInputKeys = []string{
 //   - role='meta': name, repo, branch, model, session id (turn_index=-1)
 //   - role='user': UserMessage
 //   - role='assistant': AssistantMessage (capped)
+//   - role='link': URLs extracted before any content cap
 //   - role='skill': skill names used in the turn
 //   - role='tool': tool names + high-signal input summaries (capped)
 //   - role='error': tool/LLM/agent failure text + anomaly labels (capped)
@@ -388,6 +393,13 @@ func buildTurnTexts(sess model.Session, detail *model.SessionDetail, renderEvent
 				Role:      "assistant",
 				Content:   truncateRunes(s, maxAssistantRunes),
 			})
+			if links := extractURLs(s); links != "" {
+				texts = append(texts, db.TurnText{
+					TurnIndex: t.TurnIndex,
+					Role:      "link",
+					Content:   links,
+				})
+			}
 		}
 		if skills := uniqueNonEmpty(t.Skills); len(skills) > 0 {
 			texts = append(texts, db.TurnText{
@@ -428,11 +440,29 @@ func buildTurnTexts(sess model.Session, detail *model.SessionDetail, renderEvent
 					Role:      "assistant",
 					Content:   "[已回滚] " + truncateRunes(s, maxAssistantRunes),
 				})
+				if links := extractURLs(s); links != "" {
+					texts = append(texts, db.TurnText{
+						TurnIndex: idx,
+						Role:      "link",
+						Content:   links,
+					})
+				}
 			}
 		}
 	}
 
 	return texts
+}
+
+// extractURLs preserves URLs that may occur after a capped transcript field.
+// URLs are compact, high-signal search keys, so indexing them separately keeps
+// the general transcript cap while retaining direct-link recall.
+func extractURLs(s string) string {
+	urls := urlPattern.FindAllString(s, maxURLsPerTurn)
+	if len(urls) == 0 {
+		return ""
+	}
+	return strings.Join(uniqueNonEmpty(urls), " ")
 }
 
 func turnErrorText(t model.TurnVM) string {
