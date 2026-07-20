@@ -308,7 +308,7 @@ function isHandoffMetadata(value: unknown): value is HandoffMetadata {
 // first JSON fence must carry the handoff schema, so JSON examples in the
 // actual prompt remain untouched.
 export function splitHandoffOutput(raw: string): { content: string; metadata: HandoffMetadata | null } {
-  const content = raw.trim()
+  const content = unwrapMarkdownFence(raw.trim())
   const starts = ['```json\n', '```json\r\n']
   let start = -1
   let open = ''
@@ -319,12 +319,53 @@ export function splitHandoffOutput(raw: string): { content: string; metadata: Ha
       open = candidate
     }
   }
-  if (start < 0 || content.slice(0, start).includes('```')) return { content, metadata: null }
+  if (start < 0 || content.slice(0, start).includes('```')) return normalizeHandoffBody(content)
   const fenceEnd = content.indexOf('```', start + open.length)
   if (fenceEnd < 0) return { content, metadata: null }
   const metadata = parseHandoffMetadata(content.slice(start + open.length, fenceEnd).trim())
-  if (!isHandoffMetadata(metadata)) return { content, metadata: null }
-  return { content: content.slice(fenceEnd + 3).trim(), metadata }
+  const rest = content.slice(fenceEnd + 3)
+  if (!isHandoffMetadata(metadata) || !startsHandoffHeading(rest)) {
+    return normalizeHandoffBody(content)
+  }
+  const normalized = normalizeHandoffBody(rest)
+  return { content: normalized.content, metadata: normalized.metadata ?? metadata }
+}
+
+function normalizeHandoffBody(raw: string): { content: string; metadata: HandoffMetadata | null } {
+  const content = unwrapMarkdownFence(raw.trim())
+  let searchFrom = 0
+  while (searchFrom < content.length) {
+    const start = content.indexOf('```json', searchFrom)
+    if (start < 0) break
+    const nested = splitMetadataFence(content.slice(start))
+    if (nested && isHandoffMetadata(nested.metadata) && startsHandoffHeading(nested.rest)) {
+      const normalized = normalizeHandoffBody(nested.rest)
+      return { content: normalized.content, metadata: normalized.metadata ?? nested.metadata }
+    }
+    searchFrom = start + '```json'.length
+  }
+  return { content, metadata: null }
+}
+
+function splitMetadataFence(raw: string): { rest: string; metadata: HandoffMetadata | null } | null {
+  const match = /^```json(?:\r?\n)/.exec(raw)
+  if (!match) return null
+  const fenceEnd = raw.indexOf('```', match[0].length)
+  if (fenceEnd < 0) return null
+  return {
+    rest: raw.slice(fenceEnd + 3),
+    metadata: parseHandoffMetadata(raw.slice(match[0].length, fenceEnd).trim()),
+  }
+}
+
+function startsHandoffHeading(raw: string): boolean {
+  const content = unwrapMarkdownFence(raw.trim())
+  return content === '# 任务交接' || content.startsWith('# 任务交接\n')
+}
+
+function unwrapMarkdownFence(raw: string): string {
+  const match = /^```(?:markdown|md)\r?\n([\s\S]*)\r?\n```$/.exec(raw)
+  return match ? match[1].trim() : raw
 }
 
 export type AIKind = 'summary' | 'title' | 'handoff'
@@ -396,6 +437,13 @@ export async function fetchLatestGeneration(kind: AIKind, sessionId: string, age
 // callers show the "去配置模型" guidance instead of a plain error.
 export class NoProviderError extends Error {}
 
+export class ModelUnavailableError extends Error {
+  constructor(message: string, readonly providerId: number) {
+    super(message)
+    this.name = 'ModelUnavailableError'
+  }
+}
+
 // Runs one generation over SSE (POST + streamed response body — EventSource
 // can't POST, so the stream is parsed by hand). onStatus receives coarse
 // stage strings ("启动适配器", "请求模型", ...). providerId 0/undefined means
@@ -435,7 +483,13 @@ export async function generateAI(
       }
       if (!event || !data) continue
       if (event === 'status') onStatus((JSON.parse(data) as { stage: string }).stage)
-      else if (event === 'error') throw new Error((JSON.parse(data) as { message: string }).message)
+      else if (event === 'error') {
+        const payload = JSON.parse(data) as { message: string; code?: string; provider_id?: number }
+        if (payload.code === 'model_unavailable' && typeof payload.provider_id === 'number') {
+          throw new ModelUnavailableError(payload.message, payload.provider_id)
+        }
+        throw new Error(payload.message)
+      }
       else if (event === 'done') result = JSON.parse(data) as AIGeneration
     }
     if (done) break

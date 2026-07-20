@@ -13,6 +13,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Config identifies one model source plus the user's explicit model choice.
@@ -33,6 +34,24 @@ type Model struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+}
+
+// ModelUnavailableError reports a saved ACP model choice that the agent no
+// longer advertises. Callers can distinguish it from transport failures and
+// offer a safe delete/reconfigure action without parsing the message text.
+type ModelUnavailableError struct {
+	ModelID   string
+	Agent     string
+	Available []string
+}
+
+func (e *ModelUnavailableError) Error() string {
+	if len(e.Available) == 0 {
+		return fmt.Sprintf("模型「%s」已无法由 %s 使用；该 Agent 当前未公布任何可选型号，请刷新模型源后重试",
+			e.ModelID, LocalAgentLabel(e.Agent))
+	}
+	return fmt.Sprintf("模型「%s」已无法由 %s 使用；请刷新模型源并改选以下型号之一：%s",
+		e.ModelID, LocalAgentLabel(e.Agent), strings.Join(e.Available, "、"))
 }
 
 // StatusFunc receives coarse progress stages ("下载适配器", "连接模型", ...)

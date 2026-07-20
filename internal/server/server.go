@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/db"
+	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/reader"
 )
 
@@ -29,6 +30,10 @@ type Server struct {
 	Readers []reader.BaseSessionReader
 	Mux     *http.ServeMux
 	events  *eventHub
+
+	// newGenerationClient is overridden by handler tests that need to verify
+	// typed model failures without starting a real provider process.
+	newGenerationClient func(llm.Config) (llm.Client, error)
 
 	// Version/Commit 由 main 从 -ldflags 注入值转交；release 构建只有 Version，
 	// Commit 为空表示非开发构建，GET /api/version 据此决定是否回传 commit。

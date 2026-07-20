@@ -7,6 +7,7 @@ import (
 
 func TestParseHandoffOutput(t *testing.T) {
 	meta := `{"difficulty":"中等","difficulty_reason":"跨前后端","recommended":[{"executor":"Codex CLI（本机已安装）","reason":"性价比"}]}`
+	restartedMeta := `{"difficulty":"困难","difficulty_reason":"重启后的评估","recommended":[{"executor":"Claude Code（本机已安装）","reason":"匹配任务"}]}`
 	body := "# 任务交接\n\n继续实现 AI 一期。\n\n## 背景与目标\n- x"
 
 	tests := []struct {
@@ -26,6 +27,25 @@ func TestParseHandoffOutput(t *testing.T) {
 			raw:          "我会核对当前工作区的改动与分支状态，再整理交接提示词。\n\n```json\n" + meta + "\n```\n\n" + body,
 			wantContent:  body,
 			wantMetadata: meta,
+		},
+		{
+			name:         "markdown wrapper is removed",
+			raw:          "```json\n" + meta + "\n```\n\n```markdown\n" + body + "\n```",
+			wantContent:  body,
+			wantMetadata: meta,
+		},
+		{
+			name:         "complete markdown-wrapped envelope is parsed",
+			raw:          "```markdown\n```json\n" + meta + "\n```\n\n" + body + "\n```",
+			wantContent:  body,
+			wantMetadata: meta,
+		},
+		{
+			name: "restarted handoff replaces false start",
+			raw: "```json\n" + meta + "\n```\n\n# 任务交接\n\n错误的第一稿。\n" +
+				"PR: https://example.test/41```json\n" + restartedMeta + "\n```\n\n" + body,
+			wantContent:  body,
+			wantMetadata: restartedMeta,
 		},
 		{
 			name:         "no metadata block",
@@ -49,6 +69,12 @@ func TestParseHandoffOutput(t *testing.T) {
 			name:         "unrelated json in body is preserved",
 			raw:          "先检查配置。\n\n```json\n{\"port\": 8080}\n```\n\n" + body,
 			wantContent:  "先检查配置。\n\n```json\n{\"port\": 8080}\n```\n\n" + body,
+			wantMetadata: "",
+		},
+		{
+			name:         "handoff-shaped json example without fresh heading is preserved",
+			raw:          body + "\n\n示例：\n```json\n" + meta + "\n```\n\n继续执行测试。",
+			wantContent:  body + "\n\n示例：\n```json\n" + meta + "\n```\n\n继续执行测试。",
 			wantMetadata: "",
 		},
 		{
