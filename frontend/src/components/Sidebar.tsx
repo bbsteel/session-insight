@@ -7,7 +7,7 @@ import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import ModelFilter, { type ModelEntry } from './ModelFilter'
 import AgentIcon from './AgentIcon'
-import BookmarkNoteEditor, { type BookmarkNoteTarget } from './BookmarkNoteEditor'
+import BookmarkNoteEditor, { type BookmarkNoteAnchor, type BookmarkNoteTarget } from './BookmarkNoteEditor'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import InstantTooltip from './InstantTooltip'
 import StarIcon from './StarIcon'
@@ -140,6 +140,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [noteEditorSession, setNoteEditorSession] = useState<SessionSummary | null>(null)
+  const [notePopover, setNotePopover] = useState<{ session: BookmarkNoteTarget; anchor: BookmarkNoteAnchor } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   // 活跃会话点「复制恢复命令」不直接复制，先弹窗确认——对同一会话开第二个
   // CLI 实例可能与正在写入的进程双写冲突。
@@ -152,7 +153,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [agentFilter, setAgentFilter] = useState<string>('')
   const [projectFilter, setProjectFilter] = useState<string>('')
   const [modelFilter, setModelFilter] = useState<string>('')
-  const [bookmarksOnly, setBookmarksOnly] = useState(false)
 
   const searchRef = useRef<HTMLInputElement>(null)
   const asideRef = useRef<HTMLElement>(null)
@@ -376,7 +376,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     setContextMenu({ x: e.clientX, y: e.clientY, session })
   }, [])
 
-  const toggleSessionBookmark = useCallback(async (session: SessionSummary) => {
+  const toggleSessionBookmark = useCallback(async (session: SessionSummary): Promise<boolean> => {
     const bookmarked = !session.bookmarked
     try {
       if (bookmarked) await addBookmark(session)
@@ -390,10 +390,29 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       setSessions(prev => applyBookmarkChange(prev, change))
       onBookmarkChange?.(change)
       showToast(bookmarked ? '已收藏' : '已取消收藏')
+      return true
     } catch {
       showToast(bookmarked ? '收藏失败' : '取消收藏失败')
+      return false
     }
   }, [onBookmarkChange, showToast])
+
+  const bookmarkFromRow = useCallback(async (event: React.MouseEvent<HTMLButtonElement>, session: SessionSummary) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const changed = await toggleSessionBookmark(session)
+    if (!changed || session.bookmarked) return
+
+    setNoteEditorSession(null)
+    setNotePopover({
+      session: { id: session.id, agent_type: session.agent_type },
+      anchor: {
+        x: event.clientX,
+        y: event.clientY,
+        placement: event.clientY > window.innerHeight - 240 ? 'above' : 'below',
+      },
+    })
+  }, [toggleSessionBookmark])
 
   const saveBookmarkNote = useCallback(async (session: BookmarkNoteTarget, note: string) => {
     try {
@@ -413,13 +432,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [onBookmarkChange, showToast])
 
-  const bookmarkCount = useMemo(
-    () => sessions.reduce((n, s) => n + (s.bookmarked ? 1 : 0), 0),
-    [sessions],
-  )
-
   const filtered = useMemo(() => sessions.filter(s => {
-    if (bookmarksOnly && !s.bookmarked) return false
     if (agentFilter && s.agent_type !== agentFilter) return false
     if (projectFilter && s.project !== projectFilter) return false
     if (modelFilter && !sessionMatchesModelFilter(s, modelFilter)) return false
@@ -434,9 +447,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !sid.includes(q) && !contentHit) return false
     }
     return true
-  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, modelFilter, bookmarksOnly, contentHits])
+  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, modelFilter, contentHits])
 
-  const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter || bookmarksOnly)
+  const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter)
 
   // A global-search result can be hidden by the sidebar's current filters and
   // by virtual scrolling. Reveal it, then move keyboard focus to its row.
@@ -445,7 +458,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     setAgentFilter(focusTarget.agentType)
     setProjectFilter('')
     setModelFilter('')
-    setBookmarksOnly(false)
     setQuery('')
   }, [focusTarget])
 
@@ -625,7 +637,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           onClick={() => onSelect(session.id, session.agent_type)}
           onContextMenu={(e) => openContextMenu(e, session)}
           title="右键打开菜单"
-          className={`relative w-full text-left pl-2.5 pr-8 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
+          className={`relative w-full text-left pl-2.5 pr-20 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
             selected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
           style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
@@ -636,16 +648,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <div className="min-w-0 flex-1">
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
                 {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
-                {session.bookmarked && (
-                  <InstantTooltip
-                    text={session.bookmark_note?.trim() ? `已收藏：${session.bookmark_note.trim()}` : '已收藏'}
-                    placement="top"
-                  >
-                    <span className="inline-flex flex-shrink-0 text-[var(--accent-blue)]" aria-label="已收藏">
-                      <StarIcon size={12} filled strokeWidth={1.5} />
-                    </span>
-                  </InstantTooltip>
-                )}
                 <span className="truncate">{getSessionName(session)}</span>
               </div>
               <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
@@ -657,6 +659,44 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </div>
           </div>
         </button>
+        {session.bookmarked && session.bookmark_note?.trim() && (
+          <InstantTooltip
+            text={`收藏备注：${session.bookmark_note.trim()}`}
+            placement="top"
+            className="absolute right-[3.25rem] top-1.5 flex h-5 w-5 items-center justify-center text-[var(--text-secondary)]"
+          >
+            <button
+              type="button"
+              onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
+              className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              aria-label="编辑收藏备注"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M5 3.75h10.5L20 8.25v12H5z" />
+                <path d="M15.5 3.75v4.5H20" />
+                <path d="M8.5 13h7M8.5 16.5h5" />
+              </svg>
+            </button>
+          </InstantTooltip>
+        )}
+        <InstantTooltip
+          text={session.bookmarked ? '取消收藏' : '收藏'}
+          placement="top"
+          className="absolute right-7 top-1.5"
+        >
+          <button
+            type="button"
+            onClick={event => { void bookmarkFromRow(event, session) }}
+            className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+              session.bookmarked
+                ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
+                : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
+            }`}
+            aria-label={session.bookmarked ? '取消收藏' : '收藏'}
+          >
+            <StarIcon size={14} filled={session.bookmarked} strokeWidth={1.75} />
+          </button>
+        </InstantTooltip>
         <button
           onClick={(e) => { e.stopPropagation(); copyId(session) }}
           tabIndex={-1}
@@ -732,8 +772,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         )}
       </div>
 
-      {/* Filter Bar: search + bookmark star */}
-      <div className="px-4 pb-2 flex-shrink-0 flex items-center gap-1.5">
+      {/* Filter Bar */}
+      <div className="px-4 pb-2 flex-shrink-0">
         <div className="relative min-w-0 flex-1">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8" />
@@ -757,25 +797,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </button>
           )}
         </div>
-        <InstantTooltip
-          text={bookmarksOnly ? '显示全部会话' : `只看收藏${bookmarkCount > 0 ? `（${bookmarkCount}）` : ''}`}
-          placement="bottom"
-        >
-          <button
-            type="button"
-            role="switch"
-            aria-checked={bookmarksOnly}
-            onClick={() => setBookmarksOnly(v => !v)}
-            aria-label={bookmarksOnly ? '关闭只看收藏' : '只看收藏'}
-            className={`h-[34px] w-[34px] flex-shrink-0 inline-flex items-center justify-center rounded-md border transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-              bookmarksOnly
-                ? 'border-[var(--accent-blue)]/40 bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
-                : 'border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:text-[var(--warning)] hover:border-[var(--border-muted)]'
-            }`}
-          >
-            <StarIcon size={16} filled={bookmarksOnly} />
-          </button>
-        </InstantTooltip>
       </div>
 
       {/* Agent Filter */}
@@ -818,7 +839,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   setAgentFilter('')
                   setProjectFilter('')
                   setModelFilter('')
-                  setBookmarksOnly(false)
                 }}
                 className="mt-3 h-7 px-3 rounded-md border border-[var(--border-default)] text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
@@ -909,6 +929,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 <button
                   className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
                   onClick={() => {
+                    setNotePopover(null)
                     setNoteEditorSession(contextMenu.session)
                     setContextMenu(null)
                   }}
@@ -993,6 +1014,16 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           session={noteEditorSession}
           onSave={saveBookmarkNote}
           onClose={() => setNoteEditorSession(null)}
+        />
+      )}
+
+      {notePopover && (
+        <BookmarkNoteEditor
+          session={notePopover.session}
+          anchor={notePopover.anchor}
+          title="添加收藏备注"
+          onSave={saveBookmarkNote}
+          onClose={() => setNotePopover(null)}
         />
       )}
 
