@@ -46,6 +46,10 @@ type ModelUnavailableError struct {
 }
 
 func (e *ModelUnavailableError) Error() string {
+	if len(e.Available) == 0 {
+		return fmt.Sprintf("模型「%s」已无法由 %s 使用；该 Agent 当前未公布任何可选型号，请刷新模型源后重试",
+			e.ModelID, LocalAgentLabel(e.Agent))
+	}
 	return fmt.Sprintf("模型「%s」已无法由 %s 使用；请刷新模型源并改选以下型号之一：%s",
 		e.ModelID, LocalAgentLabel(e.Agent), strings.Join(e.Available, "、"))
 }

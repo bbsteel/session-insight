@@ -586,7 +586,7 @@ func (c *acpClient) applyModel(ctx context.Context, conn *acpConn, sess *acpSess
 
 func (c *acpClient) modelSelectionRequest(sess *acpSession) (string, map[string]any, error) {
 	models := sess.modelList()
-	if len(models) > 0 {
+	if sess.modelConfigID() != "" || sess.Models != nil {
 		available := make([]string, 0, len(models))
 		selected := false
 		for _, model := range models {

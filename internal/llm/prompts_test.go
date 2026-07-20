@@ -7,6 +7,7 @@ import (
 
 func TestParseHandoffOutput(t *testing.T) {
 	meta := `{"difficulty":"中等","difficulty_reason":"跨前后端","recommended":[{"executor":"Codex CLI（本机已安装）","reason":"性价比"}]}`
+	restartedMeta := `{"difficulty":"困难","difficulty_reason":"重启后的评估","recommended":[{"executor":"Claude Code（本机已安装）","reason":"匹配任务"}]}`
 	body := "# 任务交接\n\n继续实现 AI 一期。\n\n## 背景与目标\n- x"
 
 	tests := []struct {
@@ -34,11 +35,17 @@ func TestParseHandoffOutput(t *testing.T) {
 			wantMetadata: meta,
 		},
 		{
-			name: "restarted handoff replaces false start",
-			raw: "```json\n" + meta + "\n```\n\n# 任务交接\n\n错误的第一稿。\n" +
-				"PR: https://example.test/41```json\n" + meta + "\n```\n\n" + body,
+			name:         "complete markdown-wrapped envelope is parsed",
+			raw:          "```markdown\n```json\n" + meta + "\n```\n\n" + body + "\n```",
 			wantContent:  body,
 			wantMetadata: meta,
+		},
+		{
+			name: "restarted handoff replaces false start",
+			raw: "```json\n" + meta + "\n```\n\n# 任务交接\n\n错误的第一稿。\n" +
+				"PR: https://example.test/41```json\n" + restartedMeta + "\n```\n\n" + body,
+			wantContent:  body,
+			wantMetadata: restartedMeta,
 		},
 		{
 			name:         "no metadata block",

@@ -120,15 +120,19 @@ func BuildPrompt(kind GenerationKind, detail *model.SessionDetail, handoffCandid
 // the block is missing or malformed the whole output is kept as content and
 // metadata is empty — the feature degrades, never fails the generation.
 func ParseHandoffOutput(raw string) (content, metadataJSON string) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := unwrapMarkdownFence(strings.TrimSpace(raw))
 	rest, block := stripLeadingJSONFence(trimmed)
 	if block == "" {
-		return normalizeHandoffBody(trimmed), ""
+		return normalizeHandoffBody(trimmed)
 	}
 	if !isHandoffMetadataJSON(block) || !startsHandoffHeading(rest) {
 		return trimmed, ""
 	}
-	return normalizeHandoffBody(rest), block
+	content, effectiveMetadata := normalizeHandoffBody(rest)
+	if effectiveMetadata != "" {
+		return content, effectiveMetadata
+	}
+	return content, block
 }
 
 // normalizeHandoffBody repairs two common formatting slips without changing
@@ -139,7 +143,7 @@ func ParseHandoffOutput(raw string) (content, metadataJSON string) {
 //
 // The second case is deliberately strict so JSON examples in the handoff body
 // remain untouched.
-func normalizeHandoffBody(raw string) string {
+func normalizeHandoffBody(raw string) (content, metadataJSON string) {
 	body := strings.TrimSpace(raw)
 	body = unwrapMarkdownFence(body)
 
@@ -152,11 +156,15 @@ func normalizeHandoffBody(raw string) string {
 		start := searchFrom + rel
 		rest, block := stripLeadingJSONFence(body[start:])
 		if block != "" && isHandoffMetadataJSON(block) && startsHandoffHeading(rest) {
-			return normalizeHandoffBody(rest)
+			content, nestedMetadata := normalizeHandoffBody(rest)
+			if nestedMetadata != "" {
+				return content, nestedMetadata
+			}
+			return content, block
 		}
 		searchFrom = start + len("```json")
 	}
-	return body
+	return body, ""
 }
 
 func startsHandoffHeading(s string) bool {

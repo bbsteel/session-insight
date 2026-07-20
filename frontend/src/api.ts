@@ -308,7 +308,7 @@ function isHandoffMetadata(value: unknown): value is HandoffMetadata {
 // first JSON fence must carry the handoff schema, so JSON examples in the
 // actual prompt remain untouched.
 export function splitHandoffOutput(raw: string): { content: string; metadata: HandoffMetadata | null } {
-  const content = raw.trim()
+  const content = unwrapMarkdownFence(raw.trim())
   const starts = ['```json\n', '```json\r\n']
   let start = -1
   let open = ''
@@ -319,18 +319,19 @@ export function splitHandoffOutput(raw: string): { content: string; metadata: Ha
       open = candidate
     }
   }
-  if (start < 0 || content.slice(0, start).includes('```')) return { content, metadata: null }
+  if (start < 0 || content.slice(0, start).includes('```')) return normalizeHandoffBody(content)
   const fenceEnd = content.indexOf('```', start + open.length)
   if (fenceEnd < 0) return { content, metadata: null }
   const metadata = parseHandoffMetadata(content.slice(start + open.length, fenceEnd).trim())
   const rest = content.slice(fenceEnd + 3)
   if (!isHandoffMetadata(metadata) || !startsHandoffHeading(rest)) {
-    return { content: normalizeHandoffBody(content), metadata: null }
+    return normalizeHandoffBody(content)
   }
-  return { content: normalizeHandoffBody(rest), metadata }
+  const normalized = normalizeHandoffBody(rest)
+  return { content: normalized.content, metadata: normalized.metadata ?? metadata }
 }
 
-function normalizeHandoffBody(raw: string): string {
+function normalizeHandoffBody(raw: string): { content: string; metadata: HandoffMetadata | null } {
   const content = unwrapMarkdownFence(raw.trim())
   let searchFrom = 0
   while (searchFrom < content.length) {
@@ -338,11 +339,12 @@ function normalizeHandoffBody(raw: string): string {
     if (start < 0) break
     const nested = splitMetadataFence(content.slice(start))
     if (nested && isHandoffMetadata(nested.metadata) && startsHandoffHeading(nested.rest)) {
-      return normalizeHandoffBody(nested.rest)
+      const normalized = normalizeHandoffBody(nested.rest)
+      return { content: normalized.content, metadata: normalized.metadata ?? nested.metadata }
     }
     searchFrom = start + '```json'.length
   }
-  return content
+  return { content, metadata: null }
 }
 
 function splitMetadataFence(raw: string): { rest: string; metadata: HandoffMetadata | null } | null {

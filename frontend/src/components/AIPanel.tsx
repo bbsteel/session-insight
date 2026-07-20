@@ -374,7 +374,12 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
           {!st.busy && st.generation && tab !== 'title' && (
             <>
               {tab === 'handoff' && (() => {
-                const meta = parseHandoffMetadata(st.generation!.metadata) ?? handoff?.metadata
+                // A cached pre-fix generation may carry a restarted envelope
+                // in content while its saved metadata still describes the
+                // discarded first draft. Prefer metadata recovered alongside
+                // the selected content; new normalized generations fall back
+                // to the server-stored metadata.
+                const meta = handoff?.metadata ?? parseHandoffMetadata(st.generation!.metadata)
                 if (!meta) return null
                 return (
                   <div className="mb-3 rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] px-3 py-2">

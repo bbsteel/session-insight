@@ -129,3 +129,43 @@ func TestACPModelSelectionRejectsModelNoLongerAdvertised(t *testing.T) {
 		}
 	}
 }
+
+func TestACPModelSelectionRejectsUnavailableLegacyModel(t *testing.T) {
+	var sess acpSession
+	if err := json.Unmarshal([]byte(`{
+		"sessionId":"session-1",
+		"models":{"currentModelId":"claude-sonnet","availableModels":[
+			{"modelId":"claude-sonnet","name":"Claude Sonnet"}
+		]}
+	}`), &sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &acpClient{cfg: Config{Agent: "claude", ModelID: "claude-opus-old"}}
+	method, params, err := client.modelSelectionRequest(&sess)
+	if err == nil || !strings.Contains(err.Error(), "claude-sonnet") {
+		t.Fatalf("error = %v, want advertised legacy model", err)
+	}
+	if method != "" || params != nil {
+		t.Fatalf("method = %q, params = %#v; want no selection request", method, params)
+	}
+}
+
+func TestACPModelSelectionRejectsEmptyAdvertisement(t *testing.T) {
+	var sess acpSession
+	if err := json.Unmarshal([]byte(`{
+		"sessionId":"session-1",
+		"configOptions":[{"id":"model","category":"model","options":[]}]
+	}`), &sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &acpClient{cfg: Config{Agent: "codex", ModelID: "gpt-5.4-mini"}}
+	method, params, err := client.modelSelectionRequest(&sess)
+	if err == nil || !strings.Contains(err.Error(), "当前未公布任何可选型号") {
+		t.Fatalf("error = %v, want empty-advertisement guidance", err)
+	}
+	if method != "" || params != nil {
+		t.Fatalf("method = %q, params = %#v; want no selection request", method, params)
+	}
+}

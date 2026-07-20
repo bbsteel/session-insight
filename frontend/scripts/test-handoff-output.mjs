@@ -8,15 +8,22 @@ const metadata = {
   difficulty_reason: '需要确认现有 UI 状态',
   recommended: [{ executor: 'Codex CLI', reason: '适合本地仓库' }],
 }
+const restartedMetadata = {
+  difficulty: '困难',
+  difficulty_reason: '重启后的评估',
+  recommended: [{ executor: 'Claude Code CLI', reason: '匹配任务' }],
+}
 const body = '# 任务交接\n\n继续修复会话交接渲染。'
 const fenced = `\`\`\`json\n${JSON.stringify(metadata)}\n\`\`\``
 
 assert.deepEqual(splitHandoffOutput(`${fenced}\n\n${body}`), { content: body, metadata })
 assert.deepEqual(splitHandoffOutput(`我会先核对现状。\n\n${fenced}\n\n${body}`), { content: body, metadata })
 assert.deepEqual(splitHandoffOutput(`${fenced}\n\n\`\`\`markdown\n${body}\n\`\`\``), { content: body, metadata })
-assert.deepEqual(splitHandoffOutput(`${fenced}\n\n# 任务交接\n\n错误的第一稿。\nPR: https://example.test/41${fenced}\n\n${body}`), {
+assert.deepEqual(splitHandoffOutput(`\`\`\`markdown\n${fenced}\n\n${body}\n\`\`\``), { content: body, metadata })
+const restartedFence = `\`\`\`json\n${JSON.stringify(restartedMetadata)}\n\`\`\``
+assert.deepEqual(splitHandoffOutput(`${fenced}\n\n# 任务交接\n\n错误的第一稿。\nPR: https://example.test/41${restartedFence}\n\n${body}`), {
   content: body,
-  metadata,
+  metadata: restartedMetadata,
 })
 assert.deepEqual(splitHandoffOutput(`说明配置。\n\n\`\`\`json\n{"port":8080}\n\`\`\`\n\n${body}`), {
   content: `说明配置。\n\n\`\`\`json\n{"port":8080}\n\`\`\`\n\n${body}`,

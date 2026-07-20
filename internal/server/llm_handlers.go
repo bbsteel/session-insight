@@ -416,6 +416,13 @@ func providerLLMConfig(p *db.LLMProvider) llm.Config {
 	}
 }
 
+func (s *Server) generationClient(cfg llm.Config) (llm.Client, error) {
+	if s.newGenerationClient != nil {
+		return s.newGenerationClient(cfg)
+	}
+	return llm.New(cfg)
+}
+
 func isUniqueConstraintErr(err error) bool {
 	if err == nil {
 		return false
@@ -521,7 +528,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	sendEvent("status", map[string]string{"stage": "已选择模型 " + providerModelLabel(provider)})
 	sendEvent("status", map[string]string{"stage": "构建上下文"})
 
-	client, err := llm.New(providerLLMConfig(provider))
+	client, err := s.generationClient(providerLLMConfig(provider))
 	if err != nil {
 		sendEvent("error", map[string]string{"message": err.Error()})
 		return
