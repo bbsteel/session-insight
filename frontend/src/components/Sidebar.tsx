@@ -16,6 +16,7 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
 import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
 import { modelMeta } from '../modelMeta'
+import { formatDate, formatNumber, useI18n } from '../i18n'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 
@@ -80,6 +81,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
+  const { locale, t } = useI18n()
   const [now, setNow] = useState(Date.now())
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -620,14 +622,14 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
     if (branch) parts.push(branch)
     if ((session.rolled_back_turn_count ?? 0) > 0) {
-      parts.push(`${session.turn_count} turns · +${session.rolled_back_turn_count} 已回滚`)
+      parts.push(`${formatNumber(locale, session.turn_count)} turns · +${formatNumber(locale, session.rolled_back_turn_count ?? 0)} ${t('replay.rolledBack')}`)
     } else {
       parts.push(`${session.message_count || session.turn_count} msgs`)
     }
     const live = isSessionLive(session, now)
-    if (live) parts.push('活跃中')
+    if (live) parts.push(t('sidebar.live'))
     const metadata = parts.join(' · ')
-    const relativeTime = formatRelativeTime(session.updated_at, now)
+    const relativeTime = formatRelativeTime(session.updated_at, now, locale)
 
     return (
       <div className="group relative">
@@ -636,7 +638,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           data-agent-type={session.agent_type}
           onClick={() => onSelect(session.id, session.agent_type)}
           onContextMenu={(e) => openContextMenu(e, session)}
-          title="右键打开菜单"
+          title={t('sidebar.openMenu')}
           className={`relative w-full text-left pl-2.5 pr-20 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
             selected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
@@ -647,12 +649,12 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <AgentIcon agentType={session.agent_type} size={20} className="mt-0.5" />
             <div className="min-w-0 flex-1">
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
-                {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title="活跃中" aria-label="活跃中" />}
+                {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title={t('sidebar.live')} aria-label={t('sidebar.live')} />}
                 <span className="truncate">{getSessionName(session)}</span>
               </div>
               <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
                 <span className="truncate min-w-0">{metadata}</span>
-                <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at} title={new Date(session.updated_at).toLocaleString()}>
+                <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at} title={formatDate(locale, session.updated_at, { dateStyle: 'medium', timeStyle: 'short' })}>
                   {relativeTime}
                 </time>
               </div>
@@ -722,7 +724,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         style={{ width: effectiveWidth }}
       >
         <div className="p-4">
-          <h2 className="text-nav font-semibold text-[var(--text-primary)]">Sessions</h2>
+          <h2 className="text-nav font-semibold text-[var(--text-primary)]">{t('sidebar.sessions')}</h2>
           <div className="mt-3 space-y-2">
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="h-7 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
@@ -739,22 +741,22 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       className="h-full flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-surface)] relative flex flex-col"
       style={{ width: effectiveWidth }}
       role={isMobile ? 'dialog' : undefined}
-      aria-label="会话列表"
+      aria-label={t('sidebar.sessions')}
     >
       {/* Header */}
       <div className="p-4 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <h2 className="text-nav font-semibold text-[var(--text-primary)] truncate">Sessions</h2>
-          <span className="text-helper text-[var(--text-muted)] flex-shrink-0">{sessions.length} total</span>
+          <h2 className="text-nav font-semibold text-[var(--text-primary)] truncate">{t('sidebar.sessions')}</h2>
+          <span className="text-helper text-[var(--text-muted)] flex-shrink-0">{formatNumber(locale, sessions.length)} {t('sidebar.total')}</span>
           {liveCount > 0 && (
             <span className="text-helper text-[var(--success)] flex-shrink-0 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] animate-pulse" />
-              {liveCount} 活跃中
+              {formatNumber(locale, liveCount)} {t('sidebar.live')}
             </span>
           )}
           {disconnected && (
-            <span className="text-helper text-[var(--warning)] flex-shrink-0" title="与后端的实时连接已断开，列表可能不是最新，恢复后会自动刷新">
-              连接已断开
+            <span className="text-helper text-[var(--warning)] flex-shrink-0" title={t('sidebar.disconnectedHelp')}>
+              {t('sidebar.disconnected')}
             </span>
           )}
         </div>
@@ -782,7 +784,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           <input
             ref={searchRef}
             type="text"
-            placeholder="过滤会话..."
+            placeholder={t('sidebar.filter')}
             value={query}
             onChange={e => setQuery(e.target.value)}
             className="w-full h-[34px] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] pl-8 pr-7 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]"
@@ -791,7 +793,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <button
               onClick={() => setQuery('')}
               className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
-              aria-label="清除搜索"
+              aria-label={t('sidebar.clearFilter')}
             >
               &times;
             </button>
@@ -824,14 +826,14 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         {error ? (
           <div className="px-3 py-8 text-center">
             <div className="mx-auto mb-2 flex h-7 w-7 items-center justify-center rounded-md bg-[var(--bg-inset)] text-helper text-[var(--warning)]">!</div>
-            <div className="text-nav font-medium text-[var(--text-primary)]">后端未连接</div>
-            <div className="mt-1 text-helper text-[var(--text-muted)]">启动 Go 服务后会显示本地会话。</div>
+            <div className="text-nav font-medium text-[var(--text-primary)]">{t('sidebar.backendUnavailable')}</div>
+            <div className="mt-1 text-helper text-[var(--text-muted)]">{t('sidebar.backendUnavailableHelp')}</div>
           </div>
         ) : filtered.length === 0 ? (
           <div className="px-3 py-8 text-center">
             <div className="mx-auto mb-2 flex h-7 w-7 items-center justify-center rounded-md bg-[var(--bg-inset)] text-helper text-[var(--text-muted)]">⌕</div>
-            <div className="text-nav font-medium text-[var(--text-primary)]">未找到匹配的会话</div>
-            <div className="mt-1 text-helper text-[var(--text-muted)]">尝试其他关键词或清除筛选条件</div>
+            <div className="text-nav font-medium text-[var(--text-primary)]">{t('sidebar.noMatches')}</div>
+            <div className="mt-1 text-helper text-[var(--text-muted)]">{t('sidebar.tryAnother')}</div>
             {hasActiveFilters && (
               <button
                 onClick={() => {
@@ -842,7 +844,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 }}
                 className="mt-3 h-7 px-3 rounded-md border border-[var(--border-default)] text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
-                清除筛选
+                {t('sidebar.clearFilters')}
               </button>
             )}
           </div>

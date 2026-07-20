@@ -25,6 +25,7 @@ import {
 } from '../terminalTheme'
 import FontPicker from './FontPicker'
 import { ThemeSelect } from './ThemeToggle'
+import { useI18n, type Locale } from '../i18n'
 import UserAvatar, { useUserAvatar } from './UserAvatar'
 import {
   AppearanceIcon,
@@ -52,19 +53,19 @@ type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'ed
 
 interface TabDef {
   id: TabId
-  label: string
+  labelKey: string
   icon: React.ComponentType<{ className?: string }>
 }
 
 const TABS: TabDef[] = [
-  { id: 'appearance', label: '外观', icon: AppearanceIcon },
-  { id: 'navigation', label: '会话导航', icon: NavigationIcon },
-  { id: 'search', label: '全文搜索', icon: SearchIcon },
-  { id: 'terminal', label: '终端外观', icon: TerminalIcon },
-  { id: 'fonts', label: '字体', icon: FontIcon },
-  { id: 'editor', label: '文件查看器', icon: EditorIcon },
-  { id: 'ai', label: 'AI', icon: SparklesIcon },
-  { id: 'about', label: '关于', icon: InfoIcon },
+  { id: 'appearance', labelKey: 'settings.tab.appearance', icon: AppearanceIcon },
+  { id: 'navigation', labelKey: 'settings.tab.navigation', icon: NavigationIcon },
+  { id: 'search', labelKey: 'settings.tab.search', icon: SearchIcon },
+  { id: 'terminal', labelKey: 'settings.tab.terminal', icon: TerminalIcon },
+  { id: 'fonts', labelKey: 'settings.tab.fonts', icon: FontIcon },
+  { id: 'editor', labelKey: 'settings.tab.editor', icon: EditorIcon },
+  { id: 'ai', labelKey: 'settings.tab.ai', icon: SparklesIcon },
+  { id: 'about', labelKey: 'settings.tab.about', icon: InfoIcon },
 ]
 
 const GITHUB_REPO_URL = 'https://github.com/bbsteel/session-insight'
@@ -81,6 +82,7 @@ export default function SettingsDialog({
   onOpenAISettings,
   initialTab,
 }: Props) {
+  const { preference, setPreference, t } = useI18n()
   const [activeTab, setActiveTab] = useState<TabId>('appearance')
   const [loading, setLoading] = useState(false)
   const [editorCommand, setEditorCommand] = useState('')
@@ -344,7 +346,7 @@ export default function SettingsDialog({
                           : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]'
                       }`}
                     />
-                    <span className="truncate">{tab.label}</span>
+                    <span className="truncate">{t(tab.labelKey)}</span>
                   </button>
                 </div>
               )
@@ -359,12 +361,12 @@ export default function SettingsDialog({
             onPointerDown={startDrag}
           >
             <h2 id="settings-title" className="text-body font-semibold text-[var(--text-primary)]">
-              {activeTabDef.label}
+              {t(activeTabDef.labelKey)}
             </h2>
             <button
               onClick={onClose}
               className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-              aria-label="关闭"
+              aria-label={t('common.close')}
             >
               ✕
             </button>
@@ -377,6 +379,24 @@ export default function SettingsDialog({
 
             {activeTab === 'appearance' && (
               <div className="space-y-4">
+                <div className={sectionBox}>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className={sectionTitle}>{t('settings.language')}</div>
+                      <div className={sectionDesc}>{t('settings.languageHelp')}</div>
+                    </div>
+                    <select
+                      value={preference ?? 'system'}
+                      onChange={e => setPreference(e.target.value === 'system' ? null : e.target.value as Locale)}
+                      className={selectCls}
+                      aria-label={t('settings.language')}
+                    >
+                      <option value="system">{t('settings.languageSystem')}</option>
+                      <option value="en">{t('settings.languageEnglish')}</option>
+                      <option value="zh-CN">{t('settings.languageChinese')}</option>
+                    </select>
+                  </div>
+                </div>
                 <div className={sectionBox}>
                   <div className="flex items-center justify-between gap-4">
                     <div>

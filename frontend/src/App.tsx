@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
 import type { BookmarkChange } from './bookmarkState'
+import { useI18n } from './i18n'
 
 // Hash route for the new-tab file viewer (#/file?path=…&cwd=…): the Go embed
 // file server only knows "/", so client-side hash routing keeps it zero-config.
@@ -17,6 +18,7 @@ function parseFileRoute(): { path: string; cwd: string; line?: number } | null {
 }
 
 export default function App() {
+  const { t } = useI18n()
   const [fileRoute] = useState(parseFileRoute)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedAgentType, setSelectedAgentType] = useState<string | null>(null)
@@ -42,7 +44,7 @@ export default function App() {
       <button
         className="md:hidden fixed left-2 top-2 z-[250] h-7 w-7 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         onClick={() => setSidebarOpen(true)}
-        aria-label="打开会话列表"
+        aria-label={t('app.openSessions')}
       >
         ☰
       </button>

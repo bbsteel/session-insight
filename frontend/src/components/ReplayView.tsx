@@ -21,6 +21,7 @@ import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
 import { getNavOpenPref } from '../navPrefs'
+import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -37,8 +38,8 @@ interface Props {
   onBookmarkChange?: (change: BookmarkChange) => void
 }
 
-function fmtTokens(n: number): string {
-  return n.toLocaleString()
+function fmtTokens(n: number, locale: Locale): string {
+  return formatNumber(locale, n)
 }
 
 function formatDuration(ms: number): string {
@@ -51,6 +52,7 @@ function formatDuration(ms: number): string {
 }
 
 export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange }: Props) {
+  const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
@@ -1089,8 +1091,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
-          <h3 className="text-body font-medium text-[var(--text-primary)]">还没有选中会话</h3>
-          <p className="text-helper text-[var(--text-muted)] mt-1">从左侧选择一个会话后，这里会显示终端内容。</p>
+          <h3 className="text-body font-medium text-[var(--text-primary)]">{t('replay.noSelection')}</h3>
+          <p className="text-helper text-[var(--text-muted)] mt-1">{t('replay.selectHint')}</p>
         </div>
       </div>
     </main>
@@ -1117,12 +1119,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
           <h3 className="text-body font-medium text-[var(--text-primary)]">
-            {session ? '此会话暂无可回放内容' : '还没有会话记录'}
+            {session ? t('replay.noReplay') : t('replay.noSessions')}
           </h3>
           <p className="text-helper text-[var(--text-muted)] mt-1">
             {session
-              ? '会话已创建但尚无用户回合（例如仅写入了系统上下文）。有对话后会自动出现在这里。'
-              : '使用 agent 进行编码后，会话将自动出现在这里。'}
+              ? t('replay.createdNoTurns')
+              : t('replay.agentHint')}
           </p>
         </div>
       </div>
@@ -1162,9 +1164,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               className={`h-7 rounded-md px-2 inline-flex items-center justify-center text-nav ${
                 session.bookmarked ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'
               } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-              aria-label={session.bookmarked ? '取消收藏' : '收藏'}
+              aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
             >
-              {session.bookmarked ? '取消收藏' : '收藏'}
+              {session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
             </button>
           </InstantTooltip>
           {session.bookmarked && (
@@ -1197,7 +1199,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
-            分析
+            {t('replay.analytics')}
           </button>
           <span className="text-[var(--border-default)]">|</span>
           <button
@@ -1218,21 +1220,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             className={`h-7 rounded-md px-2 inline-flex items-center gap-1 text-nav ${followOutput ? 'text-[var(--accent-green)] bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)]' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={
               !sessionIsLive
-                ? '跟随输出（类似 tail -f）：仅活跃会话可用'
+                ? t('replay.followUnavailable')
                 : followOutput
-                  ? '关闭跟随：停止自动滚到底部'
-                  : '跟随输出（类似 tail -f）：活跃会话有新内容时自动滚到底部'
+                  ? t('replay.followOn')
+                  : t('replay.followOff')
             }
             aria-pressed={followOutput}
-            aria-label={followOutput ? '关闭跟随输出' : '开启跟随输出'}
+            aria-label={followOutput ? t('replay.followOn') : t('replay.followOff')}
           >
             {followOutput && (
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />
             )}
-            跟随
+            {t('replay.follow')}
           </button>
           <span className="text-[var(--border-default)]">|</span>
-          <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">导出</a>
+          <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{t('replay.export')}</a>
           <span className="text-[var(--border-default)]">|</span>
           <button
             onClick={() => setShowAIPanel(true)}
@@ -1241,27 +1243,27 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 ? 'border-[var(--accent-blue)] bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] text-[var(--accent-blue)]'
                 : 'border-[color-mix(in_srgb,var(--accent-blue)_45%,transparent)] text-[var(--accent-blue)]'
             } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            title="AI 总结 / 标题 / 交接"
+            title={t('replay.aiPanel')}
           >
             ✨ AI
           </button>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {isSessionLive(session, now) && (
-            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" aria-label="活跃中">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />活跃中
+            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" aria-label={t('replay.active')}>
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.active')}
             </span>
           )}
-          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens)} tokens · {session.turn_count} 活动 turns
+          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens, locale)} {t('replay.tokens')} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}
           {(session.rolled_back_turn_count ?? 0) > 0 && (
-            <span className="text-[var(--warning)]"> · +{session.rolled_back_turn_count} 已回滚</span>
+            <span className="text-[var(--warning)]"> · +{formatNumber(locale, session.rolled_back_turn_count ?? 0)} {t('replay.rolledBack')}</span>
           )}
           {' · '}{sessionDuration}
           {session.repository && <span className="text-[var(--text-muted)]"> · {session.repository.split('/').pop()}</span>}
           {session.branch && <span className="text-[var(--text-muted)]">@{session.branch}</span>}
           {session.created_at && (
             <span className="text-[var(--text-muted)] ml-1 text-meta">
-              {new Date(session.created_at).toLocaleDateString()}
+              {formatDate(locale, session.created_at)}
             </span>
           )}
           {session.todos && session.todos.length > 0 && (
@@ -1270,7 +1272,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         </span>
         <span className="text-[var(--border-default)] mx-1">|</span>
         <div className="flex items-center gap-2 mr-4">
-          <span className="text-nav text-[var(--text-muted)]">导航</span>
+          <span className="text-nav text-[var(--text-muted)]">{t('replay.navigation')}</span>
           <button
             onClick={() => setShowUserPanel(v => {
               const next = !v
@@ -1288,9 +1290,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
             } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            title="交互消息面板"
+            title={t('replay.messages')}
           >
-            交互消息{interactionCount > 0 ? ` ${interactionCount}` : ''}
+            {t('replay.messages')}{interactionCount > 0 ? ` ${formatNumber(locale, interactionCount)}` : ''}
           </button>
           <button
             onClick={() => setShowToolPanel(v => {
@@ -1308,9 +1310,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
             } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            title="工具调用面板"
+            title={t('replay.toolCalls')}
           >
-            工具调用{toolCallCount > 0 ? ` ${toolCallCount}` : ''}
+            {t('replay.toolCalls')}{toolCallCount > 0 ? ` ${formatNumber(locale, toolCallCount)}` : ''}
           </button>
         </div>
         <span ref={visibleRangeLabelRef} className="flex-shrink-0 text-meta text-[var(--text-muted)]">

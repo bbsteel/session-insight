@@ -454,11 +454,12 @@ export async function generateAI(
   onStatus: (stage: string) => void,
   signal?: AbortSignal,
   providerId?: number,
+  locale?: 'zh-CN' | 'en',
 ): Promise<AIGeneration> {
   const res = await fetch(`/api/sessions/${sessionId}/ai/${kind}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(providerId ? { provider_id: providerId } : {}),
+    body: JSON.stringify({ ...(providerId ? { provider_id: providerId } : {}), ...(locale ? { locale } : {}) }),
     signal,
   })
   if (res.status === 412) throw new NoProviderError(await res.text())
