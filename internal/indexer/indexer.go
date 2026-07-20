@@ -344,7 +344,7 @@ const (
 	maxURLsPerTurn    = 32
 )
 
-var urlPattern = regexp.MustCompile(`https?://[^\s<>"\x60]+`)
+var urlPattern = regexp.MustCompile("https?://[^\\s<>\"`\\[\\]()]+")
 
 // highSignalToolInputKeys are short, searchable tool argument fields.
 // Long blobs (file bodies, patches, stdout) are intentionally omitted.
@@ -388,18 +388,7 @@ func buildTurnTexts(sess model.Session, detail *model.SessionDetail, renderEvent
 			})
 		}
 		if s := strings.TrimSpace(t.AssistantMessage); s != "" {
-			texts = append(texts, db.TurnText{
-				TurnIndex: t.TurnIndex,
-				Role:      "assistant",
-				Content:   truncateRunes(s, maxAssistantRunes),
-			})
-			if links := extractURLs(s); links != "" {
-				texts = append(texts, db.TurnText{
-					TurnIndex: t.TurnIndex,
-					Role:      "link",
-					Content:   links,
-				})
-			}
+			texts = appendAssistantTexts(texts, t.TurnIndex, "", s)
 		}
 		if skills := uniqueNonEmpty(t.Skills); len(skills) > 0 {
 			texts = append(texts, db.TurnText{
@@ -435,18 +424,7 @@ func buildTurnTexts(sess model.Session, detail *model.SessionDetail, renderEvent
 				})
 			}
 			if s := strings.TrimSpace(t.AssistantMessage); s != "" {
-				texts = append(texts, db.TurnText{
-					TurnIndex: idx,
-					Role:      "assistant",
-					Content:   "[已回滚] " + truncateRunes(s, maxAssistantRunes),
-				})
-				if links := extractURLs(s); links != "" {
-					texts = append(texts, db.TurnText{
-						TurnIndex: idx,
-						Role:      "link",
-						Content:   links,
-					})
-				}
+				texts = appendAssistantTexts(texts, idx, "[已回滚] ", s)
 			}
 		}
 	}
@@ -454,13 +432,36 @@ func buildTurnTexts(sess model.Session, detail *model.SessionDetail, renderEvent
 	return texts
 }
 
+func appendAssistantTexts(texts []db.TurnText, turnIndex int, prefix, content string) []db.TurnText {
+	texts = append(texts, db.TurnText{
+		TurnIndex: turnIndex,
+		Role:      "assistant",
+		Content:   prefix + truncateRunes(content, maxAssistantRunes),
+	})
+	if links := extractURLs(content); links != "" {
+		texts = append(texts, db.TurnText{
+			TurnIndex: turnIndex,
+			Role:      "link",
+			Content:   links,
+		})
+	}
+	return texts
+}
+
 // extractURLs preserves URLs that may occur after a capped transcript field.
 // URLs are compact, high-signal search keys, so indexing them separately keeps
 // the general transcript cap while retaining direct-link recall.
 func extractURLs(s string) string {
-	urls := urlPattern.FindAllString(s, maxURLsPerTurn)
-	if len(urls) == 0 {
+	matches := urlPattern.FindAllString(s, -1)
+	if len(matches) == 0 {
 		return ""
+	}
+	for i, match := range matches {
+		matches[i] = strings.TrimRight(match, ".,;:!?")
+	}
+	urls := uniqueNonEmpty(matches)
+	if len(urls) > maxURLsPerTurn {
+		urls = urls[:maxURLsPerTurn]
 	}
 	return strings.Join(uniqueNonEmpty(urls), " ")
 }
