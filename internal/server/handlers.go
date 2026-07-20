@@ -759,7 +759,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			seen[k] = true
 			keys = append(keys, struct{ AgentType, SessionID string }{r.AgentType, r.SessionID})
 		}
-		metas, err := s.DB.GetSessionMetas(keys)
+		metas, err = s.DB.GetSessionMetas(keys)
 		if err != nil {
 			log.Printf("search: GetSessionMetas: %v", err)
 		}

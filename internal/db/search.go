@@ -50,14 +50,14 @@ func (db *DB) SearchTurns(q string, limit int) ([]TurnSearchResult, error) {
 	}
 	defer rows.Close()
 
-	var results []TurnSearchResult
+	var textResults []TurnSearchResult
 	for rows.Next() {
 		var agentType, sessionID, content string
 		var rank float64
 		if err := rows.Scan(&agentType, &sessionID, &content, &rank); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		results = append(results, TurnSearchResult{
+		textResults = append(textResults, TurnSearchResult{
 			AgentType: agentType,
 			SessionID: sessionID,
 			Match:     snippetAround(content, q, searchSnippetRadius),
@@ -66,7 +66,78 @@ func (db *DB) SearchTurns(q string, limit int) ([]TurnSearchResult, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// Session identifiers live in the sessions table rather than in transcript
+	// turn text. Search them explicitly so an agent/session UUID can always
+	// navigate to its session, even when that UUID never appeared in a message.
+	metadataResults, err := db.searchSessionMetadata(q, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Put direct metadata matches first: an exact session-ID lookup should not
+	// be buried under transcript mentions of the same identifier. Preserve the
+	// one-result-per-session contract when a session matches both sources.
+	results := make([]TurnSearchResult, 0, limit)
+	seen := make(map[string]struct{}, len(metadataResults)+len(textResults))
+	for _, group := range [][]TurnSearchResult{metadataResults, textResults} {
+		for _, result := range group {
+			key := result.AgentType + "\x00" + result.SessionID
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			results = append(results, result)
+			if len(results) == limit {
+				return results, nil
+			}
+		}
+	}
 	return results, nil
+}
+
+func (db *DB) searchSessionMetadata(q string, limit int) ([]TurnSearchResult, error) {
+	pattern := "%" + q + "%"
+	rows, err := db.conn.Query(`
+		SELECT agent_type, id, resume_id, parent_session_id, name, project
+		FROM sessions
+		WHERE id LIKE ? OR resume_id LIKE ? OR parent_session_id LIKE ? OR name LIKE ? OR project LIKE ?
+		ORDER BY updated_at DESC, id ASC
+		LIMIT ?`, pattern, pattern, pattern, pattern, pattern, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search session metadata: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]TurnSearchResult, 0)
+	for rows.Next() {
+		var agentType, sessionID, resumeID, parentSessionID, name, project string
+		if err := rows.Scan(&agentType, &sessionID, &resumeID, &parentSessionID, &name, &project); err != nil {
+			return nil, fmt.Errorf("scan session metadata search: %w", err)
+		}
+		results = append(results, TurnSearchResult{
+			AgentType: agentType,
+			SessionID: sessionID,
+			Match:     sessionMetadataMatch(q, sessionID, resumeID, parentSessionID, name, project),
+		})
+	}
+	return results, rows.Err()
+}
+
+func sessionMetadataMatch(q, sessionID, resumeID, parentSessionID, name, project string) string {
+	needle := strings.ToLower(q)
+	for _, field := range []struct{ label, value string }{
+		{"会话 ID", sessionID},
+		{"恢复 ID", resumeID},
+		{"父会话 ID", parentSessionID},
+		{"会话名称", name},
+		{"项目", project},
+	} {
+		if strings.Contains(strings.ToLower(field.value), needle) {
+			return field.label + ": " + field.value
+		}
+	}
+	return "会话 ID: " + sessionID
 }
 
 // searchLike performs a LIKE-based search for short queries (< 3 runes).

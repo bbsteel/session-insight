@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 26
+const currentSchemaVersion = 27
 
 type DB struct {
 	conn *sql.DB
@@ -639,6 +639,15 @@ func migrate(conn *sql.DB) error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("v26 commit: %w", err)
+		}
+	}
+
+	// Version 27: preserve URLs from capped assistant messages as dedicated
+	// search rows. Re-index every session so existing transcripts gain links
+	// that appeared after the previous 8192-rune assistant cap.
+	if maxVersion < 27 {
+		if _, err := conn.Exec(`DELETE FROM index_watermarks`); err != nil {
+			return fmt.Errorf("v27 clear index_watermarks: %w", err)
 		}
 	}
 
