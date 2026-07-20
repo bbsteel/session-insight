@@ -403,6 +403,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     const changed = await toggleSessionBookmark(session)
     if (!changed || session.bookmarked) return
 
+    setNoteEditorSession(null)
     setNotePopover({
       session: { id: session.id, agent_type: session.agent_type },
       anchor: {
@@ -678,11 +679,15 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </button>
           </InstantTooltip>
         )}
-        <InstantTooltip text={session.bookmarked ? '取消收藏' : '收藏'} placement="top">
+        <InstantTooltip
+          text={session.bookmarked ? '取消收藏' : '收藏'}
+          placement="top"
+          className="absolute right-7 top-1.5"
+        >
           <button
             type="button"
             onClick={event => { void bookmarkFromRow(event, session) }}
-            className={`absolute right-7 top-1.5 flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+            className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
               session.bookmarked
                 ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
                 : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
@@ -924,6 +929,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 <button
                   className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
                   onClick={() => {
+                    setNotePopover(null)
                     setNoteEditorSession(contextMenu.session)
                     setContextMenu(null)
                   }}

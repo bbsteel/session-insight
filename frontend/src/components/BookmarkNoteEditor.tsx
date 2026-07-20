@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 export interface BookmarkNoteTarget {
@@ -35,6 +35,7 @@ export default function BookmarkNoteEditor({
   const note = session.bookmark_note?.trim() ?? ''
   const [draft, setDraft] = useState(note)
   const [saving, setSaving] = useState(false)
+  const anchoredRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setDraft(session.bookmark_note?.trim() ?? '')
@@ -47,6 +48,15 @@ export default function BookmarkNoteEditor({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  useEffect(() => {
+    if (!anchor) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!anchoredRef.current?.contains(event.target as Node)) onClose()
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [anchor, onClose])
 
   const save = async () => {
     const next = draft.trim()
@@ -62,6 +72,7 @@ export default function BookmarkNoteEditor({
   const editor = (
     <div
       role="dialog"
+      ref={anchor ? anchoredRef : undefined}
       aria-modal={anchor ? undefined : true}
       aria-label={title}
       className={anchor
