@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n, type Locale } from '../i18n'
 import { GlobeIcon } from './icons'
 
@@ -8,23 +8,24 @@ const OPTIONS: { value: Locale | 'system'; labelKey: string }[] = [
   { value: 'zh-CN', labelKey: 'settings.languageChinese' },
 ]
 
-const SHORT_LABEL: Record<string, string> = {
-  system: '',
-  en: 'EN',
-}
-
 /** Header language switch button — opens a dropdown on click, with keyboard navigation. */
 export function LanguageSwitch() {
   const { preference, setPreference, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   const currentValue = preference ?? 'system'
-  const currentLabel = currentValue === 'zh-CN'
-    ? t('settings.languageChineseShort')
-    : SHORT_LABEL[currentValue] || t(OPTIONS.find(o => o.value === currentValue)!.labelKey)
+  const shortLabelKey = currentValue === 'en'
+    ? 'settings.languageEnglishShort'
+    : currentValue === 'zh-CN' ? 'settings.languageChineseShort' : null
+  const currentLabel = t(shortLabelKey ?? OPTIONS.find(o => o.value === currentValue)!.labelKey)
+  const closeAndRestoreFocus = useCallback(() => {
+    setOpen(false)
+    requestAnimationFrame(() => triggerRef.current?.focus())
+  }, [])
 
   // Reset active index to current value when opening.
   useEffect(() => {
@@ -46,7 +47,7 @@ export function LanguageSwitch() {
     const onKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
         case 'Escape':
-          setOpen(false)
+          closeAndRestoreFocus()
           break
         case 'ArrowDown':
           e.preventDefault()
@@ -82,16 +83,17 @@ export function LanguageSwitch() {
       document.removeEventListener('mousedown', onClickOutside)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [open])
+  }, [closeAndRestoreFocus, open])
 
   const select = (value: Locale | 'system') => {
     setPreference(value === 'system' ? null : value as Locale)
-    setOpen(false)
+    closeAndRestoreFocus()
   }
 
   return (
     <div ref={containerRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}

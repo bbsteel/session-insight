@@ -33,6 +33,10 @@ try {
 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await assert.doesNotReject(page.getByPlaceholder(/Search all sessions/).waitFor({ state: 'visible' }))
+  const englishLanguageSwitch = page.getByRole('button', { name: 'Language', exact: true }).first()
+  await englishLanguageSwitch.click()
+  await page.keyboard.press('Escape')
+  assert.equal(await englishLanguageSwitch.evaluate(element => document.activeElement === element), true)
 
   const bookmark = page.locator('button[aria-label="Bookmark"]').first()
   await bookmark.waitFor({ state: 'attached' })
@@ -54,6 +58,10 @@ try {
   assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN')
   assert.equal(await page.locator('#settings-title').textContent(), '外观')
   await page.getByRole('button', { name: '关闭' }).first().click()
+  const chineseLanguageSwitch = page.getByRole('button', { name: '语言', exact: true }).first()
+  await chineseLanguageSwitch.click()
+  await page.getByRole('option', { name: '简体中文' }).press('Enter')
+  assert.equal(await chineseLanguageSwitch.evaluate(element => document.activeElement === element), true)
 
   const chineseBookmark = page.locator('button[aria-label="收藏"]').first()
   await chineseBookmark.waitFor({ state: 'attached' })

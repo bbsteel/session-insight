@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "outDir": ".runtime/i18n-test",
+    "rootDir": "src"
+  },
+  "files": ["src/i18n.tsx"]
+}
