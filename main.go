@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/db"
@@ -129,11 +132,49 @@ func main() {
 	// Loopback only: the API exposes session contents and (via the editor
 	// command setting + open-file) command execution, so it must never be
 	// reachable from the network.
-	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
+	//
+	// Try the requested port first. If it's already in use, fall back to an
+	// OS-assigned port so the binary always starts regardless of what else is
+	// running — important both for the dev workflow (run.sh) and for the
+	// packaged release binary.
+	listener, err := listenWithFallback("127.0.0.1", port)
 	if err != nil {
-		log.Fatalf("failed to listen on 127.0.0.1:%s: %v", port, err)
+		log.Fatalf("failed to listen: %v", err)
 	}
 	url := "http://" + listener.Addr().String() + "/"
 	log.Printf("SessionInsight listening on %s", url)
 	log.Fatal(http.Serve(listener, srv.Mux))
+}
+
+// listenWithFallback attempts to listen on host:port. If the port is already in
+// use, it falls back to an OS-assigned port on the same host and logs a
+// warning so the user knows the original port was unavailable.
+func listenWithFallback(host, port string) (net.Listener, error) {
+	addr := host + ":" + port
+	listener, err := net.Listen("tcp", addr)
+	if err == nil {
+		return listener, nil
+	}
+	if !isAddrInUse(err) {
+		return nil, err
+	}
+	log.Printf("port %s is in use, falling back to an OS-assigned port", port)
+	listener, err = net.Listen("tcp", host+":0")
+	if err != nil {
+		return nil, fmt.Errorf("fallback listen failed: %w", err)
+	}
+	return listener, nil
+}
+
+// isAddrInUse reports whether err is an EADDRINUSE from a failed listen.
+func isAddrInUse(err error) bool {
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) || opErr.Op != "listen" {
+		return false
+	}
+	var scErr *os.SyscallError
+	if errors.As(opErr.Err, &scErr) {
+		return scErr.Syscall == "bind" && errors.Is(scErr.Err, syscall.EADDRINUSE)
+	}
+	return errors.Is(opErr.Err, syscall.EADDRINUSE)
 }
