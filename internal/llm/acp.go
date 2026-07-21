@@ -28,7 +28,7 @@ var LocalAgents = []string{"claude", "codex", "gemini", "grok"}
 // codexACPAgentPackage is pinned for reproducible SI releases. The release
 // workflow compares it with the ACP registry and blocks a release when the
 // registry has moved, forcing the adapter upgrade through tests and review.
-const codexACPAgentPackage = "@agentclientprotocol/codex-acp@1.1.4"
+const codexACPAgentPackage = "@agentclientprotocol/codex-acp@1.1.5"
 
 // LocalAgentLabel is a short UI/docs label for a local agent id.
 func LocalAgentLabel(agent string) string {
