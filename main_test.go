@@ -73,20 +73,27 @@ func TestListenWithFallback(t *testing.T) {
 	}
 
 	// Non-EADDRINUSE error is not a fallback candidate: returned as-is.
+	// Must make exactly one call to the requested address, no fallback.
 	nonAddrErr := &net.OpError{Op: "listen", Net: "tcp", Err: syscall.EACCES}
+	var addrs []string
 	_, err = listenWithFallbackFn("127.0.0.1", "8080", func(network, addr string) (net.Listener, error) {
+		addrs = append(addrs, addr)
 		return nil, nonAddrErr
 	})
 	if !errors.Is(err, syscall.EACCES) {
 		t.Errorf("expected EACCES to pass through, got: %v", err)
 	}
+	if len(addrs) != 1 || addrs[0] != "127.0.0.1:8080" {
+		t.Errorf("expected one call to 127.0.0.1:8080, got %v", addrs)
+	}
 
 	// Fallback listen failure: first attempt EADDRINUSE, fallback port-0 also fails.
+	// Must make exactly two calls: 127.0.0.1:8080 then 127.0.0.1:0.
 	secondErr := errors.New("port exhausted")
-	callCount := 0
+	addrs = nil
 	_, err = listenWithFallbackFn("127.0.0.1", "8080", func(network, addr string) (net.Listener, error) {
-		callCount++
-		if callCount == 1 {
+		addrs = append(addrs, addr)
+		if len(addrs) == 1 {
 			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: syscall.EADDRINUSE}
 		}
 		return nil, secondErr
@@ -97,6 +104,9 @@ func TestListenWithFallback(t *testing.T) {
 	// The returned error should wrap the second failure.
 	if !errors.Is(err, secondErr) {
 		t.Errorf("expected error wrapping secondErr, got: %v", err)
+	}
+	if len(addrs) != 2 || addrs[0] != "127.0.0.1:8080" || addrs[1] != "127.0.0.1:0" {
+		t.Errorf("expected [127.0.0.1:8080 127.0.0.1:0], got %v", addrs)
 	}
 }
 
