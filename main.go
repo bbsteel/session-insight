@@ -150,8 +150,13 @@ func main() {
 // use, it falls back to an OS-assigned port on the same host and logs a
 // warning so the user knows the original port was unavailable.
 func listenWithFallback(host, port string) (net.Listener, error) {
+	return listenWithFallbackFn(host, port, net.Listen)
+}
+
+// listenWithFallbackFn is the injectable form used by tests.
+func listenWithFallbackFn(host, port string, doListen func(network, addr string) (net.Listener, error)) (net.Listener, error) {
 	addr := host + ":" + port
-	listener, err := net.Listen("tcp", addr)
+	listener, err := doListen("tcp", addr)
 	if err == nil {
 		return listener, nil
 	}
@@ -159,7 +164,7 @@ func listenWithFallback(host, port string) (net.Listener, error) {
 		return nil, err
 	}
 	log.Printf("port %s is in use, falling back to an OS-assigned port", port)
-	listener, err = net.Listen("tcp", host+":0")
+	listener, err = doListen("tcp", host+":0")
 	if err != nil {
 		return nil, fmt.Errorf("fallback listen failed: %w", err)
 	}
