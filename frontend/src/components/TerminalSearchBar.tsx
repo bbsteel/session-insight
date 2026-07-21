@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { TerminalControl, TerminalSearchOptions } from '../terminalControl'
 
 // Floating in-terminal search bar (Ctrl+F). Searches the visible (composed)
@@ -6,6 +6,7 @@ import type { TerminalControl, TerminalSearchOptions } from '../terminalControl'
 // Case-sensitivity / whole-word / highlight-all toggles persist across sessions.
 
 const OPTS_KEY = 'session-insight-terminal-search-opts'
+const MIN_BESIDE_PANEL_WIDTH = 360
 
 function loadOpts(): TerminalSearchOptions {
   try {
@@ -45,6 +46,8 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
   const [opts, setOpts] = useState<TerminalSearchOptions>(loadOpts)
   const [result, setResult] = useState<{ index: number; count: number } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState<number | null>(null)
   const queryRef = useRef('')
   queryRef.current = query
   const optsRef = useRef(opts)
@@ -56,6 +59,16 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
     inputRef.current?.focus()
     inputRef.current?.select()
   }, [focusToken])
+
+  useLayoutEffect(() => {
+    const container = barRef.current?.parentElement
+    if (!container) return
+    const reportWidth = () => setContainerWidth(container.getBoundingClientRect().width)
+    reportWidth()
+    const observer = new ResizeObserver(reportWidth)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const ctrl = controlRef.current
@@ -103,7 +116,10 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
       : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`
 
   const pinnedPanelGap = 8
-  const insetStyle = rightInset > 0
+  const fitsBesidePanel = rightInset > 0
+    && containerWidth !== null
+    && containerWidth - rightInset - pinnedPanelGap * 2 >= MIN_BESIDE_PANEL_WIDTH
+  const insetStyle = fitsBesidePanel
     ? {
         right: rightInset + pinnedPanelGap,
         maxWidth: `calc(100% - ${rightInset + pinnedPanelGap * 2}px)`,
@@ -112,7 +128,9 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
 
   return (
     <div
+      ref={barRef}
       data-testid="terminal-search-bar"
+      data-layout={rightInset > 0 ? (fitsBesidePanel ? 'beside' : 'overlay') : 'default'}
       className="absolute right-14 top-2 z-20 flex items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2 py-1 shadow-md"
       style={insetStyle}
     >
@@ -125,7 +143,7 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
           else if (e.key === 'Escape') { e.preventDefault(); onClose() }
         }}
         placeholder="在终端中查找"
-        className="h-6 min-w-0 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
+        className="h-6 min-w-24 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
       />
       <button onClick={() => toggle('caseSensitive')} title="区分大小写" aria-pressed={opts.caseSensitive} className={toggleCls(opts.caseSensitive)}>Aa</button>
       <button onClick={() => toggle('wholeWord')} title="全词匹配" aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
