@@ -610,13 +610,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             },
           },
           {
-            label: session?.bookmarked ? '取消收藏' : '收藏',
+            label: session?.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark'),
             disabled: bookmarkBusy,
             tooltip: session?.bookmarked
               ? (session.bookmark_note?.trim()
-                ? `已收藏：${session.bookmark_note.trim()}`
-                : '已收藏（未写备注）')
-              : '收藏后可添加备注',
+                ? t('replay.bookmarkedWithNote', { note: session.bookmark_note.trim() })
+                : t('replay.bookmarkedWithoutNote'))
+              : t('replay.bookmarkHint'),
             onClick: () => {
               void toggleBookmark()
               setCtxMenu(null)
@@ -624,9 +624,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           },
           ...(session?.bookmarked
             ? [{
-                label: session.bookmark_note?.trim() ? '编辑收藏备注' : '添加收藏备注',
+                label: session.bookmark_note?.trim() ? t('replay.editBookmarkNote') : t('replay.addBookmarkNote'),
                 disabled: bookmarkBusy,
-                tooltip: session.bookmark_note?.trim() || '未记录收藏原因',
+                tooltip: session.bookmark_note?.trim() || t('replay.noBookmarkReason'),
                 onClick: () => {
                   setNoteEditorOpen(true)
                   setCtxMenu(null)
@@ -677,7 +677,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       ],
     })
     return sections
-  }, [ctxMenu, fileTarget, folds, positionsData, session, followOutput, sessionIsLive])
+  }, [ctxMenu, fileTarget, folds, positionsData, session, followOutput, sessionIsLive, t])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -735,11 +735,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         bookmarkNote: nextBookmarked ? (session.bookmark_note ?? '') : undefined,
       })
     } catch {
-      setBookmarkError(nextBookmarked ? '添加收藏失败' : '取消收藏失败')
+      setBookmarkError(nextBookmarked ? t('replay.addBookmarkFailed') : t('replay.removeBookmarkFailed'))
     } finally {
       setBookmarkBusy(false)
     }
-  }, [bookmarkBusy, onBookmarkChange, session])
+  }, [bookmarkBusy, onBookmarkChange, session, t])
 
   const saveBookmarkNote = useCallback(async (_target: { id: string; agent_type: string }, note: string) => {
     if (!session) return
@@ -753,10 +753,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         bookmarkNote: note,
       })
     } catch {
-      setBookmarkError('收藏备注保存失败')
-      throw new Error('收藏备注保存失败')
+      const message = t('bookmark.noteSaveFailed')
+      setBookmarkError(message)
+      throw new Error(message)
     }
-  }, [onBookmarkChange, session])
+  }, [onBookmarkChange, session, t])
 
   const turns = session?.turns ?? []
   const rolledBackTurns = useMemo(

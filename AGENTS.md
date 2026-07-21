@@ -89,6 +89,13 @@ When the working tree already has uncommitted or local-only work on `main` that 
 - Do not introduce independent DOM overlay coordinate math for terminal rows. Hand-rolled `getBoundingClientRect()`/`cellHeight` calculations can drift from xterm by 1-2 rows because xterm accounts for screen padding, renderService CSS cell dimensions, ceil/clamp behavior, and viewport state internally.
 - Use xterm marker/decoration rendering for hover feedback so visual positioning shares xterm's own viewport math.
 
+## Localization completeness
+
+- All new or changed user-facing copy must be added to every locale in `frontend/src/i18n.tsx` and rendered through `t(...)`; do not add display text directly in components.
+- Run `npm --prefix frontend run test:i18n` after changing translations. This test enforces locale-key parity and representative interpolation behavior.
+- `npm --prefix frontend run test:i18n-source` is a CI ratchet against Chinese literals outside the translation catalog. Do not update its baseline to admit new UI copy. Run `npm --prefix frontend run test:i18n-source:update` only when removing or intentionally migrating legacy literals, and review the baseline diff with the code change.
+- For rendered UI changes, validate both `en` and `zh-CN` in the live Playwright check. Assertions must cover the changed labels, tooltips, dialogs, and success/error states that the flow can exercise.
+
 ## Frontend Validation (Playwright)
 
 Frontend unit scripts under `frontend/scripts/` (pure Node + `tsc` of isolated modules) remain the default for **logic-only** modules with no DOM or layout surface (`scrollSync`, `sidebarRows`, outline parsers, etc.). They do **not** replace browser checks when the user-visible UI can break.

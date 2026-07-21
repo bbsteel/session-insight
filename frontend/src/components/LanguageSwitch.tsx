@@ -11,7 +11,6 @@ const OPTIONS: { value: Locale | 'system'; labelKey: string }[] = [
 const SHORT_LABEL: Record<string, string> = {
   system: '',
   en: 'EN',
-  'zh-CN': '中文',
 }
 
 /** Header language switch button — opens a dropdown on click, with keyboard navigation. */
@@ -23,7 +22,9 @@ export function LanguageSwitch() {
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   const currentValue = preference ?? 'system'
-  const currentLabel = SHORT_LABEL[currentValue] || t(OPTIONS.find(o => o.value === currentValue)!.labelKey)
+  const currentLabel = currentValue === 'zh-CN'
+    ? t('settings.languageChineseShort')
+    : SHORT_LABEL[currentValue] || t(OPTIONS.find(o => o.value === currentValue)!.labelKey)
 
   // Reset active index to current value when opening.
   useEffect(() => {

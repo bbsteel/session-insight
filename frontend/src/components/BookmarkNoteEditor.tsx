@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useI18n } from '../i18n'
 
 export interface BookmarkNoteTarget {
   id: string
@@ -24,14 +25,16 @@ interface BookmarkNoteEditorProps {
   anchor?: BookmarkNoteAnchor
 }
 
-/** Modal editor for a session's bookmark note (收藏原因). */
+/** Modal editor for a session's bookmark note. */
 export default function BookmarkNoteEditor({
   session,
   onSave,
   onClose,
-  title = '收藏备注',
+  title,
   anchor,
 }: BookmarkNoteEditorProps) {
+  const { t } = useI18n()
+  const resolvedTitle = title ?? t('bookmark.noteTitle')
   const note = session.bookmark_note?.trim() ?? ''
   const [draft, setDraft] = useState(note)
   const [saving, setSaving] = useState(false)
@@ -74,7 +77,7 @@ export default function BookmarkNoteEditor({
       role="dialog"
       ref={anchor ? anchoredRef : undefined}
       aria-modal={anchor ? undefined : true}
-      aria-label={title}
+      aria-label={resolvedTitle}
       className={anchor
         ? 'fixed z-[calc(var(--z-modal)+1)] w-[min(280px,calc(100vw-2rem))] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-lg'
         : 'fixed left-1/2 top-1/3 z-[calc(var(--z-modal)+1)] w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 shadow-lg'}
@@ -84,8 +87,8 @@ export default function BookmarkNoteEditor({
           : { left: `min(${anchor.x + 8}px, calc(100vw - 18rem))`, bottom: window.innerHeight - anchor.y + 8 }
         : undefined}
     >
-      <h3 className="text-nav font-semibold text-[var(--text-primary)]">{title}</h3>
-      <p className="mt-1 text-helper text-[var(--text-muted)]">记录为什么收藏这条会话（仅本机保存）。</p>
+      <h3 className="text-nav font-semibold text-[var(--text-primary)]">{resolvedTitle}</h3>
+      <p className="mt-1 text-helper text-[var(--text-muted)]">{t('bookmark.help')}</p>
       <textarea
         value={draft}
         onChange={e => setDraft(e.target.value)}
@@ -93,7 +96,7 @@ export default function BookmarkNoteEditor({
         rows={anchor ? 3 : 4}
         autoFocus
         className="mt-3 w-full resize-none rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1.5 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
-        placeholder="记录收藏原因..."
+        placeholder={t('bookmark.placeholder')}
       />
       <div className="mt-3 flex items-center justify-end gap-2">
         <button
@@ -102,7 +105,7 @@ export default function BookmarkNoteEditor({
           disabled={saving}
           className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         >
-          {anchor ? '跳过直接收藏' : '取消'}
+          {anchor ? t('bookmark.skip') : t('common.cancel')}
         </button>
         <button
           type="button"
@@ -110,7 +113,7 @@ export default function BookmarkNoteEditor({
           disabled={saving}
           className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         >
-          {saving ? '保存中…' : '保存'}
+          {saving ? t('common.saving') : t('common.save')}
         </button>
       </div>
     </div>
