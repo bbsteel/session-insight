@@ -108,6 +108,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const scrollToTopRef = useRef<((top: number, behavior?: ScrollBehavior) => void) | null>(null)
   const visibleRangeRef = useRef<VisibleTurnRange>()
   const visibleRangeLabelRef = useRef<HTMLSpanElement>(null)
+  const jumpBaseRef = useRef(0)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout>>()
   const lastMetricsRef = useRef<ScrollMetrics>()
   // Scroll metrics are emitted only while the terminal view is active. Keep
@@ -253,12 +254,69 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // Fold ranges extracted from positions; TerminalPanel owns collapse state.
   const folds = useMemo(() => foldsFromPositions(positionsData?.positions), [positionsData])
   const handleFoldChange = useCallback(() => setFoldVersion(v => v + 1), [])
+  const turns = useMemo(() => session?.turns ?? [], [session?.turns])
+  const rolledBackTurns = useMemo(
+    () => session?.rollback_groups?.flatMap(group => group.turns) ?? [],
+    [session?.rollback_groups],
+  )
+  const userIndexes = useMemo(() => turns
+    .map((turn, index) => turn.user_message ? index : -1)
+    .filter(index => index >= 0), [turns])
+
+  const jump = useCallback((direction: -1 | 1, target: JumpTarget) => {
+    const barCount = turns.length
+    if (barCount === 0) return
+    const base = jumpBaseRef.current
+    let targetIndex: number
+
+    if (target === 'turn') {
+      targetIndex = Math.max(0, Math.min(base + direction, barCount - 1))
+    } else {
+      const found = direction > 0
+        ? userIndexes.find(i => i > base)
+        : [...userIndexes].reverse().find(i => i < base)
+      if (found === undefined) return
+      targetIndex = found
+    }
+
+    jumpBaseRef.current = targetIndex
+    scrollToIndexRef.current?.(targetIndex)
+  }, [turns.length, userIndexes])
 
   // Terminal context menu: opened by right-click with a snapshot of the
   // collapse state so item enablement is stable while the menu is up.
   const [ctxMenu, setCtxMenu] = useState<(TerminalContextMenuEvent & { fileOnly?: boolean; editIdx?: number }) | null>(null)
   const handleTerminalContextMenu = useCallback((e: TerminalContextMenuEvent) => setCtxMenu(e), [])
   useEffect(() => { setCtxMenu(null) }, [sessionId, viewMode])
+
+  const toggleBookmark = useCallback(async () => {
+    if (!session || bookmarkBusy) return
+    const nextBookmarked = !session.bookmarked
+    setBookmarkBusy(true)
+    setBookmarkError(null)
+    try {
+      if (nextBookmarked) await addBookmark(session)
+      else await removeBookmark(session)
+      setSession(prev => prev
+        ? {
+            ...prev,
+            bookmarked: nextBookmarked,
+            bookmark_note: nextBookmarked ? prev.bookmark_note : undefined,
+          }
+        : prev)
+      if (!nextBookmarked) setNoteEditorOpen(false)
+      onBookmarkChange?.({
+        agentType: session.agent_type,
+        sessionId: session.id,
+        bookmarked: nextBookmarked,
+        bookmarkNote: nextBookmarked ? (session.bookmark_note ?? '') : undefined,
+      })
+    } catch {
+      setBookmarkError(nextBookmarked ? 'replay.addBookmarkFailed' : 'replay.removeBookmarkFailed')
+    } finally {
+      setBookmarkBusy(false)
+    }
+  }, [bookmarkBusy, onBookmarkChange, session])
 
   // Live tail: poll the stat-level revision every few seconds; on change,
   // apply the new render incrementally (append when possible) and bump
@@ -610,13 +668,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             },
           },
           {
-            label: session?.bookmarked ? '取消收藏' : '收藏',
+            label: session?.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark'),
             disabled: bookmarkBusy,
             tooltip: session?.bookmarked
               ? (session.bookmark_note?.trim()
-                ? `已收藏：${session.bookmark_note.trim()}`
-                : '已收藏（未写备注）')
-              : '收藏后可添加备注',
+                ? t('replay.bookmarkedWithNote', { note: session.bookmark_note.trim() })
+                : t('replay.bookmarkedWithoutNote'))
+              : t('replay.bookmarkHint'),
             onClick: () => {
               void toggleBookmark()
               setCtxMenu(null)
@@ -624,9 +682,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           },
           ...(session?.bookmarked
             ? [{
-                label: session.bookmark_note?.trim() ? '编辑收藏备注' : '添加收藏备注',
+                label: session.bookmark_note?.trim() ? t('replay.editBookmarkNote') : t('replay.addBookmarkNote'),
                 disabled: bookmarkBusy,
-                tooltip: session.bookmark_note?.trim() || '未记录收藏原因',
+                tooltip: session.bookmark_note?.trim() || t('replay.noBookmarkReason'),
                 onClick: () => {
                   setNoteEditorOpen(true)
                   setCtxMenu(null)
@@ -677,7 +735,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       ],
     })
     return sections
-  }, [ctxMenu, fileTarget, folds, positionsData, session, followOutput, sessionIsLive])
+  }, [bookmarkBusy, ctxMenu, fileTarget, folds, followOutput, jump, positionsData, session, sessionIsLive, t, toggleBookmark])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -712,35 +770,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     })
   }, [bookmarkChange])
 
-  const toggleBookmark = useCallback(async () => {
-    if (!session || bookmarkBusy) return
-    const nextBookmarked = !session.bookmarked
-    setBookmarkBusy(true)
-    setBookmarkError(null)
-    try {
-      if (nextBookmarked) await addBookmark(session)
-      else await removeBookmark(session)
-      setSession(prev => prev
-        ? {
-            ...prev,
-            bookmarked: nextBookmarked,
-            bookmark_note: nextBookmarked ? prev.bookmark_note : undefined,
-          }
-        : prev)
-      if (!nextBookmarked) setNoteEditorOpen(false)
-      onBookmarkChange?.({
-        agentType: session.agent_type,
-        sessionId: session.id,
-        bookmarked: nextBookmarked,
-        bookmarkNote: nextBookmarked ? (session.bookmark_note ?? '') : undefined,
-      })
-    } catch {
-      setBookmarkError(nextBookmarked ? '添加收藏失败' : '取消收藏失败')
-    } finally {
-      setBookmarkBusy(false)
-    }
-  }, [bookmarkBusy, onBookmarkChange, session])
-
   const saveBookmarkNote = useCallback(async (_target: { id: string; agent_type: string }, note: string) => {
     if (!session) return
     try {
@@ -753,16 +782,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         bookmarkNote: note,
       })
     } catch {
-      setBookmarkError('收藏备注保存失败')
-      throw new Error('收藏备注保存失败')
+      const key = 'bookmark.noteSaveFailed'
+      setBookmarkError(key)
+      throw new Error(t(key))
     }
-  }, [onBookmarkChange, session])
-
-  const turns = session?.turns ?? []
-  const rolledBackTurns = useMemo(
-    () => session?.rollback_groups?.flatMap(group => group.turns) ?? [],
-    [session?.rollback_groups],
-  )
+  }, [onBookmarkChange, session, t])
 
   // Wire scrollToIndexRef and scrollToTopRef to the terminal control.
   // When analytics is shown the terminal is unmounted so these become no-ops.
@@ -973,7 +997,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [sessionId, session])
+  }, [jump, session?.turns?.length, sessionId])
 
   useEffect(() => {
     if (!sessionId) { setSession(null); setEdits([]); return }
@@ -1059,32 +1083,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     })
     return () => window.cancelAnimationFrame(frame)
   }, [turns.length, positionsData, positionsBuilding, viewMode])
-
-  const jumpBaseRef = useRef(0)
-
-  const userIndexes = useMemo(() => turns
-    .map((turn, index) => turn.user_message ? index : -1)
-    .filter(index => index >= 0), [turns])
-
-  function jump(direction: -1 | 1, target: JumpTarget) {
-    const barCount = turns.length
-    if (barCount === 0) return
-    const base = jumpBaseRef.current
-    let targetIndex: number
-
-    if (target === 'turn') {
-      targetIndex = Math.max(0, Math.min(base + direction, barCount - 1))
-    } else {
-      const found = direction > 0
-        ? userIndexes.find(i => i > base)
-        : [...userIndexes].reverse().find(i => i < base)
-      if (found === undefined) return
-      targetIndex = found
-    }
-
-    jumpBaseRef.current = targetIndex
-    scrollToIndexRef?.current?.(targetIndex)
-  }
 
   if (!sessionId) return (
     <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
@@ -1187,7 +1185,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           )}
           {bookmarkError && (
             <span className="text-meta text-[var(--error)]" role="status">
-              {bookmarkError}
+              {t(bookmarkError)}
             </span>
           )}
           {openFileError && (

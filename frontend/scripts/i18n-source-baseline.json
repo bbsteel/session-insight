@@ -1,0 +1,114 @@
+{
+  "src/api.ts": {
+    "count": 13,
+    "fingerprint": "8f9b9d4f8e85695a"
+  },
+  "src/codeReaderSupport.ts": {
+    "count": 8,
+    "fingerprint": "7aa7e8773c6e2b54"
+  },
+  "src/components/AIPanel.tsx": {
+    "count": 40,
+    "fingerprint": "f0148708bd8ddcf8"
+  },
+  "src/components/AISettingsModal.tsx": {
+    "count": 69,
+    "fingerprint": "ff0f6022c358ffee"
+  },
+  "src/components/AgentFilter.tsx": {
+    "count": 4,
+    "fingerprint": "6ca70bb55e128432"
+  },
+  "src/components/AnalyticsView.tsx": {
+    "count": 48,
+    "fingerprint": "a8d1aabfb96bbed9"
+  },
+  "src/components/CodeReader.tsx": {
+    "count": 13,
+    "fingerprint": "c1510e59d63edea7"
+  },
+  "src/components/DeepInsightSection.tsx": {
+    "count": 102,
+    "fingerprint": "84606251c4ffd467"
+  },
+  "src/components/DeleteSessionDialog.tsx": {
+    "count": 19,
+    "fingerprint": "aa7bc53611414498"
+  },
+  "src/components/DiffModal.tsx": {
+    "count": 11,
+    "fingerprint": "e2f07999ef5e5cef"
+  },
+  "src/components/FileViewer.tsx": {
+    "count": 31,
+    "fingerprint": "f71ae1a4e6e289df"
+  },
+  "src/components/FontPicker.tsx": {
+    "count": 1,
+    "fingerprint": "8a11f0931efeb961"
+  },
+  "src/components/MiniMap.tsx": {
+    "count": 12,
+    "fingerprint": "0b76e2697a358f3e"
+  },
+  "src/components/ModelFilter.tsx": {
+    "count": 3,
+    "fingerprint": "d573ecc49b9b3add"
+  },
+  "src/components/OutputModal.tsx": {
+    "count": 7,
+    "fingerprint": "02709a13e4c7a4eb"
+  },
+  "src/components/ProjectFilter.tsx": {
+    "count": 3,
+    "fingerprint": "a712e745fdf3c912"
+  },
+  "src/components/ReplayView.tsx": {
+    "count": 34,
+    "fingerprint": "12368c816ca36eee"
+  },
+  "src/components/SettingsDialog.tsx": {
+    "count": 61,
+    "fingerprint": "0a790f8910134e3e"
+  },
+  "src/components/Sidebar.tsx": {
+    "count": 35,
+    "fingerprint": "392c9c3a10514bf3"
+  },
+  "src/components/TerminalContextMenu.tsx": {
+    "count": 1,
+    "fingerprint": "308511ef0c6d596a"
+  },
+  "src/components/TerminalPanel.tsx": {
+    "count": 11,
+    "fingerprint": "840bcfc32f8d6d8e"
+  },
+  "src/components/TerminalSearchBar.tsx": {
+    "count": 11,
+    "fingerprint": "9ff68a3881378908"
+  },
+  "src/components/ThemeToggle.tsx": {
+    "count": 15,
+    "fingerprint": "f2782b4a39f2bc2f"
+  },
+  "src/components/ToolCallPanel.tsx": {
+    "count": 2,
+    "fingerprint": "c4563ad156e7d7d8"
+  },
+  "src/components/UserAvatar.tsx": {
+    "count": 1,
+    "fingerprint": "c2059e2dbe6ea450"
+  },
+  "src/components/UserMessagePanel.tsx": {
+    "count": 2,
+    "fingerprint": "b814efd4ce20ec43"
+  },
+  "src/sidebarRows.ts": {
+    "count": 6,
+    "fingerprint": "58d417dca4e8dc16"
+  },
+  "src/terminalFolds.ts": {
+    "count": 1,
+    "fingerprint": "18474aa7a5958ece"
+  }
+}

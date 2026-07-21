@@ -391,13 +391,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       }
       setSessions(prev => applyBookmarkChange(prev, change))
       onBookmarkChange?.(change)
-      showToast(bookmarked ? '已收藏' : '已取消收藏')
+      showToast(bookmarked ? t('replay.bookmarked') : t('replay.bookmarkRemoved'))
       return true
     } catch {
-      showToast(bookmarked ? '收藏失败' : '取消收藏失败')
+      showToast(bookmarked ? t('replay.addBookmarkFailed') : t('replay.removeBookmarkFailed'))
       return false
     }
-  }, [onBookmarkChange, showToast])
+  }, [onBookmarkChange, showToast, t])
 
   const bookmarkFromRow = useCallback(async (event: React.MouseEvent<HTMLButtonElement>, session: SessionSummary) => {
     event.preventDefault()
@@ -427,12 +427,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       }
       setSessions(prev => applyBookmarkChange(prev, change))
       onBookmarkChange?.(change)
-      showToast(note ? '收藏备注已保存' : '收藏备注已清空')
+      showToast(note ? t('bookmark.noteSaved') : t('bookmark.noteCleared'))
     } catch {
-      showToast('收藏备注保存失败')
-      throw new Error('收藏备注保存失败')
+      const message = t('bookmark.noteSaveFailed')
+      showToast(message)
+      throw new Error(message)
     }
-  }, [onBookmarkChange, showToast])
+  }, [onBookmarkChange, showToast, t])
 
   const filtered = useMemo(() => sessions.filter(s => {
     if (agentFilter && s.agent_type !== agentFilter) return false
@@ -663,7 +664,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         </button>
         {session.bookmarked && session.bookmark_note?.trim() && (
           <InstantTooltip
-            text={`收藏备注：${session.bookmark_note.trim()}`}
+            text={t('bookmark.noteWithValue', { note: session.bookmark_note.trim() })}
             placement="top"
             className="absolute right-[3.25rem] top-1.5 flex h-5 w-5 items-center justify-center text-[var(--text-secondary)]"
           >
@@ -671,7 +672,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               type="button"
               onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
               className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-              aria-label="编辑收藏备注"
+              aria-label={t('replay.editBookmarkNote')}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M5 3.75h10.5L20 8.25v12H5z" />
@@ -682,7 +683,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           </InstantTooltip>
         )}
         <InstantTooltip
-          text={session.bookmarked ? '取消收藏' : '收藏'}
+          text={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
           placement="top"
           className="absolute right-7 top-1.5"
         >
@@ -694,7 +695,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
                 : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
             }`}
-            aria-label={session.bookmarked ? '取消收藏' : '收藏'}
+            aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
           >
             <StarIcon size={14} filled={session.bookmarked} strokeWidth={1.75} />
           </button>
@@ -908,9 +909,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               text={
                 contextMenu.session.bookmarked
                   ? (contextMenu.session.bookmark_note?.trim()
-                    ? `已收藏：${contextMenu.session.bookmark_note.trim()}`
-                    : '已收藏（未写备注）')
-                  : '收藏后可添加备注'
+                    ? t('replay.bookmarkedWithNote', { note: contextMenu.session.bookmark_note.trim() })
+                    : t('replay.bookmarkedWithoutNote'))
+                  : t('replay.bookmarkHint')
               }
               placement="cursor"
               className="block w-full"
@@ -919,12 +920,12 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
                 onClick={() => { void toggleSessionBookmark(contextMenu.session); setContextMenu(null) }}
               >
-                {contextMenu.session.bookmarked ? '取消收藏' : '收藏'}
+                {contextMenu.session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
               </button>
             </InstantTooltip>
             {contextMenu.session.bookmarked && (
               <InstantTooltip
-                text={contextMenu.session.bookmark_note?.trim() || '未记录收藏原因'}
+                text={contextMenu.session.bookmark_note?.trim() || t('replay.noBookmarkReason')}
                 placement="cursor"
                 className="block w-full"
               >
@@ -936,7 +937,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                     setContextMenu(null)
                   }}
                 >
-                  {contextMenu.session.bookmark_note?.trim() ? '编辑收藏备注' : '添加收藏备注'}
+                  {contextMenu.session.bookmark_note?.trim() ? t('replay.editBookmarkNote') : t('replay.addBookmarkNote')}
                 </button>
               </InstantTooltip>
             )}
@@ -1023,7 +1024,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         <BookmarkNoteEditor
           session={notePopover.session}
           anchor={notePopover.anchor}
-          title="添加收藏备注"
+          title={t('bookmark.addNoteTitle')}
           onSave={saveBookmarkNote}
           onClose={() => setNotePopover(null)}
         />
