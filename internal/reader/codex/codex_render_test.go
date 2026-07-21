@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/render"
 )
 
@@ -53,6 +54,97 @@ func TestCodexToRenderEventsCustomToolInputAndSingleResult(t *testing.T) {
 	}
 	if boundaries != 1 {
 		t.Fatalf("expected trailing empty turn to be dropped, got %d boundaries", boundaries)
+	}
+}
+
+func TestCodexToRenderEventsUnwrapsExecApplyPatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"timestamp":"2026-06-20T01:00:00.000Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`{"timestamp":"2026-06-20T01:00:01.000Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"call-1","name":"exec","input":"const patch = \"*** Begin Patch\\n*** Update File: notes.md\\n@@\\n-old\\n+new\\n*** End Patch\";\\nconst r = await tools.apply_patch(patch);"}}`,
+		`{"timestamp":"2026-06-20T01:00:02.000Z","type":"event_msg","payload":{"type":"patch_apply_end","call_id":"call-1","stdout":"Success","success":true}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := codexToRenderEvents(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == "ToolInvocation" {
+			if event.ToolName != "apply_patch" {
+				t.Fatalf("tool name = %q, want apply_patch", event.ToolName)
+			}
+			if got, _ := event.ToolInput["args"].(string); !strings.Contains(got, "*** Update File: notes.md") {
+				t.Fatalf("tool input = %q, want extracted patch", got)
+			}
+			return
+		}
+	}
+	t.Fatal("apply_patch invocation not found")
+}
+
+func TestUnwrapApplyPatchExecRejectsTruncatedPatch(t *testing.T) {
+	input := `const patch = "*** Begin Patch\n*** Update File: notes.md\n+new"; const r = await tools.apply_patch(patch);`
+	name, got := unwrapApplyPatchExec("exec", input)
+	if name != "exec" || got != input {
+		t.Fatalf("truncated patch = (%q, %q), want original exec input", name, got)
+	}
+}
+
+func TestCodexToRenderEventsIgnoresPreTaskUserMessage(t *testing.T) {
+	fixture := strings.Join([]string{
+		`{"timestamp":"2026-07-20T12:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"before task"}}`,
+		`{"timestamp":"2026-07-20T12:00:01Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`{"timestamp":"2026-07-20T12:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"ready"}}`,
+	}, "\n") + "\n"
+	events, err := codexToRenderEvents(writeCodexFixture(t, fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == "UserPrompt" && event.Text == "before task" {
+			t.Fatalf("pre-task prompt must not be emitted: %#v", events)
+		}
+	}
+}
+
+func TestCodexToRenderEventsCoalescesCellWait(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"timestamp":"2026-07-20T12:00:00Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`{"timestamp":"2026-07-20T12:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"exec-1","name":"exec","input":"const r = await tools.exec_command({\"cmd\":\"node frontend/scripts/validate-i18n.mjs\"});"}}`,
+		`{"timestamp":"2026-07-20T12:00:11Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"exec-1","output":"Script running with cell ID 75\nWall time 10.0 seconds\nOutput:\n"}}`,
+		`{"timestamp":"2026-07-20T12:00:12Z","type":"response_item","payload":{"type":"function_call","call_id":"wait-1","name":"wait","arguments":"{\"cell_id\":\"75\",\"yield_time_ms\":30000}"}}`,
+		`{"timestamp":"2026-07-20T12:00:20Z","type":"response_item","payload":{"type":"function_call_output","call_id":"wait-1","output":[{"type":"input_text","text":"Script completed\nOutput:\nPASS: i18n\n"}]}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := codexToRenderEvents(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invocations, results []model.RenderEvent
+	for _, event := range events {
+		switch event.Type {
+		case "ToolInvocation":
+			invocations = append(invocations, event)
+		case "ToolResult":
+			results = append(results, event)
+		}
+	}
+	if len(invocations) != 1 || invocations[0].ToolName != "exec" {
+		t.Fatalf("invocations = %#v, want one exec", invocations)
+	}
+	if got, _ := invocations[0].ToolInput["command"].(string); got != "node frontend/scripts/validate-i18n.mjs" {
+		t.Fatalf("command summary = %q", got)
+	}
+	if len(results) != 1 || results[0].ToolCallID != "exec-1" || !strings.Contains(results[0].Stdout, "PASS: i18n") {
+		t.Fatalf("results = %#v, want completed exec result", results)
 	}
 }
 
