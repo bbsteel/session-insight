@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 export type Locale = 'zh-CN' | 'en'
 type MessageValue = string | ((vars: Record<string, string | number>) => string)
@@ -50,6 +50,13 @@ export const messages: Record<Locale, Messages> = {
     'replay.noSessions': 'No sessions yet',
     'replay.bookmark': 'Bookmark',
     'replay.removeBookmark': 'Remove bookmark',
+    'replay.bookmarkedWithNote': 'Bookmarked: {note}',
+    'replay.bookmarkedWithoutNote': 'Bookmarked (no note)',
+    'replay.bookmarkSession': 'Bookmark this session',
+    'replay.noBookmarkReason': 'No bookmark reason recorded',
+    'replay.editBookmarkNote': 'Edit bookmark note',
+    'replay.addBookmarkNote': 'Add bookmark note',
+    'replay.note': 'Note',
     'replay.active': 'Live',
     'replay.follow': 'Follow',
     'replay.export': 'Export',
@@ -118,6 +125,8 @@ export const messages: Record<Locale, Messages> = {
     'sidebar.backendUnavailable': 'Backend unavailable',
     'sidebar.backendUnavailableHelp': 'Start the Go service to show local sessions.',
     'sidebar.openMenu': 'Open context menu',
+    'sidebar.turns': 'turns',
+    'sidebar.messages': 'messages',
   },
   'zh-CN': {
     'app.openSessions': '打开会话列表',
@@ -161,12 +170,19 @@ export const messages: Record<Locale, Messages> = {
     'replay.noSessions': '还没有会话记录',
     'replay.bookmark': '收藏',
     'replay.removeBookmark': '取消收藏',
+    'replay.bookmarkedWithNote': '已收藏：{note}',
+    'replay.bookmarkedWithoutNote': '已收藏（未写备注）',
+    'replay.bookmarkSession': '收藏此会话',
+    'replay.noBookmarkReason': '未记录收藏原因',
+    'replay.editBookmarkNote': '编辑收藏备注',
+    'replay.addBookmarkNote': '添加收藏备注',
+    'replay.note': '备注',
     'replay.active': '活跃中',
     'replay.follow': '跟随',
     'replay.export': '导出',
     'replay.analytics': '分析',
     'replay.tokens': 'tokens',
-    'replay.turns': '活动 turns',
+    'replay.turns': '活动回合',
     'replay.createdNoTurns': '会话已创建但尚无用户回合。开始对话后会显示在这里。',
     'replay.agentHint': '使用 agent 进行编码后，会话将自动出现在这里。',
     'replay.followUnavailable': '仅活跃会话可跟随输出。',
@@ -229,6 +245,8 @@ export const messages: Record<Locale, Messages> = {
     'sidebar.backendUnavailable': '后端未连接',
     'sidebar.backendUnavailableHelp': '启动 Go 服务后会显示本地会话。',
     'sidebar.openMenu': '打开右键菜单',
+    'sidebar.turns': '轮',
+    'sidebar.messages': '条消息',
   },
 }
 
@@ -280,6 +298,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     try { const value = localStorage.getItem(LOCALE_KEY); return value === 'zh-CN' || value === 'en' ? value : null } catch { return null }
   })
   const locale = preference ?? systemLocale()
+  useEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
   const value = useMemo<I18nContextValue>(() => ({
     locale, preference,
     setPreference(next) { saveLocale(next); setStoredPreference(next) },

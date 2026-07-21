@@ -61,7 +61,7 @@ Start with one or two untitled sentences explaining what the session did and its
 
 - Record unfinished work, known defects, or deferred directions. Write "No obvious remaining work" when none are evident.
 
-Only use facts from the record; do not invent. Keep file paths, commands, branches, and function names verbatim in backticks. Output Markdown only, with no preface or closing explanation.`
+Only use facts from the record; do not invent. Keep file paths, commands, branches, and function names verbatim in backticks. Quote code only in fenced Markdown blocks with a language tag (for example, ` + "```go" + `). Output Markdown only, with no preface or closing explanation.`
 
 const titleInstruction = `请为下面这段 AI 编程助手的会话起一个中文标题,概括会话的核心任务。要求:以整个会话中占比最大、最具代表性的主题为准——会话主题可能随时间漂移,靠后集中讨论的主题往往才是会话的真正核心,开头的零散命令或一次性运维操作不算核心任务;不超过 20 个字;直接输出标题文本本身——不要引号、不要句号、不要任何解释或前缀。`
 

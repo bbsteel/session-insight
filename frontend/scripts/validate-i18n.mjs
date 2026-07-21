@@ -26,6 +26,7 @@ try {
   const language = page.locator('select[aria-label="语言"], select[aria-label="Language"]').first()
   await language.selectOption('en')
   await assert.doesNotReject(page.getByPlaceholder(/Search all sessions/).waitFor({ state: 'visible' }))
+  assert.equal(await page.locator('html').getAttribute('lang'), 'en')
   assert.equal(await page.locator('#settings-title').textContent(), 'Appearance')
 
   await page.reload({ waitUntil: 'domcontentloaded' })
@@ -34,6 +35,7 @@ try {
   await page.locator('button[aria-label="Settings"]').click()
   await page.locator('select[aria-label="Language"]').selectOption('zh-CN')
   await assert.doesNotReject(page.getByPlaceholder(/全文搜索/).waitFor({ state: 'visible' }))
+  assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN')
   assert.equal(await page.locator('#settings-title').textContent(), '外观')
   assert.deepEqual(problems, [])
   await page.screenshot({ path: screenshot })

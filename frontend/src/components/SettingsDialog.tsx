@@ -313,7 +313,7 @@ export default function SettingsDialog({
         {/* Left sidebar: vertical tabs */}
         <div className="w-44 flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-surface)] p-3 flex flex-col">
           <div className="mb-4 px-2.5 pt-1 text-body font-semibold text-[var(--text-primary)]">
-            设置
+            {t('settings.title')}
           </div>
           <nav className="flex-1 space-y-0.5 overflow-y-auto">
             {TABS.map(tab => {

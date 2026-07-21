@@ -171,6 +171,9 @@ func TestBuildPromptSummaryUsesRequestedLanguage(t *testing.T) {
 	if !strings.Contains(english, "Produce a Markdown summary in English") {
 		t.Errorf("English summary prompt did not use the English instruction: %q", english)
 	}
+	if !strings.Contains(english, "fenced Markdown blocks with a language tag") {
+		t.Errorf("English summary prompt did not retain the fenced code requirement: %q", english)
+	}
 
 	chinese, err := BuildPrompt(KindSummary, detail, nil, "zh-CN")
 	if err != nil {

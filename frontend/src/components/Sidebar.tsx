@@ -622,9 +622,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
     if (branch) parts.push(branch)
     if ((session.rolled_back_turn_count ?? 0) > 0) {
-      parts.push(`${formatNumber(locale, session.turn_count)} turns · +${formatNumber(locale, session.rolled_back_turn_count ?? 0)} ${t('replay.rolledBack')}`)
+      parts.push(`${formatNumber(locale, session.turn_count)} ${t('sidebar.turns')} · +${formatNumber(locale, session.rolled_back_turn_count ?? 0)} ${t('replay.rolledBack')}`)
     } else {
-      parts.push(`${session.message_count || session.turn_count} msgs`)
+      parts.push(`${formatNumber(locale, session.message_count || session.turn_count)} ${t('sidebar.messages')}`)
     }
     const live = isSessionLive(session, now)
     if (live) parts.push(t('sidebar.live'))

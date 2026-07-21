@@ -1152,9 +1152,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             text={
               session.bookmarked
                 ? (session.bookmark_note?.trim()
-                  ? `已收藏：${session.bookmark_note.trim()}`
-                  : '已收藏（未写备注）')
-                : '收藏此会话'
+                  ? t('replay.bookmarkedWithNote', { note: session.bookmark_note.trim() })
+                  : t('replay.bookmarkedWithoutNote'))
+                : t('replay.bookmarkSession')
             }
             placement="bottom"
           >
@@ -1171,16 +1171,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           </InstantTooltip>
           {session.bookmarked && (
             <InstantTooltip
-              text={session.bookmark_note?.trim() || '未记录收藏原因'}
+              text={session.bookmark_note?.trim() || t('replay.noBookmarkReason')}
               placement="bottom"
             >
               <button
                 onClick={() => setNoteEditorOpen(true)}
                 disabled={bookmarkBusy}
                 className="h-7 rounded-md px-2 inline-flex items-center justify-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                aria-label={session.bookmark_note?.trim() ? '编辑收藏备注' : '添加收藏备注'}
+                aria-label={session.bookmark_note?.trim() ? t('replay.editBookmarkNote') : t('replay.addBookmarkNote')}
               >
-                {session.bookmark_note?.trim() ? '备注' : '添加备注'}
+                {session.bookmark_note?.trim() ? t('replay.note') : t('replay.addBookmarkNote')}
               </button>
             </InstantTooltip>
           )}
