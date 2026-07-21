@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
 import { CloseIcon, CollapseAllIcon, ExpandAllIcon, NarrowIcon, PinIcon, WidenIcon } from './icons'
 import { formatNumber, useI18n } from '../i18n'
@@ -28,6 +28,7 @@ interface Props {
   building: boolean
   pinned?: boolean
   onPinnedChange?: (pinned: boolean) => void
+  onWidthChange?: (width: number) => void
   // 外部筛选请求(分析页 Tool Usage chip):token 变化时应用 name 筛选。
   filterRequest?: { name: string; token: number } | null
   onJump: (lineStart: number, logicalStart?: number) => void
@@ -126,7 +127,7 @@ const summaryClampStyle: React.CSSProperties = {
 
 const WIDE_STORAGE_KEY = 'si-toolpanel-wide'
 
-export default function ToolCallPanel({ positions, building, pinned = false, onPinnedChange, filterRequest, onJump, onClose }: Props) {
+export default function ToolCallPanel({ positions, building, pinned = false, onPinnedChange, onWidthChange, filterRequest, onJump, onClose }: Props) {
   const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -137,6 +138,18 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
     localStorage.setItem(WIDE_STORAGE_KEY, w ? '0' : '1')
     return !w
   })
+
+  // Report the rendered width rather than the nominal 420/640px so the
+  // terminal search bar also handles the panel's responsive max-width.
+  useLayoutEffect(() => {
+    const panel = panelRef.current
+    if (!panel || !onWidthChange) return
+    const reportWidth = () => onWidthChange(panel.getBoundingClientRect().width)
+    reportWidth()
+    const observer = new ResizeObserver(reportWidth)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [onWidthChange])
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
@@ -215,7 +228,7 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
   }
 
   return (
-    <aside ref={panelRef} className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
+    <aside ref={panelRef} data-testid="navigation-panel" className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
       <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
         <span className="text-nav font-medium text-[var(--text-primary)]">{t('replay.toolCalls')}</span>
         <span className="text-meta text-[var(--text-muted)]">

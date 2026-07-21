@@ -69,6 +69,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [showUserPanel, setShowUserPanel] = useState(false)
   // When pinned, click-outside does not close the nav overlay.
   const [navPinned, setNavPinned] = useState(false)
+  const [navPanelWidth, setNavPanelWidth] = useState(0)
   const [showAIPanel, setShowAIPanel] = useState(false)
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
@@ -1388,6 +1389,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               controlRef={termControlRef}
               refreshToken={foldVersion}
               focusToken={searchFocusToken}
+              rightInset={navPinned && (showUserPanel || showToolPanel) ? navPanelWidth : 0}
               onClose={() => setSearchOpen(false)}
             />
           )}
@@ -1423,6 +1425,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               agentType={session.agent_type}
               pinned={navPinned}
               onPinnedChange={setNavPinned}
+              onWidthChange={setNavPanelWidth}
               onJump={handlePanelJump}
               onClose={() => {
                 setShowUserPanel(false)
@@ -1438,6 +1441,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               building={positionsBuilding}
               pinned={navPinned}
               onPinnedChange={setNavPinned}
+              onWidthChange={setNavPanelWidth}
               filterRequest={toolFilterRequest}
               onJump={handlePanelJump}
               onClose={() => {
