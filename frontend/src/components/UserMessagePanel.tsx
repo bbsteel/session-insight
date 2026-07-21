@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
 import AgentIcon from './AgentIcon'
 import UserAvatar from './UserAvatar'
@@ -30,6 +30,7 @@ interface Props {
   agentType?: string // 助手行图标用;会话未加载时退化为通用 agent 图标
   pinned?: boolean
   onPinnedChange?: (pinned: boolean) => void
+  onWidthChange?: (width: number) => void
   onJump: (lineStart: number, logicalStart?: number) => void
   onClose: () => void
 }
@@ -89,7 +90,7 @@ function loadKinds(): InteractionKind[] {
   return ALL_KINDS
 }
 
-export default function UserMessagePanel({ positions, building, agentType, pinned = false, onPinnedChange, onJump, onClose }: Props) {
+export default function UserMessagePanel({ positions, building, agentType, pinned = false, onPinnedChange, onWidthChange, onJump, onClose }: Props) {
   const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
@@ -100,6 +101,18 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
     localStorage.setItem(WIDE_STORAGE_KEY, w ? '0' : '1')
     return !w
   })
+
+  // Report the rendered width rather than the nominal 420/640px so the
+  // terminal search bar also handles the panel's responsive max-width.
+  useLayoutEffect(() => {
+    const panel = panelRef.current
+    if (!panel || !onWidthChange) return
+    const reportWidth = () => onWidthChange(panel.getBoundingClientRect().width)
+    reportWidth()
+    const observer = new ResizeObserver(reportWidth)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [onWidthChange])
   // 用户消息 / 助手回复两个勾选项,默认全选,可单独打开,记忆到本地。
   const [kinds, setKinds] = useState<InteractionKind[]>(loadKinds)
   const toggleKind = (kind: InteractionKind) => setKinds(prev => {
@@ -139,7 +152,7 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
   }
 
   return (
-    <aside ref={panelRef} className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
+    <aside ref={panelRef} data-testid="navigation-panel" className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
       <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
         <span className="text-nav font-medium text-[var(--text-primary)]">{t('replay.messages')}</span>
         <span className="text-meta text-[var(--text-muted)]">

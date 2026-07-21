@@ -35,10 +35,12 @@ interface Props {
   refreshToken: number
   /** Bumped on every Ctrl+F — refocus the input even when already open. */
   focusToken: number
+  /** Width occupied by a pinned navigation panel on the right. */
+  rightInset?: number
   onClose: () => void
 }
 
-export default function TerminalSearchBar({ controlRef, refreshToken, focusToken, onClose }: Props) {
+export default function TerminalSearchBar({ controlRef, refreshToken, focusToken, rightInset = 0, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [opts, setOpts] = useState<TerminalSearchOptions>(loadOpts)
   const [result, setResult] = useState<{ index: number; count: number } | null>(null)
@@ -96,12 +98,24 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
     setOpts(prev => ({ ...prev, [key]: !prev[key] }))
 
   const toggleCls = (on: boolean) =>
-    `h-6 min-w-6 rounded px-1 text-meta ${on
+    `h-6 min-w-6 flex-none rounded px-1 text-meta ${on
       ? 'bg-[var(--accent-blue)] text-white shadow-[inset_0_2px_3px_rgba(0,0,0,0.35)]'
       : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`
 
+  const pinnedPanelGap = 8
+  const insetStyle = rightInset > 0
+    ? {
+        right: rightInset + pinnedPanelGap,
+        maxWidth: `calc(100% - ${rightInset + pinnedPanelGap * 2}px)`,
+      }
+    : undefined
+
   return (
-    <div className="absolute right-14 top-2 z-20 flex items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2 py-1 shadow-md">
+    <div
+      data-testid="terminal-search-bar"
+      className="absolute right-14 top-2 z-20 flex items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2 py-1 shadow-md"
+      style={insetStyle}
+    >
       <input
         ref={inputRef}
         value={query}
@@ -111,29 +125,29 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
           else if (e.key === 'Escape') { e.preventDefault(); onClose() }
         }}
         placeholder="在终端中查找"
-        className="h-6 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
+        className="h-6 min-w-0 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
       />
       <button onClick={() => toggle('caseSensitive')} title="区分大小写" aria-pressed={opts.caseSensitive} className={toggleCls(opts.caseSensitive)}>Aa</button>
       <button onClick={() => toggle('wholeWord')} title="全词匹配" aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
       <button onClick={() => toggle('regex')} title="正则表达式" aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
       <button onClick={() => toggle('highlightAll')} title="高亮全部命中" aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>全亮</button>
-      <span className={`min-w-[52px] text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
+      <span className={`min-w-[52px] flex-none text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
         {invalidRegex ? '无效正则' : query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : '无结果') : ''}
       </span>
       <button
         onClick={() => step(-1)}
         title="上一个 (Shift+Enter)"
-        className="h-6 w-6 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+        className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >↑</button>
       <button
         onClick={() => step(1)}
         title="下一个 (Enter)"
-        className="h-6 w-6 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+        className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >↓</button>
       <button
         onClick={onClose}
         title="关闭 (Esc)"
-        className="h-6 w-6 rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+        className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >✕</button>
     </div>
   )
