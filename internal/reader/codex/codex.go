@@ -200,7 +200,12 @@ func unwrapApplyPatchExec(name, input string) (toolName, toolInput string) {
 		return name, input
 	}
 	var patch string
-	if json.Unmarshal([]byte(m[1]), &patch) != nil || !strings.Contains(patch, "*** Begin Patch") {
+	if json.Unmarshal([]byte(m[1]), &patch) != nil {
+		return name, input
+	}
+	begin := strings.Index(patch, "*** Begin Patch")
+	end := strings.Index(patch, "*** End Patch")
+	if begin < 0 || end < begin {
 		return name, input
 	}
 	return "apply_patch", patch
@@ -853,7 +858,6 @@ type codexRenderAttempt struct {
 	events          []model.RenderEvent
 	groups          []*codexRenderRollback
 	originalIndex   int
-	hasUserPrompt   bool
 	goalPromptEvent int
 }
 
@@ -979,7 +983,6 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 						TurnIndex: len(attempts) - 1,
 						Text:      pendingGoal,
 					})
-					current.hasUserPrompt = true
 					pendingGoal = ""
 					pendingGoalTS = time.Time{}
 				}
@@ -1012,21 +1015,21 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 				turnOpen = false
 
 			case "user_message":
-				if p.Message != "" {
-					// A direct user message in the same turn supersedes a goal
-					// update that was queued just before task_started.
-					if current.goalPromptEvent >= 0 {
-						current.events = append(current.events[:current.goalPromptEvent], current.events[current.goalPromptEvent+1:]...)
-						current.goalPromptEvent = -1
-					}
-					emit(model.RenderEvent{
-						Type:      "UserPrompt",
-						Timestamp: ts,
-						TurnIndex: len(attempts) - 1,
-						Text:      p.Message,
-					})
-					current.hasUserPrompt = true
+				if current == nil || p.Message == "" {
+					continue
 				}
+				// A direct user message in the same turn supersedes a goal
+				// update that was queued just before task_started.
+				if current.goalPromptEvent >= 0 {
+					current.events = append(current.events[:current.goalPromptEvent], current.events[current.goalPromptEvent+1:]...)
+					current.goalPromptEvent = -1
+				}
+				emit(model.RenderEvent{
+					Type:      "UserPrompt",
+					Timestamp: ts,
+					TurnIndex: len(attempts) - 1,
+					Text:      p.Message,
+				})
 
 			case "agent_message":
 				if p.Message != "" {

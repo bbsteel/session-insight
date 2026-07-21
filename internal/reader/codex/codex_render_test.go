@@ -86,6 +86,31 @@ func TestCodexToRenderEventsUnwrapsExecApplyPatch(t *testing.T) {
 	t.Fatal("apply_patch invocation not found")
 }
 
+func TestUnwrapApplyPatchExecRejectsTruncatedPatch(t *testing.T) {
+	input := `const patch = "*** Begin Patch\n*** Update File: notes.md\n+new"; const r = await tools.apply_patch(patch);`
+	name, got := unwrapApplyPatchExec("exec", input)
+	if name != "exec" || got != input {
+		t.Fatalf("truncated patch = (%q, %q), want original exec input", name, got)
+	}
+}
+
+func TestCodexToRenderEventsIgnoresPreTaskUserMessage(t *testing.T) {
+	fixture := strings.Join([]string{
+		`{"timestamp":"2026-07-20T12:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"before task"}}`,
+		`{"timestamp":"2026-07-20T12:00:01Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`{"timestamp":"2026-07-20T12:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"ready"}}`,
+	}, "\n") + "\n"
+	events, err := codexToRenderEvents(writeCodexFixture(t, fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == "UserPrompt" && event.Text == "before task" {
+			t.Fatalf("pre-task prompt must not be emitted: %#v", events)
+		}
+	}
+}
+
 func TestCodexToRenderEventsCoalescesCellWait(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	lines := []string{
