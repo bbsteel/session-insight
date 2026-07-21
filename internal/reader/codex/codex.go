@@ -787,6 +787,14 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 					}
 				}
 			}
+
+		case "compacted":
+			// Context window compaction: the model's context was
+			// compressed/summarized. Mark the current turn so the
+			// frontend can surface it.
+			if current != nil {
+				current.turn.Anomalies = append(current.turn.Anomalies, "compaction")
+			}
 		}
 
 		// Track duration from turn start to latest event
@@ -1182,6 +1190,18 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 					Stdout:        output,
 					ExitCode:      extractExitCode(output),
 					ParentEventID: parentEventID,
+				})
+			}
+
+		case "compacted":
+			// Emit a CompactionBoundary so the formatter records a
+			// minimap compaction marker (blue "C") and the terminal
+			// view can show a context-compression indicator.
+			if current != nil {
+				emit(model.RenderEvent{
+					Type:      "CompactionBoundary",
+					Timestamp: ts,
+					TurnIndex: len(attempts) - 1,
 				})
 			}
 		}
