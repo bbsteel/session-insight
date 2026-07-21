@@ -23,11 +23,23 @@ export function isSessionLive(session: Pick<SessionSummary, 'is_live' | 'updated
   return session.is_live && now - new Date(session.updated_at).getTime() < LIVE_WINDOW_MS
 }
 
-export function formatRelativeTime(dateStr: string, now = Date.now()): string {
+export function formatRelativeTime(dateStr: string, now = Date.now(), locale = 'zh-CN'): string {
   const timestamp = new Date(dateStr).getTime()
   if (!Number.isFinite(timestamp)) return dateStr
 
   const elapsedMinutes = Math.max(0, Math.floor((now - timestamp) / 60_000))
+  if (locale === 'en') {
+    const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+    if (elapsedMinutes < 1) return relative.format(0, 'minute')
+    if (elapsedMinutes < 60) return relative.format(-elapsedMinutes, 'minute')
+    const hours = Math.floor(elapsedMinutes / 60)
+    if (hours < 24) return relative.format(-hours, 'hour')
+    const days = Math.floor(hours / 24)
+    if (days < 30) return relative.format(-days, 'day')
+    const months = Math.floor(days / 30)
+    if (months < 12) return relative.format(-months, 'month')
+    return relative.format(-Math.floor(days / 365), 'year')
+  }
   if (elapsedMinutes < 1) return '刚刚'
   if (elapsedMinutes < 60) return `${elapsedMinutes}分钟前`
 

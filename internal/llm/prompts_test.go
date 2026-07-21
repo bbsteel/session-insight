@@ -160,3 +160,26 @@ func TestBuildPromptHandoffIncludesCandidates(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildPromptSummaryUsesRequestedLanguage(t *testing.T) {
+
+	detail := makeDetail(1, 100)
+	english, err := BuildPrompt(KindSummary, detail, nil, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(english, "Produce a Markdown summary in English") {
+		t.Errorf("English summary prompt did not use the English instruction: %q", english)
+	}
+	if !strings.Contains(english, "fenced Markdown blocks with a language tag") {
+		t.Errorf("English summary prompt did not retain the fenced code requirement: %q", english)
+	}
+
+	chinese, err := BuildPrompt(KindSummary, detail, nil, "zh-CN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(chinese, "请用中文输出") {
+		t.Errorf("Chinese summary prompt did not retain the Chinese instruction: %q", chinese)
+	}
+}

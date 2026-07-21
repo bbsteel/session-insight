@@ -11,6 +11,7 @@ import App from './App'
 import './app.css'
 import { initTheme } from './theme'
 import { initFonts } from './fontPrefs'
+import { I18nProvider } from './i18n'
 
 // Apply theme and fonts before first paint (defaults win; stored preferences override).
 initTheme()
@@ -23,6 +24,6 @@ if (typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.u
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <I18nProvider><App /></I18nProvider>
   </React.StrictMode>,
 )

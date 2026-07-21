@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
 import { CloseIcon, CollapseAllIcon, ExpandAllIcon, NarrowIcon, PinIcon, WidenIcon } from './icons'
+import { formatNumber, useI18n } from '../i18n'
 
 // 工具调用管理面板:按时序列出会话的所有工具调用(kind === 'tool' 的
 // positions),支持按工具类型筛选、文字过滤、展开查看参数、点击跳转到终端
@@ -105,12 +106,12 @@ function previewRedundant(e: ToolEntry): boolean {
   })
 }
 
-const statusIcon: Record<string, { icon: string; className: string; title: string }> = {
-  ok: { icon: '✓', className: 'text-[var(--accent-green)]', title: '成功' },
-  error: { icon: '✗', className: 'text-[var(--error)]', title: '失败' },
-  timeout: { icon: '⏱', className: 'text-[var(--error)]', title: '超时' },
-  rejected: { icon: '⊘', className: 'text-[var(--warning,#d29922)]', title: '被拒绝' },
-  '': { icon: '·', className: 'text-[var(--text-muted)]', title: '无结果记录' },
+const statusIcon: Record<string, { icon: string; className: string; titleKey: string }> = {
+  ok: { icon: '✓', className: 'text-[var(--accent-green)]', titleKey: 'panel.success' },
+  error: { icon: '✗', className: 'text-[var(--error)]', titleKey: 'panel.failed' },
+  timeout: { icon: '⏱', className: 'text-[var(--error)]', titleKey: 'panel.timeout' },
+  rejected: { icon: '⊘', className: 'text-[var(--warning,#d29922)]', titleKey: 'panel.rejected' },
+  '': { icon: '·', className: 'text-[var(--text-muted)]', titleKey: 'panel.noResult' },
 }
 
 // 摘要不折行到需要展开才能看:最多 4 行(服务端摘要上限 200 列,面板宽度
@@ -126,6 +127,7 @@ const summaryClampStyle: React.CSSProperties = {
 const WIDE_STORAGE_KEY = 'si-toolpanel-wide'
 
 export default function ToolCallPanel({ positions, building, pinned = false, onPinnedChange, filterRequest, onJump, onClose }: Props) {
+  const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -215,9 +217,9 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
   return (
     <aside ref={panelRef} className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
       <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
-        <span className="text-nav font-medium text-[var(--text-primary)]">工具调用</span>
+        <span className="text-nav font-medium text-[var(--text-primary)]">{t('replay.toolCalls')}</span>
         <span className="text-meta text-[var(--text-muted)]">
-          {filtering ? `${visible.length}/${entries.length}` : entries.length}
+          {filtering ? `${formatNumber(locale, visible.length)}/${formatNumber(locale, entries.length)}` : formatNumber(locale, entries.length)}
         </span>
         <span className="flex-1" />
         {/* Header actions: text-nav + currentColor SVG (no emoji/symbol fallbacks). */}
@@ -228,36 +230,36 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
               ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
               : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
           }`}
-          title={pinned ? '取消钉住（点击外部可关闭）' : '钉住面板（点击外部不关闭）'}
+          title={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
           aria-pressed={pinned}
-          aria-label={pinned ? '取消钉住导航面板' : '钉住导航面板'}
+          aria-label={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
         >
           <PinIcon filled={pinned} />
-          {pinned ? '已钉住' : '钉住'}
+          {pinned ? t('panel.pinned') : t('panel.pin')}
         </button>
         <button
           onClick={toggleWide}
           className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={wide ? '恢复标准宽度' : '加宽面板'}
+          title={wide ? t('panel.restoreWidth') : t('panel.widen')}
         >
           {wide ? <NarrowIcon /> : <WidenIcon />}
-          {wide ? '标准' : '加宽'}
+          {wide ? t('panel.standard') : t('panel.widen')}
         </button>
         {expandableKeys.length > 0 && (
           <button
             onClick={toggleAll}
             className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            title={anyExpanded ? '收起所有参数' : '展开所有参数'}
+            title={anyExpanded ? t('panel.collapseAll') : t('panel.expandAll')}
           >
             {anyExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
-            {anyExpanded ? '收起全部' : '展开全部'}
+            {anyExpanded ? t('panel.collapseAll') : t('panel.expandAll')}
           </button>
         )}
         <button
           onClick={onClose}
           className="inline-flex h-6 w-6 items-center justify-center rounded text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title="关闭"
-          aria-label="关闭工具调用面板"
+          title={t('common.close')}
+          aria-label={t('panel.closeTools')}
         >
           <CloseIcon />
         </button>
@@ -267,9 +269,9 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
         <input
           value={query}
           onChange={ev => setQuery(ev.target.value)}
-          placeholder="筛选:工具名 / 参数…"
+          placeholder={t('panel.filterTools')}
           className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
-          aria-label="按文字筛选工具调用"
+          aria-label={t('panel.filterToolsLabel')}
         />
       </div>
 
@@ -283,7 +285,7 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]'
             }`}
           >
-            全部
+            {t('panel.all')}
           </button>
           {nameCounts.map(([name, count]) => {
             const color = toolColor(name)
@@ -298,9 +300,9 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
                 style={isOn
                   ? { color, borderColor: color, backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)` }
                   : { color }}
-                title={`${name} · ${count} 次调用`}
+                title={`${name} · ${formatNumber(locale, count)} ${t('panel.calls')}`}
               >
-                {name} {count}
+                {name} {formatNumber(locale, count)}
               </button>
             )
           })}
@@ -311,19 +313,19 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
         {/* 列标题:与下方行用同一套固定列宽,竖线上下对齐,形成表格感。 */}
         <div className="sticky top-0 z-[1] flex items-stretch border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-meta text-[var(--text-muted)]">
           <div className="w-5 flex-shrink-0 border-r border-[var(--border-muted)]" />
-          <div className="w-8 flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-right">#</div>
-          <div className="w-[58px] flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-center">时间</div>
-          <div className="min-w-0 flex-1 px-1.5 py-1">工具 · 参数</div>
-          <div className="flex-shrink-0 px-1.5 py-1">耗时</div>
+          <div className="w-8 flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-right">{t('panel.number')}</div>
+          <div className="w-[58px] flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-center">{t('panel.time')}</div>
+          <div className="min-w-0 flex-1 px-1.5 py-1">{t('panel.toolArguments')}</div>
+          <div className="flex-shrink-0 px-1.5 py-1">{t('panel.duration')}</div>
         </div>
         {building && (
-          <div className="p-3 text-helper text-[var(--text-muted)]">位置索引构建中…</div>
+          <div className="p-3 text-helper text-[var(--text-muted)]">{t('panel.indexing')}</div>
         )}
         {!building && entries.length === 0 && (
-          <div className="p-3 text-helper text-[var(--text-muted)]">此会话没有工具调用记录</div>
+          <div className="p-3 text-helper text-[var(--text-muted)]">{t('panel.noTools')}</div>
         )}
         {!building && entries.length > 0 && visible.length === 0 && (
-          <div className="p-3 text-helper text-[var(--text-muted)]">没有匹配当前筛选的调用</div>
+          <div className="p-3 text-helper text-[var(--text-muted)]">{t('panel.noMatchingTools')}</div>
         )}
         {visible.map(e => {
           const st = statusIcon[e.status] ?? statusIcon['']
@@ -354,9 +356,9 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
                     ev.stopPropagation()
                     toggleExpanded(e.key)
                   }}
-                  title={!canExpand ? '参数已完整显示' : isExpanded ? '收起参数' : '展开参数'}
+                  title={!canExpand ? t('panel.argumentsShown') : isExpanded ? t('panel.collapseArguments') : t('panel.expandArguments')}
                   role={canExpand ? 'button' : undefined}
-                  aria-label={canExpand ? (isExpanded ? '收起参数' : '展开参数') : undefined}
+                  aria-label={canExpand ? (isExpanded ? t('panel.collapseArguments') : t('panel.expandArguments')) : undefined}
                 >
                   <span className="pt-1.5">{canExpand ? (isExpanded ? '▾' : '▸') : ''}</span>
                 </div>
@@ -367,7 +369,7 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
                   {e.tsMs !== null ? fmtTime(e.tsMs) : ''}
                 </div>
                 <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1.5">
-                  <span className={`w-3 flex-shrink-0 text-center text-helper font-bold ${st.className}`} title={st.title}>
+                  <span className={`w-3 flex-shrink-0 text-center text-helper font-bold ${st.className}`} title={t(st.titleKey)}>
                     {st.icon}
                   </span>
                   <span className="flex-shrink-0 text-nav font-bold tracking-tight" style={{ color }}>{e.name}</span>
