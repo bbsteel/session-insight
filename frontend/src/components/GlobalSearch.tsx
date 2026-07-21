@@ -5,6 +5,7 @@ import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
 import SettingsDialog from './SettingsDialog'
 import { ThemeSwitch } from './ThemeToggle'
+import { formatRelativeTime, useI18n, type Locale } from '../i18n'
 
 const HISTORY_KEY = 'search-history'
 const HISTORY_LIMIT_KEY = 'search-history-limit'
@@ -58,18 +59,18 @@ function sortAndTrim(entries: HistoryEntry[], limit: number): HistoryEntry[] {
   return [...pinned, ...unpinned]
 }
 
-function relTime(iso: string): string {
+function relTime(iso: string, locale: Locale): string {
   if (!iso) return ''
   const diff = Date.now() - new Date(iso).getTime()
   if (!Number.isFinite(diff) || diff < 0) return ''
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes}分钟前`
+  if (minutes < 1) return formatRelativeTime(locale, 0)
+  if (minutes < 60) return formatRelativeTime(locale, -minutes, 'minute')
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}小时前`
+  if (hours < 24) return formatRelativeTime(locale, -hours, 'hour')
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}天前`
-  return new Date(iso).toLocaleDateString()
+  if (days < 30) return formatRelativeTime(locale, -days, 'day')
+  return new Date(iso).toLocaleDateString(locale)
 }
 
 function HighlightedSnippet({ text, query }: { text: string; query: string }) {
@@ -135,6 +136,7 @@ function ClockIcon() {
 }
 
 export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void }) {
+  const { locale, t } = useI18n()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
@@ -219,21 +221,21 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
 
   const indexing = indexStatus?.state === 'running'
   const indexLabel = indexing
-    ? `索引进行中… ${Math.min(100, Math.max(0, indexStatus?.percent ?? 0))}%` +
+    ? t('search.indexing', { percent: Math.min(100, Math.max(0, indexStatus?.percent ?? 0)) }) +
       (indexStatus && indexStatus.total > 0 ? ` (${indexStatus.done}/${indexStatus.total})` : '')
     : indexStatus?.message === 'completed_with_errors'
-      ? '索引完成（部分会话失败，将重试）'
+      ? t('search.indexCompleteWithErrors')
       : null
   const searchPlaceholder = indexing
     ? indexLabel!
-    : `全文搜索... (${isMac ? '⌘K' : 'Ctrl+K'})`
+    : t('search.placeholder', { shortcut: isMac ? '⌘K' : 'Ctrl+K' })
   // Polite live region: announce progress even when the dropdown is closed.
   const indexAriaLive = indexing
     ? indexLabel
     : indexStatus?.message === 'completed_with_errors'
-      ? '全文索引完成，部分会话失败，稍后将重试'
+      ? t('search.indexCompleteWithErrors')
       : indexStatus?.message === 'ready' && (indexStatus.total ?? 0) > 0
-        ? '全文索引已就绪'
+        ? t('search.indexReady')
         : ''
 
   useEffect(() => {
@@ -351,7 +353,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           onFocus={openDropdown}
           onClick={openDropdown}
           className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
-          aria-label="全文搜索"
+          aria-label={t('common.search')}
         />
         {indexing && (
           <div
@@ -369,13 +371,13 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
             {indexLabel && (
               <div className="border-b border-[var(--border-muted)] px-3 py-1.5 text-meta text-[var(--text-muted)]">
                 {indexLabel}
-                {indexing && <span className="ml-1 text-[var(--text-muted)]">· 可先搜已完成部分</span>}
+                {indexing && <span className="ml-1 text-[var(--text-muted)]">· {t('search.partialAvailable')}</span>}
               </div>
             )}
             {isHistoryMode ? (
               <>
                 <div className="sticky top-0 bg-[var(--bg-surface)] px-3 pt-2 pb-1 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                  最近搜索
+                  {t('search.recent')}
                 </div>
                 {visibleHistory.map((entry, i) => (
                   <div
@@ -397,8 +399,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
                     <span className="flex flex-shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-fast group-hover:opacity-100">
                       <button
                         onClick={e => { e.stopPropagation(); togglePin(entry.query) }}
-                        title={entry.pinned ? '取消钉住' : '钉住'}
-                        aria-label={entry.pinned ? '取消钉住' : '钉住'}
+                        title={entry.pinned ? t('search.unpin') : t('search.pin')}
+                        aria-label={entry.pinned ? t('search.unpin') : t('search.pin')}
                         className={`flex h-5 w-5 items-center justify-center rounded hover:bg-[var(--bg-surface-hover)] ${
                           entry.pinned ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
                         }`}
@@ -407,8 +409,8 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
                       </button>
                       <button
                         onClick={e => { e.stopPropagation(); removeEntry(entry.query) }}
-                        title="删除"
-                        aria-label="删除"
+                        title={t('search.delete')}
+                        aria-label={t('search.delete')}
                         className="flex h-5 w-5 items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
                       >
                         ✕
@@ -419,11 +421,11 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
               </>
             ) : (
               <>
-                {loading && results.length === 0 && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">搜索中...</div>}
-                {!loading && results.length === 0 && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">无匹配结果</div>}
+                {loading && results.length === 0 && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">{t('search.searching')}</div>}
+                {!loading && results.length === 0 && <div className="px-3 py-2 text-helper text-[var(--text-muted)]">{t('search.noMatches')}</div>}
                 {results.length > 0 && (
                   <div className="sticky top-0 bg-[var(--bg-surface)] px-3 pt-2 pb-1 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                    结果
+                    {t('search.results')}
                   </div>
                 )}
                 {results.map((r, i) => (
@@ -446,7 +448,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
                         </span>
                       )}
                       {r.updated_at && (
-                        <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">{relTime(r.updated_at)}</span>
+                        <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">{relTime(r.updated_at, locale)}</span>
                       )}
                     </div>
                     <div className="mt-0.5 truncate pl-[20px] text-helper text-[var(--text-secondary)]">
@@ -469,11 +471,11 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
                 ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
                 : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
             }`}
-            title="设置"
-            aria-label="设置"
+            title={t('settings.title')}
+            aria-label={t('settings.title')}
           >
             <span aria-hidden="true">⚙</span>
-            <span>设置</span>
+            <span>{t('settings.title')}</span>
           </button>
         </div>
       </div>

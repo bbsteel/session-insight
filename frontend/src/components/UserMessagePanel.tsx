@@ -3,6 +3,7 @@ import type { MiniMapPosition, PositionsResponse } from '../types'
 import AgentIcon from './AgentIcon'
 import UserAvatar from './UserAvatar'
 import { CloseIcon, NarrowIcon, PinIcon, WidenIcon } from './icons'
+import { formatNumber, useI18n } from '../i18n'
 
 // 交互消息面板:按时间序列出会话的用户消息(kind === 'user')和助手回复
 // (kind === 'assistant',每个连续文本块一条),两类消息各有勾选项(默认全选,
@@ -89,6 +90,7 @@ function loadKinds(): InteractionKind[] {
 }
 
 export default function UserMessagePanel({ positions, building, agentType, pinned = false, onPinnedChange, onJump, onClose }: Props) {
+  const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -139,9 +141,9 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
   return (
     <aside ref={panelRef} className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
       <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
-        <span className="text-nav font-medium text-[var(--text-primary)]">交互消息</span>
+        <span className="text-nav font-medium text-[var(--text-primary)]">{t('replay.messages')}</span>
         <span className="text-meta text-[var(--text-muted)]">
-          {filtering ? `${visible.length}/${kindFiltered.length}` : kindFiltered.length}
+          {filtering ? `${formatNumber(locale, visible.length)}/${formatNumber(locale, kindFiltered.length)}` : formatNumber(locale, kindFiltered.length)}
         </span>
         <span className="flex-1" />
         {/* Header actions: text-nav + currentColor SVG (no emoji/symbol fallbacks). */}
@@ -152,26 +154,26 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
               ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
               : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
           }`}
-          title={pinned ? '取消钉住（点击外部可关闭）' : '钉住面板（点击外部不关闭）'}
+          title={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
           aria-pressed={pinned}
-          aria-label={pinned ? '取消钉住导航面板' : '钉住导航面板'}
+          aria-label={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
         >
           <PinIcon filled={pinned} />
-          {pinned ? '已钉住' : '钉住'}
+          {pinned ? t('panel.pinned') : t('panel.pin')}
         </button>
         <button
           onClick={toggleWide}
           className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={wide ? '恢复标准宽度' : '加宽面板'}
+          title={wide ? t('panel.restoreWidth') : t('panel.widen')}
         >
           {wide ? <NarrowIcon /> : <WidenIcon />}
-          {wide ? '标准' : '加宽'}
+          {wide ? t('panel.standard') : t('panel.widen')}
         </button>
         <button
           onClick={onClose}
           className="inline-flex h-6 w-6 items-center justify-center rounded text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title="关闭"
-          aria-label="关闭交互消息面板"
+          title={t('common.close')}
+          aria-label={t('panel.closeMessages')}
         >
           <CloseIcon />
         </button>
@@ -181,12 +183,12 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
         <input
           value={query}
           onChange={ev => setQuery(ev.target.value)}
-          placeholder="筛选消息内容…"
+          placeholder={t('panel.filterMessages')}
           className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
-          aria-label="按文字筛选交互消息"
+          aria-label={t('panel.filterMessagesLabel')}
         />
         <div className="mt-1.5 flex items-center gap-3">
-          {([['user', '用户消息'], ['assistant', '助手回复']] as const).map(([kind, label]) => (
+          {([['user', t('panel.userMessage')], ['assistant', t('panel.assistantReply')]] as const).map(([kind, label]) => (
             <label
               key={kind}
               className="flex cursor-pointer items-center gap-1.5 text-meta text-[var(--text-secondary)]"
@@ -196,7 +198,7 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
                 checked={kinds.includes(kind)}
                 onChange={() => toggleKind(kind)}
                 className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent-blue)]"
-                aria-label={`显示${label}`}
+                aria-label={t('panel.showKind', { kind: label })}
               />
               {label}
             </label>
@@ -207,21 +209,21 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* 列标题:与下方行用同一套固定列宽,竖线上下对齐,形成表格感。 */}
         <div className="sticky top-0 z-[1] flex items-stretch border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-meta text-[var(--text-muted)]">
-          <div className="w-8 flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-right">#</div>
-          <div className="w-[58px] flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-center">时间</div>
-          <div className="min-w-0 flex-1 px-1.5 py-1">内容</div>
+          <div className="w-8 flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-right">{t('panel.number')}</div>
+          <div className="w-[58px] flex-shrink-0 border-r border-[var(--border-muted)] px-1 py-1 text-center">{t('panel.time')}</div>
+          <div className="min-w-0 flex-1 px-1.5 py-1">{t('panel.content')}</div>
         </div>
         {building && (
-          <div className="p-3 text-helper text-[var(--text-muted)]">位置索引构建中…</div>
+          <div className="p-3 text-helper text-[var(--text-muted)]">{t('panel.indexing')}</div>
         )}
         {!building && entries.length === 0 && (
-          <div className="p-3 text-helper text-[var(--text-muted)]">此会话没有交互消息记录</div>
+          <div className="p-3 text-helper text-[var(--text-muted)]">{t('panel.noMessages')}</div>
         )}
         {!building && entries.length > 0 && kindFiltered.length === 0 && (
-          <div className="p-3 text-helper text-[var(--text-muted)]">请在上方勾选要显示的消息类型</div>
+          <div className="p-3 text-helper text-[var(--text-muted)]">{t('panel.chooseMessageKinds')}</div>
         )}
         {!building && kindFiltered.length > 0 && visible.length === 0 && (
-          <div className="p-3 text-helper text-[var(--text-muted)]">没有匹配当前筛选的消息</div>
+          <div className="p-3 text-helper text-[var(--text-muted)]">{t('panel.noMatchingMessages')}</div>
         )}
         {visible.map(e => {
           const isActive = e.key === activeKey
@@ -244,7 +246,7 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
                   {e.tsMs !== null ? fmtTime(e.tsMs) : ''}
                 </div>
                 <div className="flex min-w-0 flex-1 items-start gap-1.5 px-1.5 py-1.5">
-                  <span className="mt-px flex-shrink-0" title={e.kind === 'user' ? '用户消息' : '助手回复'}>
+                  <span className="mt-px flex-shrink-0" title={e.kind === 'user' ? t('panel.userMessage') : t('panel.assistantReply')}>
                     {e.kind === 'user'
                       ? <UserAvatar size={14} />
                       : <AgentIcon agentType={agentType} size={14} />}

@@ -5,6 +5,7 @@ import {
   parseHandoffMetadata, removeSessionTitle, setSessionTitle, splitHandoffOutput,
   type AIGeneration, type AIKind, type LLMProvider,
 } from '../api'
+import { useI18n } from '../i18n'
 import MarkdownRenderer from './MarkdownRenderer'
 
 interface Props {
@@ -60,6 +61,7 @@ function AnimatedDots() {
 // produces a draft the user must explicitly apply — nothing renames a
 // session without confirmation.
 export default function AIPanel({ sessionId, agentType, sessionName, onClose, onTitleApplied }: Props) {
+  const { locale } = useI18n()
   const [tab, setTab] = useState<AIKind>('summary')
   const [states, setStates] = useState<Record<AIKind, TabState>>({
     summary: emptyTab, title: emptyTab, handoff: emptyTab,
@@ -145,7 +147,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
     patch(kind, { busy: true, stages: [], error: null, noProvider: false, unavailableProviderId: null })
     setTitleApplied(false)
     try {
-      const gen = await generateAI(sessionId, kind, onStage, ac.signal, providerId)
+      const gen = await generateAI(sessionId, kind, onStage, ac.signal, providerId, locale)
       patch(kind, { generation: gen, busy: false, loaded: true, stages: finalize() })
     } catch (err) {
       if (ac.signal.aborted) return

@@ -469,7 +469,8 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ProviderID int64 `json:"provider_id"`
+		ProviderID int64  `json:"provider_id"`
+		Locale     string `json:"locale"`
 	}
 	json.NewDecoder(r.Body).Decode(&req) // empty body is fine
 
@@ -500,7 +501,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	if kind == string(llm.KindHandoff) {
 		candidates = s.handoffCandidates()
 	}
-	prompt, err := llm.BuildPrompt(llm.GenerationKind(kind), detail, candidates)
+	prompt, err := llm.BuildPrompt(llm.GenerationKind(kind), detail, candidates, req.Locale)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
