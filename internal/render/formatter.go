@@ -537,6 +537,9 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			closeToolFold() // finalize the per-tool fold immediately after its result, so following assistant text is not swallowed into the fold (fixes folding assistant messages)
 		case "CompactionBoundary":
 			emit("compaction", "压缩", "", evt.TurnIndex, nil)
+			tb.WriteString(prefix)
+			tb.WriteString(fgWrap("▸ 上下文已压缩", p.Palette.Muted))
+			tb.WriteString("\n")
 		case "AgentSpecific":
 			writeAgentSpecific(p, tb, evt, prefix)
 		}
@@ -570,7 +573,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 // shifts line numbers, so cached line positions keyed on it are invalidated.
 // It also covers position-set changes (e.g. a new position kind), since
 // positions are cached under the same key.
-const FormatVersion int64 = 30
+const FormatVersion int64 = 31
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or

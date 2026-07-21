@@ -126,7 +126,7 @@ func TestCompactionBoundaryEmitsPosition(t *testing.T) {
 		{Type: "UserPrompt", TurnIndex: 0, Timestamp: time.Now(), Depth: 0, Text: "before compact"},
 		{Type: "CompactionBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
 	}
-	_, positions := FormatEventsWithPositions(events, 80)
+	ansi, positions := FormatEventsWithPositions(events, 80)
 
 	var sawCompaction bool
 	for _, pos := range positions {
@@ -139,6 +139,9 @@ func TestCompactionBoundaryEmitsPosition(t *testing.T) {
 	}
 	if !sawCompaction {
 		t.Fatalf("expected CompactionBoundary to produce a compaction position, got %+v", positions)
+	}
+	if !strings.Contains(ansi, "上下文已压缩") {
+		t.Errorf("expected ANSI output to contain compaction indicator, got:\n%s", ansi)
 	}
 }
 
