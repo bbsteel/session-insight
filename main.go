@@ -167,14 +167,8 @@ func listenWithFallback(host, port string) (net.Listener, error) {
 }
 
 // isAddrInUse reports whether err is an EADDRINUSE from a failed listen.
+// errors.Is unwraps through *net.OpError → *os.SyscallError → syscall.Errno.
 func isAddrInUse(err error) bool {
 	var opErr *net.OpError
-	if !errors.As(err, &opErr) || opErr.Op != "listen" {
-		return false
-	}
-	var scErr *os.SyscallError
-	if errors.As(opErr.Err, &scErr) {
-		return scErr.Syscall == "bind" && errors.Is(scErr.Err, syscall.EADDRINUSE)
-	}
-	return errors.Is(opErr.Err, syscall.EADDRINUSE)
+	return errors.As(err, &opErr) && opErr.Op == "listen" && errors.Is(err, syscall.EADDRINUSE)
 }
