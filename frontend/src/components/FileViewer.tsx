@@ -13,6 +13,7 @@ import {
   shouldShowLanguageSupportBanner,
 } from '../codeReaderSupport'
 import type { CodeReaderHandle } from './CodeReader'
+import { LanguageSwitch } from './LanguageSwitch'
 import { ThemeSwitch } from './ThemeToggle'
 
 const CodeReader = lazy(() => import('./CodeReader'))
@@ -230,6 +231,7 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
         >
           查找
         </button>
+        <LanguageSwitch />
         <ThemeSwitch />
       </header>
       <div className="flex min-h-0 flex-1">

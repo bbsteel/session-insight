@@ -189,6 +189,17 @@ export function FontIcon({ className, ...rest }: IconProps) {
   )
 }
 
+/** Globe / language icon. */
+export function GlobeIcon({ className, ...rest }: IconProps) {
+  return (
+    <Icon className={className ?? 'h-3.5 w-3.5 shrink-0'} {...rest}>
+      <circle cx="8" cy="8" r="6" />
+      <ellipse cx="8" cy="8" rx="3" ry="6" />
+      <path d="M2 8h12" />
+    </Icon>
+  )
+}
+
 export function InfoIcon({ className, ...rest }: IconProps) {
   return (
     <Icon className={className ?? 'h-4 w-4 shrink-0'} {...rest}>

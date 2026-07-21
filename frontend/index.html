@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SessionInsight</title>
+    <!-- Apply language before paint so the lang attribute is correct from the start. -->
+    <!-- NOTE: keep in sync with frontend/src/i18n.tsx (getLocale / systemLocale). -->
+    <script>
+      (function () {
+        try {
+          var l = localStorage.getItem('si-locale')
+          if (l !== 'zh-CN' && l !== 'en') l = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
+          document.documentElement.lang = l
+        } catch (e) {}
+      })()
+    </script>
     <!-- Apply theme before paint to avoid light/dark flash (default: light). -->
     <!-- NOTE: keep in sync with frontend/src/theme.ts (getThemePreference + resolveIsDark). -->
     <script>

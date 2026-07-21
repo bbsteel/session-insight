@@ -4,6 +4,7 @@ import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
 import SettingsDialog from './SettingsDialog'
+import { LanguageSwitch } from './LanguageSwitch'
 import { ThemeSwitch } from './ThemeToggle'
 import { formatRelativeTime, useI18n, type Locale } from '../i18n'
 
@@ -462,6 +463,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
         )}
       </div>
       <div className="ml-auto flex items-center gap-1.5">
+        <LanguageSwitch />
         <ThemeSwitch />
         <div className="relative">
           <button
