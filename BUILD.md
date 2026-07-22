@@ -80,6 +80,8 @@ $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\p
 .\session-insight.exe
 ```
 
+On start the binary opens the actual bound URL (`http://127.0.0.1:<port>/`), including when `PORT` was busy and an OS-assigned port was used instead.
+
 ## Troubleshooting
 
 **`gcc: not found` or `exec: "gcc": executable file not found`**

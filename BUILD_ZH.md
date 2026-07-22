@@ -80,6 +80,8 @@ $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\p
 .\session-insight.exe
 ```
 
+启动后会用实际监听地址打开浏览器（`http://127.0.0.1:<port>/`）。若默认 `PORT` 已被占用并回退到系统分配端口，打开的也是回退后的地址。
+
 ## 常见问题
 
 **`gcc: not found` 或 `exec: "gcc": executable file not found`**

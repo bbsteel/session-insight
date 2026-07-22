@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"net"
+	"reflect"
+	"runtime"
 	"syscall"
 	"testing"
 )
@@ -108,6 +110,54 @@ func TestListenWithFallback(t *testing.T) {
 	if len(addrs) != 2 || addrs[0] != "127.0.0.1:8080" || addrs[1] != "127.0.0.1:0" {
 		t.Errorf("expected [127.0.0.1:8080 127.0.0.1:0], got %v", addrs)
 	}
+}
+
+func TestBrowserOpenCmd(t *testing.T) {
+	const url = "http://127.0.0.1:8080/"
+	cases := []struct {
+		goos string
+		name string
+		args []string
+	}{
+		{"windows", "cmd", []string{"/c", "start", "", url}},
+		{"darwin", "open", []string{url}},
+		{"linux", "xdg-open", []string{url}},
+		{"freebsd", "xdg-open", []string{url}},
+	}
+	for _, tc := range cases {
+		name, args := browserOpenCmd(tc.goos, url)
+		if name != tc.name || !reflect.DeepEqual(args, tc.args) {
+			t.Errorf("goos=%s: got (%q, %v), want (%q, %v)", tc.goos, name, args, tc.name, tc.args)
+		}
+	}
+}
+
+func TestOpenBrowser(t *testing.T) {
+	const url = "http://127.0.0.1:9090/"
+	origStart := startBrowserCommand
+	defer func() { startBrowserCommand = origStart }()
+
+	t.Run("invokes platform command", func(t *testing.T) {
+		var gotName string
+		var gotArgs []string
+		startBrowserCommand = func(name string, args ...string) error {
+			gotName = name
+			gotArgs = append([]string(nil), args...)
+			return nil
+		}
+		openBrowser(url)
+		wantName, wantArgs := browserOpenCmd(runtime.GOOS, url)
+		if gotName != wantName || !reflect.DeepEqual(gotArgs, wantArgs) {
+			t.Fatalf("got (%q, %v), want (%q, %v)", gotName, gotArgs, wantName, wantArgs)
+		}
+	})
+
+	t.Run("start failure does not panic", func(t *testing.T) {
+		startBrowserCommand = func(name string, args ...string) error {
+			return errors.New("no browser")
+		}
+		openBrowser(url)
+	})
 }
 
 // itoa is a minimal int-to-string helper to avoid importing strconv.

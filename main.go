@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -143,6 +145,9 @@ func main() {
 	}
 	url := "http://" + listener.Addr().String() + "/"
 	log.Printf("SessionInsight listening on %s", url)
+	// Open the real bound URL (may differ from PORT when fallback kicks in).
+	// Start is fire-and-forget so a slow browser never delays Serve.
+	openBrowser(url)
 	log.Fatal(http.Serve(listener, srv.Mux))
 }
 
@@ -176,4 +181,44 @@ func listenWithFallbackFn(host, port string, doListen func(network, addr string)
 func isAddrInUse(err error) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && opErr.Op == "listen" && errors.Is(err, syscall.EADDRINUSE)
+}
+
+// browserOpenCmd returns the platform command that opens url in the default
+// browser. goos is injected so tests can cover Windows/macOS/Linux without
+// depending on the host OS. The empty title arg on Windows `start` prevents
+// start from treating a quoted URL as the window title.
+func browserOpenCmd(goos, url string) (name string, args []string) {
+	switch goos {
+	case "windows":
+		return "cmd", []string{"/c", "start", "", url}
+	case "darwin":
+		return "open", []string{url}
+	default:
+		return "xdg-open", []string{url}
+	}
+}
+
+// startBrowserCommand launches the OS browser helper. Swapped by tests.
+var startBrowserCommand = func(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	// Detach from our stdio so a chatty helper cannot block Serve shutdown.
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Do not Wait: the helper often stays alive as the browser process tree.
+	// Release reaps the process entry on Unix; on Windows it's a no-op-ish
+	// cleanup of the handle. Either way we are fire-and-forget.
+	_ = cmd.Process.Release()
+	return nil
+}
+
+// openBrowser opens url in the default browser. Failures are logged only —
+// the server still starts so the user can open the URL manually from the log.
+func openBrowser(url string) {
+	name, args := browserOpenCmd(runtime.GOOS, url)
+	if err := startBrowserCommand(name, args...); err != nil {
+		log.Printf("failed to open browser: %v (open %s manually)", err, url)
+	}
 }
