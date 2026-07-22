@@ -187,11 +187,11 @@ const UNIT_HINT_KEYS: Record<string, string> = {
   premium_requests: 'analytics.unit.premium',
 }
 
-function fmtBillingAmount(locale: 'zh-CN' | 'en', amount: number, unit?: string): string {
+function fmtBillingAmount(locale: 'zh-CN' | 'en', amount: number, unit: string | undefined, t: (key: string, vars?: Record<string, string | number>) => string): string {
   switch (unit) {
     case 'aiu': return `${amount.toFixed(2)} AIU`
     case 'usd': return `$${amount.toFixed(4)}`
-    case 'premium_requests': return `${amount} premium`
+    case 'premium_requests': return t('analytics.premiumValue', { count: formatNumber(locale, amount) })
     default: return formatNumber(locale, Math.round(amount))
   }
 }
@@ -332,7 +332,7 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
               <div className="flex items-baseline gap-3 flex-wrap">
                 {data.billing.billing_unit && (
                   <span className="text-xl font-semibold text-[var(--text-primary)]" title={t(UNIT_HINT_KEYS[data.billing.billing_unit] ?? '')}>
-                    {fmtBillingAmount(locale, data.billing.billing_amount ?? 0, data.billing.billing_unit)}
+                    {fmtBillingAmount(locale, data.billing.billing_amount ?? 0, data.billing.billing_unit, t)}
                   </span>
                 )}
                 {data.billing.precision === 'estimated' && (
@@ -370,7 +370,7 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
                       <tr key={m.model} className="border-t border-[var(--border-muted)] text-[var(--text-primary)]">
                         <td className="py-1.5">{m.model}</td>
                         <td className="py-1.5 text-right">{m.requests}</td>
-                        <td className="py-1.5 text-right">{fmtBillingAmount(locale, m.billing_amount ?? 0, data.billing!.billing_unit)}</td>
+                        <td className="py-1.5 text-right">{fmtBillingAmount(locale, m.billing_amount ?? 0, data.billing!.billing_unit, t)}</td>
                         <td className="py-1.5 text-right">{bucketText(locale, m.usage.prompt_tokens, m.usage.present?.input)}</td>
                         <td className="py-1.5 text-right">{bucketText(locale, m.usage.cache_read_tokens, m.usage.present?.cache_read)}</td>
                         <td className="py-1.5 text-right">{bucketText(locale, m.usage.completion_tokens, m.usage.present?.output)}</td>
@@ -518,11 +518,13 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
                 className="bg-[var(--bg-inset)] rounded-md p-3 text-left hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 <div className="text-card text-[var(--text-primary)]">
-                  {hasCost ? fmtBillingAmount(locale, turn.est_cost ?? 0, costUnit) : `${formatNumber(locale, turn.tokens)} tokens`}
+                  {hasCost
+                    ? fmtBillingAmount(locale, turn.est_cost ?? 0, costUnit, t)
+                    : t('analytics.tokenValue', { count: formatNumber(locale, turn.tokens) })}
                 </div>
                 <div className="text-body text-[var(--text-secondary)] mt-1">
-                  {turn.rolled_back ? t('analytics.rolledBackTurn', { turn: (turn.original_turn_index ?? 0) + 1 }) : `Turn ${turn.turn_index}`} · {t('analytics.turnMeta', { requests: formatNumber(locale, turn.requests), tools: formatNumber(locale, turn.tool_count) })}
-                  {turn.error_count > 0 && <span className="text-[var(--error)]"> · {formatNumber(locale, turn.error_count)} errors</span>}
+                  {turn.rolled_back ? t('analytics.rolledBackTurn', { turn: (turn.original_turn_index ?? 0) + 1 }) : t('analytics.turnLabel', { turn: turn.turn_index })} · {t('analytics.turnMeta', { requests: formatNumber(locale, turn.requests), tools: formatNumber(locale, turn.tool_count) })}
+                  {turn.error_count > 0 && <span className="text-[var(--error)]"> · {t('analytics.errorValue', { count: formatNumber(locale, turn.error_count) })}</span>}
                 </div>
               </button>
             ))}

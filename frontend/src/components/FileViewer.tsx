@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { fsList, fsRead, openFile, type FsEntry } from '../api'
+import { APIError, fsList, fsRead, openFile, type FsEntry } from '../api'
 import { activeOutlineId, type OutlineItem, type OutlineKind } from '../codeOutline'
 import {
   codeParsePolicy,
@@ -56,6 +56,8 @@ interface FlatOutlineItem {
   item: OutlineItem
   depth: number
 }
+
+type FileLoadError = { key: string } | { message: string }
 
 function flattenWithDepth(items: OutlineItem[], depth = 0, out: FlatOutlineItem[] = []): FlatOutlineItem[] {
   for (const item of items) {
@@ -143,7 +145,7 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
   const [content, setContent] = useState<string | null>(null)
   const [fileSize, setFileSize] = useState(0)
   const [parsePolicy, setParsePolicy] = useState<CodeParsePolicy>('enabled')
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<FileLoadError | null>(null)
   const [readerLine, setReaderLine] = useState<number | undefined>(line)
   const [outline, setOutline] = useState<OutlineItem[]>([])
   const [outlineComplete, setOutlineComplete] = useState(false)
@@ -174,8 +176,14 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
         setFileSize(d.size)
         setParsePolicy(codeParsePolicy(d.size, d.truncated))
       })
-      .catch(err => setLoadError(err instanceof Error ? err.message : t('reader.readFailed')))
-  }, [t])
+      .catch(err => setLoadError(
+        err instanceof APIError
+          ? { key: `error.${err.code}` }
+          : err instanceof Error
+            ? { message: err.message }
+            : { key: 'reader.readFailed' },
+      ))
+  }, [])
 
   useEffect(() => { load(path, line) }, [path, line, load])
 
@@ -205,6 +213,7 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
   const visibleOutline = useMemo(() => filterOutline(outline, outlineQuery.trim()), [outline, outlineQuery])
   const visibleRows = useMemo(() => flattenWithDepth(visibleOutline), [visibleOutline])
   const activeId = useMemo(() => activeOutlineId(outline, activePosition), [outline, activePosition])
+  const loadErrorText = loadError && ('key' in loadError ? t(loadError.key) : loadError.message)
   const handleOutline = useCallback((next: OutlineItem[], complete: boolean) => {
     setOutline(next)
     setOutlineComplete(complete)
@@ -243,7 +252,7 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
           <TreeDir dir={root} targetPath={current} depth={0} onOpenFile={p => load(p)} targetRef={targetRef} />
         </aside>
         <main className="min-w-0 flex-1 overflow-hidden">
-          {loadError && <div className="p-4 text-helper text-[var(--error)]">{loadError}</div>}
+          {loadErrorText && <div className="p-4 text-helper text-[var(--error)]">{loadErrorText}</div>}
           {content !== null && (
             <div className="flex h-full min-h-0 flex-col">
               {parsePolicy === 'confirm' && (

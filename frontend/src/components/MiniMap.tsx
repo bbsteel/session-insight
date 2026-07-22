@@ -116,12 +116,12 @@ function fmtCost(v: number, unit?: string): string {
   return v.toFixed(2)
 }
 
-function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string) => string): string {
+function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string): string {
   if (!turn) return ''
-  const parts = [`Turn ${turn.turn_index}`]
+  const parts = [t('minimap.turnTitle', { turn: turn.turn_index })]
   if (tw?.estCost != null) parts.push(`~${fmtCost(tw.estCost, unit)} (${t('minimap.estimated')})`)
-  parts.push(`${formatNumber(locale, getTotalTokens(turn))} tokens`)
-  if ((turn.request_count ?? 0) > 0) parts.push(`${formatNumber(locale, turn.request_count ?? 0)} req`)
+  parts.push(t('minimap.tokenValue', { count: formatNumber(locale, getTotalTokens(turn)) }))
+  if ((turn.request_count ?? 0) > 0) parts.push(t('minimap.requestValue', { count: formatNumber(locale, turn.request_count ?? 0) }))
   return parts.join(' · ')
 }
 
@@ -223,7 +223,7 @@ function PositionModeContent({
                   eventClassNames[eventKind]
                 } ${isActive ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
                 style={{ minWidth: '16px', minHeight: '16px' }}
-                title={`${eventLabel(eventKind, t)} · line ${pos.line_start}`}
+                title={t('minimap.markerLine', { event: eventLabel(eventKind, t), line: pos.line_start })}
                 aria-label={`${eventLabel(eventKind, t)} · ${t('minimap.jump')}`}
                 onPointerDown={e => e.stopPropagation()}
                 onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}

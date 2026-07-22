@@ -92,7 +92,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
             {t('delete.running')}
             {pids.length > 0 ? (
               <>
-                （PID{' '}
+                {t('delete.pidPrefix')}
                 {pids.map((pid, i) => (
                   <span key={pid}>
                     {i > 0 && ', '}
@@ -105,7 +105,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
                     </button>
                   </span>
                 ))}
-                )
+                {t('delete.pidSuffix')}
                 {t('delete.runningWithPid')}
               </>
             ) : (

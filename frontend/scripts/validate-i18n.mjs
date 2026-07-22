@@ -20,6 +20,15 @@ const page = await context.newPage()
 const problems = []
 page.on('console', message => { if (message.type() === 'error') problems.push(message.text()) })
 page.on('pageerror', error => problems.push(String(error)))
+const clickSession = async (id) => {
+  const clicked = await page.locator('button[data-session-id]').evaluateAll((buttons, sessionID) => {
+    const button = buttons.find(element => element.getAttribute('data-session-id') === sessionID)
+    if (!(button instanceof HTMLButtonElement)) return false
+    button.click()
+    return true
+  }, id)
+  assert.equal(clicked, true, `session row not found for ${id}`)
+}
 
 const response = await context.request.get(`${baseURL.replace(/\/$/, '')}/api/sessions`)
 assert.equal(response.ok(), true, `session API failed: ${response.status()}`)
@@ -40,11 +49,11 @@ const fixtureSources = expectedSources.filter(source => !sourceSamples.has(sourc
 const fixtureSessionIDs = new Map()
 for (const source of fixtureSources) {
   const id = `i18n-fixture-${source}-${fallback.id}`
-  fixtureSessionIDs.set(id, fallback.id)
+  fixtureSessionIDs.set(id, { id: fallback.id, agentType: fallback.agent_type })
   sourceSamples.set(source, { ...fallback, id, agent_type: source, name: `[i18n fixture] ${source}` })
 }
 if (fixtureSources.length > 0) {
-  await page.route('**/api/sessions', async route => {
+  await page.route('**/api/**', async route => {
     const url = new URL(route.request().url())
     if (route.request().method() !== 'GET') return route.continue()
     if (url.pathname === '/api/sessions') {
@@ -53,9 +62,10 @@ if (fixtureSources.length > 0) {
       await route.fulfill({ response: upstream, json: [...sessions, ...fixtureSources.map(source => sourceSamples.get(source))] })
       return
     }
-    for (const [fixtureID, realID] of fixtureSessionIDs) {
+    for (const [fixtureID, realSession] of fixtureSessionIDs) {
       if (!url.pathname.includes(fixtureID)) continue
-      url.pathname = url.pathname.replace(fixtureID, realID)
+      url.pathname = url.pathname.replace(fixtureID, realSession.id)
+      if (url.searchParams.has('agent')) url.searchParams.set('agent', realSession.agentType)
       const upstream = await route.fetch({ url: url.toString() })
       await route.fulfill({ response: upstream })
       return
@@ -88,17 +98,18 @@ try {
   const sessionFilter = page.getByPlaceholder(/Filter sessions/)
   for (const source of expectedSources) {
     const sample = sourceSamples.get(source)
-    const selectionName = fixtureSources.includes(source) ? fallback.name : sample.name
+    const selectionName = sample.name
     await sessionFilter.fill(selectionName)
     const row = page.getByText(selectionName, { exact: true }).first()
     await row.waitFor({ state: 'visible' })
-    await row.click()
+    await clickSession(sample.id)
     await page.getByRole('button', { name: 'Analytics', exact: true }).waitFor({ state: 'visible' })
     assert.equal(await page.locator('html').getAttribute('lang'), 'en')
   }
   await page.screenshot({ path: sourceScreenshot })
   await sessionFilter.fill(liveSessions[0].name)
-  await page.getByText(liveSessions[0].name, { exact: true }).first().click()
+  await page.getByText(liveSessions[0].name, { exact: true }).first().waitFor({ state: 'visible' })
+  await clickSession(liveSessions[0].id)
 
   const bookmark = page.locator('button[aria-label="Bookmark"]').first()
   await bookmark.waitFor({ state: 'attached' })
@@ -114,6 +125,10 @@ try {
   await assert.doesNotReject(page.getByText('Bookmark note saved', { exact: true }).waitFor())
   await page.locator('button[aria-label="Remove bookmark"]').first().click()
 
+  const terminalRoot = page.locator('.xterm').first()
+  await terminalRoot.waitFor({ state: 'attached' })
+  await terminalRoot.evaluate(element => { element.dataset.i18nInstance = 'preserve-terminal' })
+
   await page.locator('button[aria-label="Settings"]').click()
   await page.locator('select[aria-label="Language"]').selectOption('zh-CN')
   await assert.doesNotReject(page.getByPlaceholder(/全文搜索/).waitFor({ state: 'visible' }))
@@ -124,6 +139,11 @@ try {
   await chineseLanguageSwitch.click()
   await page.getByRole('option', { name: '简体中文' }).press('Enter')
   assert.equal(await chineseLanguageSwitch.evaluate(element => document.activeElement === element), true)
+  assert.equal(
+    await page.locator('.xterm[data-i18n-instance="preserve-terminal"]').count(),
+    1,
+    'locale changes must preserve the mounted xterm instance and its viewport/fold state',
+  )
 
   const chineseBookmark = page.locator('button[aria-label="收藏"]').first()
   await chineseBookmark.waitFor({ state: 'attached' })
@@ -135,6 +155,30 @@ try {
   await page.screenshot({ path: chineseBookmarkScreenshot })
   await chineseEditor.getByRole('button', { name: '跳过直接收藏' }).click()
   await page.locator('button[aria-label="取消收藏"]').first().click()
+
+  console.log('Checking file viewer and CodeMirror state across locale changes')
+  const viewer = await context.newPage()
+  const fileParams = new URLSearchParams({
+    path: path.join(repoRoot, 'frontend/src/i18n.tsx'),
+    cwd: repoRoot,
+    line: '1',
+  })
+  await viewer.goto(`${baseURL}#/file?${fileParams}`, { waitUntil: 'domcontentloaded' })
+  const editor = viewer.locator('.cm-editor').first()
+  await editor.waitFor({ state: 'visible' })
+  await editor.evaluate(element => { element.dataset.i18nInstance = 'preserve-editor' })
+  const chineseOutlineFilter = viewer.locator('input[aria-label="筛选文件结构"]')
+  await chineseOutlineFilter.fill('I18nProvider')
+  await viewer.getByRole('button', { name: '语言', exact: true }).click()
+  await viewer.getByRole('option', { name: 'English' }).click()
+  assert.equal(await viewer.locator('html').getAttribute('lang'), 'en')
+  assert.equal(
+    await viewer.locator('.cm-editor[data-i18n-instance="preserve-editor"]').count(),
+    1,
+    'locale changes must preserve the mounted CodeMirror editor',
+  )
+  assert.equal(await viewer.locator('input[aria-label="Filter file structure"]').inputValue(), 'I18nProvider')
+  await viewer.close()
 
   assert.deepEqual(problems, [])
   await page.screenshot({ path: screenshot })

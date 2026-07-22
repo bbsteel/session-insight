@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +22,17 @@ type fsEntry struct {
 	IsDir bool   `json:"is_dir"`
 }
 
+func filesystemErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return http.StatusNotFound
+	case errors.Is(err, fs.ErrPermission):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 func (s *Server) handleFsList(w http.ResponseWriter, r *http.Request) {
 	dir := filepath.Clean(r.URL.Query().Get("dir"))
 	if !filepath.IsAbs(dir) {
@@ -28,7 +41,7 @@ func (s *Server) handleFsList(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "directory_list_failed", err.Error())
+		writeAPIError(w, filesystemErrorStatus(err), "directory_list_failed", err.Error())
 		return
 	}
 	out := make([]fsEntry, 0, len(entries))
@@ -56,7 +69,7 @@ func (s *Server) handleFsRead(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "file_read_failed", err.Error())
+		writeAPIError(w, filesystemErrorStatus(err), "file_read_failed", err.Error())
 		return
 	}
 	defer f.Close()

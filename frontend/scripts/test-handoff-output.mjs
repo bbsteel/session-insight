@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import {
   generateAI, ModelUnavailableError, splitHandoffOutput,
 } from '/tmp/session-insight-handoff-output/api.js'
-import { setRuntimeTranslator } from '/tmp/session-insight-handoff-output/i18nRuntime.js'
+import { registerRuntimeTranslator } from '/tmp/session-insight-handoff-output/i18nRuntime.js'
 
-setRuntimeTranslator(key => `[${key}]`)
+registerRuntimeTranslator(key => `[${key}]`)
 
 const metadata = {
   difficulty: '中等',

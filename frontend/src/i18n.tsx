@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { setRuntimeTranslator } from './i18nRuntime.js'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
+import { registerRuntimeTranslator } from './i18nRuntime.js'
 
 export type Locale = 'zh-CN' | 'en'
 type MessageValue = string | ((vars: Record<string, string | number>) => string)
@@ -47,6 +47,8 @@ export const messages: Record<Locale, Messages> = {
     'delete.irreversible': 'This cannot be undone.',
     'delete.running': 'This session is still running',
     'delete.copyPid': 'Copy PID',
+    'delete.pidPrefix': ' (PID ',
+    'delete.pidSuffix': ')',
     'delete.runningWithPid': ' and cannot be deleted. End it in the corresponding terminal, or choose “Force stop” to end the process first.',
     'delete.runningWithoutPid': '. This agent does not expose a specific process ID. End the session in the corresponding tool, then choose “Retry delete”.',
     'delete.stopped': 'The session process has stopped. You can now delete it.',
@@ -76,6 +78,7 @@ export const messages: Record<Locale, Messages> = {
     'filter.allAgents': 'All agents',
     'filter.allProjects': 'All projects',
     'filter.allModels': 'All models',
+    'filter.allProviders': 'All providers',
     'filter.searchAgents': 'Search agents…',
     'filter.searchProjects': 'Search projects…',
     'filter.searchModels': 'Search models…',
@@ -94,6 +97,10 @@ export const messages: Record<Locale, Messages> = {
     'minimap.estimated': 'estimated',
     'minimap.jump': 'Jump',
     'minimap.jumpTurn': 'Jump to Turn {turn}',
+    'minimap.turnTitle': 'Turn {turn}',
+    'minimap.tokenValue': '{count} tokens',
+    'minimap.requestValue': '{count} requests',
+    'minimap.markerLine': '{event} · line {line}',
     'minimap.top': 'Scroll to top',
     'minimap.bottom': 'Scroll to bottom',
     'terminal.followingHint': 'Following · click to pause',
@@ -214,6 +221,10 @@ export const messages: Record<Locale, Messages> = {
     'analytics.skills': 'Skills',
     'analytics.todos': 'Todos',
     'analytics.turnMeta': '{requests} requests · {tools} tools',
+    'analytics.turnLabel': 'Turn {turn}',
+    'analytics.tokenValue': '{count} tokens',
+    'analytics.errorValue': '{count} errors',
+    'analytics.premiumValue': '{count} premium requests',
     'analytics.tokenPerTurn': 'Token Per Turn',
     'analytics.modelCostHelp': 'Cost attributed to this model',
     'analytics.toolUsageHelp': 'Tool name × calls · success rate based on exit codes',
@@ -731,6 +742,8 @@ export const messages: Record<Locale, Messages> = {
     'delete.irreversible': '此操作不可恢复。',
     'delete.running': '该会话正在运行',
     'delete.copyPid': '点击复制 PID',
+    'delete.pidPrefix': '（PID ',
+    'delete.pidSuffix': '）',
     'delete.runningWithPid': '，无法直接删除。请先在对应终端结束它，或点击“强制停止”结束该进程后再删除。',
     'delete.runningWithoutPid': '，无法直接删除。该类 agent 无法定位具体进程，请在对应工具中结束该会话后点击“重试删除”。',
     'delete.stopped': '会话进程已停止，现在可以执行删除。',
@@ -760,6 +773,7 @@ export const messages: Record<Locale, Messages> = {
     'filter.allAgents': '全部 Agent',
     'filter.allProjects': '全部项目',
     'filter.allModels': '全部模型',
+    'filter.allProviders': '全部提供商',
     'filter.searchAgents': '搜索 Agent…',
     'filter.searchProjects': '搜索项目…',
     'filter.searchModels': '搜索模型…',
@@ -778,6 +792,10 @@ export const messages: Record<Locale, Messages> = {
     'minimap.estimated': '估算',
     'minimap.jump': '跳转',
     'minimap.jumpTurn': '跳转到 Turn {turn}',
+    'minimap.turnTitle': 'Turn {turn}',
+    'minimap.tokenValue': '{count} Token',
+    'minimap.requestValue': '{count} 次请求',
+    'minimap.markerLine': '{event} · 第 {line} 行',
     'minimap.top': '滚动到顶部',
     'minimap.bottom': '滚动到底部',
     'terminal.followingHint': '跟随中 · 点击暂停',
@@ -898,6 +916,10 @@ export const messages: Record<Locale, Messages> = {
     'analytics.skills': '技能',
     'analytics.todos': '待办',
     'analytics.turnMeta': '{requests} 次请求 · {tools} 次工具调用',
+    'analytics.turnLabel': '第 {turn} 轮',
+    'analytics.tokenValue': '{count} Token',
+    'analytics.errorValue': '{count} 个错误',
+    'analytics.premiumValue': '{count} 次 premium 请求',
     'analytics.tokenPerTurn': '逐 Turn Token',
     'analytics.modelCostHelp': '该模型消耗的费用',
     'analytics.toolUsageHelp': '工具名 × 调用次数 · 成功率（按退出码统计）',
@@ -1427,7 +1449,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     try { const value = localStorage.getItem(LOCALE_KEY); return value === 'zh-CN' || value === 'en' ? value : null } catch { return null }
   })
   const locale = preference ?? systemLocale()
-  setRuntimeTranslator((key, vars) => translate(locale, key, vars))
+  useLayoutEffect(
+    () => registerRuntimeTranslator((key, vars) => translate(locale, key, vars)),
+    [locale],
+  )
   useEffect(() => {
     document.documentElement.lang = locale
   }, [locale])

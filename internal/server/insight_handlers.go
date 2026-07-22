@@ -192,7 +192,10 @@ func (s *Server) generateInsight(w http.ResponseWriter, r *http.Request, id stri
 		ConfirmTarget bool   `json:"confirm_target"`
 		Locale        string `json:"locale"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
 
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
@@ -378,6 +381,12 @@ func buildSendPreview(redacted insight.Bundle, stats insight.RedactionStats, pro
 	categories := []string{"会话元数据", "初步 Findings 指标", "证据事实（Turn 摘要/工具错误/subagent 委派）", "账单与上下文指标"}
 	note := "已对已知凭据格式、邮箱与本机 home 路径做确定性脱敏；这不能保证识别所有自然语言 PII。仅本次目标授权，可在设置中撤销。"
 	if locale == "en" {
+		label = provider.Name
+		if provider.Kind == "acp" {
+			label += " (ACP:" + provider.Agent + ")"
+		} else if provider.BaseURL != "" {
+			label += " (" + provider.BaseURL + ")"
+		}
 		categories = []string{"Session metadata", "Preliminary finding metrics", "Evidence facts (turn summaries, tool errors, and subagent delegation)", "Billing and context metrics"}
 		note = "Known credential formats, email addresses, and local home paths were deterministically redacted. This cannot guarantee detection of all natural-language PII. Authorization applies only to this target and can be revoked in Settings."
 	}

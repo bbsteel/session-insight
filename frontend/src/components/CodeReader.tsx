@@ -293,6 +293,9 @@ class ReaderSearchPanel implements Panel {
   private readonly wordButton: HTMLButtonElement
   private readonly regexButton: HTMLButtonElement
   private readonly highlightButton: HTMLButtonElement
+  private readonly previousButton: HTMLButtonElement
+  private readonly nextButton: HTMLButtonElement
+  private readonly closeButton: HTMLButtonElement
   private readonly count: HTMLSpanElement
   private highlightAll = true
 
@@ -318,12 +321,12 @@ class ReaderSearchPanel implements Panel {
     this.count = document.createElement('span')
     this.count.className = 'cm-search-count'
 
-    const previous = this.button('↑', t('terminalSearch.previous'), () => findPrevious(this.view))
-    const next = this.button('↓', t('terminalSearch.next'), () => findNext(this.view))
-    const close = this.button('✕', t('terminalSearch.close'), () => closeSearchPanel(this.view))
+    this.previousButton = this.button('↑', t('terminalSearch.previous'), () => findPrevious(this.view))
+    this.nextButton = this.button('↓', t('terminalSearch.next'), () => findNext(this.view))
+    this.closeButton = this.button('✕', t('terminalSearch.close'), () => closeSearchPanel(this.view))
     this.dom = document.createElement('div')
     this.dom.className = 'cm-search'
-    this.dom.append(this.input, this.caseButton, this.wordButton, this.regexButton, this.highlightButton, this.count, previous, next, close)
+    this.dom.append(this.input, this.caseButton, this.wordButton, this.regexButton, this.highlightButton, this.count, this.previousButton, this.nextButton, this.closeButton)
     this.dom.addEventListener('keydown', event => {
       if (event.key === 'Enter') {
         event.preventDefault()
@@ -415,6 +418,20 @@ class ReaderSearchPanel implements Panel {
     this.count.textContent = total ? `${index >= 0 ? index + 1 : 0}/${total}` : this.t('terminalSearch.noResults')
   }
 
+  relocalize() {
+    this.input.placeholder = this.t('reader.searchPlaceholder')
+    this.input.setAttribute('aria-label', this.t('reader.searchPlaceholder'))
+    this.caseButton.title = this.t('terminalSearch.caseSensitive')
+    this.wordButton.title = this.t('terminalSearch.wholeWord')
+    this.regexButton.title = this.t('terminalSearch.regex')
+    this.highlightButton.textContent = this.t('terminalSearch.highlightAllShort')
+    this.highlightButton.title = this.t('terminalSearch.highlightAll')
+    this.previousButton.title = this.t('terminalSearch.previous')
+    this.nextButton.title = this.t('terminalSearch.next')
+    this.closeButton.title = this.t('terminalSearch.close')
+    this.updateCount()
+  }
+
   update(update: ViewUpdate) {
     for (const transaction of update.transactions) {
       for (const effect of transaction.effects) {
@@ -450,8 +467,10 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
 ) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const searchPanelRef = useRef<ReaderSearchPanel | null>(null)
   const isDark = useIsDark()
   const { t } = useI18n()
+  const translatorRef = useRef(t)
 
   useImperativeHandle(ref, () => ({
     reveal(offset: number) {
@@ -490,11 +509,18 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
         highlightActiveLineGutter(),
         bracketMatching(),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        search({ top: true, createPanel: view => new ReaderSearchPanel(view, t) }),
+        search({
+          top: true,
+          createPanel: view => {
+            const panel = new ReaderSearchPanel(view, (key, vars) => translatorRef.current(key, vars))
+            searchPanelRef.current = panel
+            return panel
+          },
+        }),
         keymap.of([...searchKeymap, ...foldKeymap]),
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
-        EditorView.contentAttributes.of({ 'aria-label': t('reader.ariaLabel') }),
+        EditorView.contentAttributes.of({ 'aria-label': translatorRef.current('reader.ariaLabel') }),
         EditorView.updateListener.of(update => {
           if (update.selectionSet) onActivePosition(semanticPosition(update.view, update.state.selection.main.head))
           else if (update.viewportChanged) onActivePosition(semanticPosition(update.view, update.view.viewport.from))
@@ -540,9 +566,16 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
       if (parseTimer !== undefined) window.clearTimeout(parseTimer)
       viewRef.current?.destroy()
       viewRef.current = null
+      searchPanelRef.current = null
       host.replaceChildren()
     }
-  }, [content, path, initialLine, parseLanguage, isDark, onOutline, onActivePosition, t])
+  }, [content, path, initialLine, parseLanguage, isDark, onOutline, onActivePosition])
+
+  useEffect(() => {
+    translatorRef.current = t
+    viewRef.current?.contentDOM.setAttribute('aria-label', t('reader.ariaLabel'))
+    searchPanelRef.current?.relocalize()
+  }, [t])
 
   return <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />
 })

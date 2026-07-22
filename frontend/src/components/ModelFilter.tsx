@@ -351,7 +351,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                 >
                   <span className="w-2 h-2 rounded-full bg-[var(--accent-blue)] flex-shrink-0" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-helper text-[var(--text-primary)]">All Providers</span>
+                    <span className="block truncate text-helper text-[var(--text-primary)]">{t('filter.allProviders')}</span>
                   </span>
                   <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
                 </button>

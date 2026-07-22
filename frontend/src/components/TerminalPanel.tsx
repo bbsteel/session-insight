@@ -152,6 +152,7 @@ type XtermCoreWithMouse = {
 
 export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
   const { t } = useI18n()
+  const translatorRef = useRef(t)
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -223,6 +224,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   // decoration closures; this ref lets the userPositions effect re-apply
   // them without re-mounting the terminal.
   const applyUserHighlightsRef = useRef<(() => void) | null>(null)
+  const relocalizeTerminalRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -321,10 +323,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // disposed — always clear these before a rewrite, not just after.
     let progressDecoration: IDecoration | null = null
     let progressHintDecoration: IDecoration | null = null
+    let progressHintElement: HTMLElement | null = null
     let progressMarker: IMarker | null = null
     const disposeProgressHint = () => {
       progressHintDecoration?.dispose()
       progressHintDecoration = null
+      progressHintElement = null
     }
     const clearProgress = () => {
       progressDecoration?.dispose()
@@ -348,6 +352,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       }
       if (!hintDecoration) return
       hintDecoration.onRender(element => {
+        progressHintElement = element
         if (element.dataset.siFollowHint) return // onRender fires per xterm paint
         element.dataset.siFollowHint = '1'
         const bgIdle = 'color-mix(in srgb, var(--accent-green) 15%, transparent)'
@@ -359,8 +364,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         element.style.padding = '0 4px'
         element.style.color = 'var(--accent-green)'
         element.style.background = bgIdle
-        element.textContent = t('terminal.followingHint')
-        element.title = t('terminal.pauseFollow')
+        element.textContent = translatorRef.current('terminal.followingHint')
+        element.title = translatorRef.current('terminal.pauseFollow')
         element.addEventListener('mouseenter', () => { element.style.background = bgHover })
         element.addEventListener('mouseleave', () => { element.style.background = bgIdle })
         element.addEventListener('click', e => {
@@ -511,7 +516,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       }
       stickyBarEl.style.display = 'flex'
       if (stickyLabelEl) {
-        stickyLabelEl.textContent = `↑ ${t('terminal.userMessage')}${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
+        stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
       }
       if (stickyTextEl) {
         const text = next.text || ''
@@ -633,10 +638,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         'white-space:nowrap', 'overflow:hidden',
         'border-bottom:1px solid var(--border-default)',
       ].join(';')
-      stickyBarEl.title = t('terminal.returnUserMessage')
+      stickyBarEl.title = translatorRef.current('terminal.returnUserMessage')
       stickyBarEl.setAttribute('role', 'button')
       stickyBarEl.setAttribute('tabindex', '0')
-      stickyBarEl.setAttribute('aria-label', t('terminal.returnUserMessageLabel'))
+      stickyBarEl.setAttribute('aria-label', translatorRef.current('terminal.returnUserMessageLabel'))
       onStickyKeyDown = (e: KeyboardEvent) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
@@ -646,7 +651,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       stickyBarEl.addEventListener('click', onStickyClick)
       stickyBarEl.addEventListener('keydown', onStickyKeyDown)
       stickyLabelEl = document.createElement('span')
-      stickyLabelEl.textContent = `↑ ${t('terminal.userMessage')}`
+      stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}`
       stickyLabelEl.style.cssText = [
         'flex-shrink:0', 'font-weight:600',
         'color:var(--accent-blue)',
@@ -886,7 +891,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       }
       const makeFoldMatcher = (): TerminalLineMatcher<FoldRange> => ({
         match: () => null, // rows come from fold geometry, not text scanning
-        tooltip: t('terminal.toggleContent'),
+        tooltip: translatorRef.current('terminal.toggleContent'),
         onActivate: (bufLine, fold, _matchIndex, meta) => {
           const groupStart = wrapGroupStart(bufLine)
           const joined = joinWrappedLineText(groupStart)
@@ -925,7 +930,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           const matcher: TerminalLineMatcher<unknown> = hasPath
             ? {
                 ...foldMatcher,
-                tooltip: t('terminal.fileMenuHint'),
+                tooltip: translatorRef.current('terminal.fileMenuHint'),
               }
             : foldMatcher
           const entry = { matcher, data: f, matchIndex: 0 }
@@ -1107,11 +1112,38 @@ const snapshotTerminal = () => {
       }
 
       const recompose = (afterWrite?: () => void) => {
-        foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, t('terminal.lines'))
+        foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines'))
         writeComposed(() => {
           afterWrite?.()
           onFoldChangeRef.current?.()
         })
+      }
+
+      relocalizeTerminalRef.current = () => {
+        if (progressHintElement) {
+          progressHintElement.textContent = translatorRef.current('terminal.followingHint')
+          progressHintElement.title = translatorRef.current('terminal.pauseFollow')
+        }
+        if (stickyBarEl) {
+          stickyBarEl.title = translatorRef.current('terminal.returnUserMessage')
+          stickyBarEl.setAttribute('aria-label', translatorRef.current('terminal.returnUserMessageLabel'))
+        }
+        if (stickyLabelEl) {
+          const seq = currentStickyRange?.seq
+          stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof seq === 'number' ? ` #${seq}` : ''}`
+        }
+        if (foldView) {
+          const anchorOriginal = toOriginalLine(term.buffer.active.viewportY)
+          const viewportOffset = toDisplayLine(anchorOriginal) - term.buffer.active.viewportY
+          foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines'))
+          writeComposed(() => {
+            term.scrollToLine(Math.max(0, toDisplayLine(anchorOriginal) - viewportOffset))
+            onFoldChangeRef.current?.()
+          })
+        } else {
+          scanBuffer()
+          injectFoldRows()
+        }
       }
 
       const toggleFold = (fold: FoldRange) => {
@@ -1306,7 +1338,7 @@ const snapshotTerminal = () => {
           .then(ansi => {
             if (disposed) return
             rawAnsi = ansi
-            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, t('terminal.lines')) : null
+            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
             writeComposed(() => {
               if (foldView) onFoldChangeRef.current?.()
             })
@@ -1469,7 +1501,7 @@ const snapshotTerminal = () => {
 
             const keepRow = buf.viewportY
             rawAnsi = ansi
-            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, t('terminal.lines')) : null
+            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
             await new Promise<void>(resolve => writeComposed(() => {
               if (pinBottom) {
                 openAtTop = false
@@ -1629,10 +1661,16 @@ const snapshotTerminal = () => {
       applyFoldsRef.current = null
       applyUserHighlightsRef.current = null
       followWakeRef.current = null
+      relocalizeTerminalRef.current = null
       termRef.current = null
       term.dispose()
     }
-  }, [sessionId, tsKinds, terminalFont, terminalFontFamily, terminalFontSize, t])
+  }, [sessionId, tsKinds, terminalFont, terminalFontFamily, terminalFontSize])
+
+  useEffect(() => {
+    translatorRef.current = t
+    relocalizeTerminalRef.current?.()
+  }, [t])
 
   useEffect(() => {
     if (termRef.current) {

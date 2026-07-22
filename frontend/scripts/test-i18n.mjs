@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { formatNumber, messages, systemLocale, translate } from '../.runtime/i18n-test/i18n.js'
+import { localize, registerRuntimeTranslator } from '../.runtime/i18n-test/i18nRuntime.js'
 
 assert.equal(systemLocale('zh-TW'), 'zh-CN')
 assert.equal(systemLocale('en-GB'), 'en')
@@ -15,6 +16,13 @@ assert.equal(translate('en', 'bookmark.noteTitle'), 'Bookmark note')
 assert.equal(translate('en', 'bookmark.noteWithValue', { note: 'Useful context' }), 'Bookmark note: Useful context')
 assert.equal(translate('zh-CN', 'bookmark.noteTitle'), '收藏备注')
 assert.equal(formatNumber('en', 12345), '12,345')
+const releaseEnglish = registerRuntimeTranslator((key, vars) => translate('en', key, vars))
+assert.equal(localize('settings.language'), 'Language')
+const releaseChinese = registerRuntimeTranslator((key, vars) => translate('zh-CN', key, vars))
+releaseEnglish()
+assert.equal(localize('settings.language'), '语言', 'an older provider cannot clear the active registration')
+releaseChinese()
+assert.equal(localize('settings.language'), 'settings.language', 'the active provider owns cleanup')
 for (const key of Object.keys(messages.en)) assert.ok(key in messages['zh-CN'], `zh-CN missing ${key}`)
 for (const key of Object.keys(messages['zh-CN'])) assert.ok(key in messages.en, `en missing ${key}`)
 console.log('i18n resource alignment and fallback passed')
