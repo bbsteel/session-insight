@@ -250,7 +250,7 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
               <div
                 className="flex cursor-pointer items-stretch hover:bg-[var(--bg-surface-hover)]"
                 onClick={() => jump(e)}
-                title={`跳转到终端第 ${e.line} 行`}
+                title={t('panel.jumpLine', { line: e.line })}
               >
                 <div className="w-8 flex-shrink-0 border-r border-[var(--border-muted)] px-1 pt-1.5 text-right text-meta tabular-nums text-[var(--text-muted)]">
                   {e.seq}

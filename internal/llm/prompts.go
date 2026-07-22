@@ -65,6 +65,8 @@ Only use facts from the record; do not invent. Keep file paths, commands, branch
 
 const titleInstruction = `请为下面这段 AI 编程助手的会话起一个中文标题,概括会话的核心任务。要求:以整个会话中占比最大、最具代表性的主题为准——会话主题可能随时间漂移,靠后集中讨论的主题往往才是会话的真正核心,开头的零散命令或一次性运维操作不算核心任务;不超过 20 个字;直接输出标题文本本身——不要引号、不要句号、不要任何解释或前缀。`
 
+const titleInstructionEN = `Give the following AI coding assistant session a concise English title that captures its core task. Choose the most representative topic by share across the whole session; concentrated later work often reflects the real task, while isolated opening commands or one-off operations do not. Use at most 10 words. Output only the title, with no quotation marks, period, explanation, or prefix.`
+
 const handoffInstructionHead = `你是一名资深工程师,要把下面这段 AI 编程助手会话的工作交接给一个全新的 AI 会话继续。你的输出分为两部分。
 
 第一部分:输出的最开头必须是一个 ` + "```json" + ` 围栏代码块,内容是交接元数据(不属于交接提示词本身),格式严格如下:
@@ -99,6 +101,40 @@ const handoffInstructionTail = `
 
 其他要求:各节用要点列表,关键点 **加粗**;协作约束一节必须写明仓库路径、分支、工作目录等环境事实(从记录中提取,记录里没有就写"未知,接手后先确认");"踩过的坑"只写记录中真实出现过的失败与纠正;文件路径、命令、分支用反引号包裹保留原文。除这两部分外不要输出任何前言或解释。`
 
+const handoffInstructionHeadEN = `You are a senior engineer handing this AI coding assistant session to a fresh AI session. Your output has two parts.
+
+The first part must begin with a ` + "```json" + ` fenced block containing handoff metadata (not part of the pasteable handoff prompt), using exactly this schema:
+
+` + "```json" + `
+{
+  "difficulty": "simple|medium|hard",
+  "difficulty_reason": "One sentence explaining the rating",
+  "recommended": [
+    {"executor": "Candidate executor verbatim", "reason": "One-sentence rationale"}
+  ]
+}
+` + "```" + `
+
+Choose recommended entries only from the candidate list below, highest priority first, and keep only one to three genuinely useful choices. Balance capability and cost against the remaining work: prefer fast, economical choices for simple tasks and reserve the strongest models for hard work.
+
+Candidate executors:
+`
+
+const handoffInstructionTailEN = `
+After the JSON block, output the English pasteable handoff prompt. It will be copied verbatim into a new session, so it must not mention difficulty, model recommendations, the metadata block, or phrases such as "above" that refer to it. It must be self-contained and use exactly this structure:
+
+# Task handoff
+
+Start with one or two untitled sentences explaining the task and current progress, then include:
+
+## Background and goal
+## Completed
+## Remaining work / next steps
+## Pitfalls and cautions
+## Collaboration constraints
+
+Use bullets in every section and begin key points with **bold text**. Collaboration constraints must state repository path, branch, working directory, and other environment facts found in the record; when absent, write "Unknown; confirm before continuing." Include only failures and corrections that actually occurred. Keep paths, commands, and branches verbatim in backticks. Output no preface or explanation outside the two required parts.`
+
 // BuildPrompt assembles the full prompt for one generation kind. Title
 // generation feeds every user message (truncated, budget-capped): topic
 // share across the whole session identifies the task better than the first
@@ -116,19 +152,36 @@ func BuildPrompt(kind GenerationKind, detail *model.SessionDetail, handoffCandid
 		return instruction + "\n\n" + BuildSessionContext(detail), nil
 	case KindHandoff:
 		var b strings.Builder
-		b.WriteString(handoffInstructionHead)
+		english := len(locale) > 0 && locale[0] == "en"
+		if english {
+			b.WriteString(handoffInstructionHeadEN)
+		} else {
+			b.WriteString(handoffInstructionHead)
+		}
 		if len(handoffCandidates) == 0 {
-			b.WriteString("(无候选信息——recommended 输出空数组)\n")
+			if english {
+				b.WriteString("(No candidates available; output an empty recommended array.)\n")
+			} else {
+				b.WriteString("(无候选信息——recommended 输出空数组)\n")
+			}
 		}
 		for _, c := range handoffCandidates {
 			fmt.Fprintf(&b, "- %s\n", c)
 		}
-		b.WriteString(handoffInstructionTail)
+		if english {
+			b.WriteString(handoffInstructionTailEN)
+		} else {
+			b.WriteString(handoffInstructionTail)
+		}
 		b.WriteString("\n\n")
 		b.WriteString(BuildHandoffContext(detail))
 		return b.String(), nil
 	case KindTitle:
-		return titleInstruction + "\n\n" + buildTitleContext(detail), nil
+		instruction := titleInstruction
+		if len(locale) > 0 && locale[0] == "en" {
+			instruction = titleInstructionEN
+		}
+		return instruction + "\n\n" + buildTitleContext(detail), nil
 	default:
 		return "", fmt.Errorf("unknown generation kind %q", kind)
 	}
@@ -191,7 +244,8 @@ func normalizeHandoffBody(raw string) (content, metadataJSON string) {
 
 func startsHandoffHeading(s string) bool {
 	trimmed := unwrapMarkdownFence(strings.TrimSpace(s))
-	return strings.HasPrefix(trimmed, "# 任务交接\n") || trimmed == "# 任务交接"
+	return strings.HasPrefix(trimmed, "# 任务交接\n") || trimmed == "# 任务交接" ||
+		strings.HasPrefix(trimmed, "# Task handoff\n") || trimmed == "# Task handoff"
 }
 
 func unwrapMarkdownFence(s string) string {

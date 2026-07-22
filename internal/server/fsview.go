@@ -23,12 +23,12 @@ type fsEntry struct {
 func (s *Server) handleFsList(w http.ResponseWriter, r *http.Request) {
 	dir := filepath.Clean(r.URL.Query().Get("dir"))
 	if !filepath.IsAbs(dir) {
-		http.Error(w, "dir must be absolute", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "directory_list_failed", "dir must be absolute")
 		return
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		http.Error(w, "cannot list directory", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "directory_list_failed", err.Error())
 		return
 	}
 	out := make([]fsEntry, 0, len(entries))
@@ -51,18 +51,18 @@ func (s *Server) handleFsList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFsRead(w http.ResponseWriter, r *http.Request) {
 	path, err := resolveExistingFile(r.URL.Query().Get("path"), r.URL.Query().Get("cwd"))
 	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "file_read_failed", "file not found")
 		return
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "cannot open file", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "file_read_failed", err.Error())
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		http.Error(w, "cannot stat file", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "file_read_failed", err.Error())
 		return
 	}
 
@@ -74,7 +74,7 @@ func (s *Server) handleFsRead(w http.ResponseWriter, r *http.Request) {
 	}
 	content := buf[:n]
 	if bytes.IndexByte(content, 0) >= 0 {
-		http.Error(w, "binary file", http.StatusUnsupportedMediaType)
+		writeAPIError(w, http.StatusUnsupportedMediaType, "binary_file")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

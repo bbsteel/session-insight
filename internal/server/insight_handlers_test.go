@@ -143,7 +143,7 @@ func TestInsightNoFindings(t *testing.T) {
 func TestInsightUnconfirmedTargetReturnsPreview(t *testing.T) {
 	s := newInsightServer(t, findingDetail())
 	addProvider(t, s, "http://unused")
-	w := postInsight(t, s, `{}`) // no confirm
+	w := postInsight(t, s, `{"locale":"en"}`) // no confirm
 	if w.Code != http.StatusOK {
 		t.Fatalf("preview should be 200, got %d", w.Code)
 	}
@@ -153,6 +153,9 @@ func TestInsightUnconfirmedTargetReturnsPreview(t *testing.T) {
 	}
 	if !pv.NeedsConfirmation || pv.FactCount == 0 || pv.TargetFingerprint == "" {
 		t.Errorf("bad preview: %+v", pv)
+	}
+	if !strings.Contains(pv.Note, "redacted") || len(pv.DataCategories) == 0 || pv.DataCategories[0] != "Session metadata" {
+		t.Errorf("English preview was not localized: %+v", pv)
 	}
 }
 

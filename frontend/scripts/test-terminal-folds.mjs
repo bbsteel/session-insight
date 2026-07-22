@@ -43,7 +43,7 @@ const rollbackFolds = foldsFromPositions([{
   payload: { level: 'rollback', display_start: 2, display_end: 4, logical_start: 2, logical_end: 4, header_logical: 1 },
 }])
 assertEq(rollbackFolds[0]?.level, 'rollback', 'rollback fold level preserved')
-const rollbackCollapsed = composeFoldView(rollbackLines.join('\n'), rollbackFolds, new Set(['rollback:0:1']))
+const rollbackCollapsed = composeFoldView(rollbackLines.join('\n'), rollbackFolds, new Set(['rollback:0:1']), '行')
 assertEq(rollbackCollapsed.text.split('\n'), [
   'active', '▶ ↩ 已回滚 2 个 turn\x1b[2m (2 行)\x1b[0m', 'tail',
 ], 'rollback fold hides abandoned turns')
@@ -56,7 +56,7 @@ assertEq(open.toDisplay(9), 9, 'identity toDisplay')
 assertEq(open.toOriginal(9), 9, 'identity toOriginal')
 
 // Collapse fold A (body rows 2..4 hidden, 3 rows).
-const a = composeFoldView(ansi, folds, new Set(['fold:0:1']))
+const a = composeFoldView(ansi, folds, new Set(['fold:0:1']), '行')
 assertEq(a.hiddenTotal, 3, 'collapse A hides 3 rows')
 assertEq(a.text.split('\n'), ['user', '▶ Tools (1/1)\x1b[2m (3 行)\x1b[0m', 'text', '▼ Tools (2/2)', 'boxB1', 'boxB2', 'tail'], 'composed text A')
 assertEq(a.toDisplay(0), 0, 'row before fold unchanged')
@@ -67,9 +67,10 @@ assertEq(a.toDisplay(6), 3, 'fold B header shifts up by 3')
 assertEq(a.toOriginal(2), 5, 'toOriginal inverts shift')
 assertEq(a.toOriginal(1), 1, 'toOriginal header identity')
 assertEq(a.toOriginal(6), 9, 'toOriginal tail')
+assertEq(composeFoldView(ansi, folds, new Set(['fold:0:1']), 'lines').text.includes('(3 lines)'), true, 'fold badge uses supplied locale unit')
 
 // Collapse both folds.
-const ab = composeFoldView(ansi, folds, new Set(['fold:0:1', 'fold:0:6']))
+const ab = composeFoldView(ansi, folds, new Set(['fold:0:1', 'fold:0:6']), '行')
 assertEq(ab.hiddenTotal, 5, 'collapse A+B hides 5 rows')
 assertEq(ab.text.split('\n'), ['user', '▶ Tools (1/1)\x1b[2m (3 行)\x1b[0m', 'text', '▶ Tools (2/2)\x1b[2m (2 行)\x1b[0m', 'tail'], 'composed text A+B')
 assertEq(ab.toDisplay(9), 4, 'tail row after both folds')

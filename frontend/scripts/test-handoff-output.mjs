@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import {
   generateAI, ModelUnavailableError, splitHandoffOutput,
 } from '/tmp/session-insight-handoff-output/api.js'
+import { setRuntimeTranslator } from '/tmp/session-insight-handoff-output/i18nRuntime.js'
+
+setRuntimeTranslator(key => `[${key}]`)
 
 const metadata = {
   difficulty: '中等',
@@ -48,7 +51,7 @@ globalThis.fetch = async () => new Response(
 await assert.rejects(
   generateAI('session-1', 'handoff', () => {}),
   error => error instanceof ModelUnavailableError
-    && error.message === unavailableMessage
+    && error.message === '[error.model_unavailable]'
     && error.providerId === 17,
 )
 

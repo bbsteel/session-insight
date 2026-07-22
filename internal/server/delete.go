@@ -37,27 +37,27 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rd, agentType := s.findReaderForSession(id)
 	if rd == nil {
-		http.Error(w, "session not found", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "session_not_found")
 		return
 	}
 
 	deleter, ok := rd.(reader.SessionDeleter)
 	if !ok {
-		http.Error(w, "delete not supported for agent type "+agentType, http.StatusNotImplemented)
+		writeAPIError(w, http.StatusNotImplemented, "session_delete_failed", "delete not supported for agent type "+agentType)
 		return
 	}
 
 	if finder, ok := rd.(reader.SessionProcessFinder); ok {
 		pids, err := finder.SessionProcesses(id)
 		if err != nil {
-			http.Error(w, "check running processes: "+err.Error(), http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, "session_delete_failed", "check running processes: "+err.Error())
 			return
 		}
 		if len(pids) > 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]any{
-				"error": "session is running", "running": true, "pids": pids,
+				"code": "session_running", "running": true, "pids": pids,
 			})
 			return
 		}
@@ -70,21 +70,21 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	if checker, ok := rd.(reader.SessionLivenessChecker); ok {
 		running, err := checker.SessionRunning(id)
 		if err != nil {
-			http.Error(w, "check session liveness: "+err.Error(), http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, "session_delete_failed", "check session liveness: "+err.Error())
 			return
 		}
 		if running {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]any{
-				"error": "session is running", "running": true, "pids": []int{},
+				"code": "session_running", "running": true, "pids": []int{},
 			})
 			return
 		}
 	}
 
 	if err := deleter.DeleteSession(id); err != nil {
-		http.Error(w, "delete session: "+err.Error(), http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "session_delete_failed", "delete session: "+err.Error())
 		return
 	}
 	if s.DB != nil {
@@ -109,23 +109,23 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rd, agentType := s.findReaderForSession(id)
 	if rd == nil {
-		http.Error(w, "session not found", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "session_not_found")
 		return
 	}
 
 	finder, ok := rd.(reader.SessionProcessFinder)
 	if !ok {
-		http.Error(w, "stop not supported for agent type "+agentType, http.StatusNotImplemented)
+		writeAPIError(w, http.StatusNotImplemented, "session_stop_failed", "stop not supported for agent type "+agentType)
 		return
 	}
 	pids, err := finder.SessionProcesses(id)
 	if err != nil {
-		http.Error(w, "check running processes: "+err.Error(), http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "session_stop_failed", "check running processes: "+err.Error())
 		return
 	}
 	for _, pid := range pids {
 		if err := procfind.Terminate(pid, stopGrace); err != nil {
-			http.Error(w, "stop process: "+err.Error(), http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, "session_stop_failed", "stop process: "+err.Error())
 			return
 		}
 		log.Printf("stopped session %s/%s process %d", agentType, id, pid)

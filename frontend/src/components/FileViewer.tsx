@@ -15,6 +15,7 @@ import {
 import type { CodeReaderHandle } from './CodeReader'
 import { LanguageSwitch } from './LanguageSwitch'
 import { ThemeSwitch } from './ThemeToggle'
+import { useI18n } from '../i18n'
 
 const CodeReader = lazy(() => import('./CodeReader'))
 
@@ -65,6 +66,7 @@ function flattenWithDepth(items: OutlineItem[], depth = 0, out: FlatOutlineItem[
 }
 
 function TreeDir({ dir, targetPath, depth, onOpenFile, targetRef }: TreeDirProps) {
+  const { t } = useI18n()
   const [entries, setEntries] = useState<FsEntry[] | null>(null)
   const [error, setError] = useState(false)
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -89,7 +91,7 @@ function TreeDir({ dir, targetPath, depth, onOpenFile, targetRef }: TreeDirProps
     if (Object.keys(next).length) setOpen(prev => ({ ...next, ...prev }))
   }, [entries, dir, targetPath])
 
-  if (error) return <div className="px-2 py-0.5 text-meta text-[var(--text-muted)]">无法读取目录</div>
+  if (error) return <div className="px-2 py-0.5 text-meta text-[var(--text-muted)]">{t('reader.directoryFailed')}</div>
   if (!entries) return <div className="px-2 py-0.5 text-meta text-[var(--text-muted)]">…</div>
 
   return (
@@ -136,6 +138,7 @@ function TreeDir({ dir, targetPath, depth, onOpenFile, targetRef }: TreeDirProps
 }
 
 export default function FileViewer({ path, cwd, line }: { path: string; cwd: string; line?: number }) {
+  const { locale, t } = useI18n()
   const [current, setCurrent] = useState(path)
   const [content, setContent] = useState<string | null>(null)
   const [fileSize, setFileSize] = useState(0)
@@ -171,8 +174,8 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
         setFileSize(d.size)
         setParsePolicy(codeParsePolicy(d.size, d.truncated))
       })
-      .catch(err => setLoadError(err instanceof Error ? err.message : '读取失败'))
-  }, [])
+      .catch(err => setLoadError(err instanceof Error ? err.message : t('reader.readFailed')))
+  }, [t])
 
   useEffect(() => { load(path, line) }, [path, line, load])
 
@@ -197,7 +200,7 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
 
   const rel = current.startsWith(root) ? current.slice(root.length).replace(/^\//, '') : current
   const parseEnabled = parsePolicy === 'enabled' || parsePolicy === 'confirmed'
-  const langSupport = useMemo(() => languageSupportForPath(current), [current])
+  const langSupport = useMemo(() => languageSupportForPath(current, locale), [current, locale])
   const showLangBanner = shouldShowLanguageSupportBanner(langSupport)
   const visibleOutline = useMemo(() => filterOutline(outline, outlineQuery.trim()), [outline, outlineQuery])
   const visibleRows = useMemo(() => flattenWithDepth(visibleOutline), [visibleOutline])
@@ -219,17 +222,17 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
         <span className="truncate text-helper text-[var(--text-secondary)]" title={current}>{current}</span>
         <span className="flex-1" />
         <button
-          onClick={() => void openFile({ path: current }).catch(err => alert(err instanceof Error ? err.message : '打开失败'))}
+          onClick={() => void openFile({ path: current }).catch(err => alert(err instanceof Error ? err.message : t('reader.openFailed')))}
           className="h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
         >
-          用编辑器打开
+          {t('reader.openEditor')}
         </button>
         <button
           type="button"
           onClick={() => readerRef.current?.search()}
           className="h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
         >
-          查找
+          {t('reader.find')}
         </button>
         <LanguageSwitch />
         <ThemeSwitch />
@@ -245,24 +248,24 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
             <div className="flex h-full min-h-0 flex-col">
               {parsePolicy === 'confirm' && (
                 <div className="z-10 flex flex-shrink-0 items-center gap-2 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-1.5 text-helper text-[var(--text-secondary)]">
-                  <span>大型文件（{formatByteSize(fileSize)}）的语法解析和结构提取可能明显占用 CPU 和内存。</span>
+                  <span>{t('reader.largeConfirm', { size: formatByteSize(fileSize) })}</span>
                   <button
                     type="button"
                     onClick={() => setParsePolicy('confirmed')}
                     className="h-6 rounded border border-[var(--warning)]/50 px-2 text-meta font-medium text-[var(--warning)] hover:bg-[var(--warning)]/10"
                   >
-                    仍要解析
+                    {t('reader.parseAnyway')}
                   </button>
                 </div>
               )}
               {parsePolicy === 'confirmed' && (
                 <div className="z-10 flex-shrink-0 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-1.5 text-helper text-[var(--warning)]">
-                  性能提示：已启用大型文件解析（{formatByteSize(fileSize)}），滚动、搜索和结构导航可能持续受到影响。
+                  {t('reader.largeEnabled', { size: formatByteSize(fileSize) })}
                 </div>
               )}
               {parsePolicy === 'refused' && (
                 <div className="z-10 flex-shrink-0 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-1.5 text-helper text-[var(--warning)]">
-                  性能提示：文件大小 {formatByteSize(fileSize)}，超过 {formatByteSize(MAX_FILE_PARSE_BYTES)} 解析上限；已拒绝语法解析，仅虚拟预览前 2 MiB。
+                  {t('reader.largeRefused', { size: formatByteSize(fileSize), limit: formatByteSize(MAX_FILE_PARSE_BYTES) })}
                 </div>
               )}
               {showLangBanner && (
@@ -278,14 +281,14 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
                     !
                   </span>
                   <span className="min-w-0 leading-snug">
-                    <span className="font-medium text-[var(--warning)]">语言支持</span>
+                    <span className="font-medium text-[var(--warning)]">{t('reader.languageSupport')}</span>
                     <span className="text-[var(--text-muted)]"> · </span>
                     {langSupport.summary}
                   </span>
                 </div>
               )}
               <div className="min-h-0 flex-1">
-                <Suspense fallback={<div className="p-4 text-helper text-[var(--text-muted)]">加载代码阅读器…</div>}>
+                <Suspense fallback={<div className="p-4 text-helper text-[var(--text-muted)]">{t('reader.loading')}</div>}>
                   <CodeReader
                     ref={readerRef}
                     path={current}
@@ -299,20 +302,20 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
               </div>
             </div>
           )}
-          {content === null && !loadError && <div className="p-4 text-helper text-[var(--text-muted)]">加载 {rel}…</div>}
+          {content === null && !loadError && <div className="p-4 text-helper text-[var(--text-muted)]">{t('reader.loadingFile', { file: rel })}</div>}
         </main>
         <aside className="flex w-[280px] flex-shrink-0 flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)]">
           <div className="flex h-8 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-2">
-            <span className="text-nav font-medium text-[var(--text-secondary)]">结构</span>
-            {parseEnabled && !outlineComplete && content !== null && <span className="text-meta text-[var(--text-muted)]">解析中…</span>}
+            <span className="text-nav font-medium text-[var(--text-secondary)]">{t('reader.structure')}</span>
+            {parseEnabled && !outlineComplete && content !== null && <span className="text-meta text-[var(--text-muted)]">{t('reader.parsing')}</span>}
           </div>
           <div className="flex-shrink-0 border-b border-[var(--border-muted)] p-2">
             <input
               value={outlineQuery}
               onChange={e => setOutlineQuery(e.target.value)}
               disabled={!parseEnabled}
-              placeholder={parseEnabled ? '筛选结构' : '结构解析未启用'}
-              aria-label="筛选文件结构"
+              placeholder={t(parseEnabled ? 'reader.filterStructure' : 'reader.structureDisabled')}
+              aria-label={t('reader.filterStructureLabel')}
               className="h-7 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
             />
           </div>
@@ -327,7 +330,7 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
                   <button
                     type="button"
                     onClick={() => readerRef.current?.reveal(item.from)}
-                    title={`${item.name} · 第 ${item.line} 行`}
+                    title={t('reader.lineTitle', { name: item.name, line: item.line })}
                     style={{ paddingLeft: `${depth * 14 + 8}px` }}
                     className={`flex h-7 w-full min-w-0 items-center gap-1.5 pr-2 text-left text-helper hover:bg-[var(--bg-surface-hover)] ${
                       item.id === activeId ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]'
@@ -344,20 +347,20 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
             ) : (
               <div className="px-3 py-2 text-helper text-[var(--text-muted)]">
                 {parsePolicy === 'confirm'
-                  ? '这是一个较大的文件。确认风险后才会解析并展示结构。'
+                  ? t('reader.largeOutlineConfirm')
                   : parsePolicy === 'refused'
-                    ? '文件超过解析上限，不会生成结构大纲。'
+                    ? t('reader.outlineLimit')
                     : outlineQuery
-                      ? '没有匹配的结构'
+                      ? t('reader.noMatchingStructure')
                       : !parseEnabled
-                        ? '结构解析未启用'
+                        ? t('reader.structureDisabled')
                         : langSupport.outline === 'none'
                           ? langSupport.highlight
-                            ? '当前语言仅支持语法高亮，暂无结构大纲。'
-                            : '当前文件类型无结构大纲（按纯文本显示）。'
+                            ? t('reader.highlightOnly')
+                            : t('reader.plainTextOutline')
                           : outlineComplete
-                            ? '当前文件没有可展示的结构'
-                            : '正在解析文件结构…'}
+                            ? t('reader.noStructure')
+                            : t('reader.parsingStructure')}
               </div>
             )}
           </div>

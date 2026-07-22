@@ -6,12 +6,13 @@ const compiledModule = path.join('/tmp', 'session-insight-sidebarRows.mjs')
 const { buildSidebarRows, formatRelativeTime, isSessionLive } = await import(pathToFileURL(compiledModule).href)
 
 const now = Date.parse('2026-07-12T12:00:00Z')
-assert.equal(formatRelativeTime('2026-07-12T11:59:31Z', now), '刚刚')
+assert.equal(formatRelativeTime('2026-07-12T11:59:31Z', now), '此刻')
 assert.equal(formatRelativeTime('2026-07-12T11:42:00Z', now), '18分钟前')
 assert.equal(formatRelativeTime('2026-07-12T09:00:00Z', now), '3小时前')
 assert.equal(formatRelativeTime('2026-07-07T12:00:00Z', now), '5天前')
 assert.equal(formatRelativeTime('2026-05-12T12:00:00Z', now), '2个月前')
 assert.equal(formatRelativeTime('2024-07-12T12:00:00Z', now), '2年前')
+assert.equal(formatRelativeTime('2026-07-12T11:42:00Z', now, 'en'), '18 minutes ago')
 assert.equal(formatRelativeTime('not-a-date', now), 'not-a-date')
 
 // isSessionLive：服务端快照 + 客户端衰减，只熄灭不点亮

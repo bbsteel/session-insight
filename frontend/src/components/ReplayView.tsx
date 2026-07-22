@@ -195,7 +195,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         // row and looked up among the "edit" positions; matchIndex stays as
         // fallback when positions are unavailable.
         match: (text: string) => parseEditHeaderLine(text),
-        tooltip: '文件操作：编辑器 / 新 Tab / Diff',
+        tooltip: t('replay.fileActions'),
         onActivate: (bufLine: number, _data: unknown, matchIndex: number, meta?: TerminalActivateMeta) => {
           const ctrl = termControlRef.current
           const orig = ctrl ? ctrl.toOriginalLine(bufLine) : bufLine
@@ -210,7 +210,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         // "[+] N 行被截断（点击展开）" lines → full output modal via the
         // "trunc" position at the same original row.
         match: (text: string) => (/\[\+\] \d+ 行被截断/.test(text) ? {} : null),
-        tooltip: '展开完整输出',
+        tooltip: t('replay.expandOutput'),
         onActivate: (bufLine: number, _data: unknown, matchIndex: number) => {
           const ctrl = termControlRef.current
           const orig = ctrl ? ctrl.toOriginalLine(bufLine) : bufLine
@@ -229,14 +229,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         // row actually resolves to an existing file (multi-token rows check
         // every candidate, so "cd /some/dir && vim a.vue" still qualifies).
         match: (text: string) => (extractPathsAt(text, null, fileExtsRef.current).length > 0 ? {} : null),
-        tooltip: '打开文件（编辑器 / 新 Tab）',
+        tooltip: t('replay.openFileMenu'),
         validate: async (lineText: string) => (await resolveRowFile(lineText, null)) !== null,
         onActivate: (bufLine: number, _data: unknown, _idx: number, meta?: TerminalActivateMeta) => {
           openFilePopover(bufLine, meta, null)
         },
       },
     ])
-  }, [openFilePopover])
+  }, [openFilePopover, t])
 
   // 列数没变时(例如「分析↔终端」来回切换导致的终端重挂载)必须保留现有
   // positions:positions 拉取 effect 的依赖不会变化、不会重拉,这里若无条件
@@ -580,7 +580,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         line: fileTarget.line ?? undefined,
         search: fileTarget.search,
       }).catch(err => {
-        setOpenFileError(err instanceof Error ? err.message : '打开文件失败')
+        setOpenFileError(err instanceof Error ? err.message : t('replay.openFileFailed'))
         setTimeout(() => setOpenFileError(null), 5000)
       })
       setCtxMenu(null)
@@ -594,17 +594,17 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     }
     const fileItems = () => [
       {
-        label: fileTarget ? `用编辑器打开 ${fileTarget.label}` : '用编辑器打开',
+        label: fileTarget ? t('replay.openEditorFile', { file: fileTarget.label }) : t('replay.openEditor'),
         disabled: !fileTarget,
         onClick: openWithEditor,
       },
       {
-        label: '在新 Tab 打开',
+        label: t('replay.openNewTab'),
         disabled: !fileTarget,
         onClick: openInNewTab,
       },
       ...(ctxMenu?.editIdx != null ? [{
-        label: '查看 Diff 明细',
+        label: t('replay.viewDiff'),
         onClick: () => {
           setInitialDiffIdx(ctxMenu.editIdx!)
           setShowDiffModal(true)
@@ -619,7 +619,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       const foldKey = ctxMenu.foldKey
       const foldItems = foldKey
         ? [{
-            label: ctxMenu.collapsedFoldKeys.includes(foldKey) ? '展开内容' : '收起内容',
+            label: ctxMenu.collapsedFoldKeys.includes(foldKey) ? t('replay.expandContent') : t('replay.collapseContent'),
             onClick: () => {
               const collapsed = ctxMenu.collapsedFoldKeys.includes(foldKey)
               termControlRef.current?.setFoldsCollapsed([foldKey], !collapsed, ctxMenu.originalRow)
@@ -628,9 +628,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           }]
         : []
       return [{
-        title: '文件',
+        title: t('replay.fileSection'),
         items: [...foldItems, ...fileItems()],
-        emptyText: '未识别到文件',
+        emptyText: t('replay.noFile'),
       }]
     }
 
@@ -640,28 +640,28 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         items: [
           // Always visible; greyed out when the row has no openable file.
           ...fileItems(),
-          { label: '上一条用户消息', onClick: () => { jump(-1, 'user'); setCtxMenu(null) } },
-          { label: '下一条用户消息', onClick: () => { jump(1, 'user'); setCtxMenu(null) } },
-          { label: '上一 Turn', onClick: () => { jump(-1, 'turn'); setCtxMenu(null) } },
-          { label: '下一 Turn', onClick: () => { jump(1, 'turn'); setCtxMenu(null) } },
-          { label: '回到顶部', onClick: () => { termControlRef.current?.scrollToLine(0); setCtxMenu(null) } },
-          { label: '回到底部', onClick: scrollToBottom },
+          { label: t('replay.previousUser'), onClick: () => { jump(-1, 'user'); setCtxMenu(null) } },
+          { label: t('replay.nextUser'), onClick: () => { jump(1, 'user'); setCtxMenu(null) } },
+          { label: t('replay.previousTurn'), onClick: () => { jump(-1, 'turn'); setCtxMenu(null) } },
+          { label: t('replay.nextTurn'), onClick: () => { jump(1, 'turn'); setCtxMenu(null) } },
+          { label: t('replay.toTop'), onClick: () => { termControlRef.current?.scrollToLine(0); setCtxMenu(null) } },
+          { label: t('replay.toBottom'), onClick: scrollToBottom },
           ...(sessionIsLive
-            ? [{ label: followOutput ? '关闭跟随' : '跟随输出', onClick: toggleFollow }]
+            ? [{ label: followOutput ? t('replay.disableFollow') : t('replay.followOutput'), onClick: toggleFollow }]
             : []),
           {
-            label: '复制选中文本',
+            label: t('replay.copySelection'),
             disabled: selectedText.length === 0,
             onClick: () => copyText(selectedText),
           },
-          { label: '复制会话 ID', onClick: () => copyText(session?.id ?? '') },
+          { label: t('replay.copySessionId'), onClick: () => copyText(session?.id ?? '') },
           {
-            label: '复制工作目录',
+            label: t('replay.copyCwd'),
             disabled: sessionCwd.length === 0,
             onClick: () => copyText(sessionCwd),
           },
           {
-            label: '导出会话',
+            label: t('replay.exportSession'),
             onClick: () => {
               if (session) window.location.href = `/api/sessions/${session.id}/export`
               setCtxMenu(null)
@@ -692,7 +692,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               }]
             : []),
         ],
-        emptyText: '暂无操作',
+        emptyText: t('replay.noActions'),
       },
     ]
     if (!ctxMenu || folds.length === 0) return sections
@@ -713,22 +713,22 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       title: agent.charAt(0).toUpperCase() + agent.slice(1),
       items: [
         {
-          label: '全部折叠',
+          label: t('replay.collapseAll'),
           disabled: folds.every(f => collapsed.has(f.key)),
           onClick: () => apply(folds.map(f => f.key), true),
         },
         {
-          label: '全部展开',
+          label: t('replay.expandAll'),
           disabled: collapsed.size === 0,
           onClick: () => apply(folds.map(f => f.key), false),
         },
         {
-          label: '折叠当前 Turn',
+          label: t('replay.collapseTurn'),
           disabled: turnKeys.length === 0 || turnKeys.every(k => collapsed.has(k)),
           onClick: () => apply(turnKeys, true),
         },
         {
-          label: '展开当前 Turn',
+          label: t('replay.expandTurn'),
           disabled: turnKeys.length === 0 || !turnKeys.some(k => collapsed.has(k)),
           onClick: () => apply(turnKeys, false),
         },
@@ -1322,12 +1322,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       {showHelp && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(0,0,0,var(--opacity-overlay))]" onClick={() => setShowHelp(false)}>
           <div className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-lg p-6 max-w-sm" onClick={e => e.stopPropagation()}>
-            <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-3">快捷键</h3>
+            <h3 className="text-nav font-semibold text-[var(--text-primary)] mb-3">{t('replay.shortcuts')}</h3>
             <div className="space-y-2 text-helper">
               {[
-                ['j / ↓', '下一轮'],
-                ['k / ↑', '上一轮'],
-                ['?', '打开/关闭帮助'],
+                ['j / ↓', t('replay.shortcutNext')],
+                ['k / ↑', t('replay.shortcutPrevious')],
+                ['?', t('replay.shortcutHelp')],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">
                   <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[60px] text-center">{key}</kbd>
@@ -1335,7 +1335,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 </div>
               ))}
             </div>
-            <button onClick={() => setShowHelp(false)} className="mt-4 text-meta text-[var(--accent-blue)] hover:underline">关闭</button>
+            <button onClick={() => setShowHelp(false)} className="mt-4 text-meta text-[var(--accent-blue)] hover:underline">{t('common.close')}</button>
           </div>
         </div>
       )}

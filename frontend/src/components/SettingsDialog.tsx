@@ -115,11 +115,11 @@ export default function SettingsDialog({
     e.target.value = '' // 允许再次选择同一文件
     if (!file) return
     if (!file.type.startsWith('image/')) {
-      setAvatarError('请选择图像文件')
+      setAvatarError(t('settings.avatarImageOnly'))
       return
     }
     if (file.size > AVATAR_MAX_BYTES) {
-      setAvatarError(`图像大小 ${Math.ceil(file.size / 1024)}KB,超过 200KB 上限,请压缩后再上传`)
+      setAvatarError(t('settings.avatarTooLarge', { size: Math.ceil(file.size / 1024) }))
       return
     }
     const readId = ++avatarReadSeq.current
@@ -129,12 +129,12 @@ export default function SettingsDialog({
       if (setUserAvatar(typeof reader.result === 'string' ? reader.result : null)) {
         setAvatarError('')
       } else {
-        setAvatarError('头像保存失败：浏览器本地存储不可用或已满')
+        setAvatarError(t('settings.avatarSaveFailed'))
       }
     }
     reader.onerror = () => {
       if (readId !== avatarReadSeq.current) return
-      setAvatarError('读取文件失败,请重试')
+      setAvatarError(t('settings.avatarReadFailed'))
     }
     reader.readAsDataURL(file)
   }
@@ -144,7 +144,7 @@ export default function SettingsDialog({
     if (setUserAvatar(null)) {
       setAvatarError('')
     } else {
-      setAvatarError('头像保存失败：浏览器本地存储不可用或已满')
+      setAvatarError(t('settings.avatarSaveFailed'))
     }
   }
 
@@ -374,7 +374,7 @@ export default function SettingsDialog({
 
           <div className="flex-1 overflow-y-auto px-5 py-4">
             {loading && activeTab === 'editor' && (
-              <div className="text-helper text-[var(--text-muted)]">加载中…</div>
+              <div className="text-helper text-[var(--text-muted)]">{t('common.loading')}</div>
             )}
 
             {activeTab === 'appearance' && (
@@ -400,8 +400,8 @@ export default function SettingsDialog({
                 <div className={sectionBox}>
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <div className={sectionTitle}>主题</div>
-                      <div className={sectionDesc}>默认浅色；跟随系统时随 OS 深/浅切换</div>
+                      <div className={sectionTitle}>{t('theme.label')}</div>
+                      <div className={sectionDesc}>{t('settings.themeHelp')}</div>
                     </div>
                     <ThemeSelect />
                   </div>
@@ -409,17 +409,17 @@ export default function SettingsDialog({
                 <div className={sectionBox}>
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <div className={sectionTitle}>用户头像</div>
-                      <div className={sectionDesc}>交互消息面板中用户消息的图标；可上传图像（不超过 200KB）</div>
+                      <div className={sectionTitle}>{t('settings.avatar')}</div>
+                      <div className={sectionDesc}>{t('settings.avatarHelp')}</div>
                     </div>
                     <div className="flex items-center gap-2">
                       <UserAvatar size={32} />
                       <button onClick={() => avatarFileRef.current?.click()} className={btnCls}>
-                        上传图像
+                        {t('settings.avatarUpload')}
                       </button>
                       {userAvatar && (
                         <button onClick={handleAvatarReset} className={btnCls}>
-                          恢复默认
+                          {t('settings.avatarReset')}
                         </button>
                       )}
                       <input
@@ -427,7 +427,7 @@ export default function SettingsDialog({
                         type="file"
                         accept="image/*"
                         className="hidden"
-                        aria-label="上传用户头像图像"
+                        aria-label={t('settings.avatarUploadLabel')}
                         onChange={handleAvatarFile}
                       />
                     </div>
@@ -443,18 +443,18 @@ export default function SettingsDialog({
               <div className={sectionBox}>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <div className={sectionTitle}>打开时展开</div>
-                    <div className={sectionDesc}>打开会话时展开导航面板并启用钉住</div>
+                    <div className={sectionTitle}>{t('settings.navOpen')}</div>
+                    <div className={sectionDesc}>{t('settings.navOpenHelp')}</div>
                   </div>
                   <select
                     value={navOpenPref}
                     onChange={e => handleNavOpenPref(e.target.value as NavOpenPref)}
                     className={selectCls}
-                    aria-label="打开会话时展开导航"
+                    aria-label={t('settings.navOpenLabel')}
                   >
-                    <option value="user">交互消息</option>
-                    <option value="tool">工具调用</option>
-                    <option value="off">不展开</option>
+                    <option value="user">{t('settings.navUser')}</option>
+                    <option value="tool">{t('settings.navTool')}</option>
+                    <option value="off">{t('settings.navOff')}</option>
                   </select>
                 </div>
               </div>
@@ -464,8 +464,8 @@ export default function SettingsDialog({
               <div className={sectionBox}>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <div className={sectionTitle}>历史记录条数</div>
-                    <div className={sectionDesc}>钉住的记录不占用条数限制</div>
+                    <div className={sectionTitle}>{t('settings.historyLimit')}</div>
+                    <div className={sectionDesc}>{t('settings.historyLimitHelp')}</div>
                   </div>
                   <input
                     type="number"
@@ -474,12 +474,12 @@ export default function SettingsDialog({
                     value={historyLimit}
                     onChange={e => handleHistoryLimit(Number(e.target.value))}
                     className={`${inputCls} w-16 text-right`}
-                    aria-label="历史记录条数"
+                    aria-label={t('settings.historyLimit')}
                   />
                 </div>
                 <div className="mt-4 pt-4 border-t border-[var(--border-muted)]">
                   <button onClick={onClearHistory} className={dangerBtnCls}>
-                    清空搜索历史
+                    {t('settings.clearHistory')}
                   </button>
                 </div>
               </div>
@@ -490,8 +490,8 @@ export default function SettingsDialog({
                 <div className={sectionBox}>
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <div className={sectionTitle}>Turn 横幅颜色</div>
-                      <div className={sectionDesc}>默认随深/浅主题，改动即时生效</div>
+                      <div className={sectionTitle}>{t('settings.bannerColor')}</div>
+                      <div className={sectionDesc}>{t('settings.bannerColorHelp')}</div>
                     </div>
                     <span className="flex items-center gap-1.5">
                       <input
@@ -502,7 +502,7 @@ export default function SettingsDialog({
                           setBannerColorOverride(e.target.value)
                         }}
                         className="h-7 w-9 cursor-pointer rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] p-0.5"
-                        aria-label="Turn 横幅颜色"
+                        aria-label={t('settings.bannerColor')}
                       />
                       {bannerColor && (
                         <button
@@ -512,7 +512,7 @@ export default function SettingsDialog({
                           }}
                           className={btnCls}
                         >
-                          恢复默认
+                          {t('settings.restoreDefault')}
                         </button>
                       )}
                     </span>
@@ -520,14 +520,14 @@ export default function SettingsDialog({
                 </div>
 
                 <div className={sectionBox}>
-                  <div className={sectionTitle}>消息时间戳前缀</div>
-                  <div className={sectionDesc}>勾选的消息类型在终端里显示 HH:MM:SS，保存后立即重渲染</div>
+                  <div className={sectionTitle}>{t('settings.timestamp')}</div>
+                  <div className={sectionDesc}>{t('settings.timestampHelp')}</div>
                   <div className="mt-3 flex flex-wrap items-center gap-4">
                     {(
                       [
-                        ['user', '用户输入'],
-                        ['assistant', '助手回复'],
-                        ['tool', '工具调用'],
+                        ['user', 'settings.timestampUser'],
+                        ['assistant', 'settings.timestampAssistant'],
+                        ['tool', 'settings.timestampTool'],
                       ] as const
                     ).map(([kind, label]) => (
                       <label
@@ -540,7 +540,7 @@ export default function SettingsDialog({
                           onChange={() => toggleTsKind(kind)}
                           className={checkboxCls}
                         />
-                        {label}
+                        {t(label)}
                       </label>
                     ))}
                   </div>
@@ -551,10 +551,10 @@ export default function SettingsDialog({
             {activeTab === 'fonts' && (
               <div className="space-y-4">
                 <div className={sectionBox}>
-                  <div className="text-body font-semibold text-[var(--text-primary)] mb-3">界面字体</div>
+                  <div className="text-body font-semibold text-[var(--text-primary)] mb-3">{t('settings.uiFont')}</div>
                   <div className="space-y-3">
                     <FontPicker
-                      label="字体"
+                      label={t('settings.font')}
                       value={uiFont}
                       onChange={next => {
                         setUiFont(next)
@@ -562,12 +562,12 @@ export default function SettingsDialog({
                       }}
                     />
                     <div>
-                      <div className="text-helper text-[var(--text-primary)]">字号</div>
+                      <div className="text-helper text-[var(--text-primary)]">{t('settings.fontSize')}</div>
                       <div className="mt-1 flex items-center gap-2">
                         {[
-                          { key: 'small', label: '小' },
-                          { key: 'medium', label: '中' },
-                          { key: 'large', label: '大' },
+                          { key: 'small', label: t('settings.fontSmall') },
+                          { key: 'medium', label: t('settings.fontMedium') },
+                          { key: 'large', label: t('settings.fontLarge') },
                         ].map(({ key, label }) => {
                           const selected = uiFontSize === key
                           return (
@@ -594,10 +594,10 @@ export default function SettingsDialog({
                 </div>
 
                 <div className={sectionBox}>
-                  <div className="text-body font-semibold text-[var(--text-primary)] mb-3">终端字体</div>
+                  <div className="text-body font-semibold text-[var(--text-primary)] mb-3">{t('settings.terminalFont')}</div>
                   <div className="space-y-3">
                     <FontPicker
-                      label="字体"
+                      label={t('settings.font')}
                       value={terminalFont}
                       monospaceOnly
                       onChange={next => {
@@ -606,7 +606,7 @@ export default function SettingsDialog({
                       }}
                     />
                     <div>
-                      <div className="text-helper text-[var(--text-primary)]">字号</div>
+                      <div className="text-helper text-[var(--text-primary)]">{t('settings.fontSize')}</div>
                       <div className="mt-1 flex items-center gap-3">
                         <input
                           type="range"
@@ -620,7 +620,7 @@ export default function SettingsDialog({
                             setTerminalFontSizePref(size)
                           }}
                           className="h-7 flex-1 accent-[var(--accent-blue)]"
-                          aria-label="终端字号"
+                          aria-label={t('settings.terminalFontSize')}
                         />
                         <span className="w-10 text-right text-helper text-[var(--text-primary)] tabular-nums">
                           {terminalFontSize}px
@@ -631,7 +631,7 @@ export default function SettingsDialog({
                 </div>
 
                 <div className="flex items-center justify-between gap-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-4">
-                  <div className={sectionDesc}>提示：使用 ↑ / ↓ 可实时预览效果</div>
+                  <div className={sectionDesc}>{t('settings.fontPreviewHelp')}</div>
                   <button
                     onClick={() => {
                       setUiFont(DEFAULT_UI_FONT)
@@ -645,7 +645,7 @@ export default function SettingsDialog({
                     }}
                     className={btnCls}
                   >
-                    恢复默认字体
+                    {t('settings.restoreFonts')}
                   </button>
                 </div>
               </div>
@@ -655,35 +655,35 @@ export default function SettingsDialog({
               <div className="space-y-4">
                 <div className={sectionBox}>
                   <label className="block text-helper font-medium text-[var(--text-primary)]">
-                    打开文件的程序
+                    {t('settings.editorCommand')}
                     <input
                       type="text"
                       value={editorCommand}
-                      placeholder={editorCommandDefault || '默认使用系统默认编辑器（如 code / xdg-open）'}
+                      placeholder={editorCommandDefault || t('settings.editorDefault')}
                       onChange={e => setEditorCommand(e.target.value)}
                       onBlur={() => void persistEditorCommand()}
                       className={`${inputCls} mt-1.5 w-full font-mono text-meta`}
                     />
                   </label>
                   <div className={sectionDesc}>
-                    自定义打开文件时使用的程序；留空则使用系统默认。占位符：{'{path}'}、{'{line}'}
+                    {t('settings.editorHelp', { path: '{path}', line: '{line}' })}
                   </div>
                 </div>
 
                 <div className={sectionBox}>
                   <label className="block text-helper font-medium text-[var(--text-primary)]">
-                    可打开文件类型
+                    {t('settings.fileTypes')}
                     <input
                       type="text"
                       value={fileExts}
-                      placeholder="留空 = 默认代码/文本扩展名"
+                      placeholder={t('settings.fileTypesPlaceholder')}
                       onChange={e => setFileExts(e.target.value)}
                       onBlur={() => void persistFileExts()}
                       className={`${inputCls} mt-1.5 w-full font-mono text-meta`}
                     />
                   </label>
                   <div className={sectionDesc}>
-                    逗号分隔（如 go,ts,vue）；* 表示不限制。终端里只有这些类型的文件才会出现打开入口，改动刷新后生效
+                    {t('settings.fileTypesHelp')}
                   </div>
                 </div>
               </div>
@@ -691,11 +691,11 @@ export default function SettingsDialog({
 
             {activeTab === 'ai' && (
               <div className={sectionBox}>
-                <div className={sectionTitle}>AI 模型源</div>
-                <div className={sectionDesc}>用于会话总结、会话标题与会话交接</div>
+                <div className={sectionTitle}>{t('settings.aiProviders')}</div>
+                <div className={sectionDesc}>{t('settings.aiProvidersHelp')}</div>
                 <div className="mt-4">
                   <button onClick={handleOpenAISettings} className={primaryBtnCls}>
-                    管理 AI 模型源…
+                    {t('settings.manageAI')}
                   </button>
                 </div>
               </div>
@@ -714,25 +714,25 @@ export default function SettingsDialog({
                   </div>
                   {versionInfo?.commit && (
                     <div className="mt-1 text-meta text-[var(--text-muted)]">
-                      开发构建 · {versionInfo.commit}
+                      {t('settings.devBuild', { commit: versionInfo.commit })}
                     </div>
                   )}
                   <div className={sectionDesc}>
-                    本地优先的 AI 编程 Agent 会话浏览、终端原生回放与分析工具
+                    {t('settings.aboutSummary')}
                   </div>
                   <div className={sectionDesc}>
-                    会话发现、索引、搜索和回放均在本机运行；AI 生成功能需主动启用，只使用你配置的模型服务
+                    {t('settings.aboutPrivacy')}
                   </div>
                 </div>
 
                 <div className={sectionBox}>
-                  <div className={sectionTitle}>链接</div>
+                  <div className={sectionTitle}>{t('settings.links')}</div>
                   <div className="mt-2 space-y-1.5">
                     {(
                       [
-                        ['GitHub 仓库', GITHUB_REPO_URL],
-                        ['版本发布（Releases）', `${GITHUB_REPO_URL}/releases`],
-                        ['问题反馈（Issues）', `${GITHUB_REPO_URL}/issues`],
+                        [t('settings.github'), GITHUB_REPO_URL],
+                        [t('settings.releases'), `${GITHUB_REPO_URL}/releases`],
+                        [t('settings.issues'), `${GITHUB_REPO_URL}/issues`],
                       ] as const
                     ).map(([label, url]) => (
                       <div key={url}>

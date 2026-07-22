@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { TerminalControl, TerminalSearchOptions } from '../terminalControl'
+import { useI18n } from '../i18n'
 
 // Floating in-terminal search bar (Ctrl+F). Searches the visible (composed)
 // buffer via xterm addon-search; Enter/Shift+Enter step matches, Esc closes.
@@ -42,6 +43,7 @@ interface Props {
 }
 
 export default function TerminalSearchBar({ controlRef, refreshToken, focusToken, rightInset = 0, onClose }: Props) {
+  const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [opts, setOpts] = useState<TerminalSearchOptions>(loadOpts)
   const [result, setResult] = useState<{ index: number; count: number } | null>(null)
@@ -142,29 +144,29 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
           if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1) }
           else if (e.key === 'Escape') { e.preventDefault(); onClose() }
         }}
-        placeholder="在终端中查找"
+        placeholder={t('terminalSearch.placeholder')}
         className="h-6 min-w-24 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
       />
-      <button onClick={() => toggle('caseSensitive')} title="区分大小写" aria-pressed={opts.caseSensitive} className={toggleCls(opts.caseSensitive)}>Aa</button>
-      <button onClick={() => toggle('wholeWord')} title="全词匹配" aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
-      <button onClick={() => toggle('regex')} title="正则表达式" aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
-      <button onClick={() => toggle('highlightAll')} title="高亮全部命中" aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>全亮</button>
+      <button onClick={() => toggle('caseSensitive')} title={t('terminalSearch.caseSensitive')} aria-pressed={opts.caseSensitive} className={toggleCls(opts.caseSensitive)}>Aa</button>
+      <button onClick={() => toggle('wholeWord')} title={t('terminalSearch.wholeWord')} aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
+      <button onClick={() => toggle('regex')} title={t('terminalSearch.regex')} aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
+      <button onClick={() => toggle('highlightAll')} title={t('terminalSearch.highlightAll')} aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>{t('terminalSearch.highlightAllShort')}</button>
       <span className={`min-w-[52px] flex-none text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
-        {invalidRegex ? '无效正则' : query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : '无结果') : ''}
+        {invalidRegex ? t('terminalSearch.invalidRegex') : query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : t('terminalSearch.noResults')) : ''}
       </span>
       <button
         onClick={() => step(-1)}
-        title="上一个 (Shift+Enter)"
+        title={t('terminalSearch.previous')}
         className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >↑</button>
       <button
         onClick={() => step(1)}
-        title="下一个 (Enter)"
+        title={t('terminalSearch.next')}
         className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >↓</button>
       <button
         onClick={onClose}
-        title="关闭 (Esc)"
+        title={t('terminalSearch.close')}
         className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >✕</button>
     </div>

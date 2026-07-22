@@ -183,3 +183,29 @@ func TestBuildPromptSummaryUsesRequestedLanguage(t *testing.T) {
 		t.Errorf("Chinese summary prompt did not retain the Chinese instruction: %q", chinese)
 	}
 }
+
+func TestBuildPromptTitleAndHandoffUseRequestedLanguage(t *testing.T) {
+	detail := makeDetail(1, 100)
+	title, err := BuildPrompt(KindTitle, detail, nil, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(title, "concise English title") {
+		t.Errorf("English title prompt did not use the English instruction: %q", title)
+	}
+
+	handoff, err := BuildPrompt(KindHandoff, detail, []string{"Codex CLI"}, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# Task handoff", `"difficulty": "simple|medium|hard"`, "Codex CLI"} {
+		if !strings.Contains(handoff, want) {
+			t.Errorf("English handoff prompt missing %q", want)
+		}
+	}
+
+	content, metadata := ParseHandoffOutput("```json\n{\"difficulty\":\"hard\",\"recommended\":[]}\n```\n\n# Task handoff\n\nContinue the work.")
+	if metadata == "" || !strings.HasPrefix(content, "# Task handoff") {
+		t.Fatalf("English handoff output was not parsed: content=%q metadata=%q", content, metadata)
+	}
+}

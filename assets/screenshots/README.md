@@ -18,15 +18,16 @@ Together they cover replay, navigation, personalization, analysis, and code insp
 
 ## Capture
 
-Start the full application first, then install Playwright's Chromium build once and run the capture command with an exact local session title:
+Start the full application first, then install Playwright's Chromium build once and capture both locales with an exact local session title:
 
 ```bash
 ./run.sh all
 npm --prefix frontend exec -- playwright install chromium
-npm --prefix frontend run capture:screenshots -- --session-title "<exact session title>"
+npm --prefix frontend run capture:screenshots -- --locale en --session-title "<exact session title>"
+npm --prefix frontend run capture:screenshots -- --locale zh-CN --session-title "<exact session title>"
 ```
 
-The script fixes the viewport and light theme, filters the sidebar to the chosen session, replaces the repository and home paths, replaces email addresses, and limits the code-reader tree to Git-tracked files. It writes all three PNG files in place.
+The script fixes the viewport and light theme, filters the sidebar to the chosen session, replaces the repository and home paths, replaces email addresses, and limits the code-reader tree to Git-tracked files. It writes five PNG files under the selected locale directory.
 
 ## Privacy check
 

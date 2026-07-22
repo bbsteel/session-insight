@@ -4,6 +4,7 @@ import {
   type InsightItem, type InsightOutput, type InsightEvidenceRef, type SendPreview, type LLMProvider,
 } from '../api'
 import { subscribe, getState, seedResult, start, cancel, dismissPreview } from '../insightStore'
+import { useI18n, type Locale } from '../i18n'
 
 interface Props {
   sessionId: string
@@ -13,11 +14,13 @@ interface Props {
   onJumpToTurn?: (turnIndex: number) => void
 }
 
-const confidenceLabel: Record<string, string> = { high: '高', medium: '中', low: '低' }
-const epistemicLabel: Record<string, string> = { observed: '观察事实', inferred: '推断', unknown: '无法判断' }
-const strengthLabel: Record<string, string> = { none: '无因果', weak: '弱因果', moderate: '中等因果', strong: '强因果' }
-const kindLabel: Record<string, string> = {
-  session: '会话', turn: '轮次', subagent: '子代理', metric: '指标', tool: '工具', skill: '技能',
+type Translate = (key: string, vars?: Record<string, string | number>) => string
+
+const confidenceKeys: Record<string, string> = { high: 'insight.confidence.high', medium: 'insight.confidence.medium', low: 'insight.confidence.low' }
+const epistemicKeys: Record<string, string> = { observed: 'insight.epistemic.observed', inferred: 'insight.epistemic.inferred', unknown: 'insight.epistemic.unknown' }
+const strengthKeys: Record<string, string> = { none: 'insight.strength.none', weak: 'insight.strength.weak', moderate: 'insight.strength.moderate', strong: 'insight.strength.strong' }
+const kindKeys: Record<string, string> = {
+  session: 'insight.kind.session', turn: 'insight.kind.turn', subagent: 'insight.kind.subagent', metric: 'insight.kind.metric', tool: 'insight.kind.tool', skill: 'insight.kind.skill',
 }
 
 // DeepInsightSection is the second analysis layer (根因分析): it explains why
@@ -26,6 +29,7 @@ const kindLabel: Record<string, string> = {
 // moving). Generation state lives in insightStore so switching away mid-run
 // keeps the analysis going and coming back re-attaches to its progress.
 export default function DeepInsightSection({ sessionId, agentType, isLive, findingsCount, onJumpToTurn }: Props) {
+  const { locale, t } = useI18n()
   const [loaded, setLoaded] = useState(false)
   const [providers, setProviders] = useState<LLMProvider[]>([])
   // 0 = use the server-side default provider.
@@ -72,17 +76,17 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
   return (
     <div className="px-4 pb-4">
       <div className="flex items-center gap-3 mb-2 flex-wrap">
-        <h3 className="text-body font-semibold text-[var(--text-primary)]">根因分析</h3>
+        <h3 className="text-body font-semibold text-[var(--text-primary)]">{t('insight.title')}</h3>
         {/* Launch control + model picker sit right next to the title. */}
         {!busy && !isLive && !providerMissing && providers.length > 0 && (
           <select
             value={providerId}
             onChange={e => setProviderId(Number(e.target.value))}
             className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
-            title="用哪个模型源做根因分析"
+            title={t('insight.providerPicker')}
           >
             <option value={0}>
-              {defaultProvider ? `${defaultProvider.name}（默认）` : '（未设置默认）'}
+              {defaultProvider ? t('ai.defaultProvider', { name: defaultProvider.name }) : t('ai.noDefaultProvider')}
             </option>
             {providers.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
@@ -90,19 +94,19 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
           </select>
         )}
         {busy ? (
-          <button onClick={() => cancel(sessionId)} className={btnCls}>取消</button>
+          <button onClick={() => cancel(sessionId)} className={btnCls}>{t('common.cancel')}</button>
         ) : isLive ? (
-          <span className="text-nav text-[var(--text-muted)]">会话结束后可分析</span>
+          <span className="text-nav text-[var(--text-muted)]">{t('insight.afterSession')}</span>
         ) : providerMissing ? (
           <button onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))} className={btnCls}>
-            配置模型后启动
+            {t('insight.configure')}
           </button>
         ) : (
-          <button onClick={() => start(sessionId, false, providerId)} className={`${btnCls} border-[var(--accent-blue)] text-[var(--accent-blue)]`}>
-            {result ? '重新分析' : '启动分析'}
+          <button onClick={() => start(sessionId, false, providerId, locale)} className={`${btnCls} border-[var(--accent-blue)] text-[var(--accent-blue)]`}>
+            {t(result ? 'insight.restart' : 'insight.start')}
           </button>
         )}
-        <span className="text-nav font-normal text-[var(--text-secondary)]">用配置的模型解释这些发现为何出现</span>
+        <span className="text-nav font-normal text-[var(--text-secondary)]">{t('insight.help')}</span>
 
         {canExport && (
           <div className="flex items-center gap-2">
@@ -126,16 +130,16 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
                 : <span className="text-[var(--text-primary)]"><span className="text-[var(--accent-blue)]">›</span> {line.text}…</span>}
             </div>
           ))}
-          {state.stages.length === 0 && <span className="text-[var(--text-muted)]">正在准备…</span>}
+          {state.stages.length === 0 && <span className="text-[var(--text-muted)]">{t('insight.preparing')}</span>}
         </div>
       )}
 
       {blocked && (
         <div className="rounded-md border border-dashed border-[var(--border-default)] p-3 text-helper text-[var(--text-secondary)]">
-          {blocked === 'session_active' && '会话仍在活跃中，账单尚未结算，结束后再分析。'}
-          {blocked === 'session_changing' && '会话数据正在变化，请稍后重试。'}
-          {blocked === 'no_findings' && '没有可分析的初步发现。'}
-          {blocked === 'not_found' && '会话不存在。'}
+          {blocked === 'session_active' && t('insight.blocked.active')}
+          {blocked === 'session_changing' && t('insight.blocked.changing')}
+          {blocked === 'no_findings' && t('insight.blocked.noFindings')}
+          {blocked === 'not_found' && t('insight.blocked.notFound')}
         </div>
       )}
       {error && <div className="mb-2 whitespace-pre-wrap break-all text-helper text-[var(--error)]">{error}</div>}
@@ -143,7 +147,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
       {preview && (
         <SendPreviewCard
           preview={preview}
-          onConfirm={() => start(sessionId, true, providerId)}
+          onConfirm={() => start(sessionId, true, providerId, locale)}
           onCancel={() => dismissPreview(sessionId)}
         />
       )}
@@ -152,8 +156,8 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
         <>
           {stale && (
             <div className="mb-2 flex items-center gap-2 rounded-md bg-[var(--warning)]/15 px-3 py-1.5 text-helper text-[var(--warning)]">
-              <span>结果可能已过期（{staleReason(result.freshness.reasons)}）</span>
-              <button onClick={() => start(sessionId, false, providerId)} className="underline">重新分析</button>
+              <span>{t('insight.stale', { reason: staleReason(result.freshness.reasons, t) })}</span>
+              <button onClick={() => start(sessionId, false, providerId, locale)} className="underline">{t('insight.restart')}</button>
             </div>
           )}
           <div className="mb-2 text-meta text-[var(--text-muted)]">
@@ -162,7 +166,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
           {meta?.parse_failed ? (
             <div>
               <div className="mb-1 text-helper text-[var(--warning)]">
-                结构化解析失败，模型未按格式输出（下方为原始输出）。若模型拒答或答非所问，多为模型能力不足或对数据里的指令样文本过度敏感——可换用 API 类型或更强的模型源重试。
+                {t('insight.parseFailed')}
               </div>
               <pre className="whitespace-pre-wrap break-words rounded-md bg-[var(--bg-inset)] p-3 text-body text-[var(--text-secondary)]">{result.generation.content}</pre>
             </div>
@@ -176,7 +180,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
 
       {loaded && !result && !busy && !preview && !blocked && !error && (
         <div className="text-nav text-[var(--text-muted)]">
-          {isLive ? '会话活跃时不生成，避免对变化中的数据反复付费。' : '尚未生成根因分析。'}
+          {t(isLive ? 'insight.liveEmpty' : 'insight.empty')}
         </div>
       )}
     </div>
@@ -188,10 +192,11 @@ function InsightCards({ output, evidenceMap, onJumpToTurn }: {
   evidenceMap: Map<string, InsightEvidenceRef>
   onJumpToTurn?: (t: number) => void
 }) {
+  const { t } = useI18n()
   if (output.insights.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-[var(--border-default)] p-3 text-body text-[var(--text-secondary)]">
-        <div>当前证据不足以给出根因分析。</div>
+        <div>{t('insight.insufficient')}</div>
         {output.evidence_gaps && output.evidence_gaps.length > 0 && (
           <ul className="mt-1 list-disc pl-5 text-nav text-[var(--text-muted)]">
             {output.evidence_gaps.map((g, i) => <li key={i}>{g}</li>)}
@@ -206,7 +211,7 @@ function InsightCards({ output, evidenceMap, onJumpToTurn }: {
       {output.insights.map((ins, i) => <InsightCard key={i} ins={ins} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />)}
       {output.evidence_gaps && output.evidence_gaps.length > 0 && (
         <div className="rounded-md bg-[var(--bg-inset)] px-3 py-2">
-          <div className="text-body font-medium text-[var(--text-secondary)]">数据缺口</div>
+          <div className="text-body font-medium text-[var(--text-secondary)]">{t('insight.evidenceGaps')}</div>
           <ul className="mt-1 list-disc pl-5 text-nav text-[var(--text-muted)]">
             {output.evidence_gaps.map((g, i) => <li key={i}>{g}</li>)}
           </ul>
@@ -224,6 +229,7 @@ function InsightCard({ ins, evidenceMap, onJumpToTurn }: {
   evidenceMap: Map<string, InsightEvidenceRef>
   onJumpToTurn?: (t: number) => void
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const conf = ins.confidence
   const confColor = conf === 'high' ? 'var(--error)' : conf === 'medium' ? 'var(--warning)' : 'var(--accent-blue)'
@@ -241,13 +247,16 @@ function InsightCard({ ins, evidenceMap, onJumpToTurn }: {
       <div className="flex items-center justify-between gap-2">
         <div className="text-prose font-semibold text-[var(--text-primary)]">{ins.title}</div>
         <span className="shrink-0 text-nav px-1.5 py-0.5 rounded-sm" style={{ background: `color-mix(in srgb, ${confColor} 18%, transparent)`, color: confColor }}>
-          置信度 {confidenceLabel[conf] ?? conf}
+          {t('insight.confidence', { value: confidenceKeys[conf] ? t(confidenceKeys[conf]) : conf })}
         </span>
       </div>
 
       {/* Main conclusion — always visible. */}
       <div className="mt-2 text-body text-[var(--text-primary)]">
-        <span className="text-nav text-[var(--text-muted)]">主要原因（{epistemicLabel[ins.cause.epistemic_status] ?? ins.cause.epistemic_status} · {strengthLabel[ins.cause.causal_strength] ?? ins.cause.causal_strength}）</span>
+        <span className="text-nav text-[var(--text-muted)]">{t('insight.mainCause', {
+          epistemic: epistemicKeys[ins.cause.epistemic_status] ? t(epistemicKeys[ins.cause.epistemic_status]) : ins.cause.epistemic_status,
+          strength: strengthKeys[ins.cause.causal_strength] ? t(strengthKeys[ins.cause.causal_strength]) : ins.cause.causal_strength,
+        })}</span>
         <div className="mt-0.5">{ins.cause.statement}</div>
       </div>
 
@@ -256,43 +265,43 @@ function InsightCard({ ins, evidenceMap, onJumpToTurn }: {
           onClick={() => setOpen(o => !o)}
           className="mt-2 text-nav text-[var(--accent-blue)] hover:underline"
         >
-          {open ? '收起详情 ▲' : '展开详情 ▼'}
+          {t(open ? 'insight.collapse' : 'insight.expand')}
         </button>
       )}
 
       {open && (
         <div className="mt-2 space-y-3 border-t border-[var(--border-muted)] pt-2">
-          <EvidenceSection label="关键证据" ids={ins.cause.evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
+          <EvidenceSection label={t('insight.keyEvidence')} ids={ins.cause.evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
           {ins.cause.confounders && ins.cause.confounders.length > 0 && (
-            <Bullets label="已排查的混淆因素" items={ins.cause.confounders} />
+            <Bullets label={t('insight.confounders')} items={ins.cause.confounders} />
           )}
 
           {(ins.impact.statement || (ins.impact.evidence_ids?.length ?? 0) > 0) && (
             <div className="space-y-1">
               {ins.impact.statement && (
                 <div className="text-body text-[var(--text-secondary)]">
-                  <span className="text-nav text-[var(--text-muted)]">影响：</span>{ins.impact.statement}
+                  <span className="text-nav text-[var(--text-muted)]">{t('insight.impact')}</span>{ins.impact.statement}
                 </div>
               )}
-              <EvidenceSection label="影响证据" ids={ins.impact.evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
+              <EvidenceSection label={t('insight.impactEvidence')} ids={ins.impact.evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
             </div>
           )}
 
-          <EvidenceSection label="反证" ids={ins.counter_evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
+          <EvidenceSection label={t('insight.counterEvidence')} ids={ins.counter_evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
 
           {ins.alternatives && ins.alternatives.map((alt, i) => (
             <div key={i} className="rounded-md bg-[var(--bg-surface)] p-2">
               <div className="text-body text-[var(--text-secondary)]">
-                <span className="text-nav text-[var(--text-muted)]">替代解释：</span>{alt.statement}
+                <span className="text-nav text-[var(--text-muted)]">{t('insight.alternative')}</span>{alt.statement}
                 {alt.assessment && <span className="text-nav text-[var(--text-muted)]">（{alt.assessment}）</span>}
               </div>
-              <EvidenceSection label="支持" ids={alt.evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
-              <EvidenceSection label="反对" ids={alt.opposing_evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
+              <EvidenceSection label={t('insight.supporting')} ids={alt.evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
+              <EvidenceSection label={t('insight.opposing')} ids={alt.opposing_evidence_ids} evidenceMap={evidenceMap} onJumpToTurn={onJumpToTurn} />
             </div>
           ))}
 
-          {ins.recommendations && ins.recommendations.length > 0 && <Bullets label="下一次可改进" items={ins.recommendations} accent />}
-          {ins.caveats && ins.caveats.length > 0 && <Bullets label="数据边界" items={ins.caveats} />}
+          {ins.recommendations && ins.recommendations.length > 0 && <Bullets label={t('insight.recommendations')} items={ins.recommendations} accent />}
+          {ins.caveats && ins.caveats.length > 0 && <Bullets label={t('insight.boundaries')} items={ins.caveats} />}
         </div>
       )}
     </div>
@@ -307,6 +316,7 @@ function EvidenceSection({ label, ids, evidenceMap, onJumpToTurn }: {
   evidenceMap: Map<string, InsightEvidenceRef>
   onJumpToTurn?: (t: number) => void
 }) {
+  const { t } = useI18n()
   if (!ids || ids.length === 0) return null
   return (
     <div>
@@ -314,7 +324,7 @@ function EvidenceSection({ label, ids, evidenceMap, onJumpToTurn }: {
       <div className="mt-1 space-y-1">
         {ids.map(id => {
           const ev = evidenceMap.get(id)
-          const kind = ev?.kind ? (kindLabel[ev.kind] ?? ev.kind) : '证据'
+          const kind = ev?.kind ? (kindKeys[ev.kind] ? t(kindKeys[ev.kind]) : ev.kind) : t('insight.evidence')
           const canJump = ev?.turn_index !== undefined && onJumpToTurn
           return (
             <div key={id} className="flex items-start gap-2 rounded-sm bg-[var(--bg-surface)] px-2 py-1.5">
@@ -325,7 +335,7 @@ function EvidenceSection({ label, ids, evidenceMap, onJumpToTurn }: {
                   onClick={() => onJumpToTurn!(ev!.turn_index!)}
                   className="shrink-0 text-nav text-[var(--accent-blue)] hover:underline cursor-pointer"
                 >
-                  跳转 T{ev!.turn_index} ↗
+                  {t('insight.jump', { turn: ev!.turn_index! })}
                 </button>
               )}
             </div>
@@ -354,8 +364,9 @@ function ExportButtons({ output, evidenceMap, generation, sessionId, agentType }
   sessionId: string
   agentType: string
 }) {
+  const { locale, t } = useI18n()
   const [copied, setCopied] = useState(false)
-  const stem = fileStem(agentType, sessionId, generation.created_at)
+  const stem = fileStem(t('insight.fileStem'), agentType, sessionId, generation.created_at)
 
   const save = (content: string, ext: string, mime: string) => {
     const blob = new Blob([content], { type: mime })
@@ -371,26 +382,26 @@ function ExportButtons({ output, evidenceMap, generation, sessionId, agentType }
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(buildMarkdown(output, evidenceMap, generation))
+      await navigator.clipboard.writeText(buildMarkdown(output, evidenceMap, generation, t))
       setCopied(true); setTimeout(() => setCopied(false), 1500)
     } catch { /* clipboard blocked */ }
   }
 
   return (
     <>
-      <button onClick={() => save(buildMarkdown(output, evidenceMap, generation), 'md', 'text/markdown;charset=utf-8')} className={btnCls}>导出 Markdown</button>
-      <button onClick={() => save(buildHTML(output, evidenceMap, generation), 'html', 'text/html;charset=utf-8')} className={btnCls}>导出 HTML</button>
-      <button onClick={copy} className={btnCls}>{copied ? '已复制' : '复制'}</button>
+      <button onClick={() => save(buildMarkdown(output, evidenceMap, generation, t), 'md', 'text/markdown;charset=utf-8')} className={btnCls}>{t('insight.exportMarkdown')}</button>
+      <button onClick={() => save(buildHTML(output, evidenceMap, generation, locale, t), 'html', 'text/html;charset=utf-8')} className={btnCls}>{t('insight.exportHtml')}</button>
+      <button onClick={copy} className={btnCls}>{t(copied ? 'common.copied' : 'common.copy')}</button>
     </>
   )
 }
 
 // fileStem builds a readable, session-identifying filename base, e.g.
 // 根因分析_codex_019f5fa6_20260715-145545.
-function fileStem(agent: string, sessionId: string, createdAt: string): string {
+function fileStem(prefix: string, agent: string, sessionId: string, createdAt: string): string {
   const m = createdAt.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/)
   const ts = m ? `${m[1]}${m[2]}${m[3]}-${m[4]}${m[5]}${m[6]}` : createdAt.replace(/[^\d]/g, '')
-  return `根因分析_${agent || 'session'}_${sessionId.slice(0, 8)}_${ts}`
+  return `${prefix}_${agent || 'session'}_${sessionId.slice(0, 8)}_${ts}`
 }
 
 function trunc(s: string, n: number): string {
@@ -401,18 +412,18 @@ function trunc(s: string, n: number): string {
 // compactRefs turns a citation list into deduped short tags (T3 for turns,
 // kind label otherwise) so an insight's basis reads as one short line rather
 // than a wall of repeated full-text evidence.
-function compactRefs(evidenceMap: Map<string, InsightEvidenceRef>, ...lists: (string[] | undefined)[]): string {
+function compactRefs(t: Translate, evidenceMap: Map<string, InsightEvidenceRef>, ...lists: (string[] | undefined)[]): string {
   const seen = new Set<string>()
   const tags: string[] = []
   for (const ids of lists) {
     for (const id of ids ?? []) {
       const ev = evidenceMap.get(id)
-      const tag = ev?.turn_index !== undefined ? `T${ev.turn_index}` : (kindLabel[ev?.kind ?? ''] ?? ev?.kind ?? '证据')
+      const tag = ev?.turn_index !== undefined ? `T${ev.turn_index}` : (kindKeys[ev?.kind ?? ''] ? t(kindKeys[ev?.kind ?? '']) : ev?.kind ?? t('insight.evidence'))
       if (seen.has(tag)) continue
       seen.add(tag); tags.push(tag)
     }
   }
-  return tags.join('、')
+  return tags.join(', ')
 }
 
 // citedIds collects every evidence id an insight references, in first-seen order.
@@ -433,43 +444,47 @@ function buildMarkdown(
   output: InsightOutput,
   evidenceMap: Map<string, InsightEvidenceRef>,
   generation: { model_id: string; created_at: string },
+  t: Translate,
 ): string {
   const L: string[] = []
-  L.push('# 根因分析报告', '', `> 模型 ${generation.model_id} · ${generation.created_at}`, '')
-  if (output.summary) L.push('## 概要', '', output.summary, '')
+  L.push(`# ${t('insight.reportTitle')}`, '', `> ${t('insight.reportModel', { model: generation.model_id, time: generation.created_at })}`, '')
+  if (output.summary) L.push(`## ${t('insight.reportSummary')}`, '', output.summary, '')
 
   output.insights.forEach((ins, i) => {
-    L.push(`## ${i + 1}. ${ins.title}（置信度 ${confidenceLabel[ins.confidence] ?? ins.confidence}）`, '')
-    L.push(`**原因**（${epistemicLabel[ins.cause.epistemic_status] ?? ins.cause.epistemic_status} · ${strengthLabel[ins.cause.causal_strength] ?? ins.cause.causal_strength}）：${ins.cause.statement}`, '')
-    if (ins.impact.statement) L.push(`**影响**：${ins.impact.statement}`, '')
+    const confidence = confidenceKeys[ins.confidence] ? t(confidenceKeys[ins.confidence]) : ins.confidence
+    const epistemic = epistemicKeys[ins.cause.epistemic_status] ? t(epistemicKeys[ins.cause.epistemic_status]) : ins.cause.epistemic_status
+    const strength = strengthKeys[ins.cause.causal_strength] ? t(strengthKeys[ins.cause.causal_strength]) : ins.cause.causal_strength
+    L.push(`## ${i + 1}. ${ins.title} (${t('insight.confidence', { value: confidence })})`, '')
+    L.push(`**${t('insight.reportCause')}** (${epistemic} · ${strength}): ${ins.cause.statement}`, '')
+    if (ins.impact.statement) L.push(`**${t('insight.reportImpact')}**: ${ins.impact.statement}`, '')
     if (ins.recommendations && ins.recommendations.length > 0) {
-      L.push('**建议**')
+      L.push(`**${t('insight.reportRecommendations')}**`)
       ins.recommendations.forEach(r => L.push(`- ${r}`))
       L.push('')
     }
-    ins.alternatives?.forEach(alt => L.push(`**替代解释**：${alt.statement}${alt.assessment ? `（${alt.assessment}）` : ''}`, ''))
+    ins.alternatives?.forEach(alt => L.push(`**${t('insight.reportAlternative')}**: ${alt.statement}${alt.assessment ? ` (${alt.assessment})` : ''}`, ''))
     if (ins.caveats && ins.caveats.length > 0) {
-      L.push('**数据边界**')
+      L.push(`**${t('insight.boundaries')}**`)
       ins.caveats.forEach(c => L.push(`- ${c}`))
       L.push('')
     }
-    const basis = compactRefs(evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
-    const counter = compactRefs(evidenceMap, ins.counter_evidence_ids)
-    if (basis) L.push(`**依据**：${basis}${counter ? ` **反证**：${counter}` : ''}`, '')
+    const basis = compactRefs(t, evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
+    const counter = compactRefs(t, evidenceMap, ins.counter_evidence_ids)
+    if (basis) L.push(`**${t('insight.reportBasis')}**: ${basis}${counter ? ` **${t('insight.counterEvidence')}**: ${counter}` : ''}`, '')
   })
 
   if (output.evidence_gaps && output.evidence_gaps.length > 0) {
-    L.push('## 数据缺口', '')
+    L.push(`## ${t('insight.evidenceGaps')}`, '')
     output.evidence_gaps.forEach(g => L.push(`- ${g}`))
     L.push('')
   }
 
   const ids = citedIds(output)
   if (ids.length > 0) {
-    L.push('---', '', '## 证据附录', '')
+    L.push('---', '', `## ${t('insight.reportAppendix')}`, '')
     for (const id of ids) {
       const ev = evidenceMap.get(id)
-      const kind = ev?.kind ? (kindLabel[ev.kind] ?? ev.kind) : '证据'
+      const kind = ev?.kind ? (kindKeys[ev.kind] ? t(kindKeys[ev.kind]) : ev.kind) : t('insight.evidence')
       const tag = ev?.turn_index !== undefined ? `T${ev.turn_index}` : kind
       L.push(`- **[${tag}]** ${trunc(ev?.statement ?? id, 140)}`)
     }
@@ -488,48 +503,53 @@ function buildHTML(
   output: InsightOutput,
   evidenceMap: Map<string, InsightEvidenceRef>,
   generation: { model_id: string; created_at: string },
+  locale: Locale,
+  t: Translate,
 ): string {
   const H: string[] = []
-  H.push(`<h1>根因分析报告</h1>`)
-  H.push(`<p class="meta">模型 ${esc(generation.model_id)} · ${esc(generation.created_at)}</p>`)
+  H.push(`<h1>${esc(t('insight.reportTitle'))}</h1>`)
+  H.push(`<p class="meta">${esc(t('insight.reportModel', { model: generation.model_id, time: generation.created_at }))}</p>`)
   if (output.summary) H.push(`<div class="summary">${esc(output.summary)}</div>`)
 
   output.insights.forEach((ins, i) => {
     const conf = ins.confidence
     H.push(`<section class="card ${conf}">`)
-    H.push(`<h2><span class="idx">${i + 1}</span> ${esc(ins.title)} <span class="badge ${conf}">置信度 ${confidenceLabel[conf] ?? conf}</span></h2>`)
-    H.push(`<p><b>原因</b> <span class="dim">（${epistemicLabel[ins.cause.epistemic_status] ?? ins.cause.epistemic_status} · ${strengthLabel[ins.cause.causal_strength] ?? ins.cause.causal_strength}）</span>：${esc(ins.cause.statement)}</p>`)
-    if (ins.impact.statement) H.push(`<p><b>影响</b>：${esc(ins.impact.statement)}</p>`)
+    const confidence = confidenceKeys[conf] ? t(confidenceKeys[conf]) : conf
+    const epistemic = epistemicKeys[ins.cause.epistemic_status] ? t(epistemicKeys[ins.cause.epistemic_status]) : ins.cause.epistemic_status
+    const strength = strengthKeys[ins.cause.causal_strength] ? t(strengthKeys[ins.cause.causal_strength]) : ins.cause.causal_strength
+    H.push(`<h2><span class="idx">${i + 1}</span> ${esc(ins.title)} <span class="badge ${conf}">${esc(t('insight.confidence', { value: confidence }))}</span></h2>`)
+    H.push(`<p><b>${esc(t('insight.reportCause'))}</b> <span class="dim">(${esc(epistemic)} · ${esc(strength)})</span>: ${esc(ins.cause.statement)}</p>`)
+    if (ins.impact.statement) H.push(`<p><b>${esc(t('insight.reportImpact'))}</b>: ${esc(ins.impact.statement)}</p>`)
     if (ins.recommendations && ins.recommendations.length > 0) {
-      H.push(`<p><b>建议</b></p><ul>${ins.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`)
+      H.push(`<p><b>${esc(t('insight.reportRecommendations'))}</b></p><ul>${ins.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`)
     }
-    ins.alternatives?.forEach(alt => H.push(`<p><b>替代解释</b>：${esc(alt.statement)}${alt.assessment ? `（${esc(alt.assessment)}）` : ''}</p>`))
+    ins.alternatives?.forEach(alt => H.push(`<p><b>${esc(t('insight.reportAlternative'))}</b>: ${esc(alt.statement)}${alt.assessment ? ` (${esc(alt.assessment)})` : ''}</p>`))
     if (ins.caveats && ins.caveats.length > 0) {
-      H.push(`<p><b>数据边界</b></p><ul>${ins.caveats.map(c => `<li>${esc(c)}</li>`).join('')}</ul>`)
+      H.push(`<p><b>${esc(t('insight.boundaries'))}</b></p><ul>${ins.caveats.map(c => `<li>${esc(c)}</li>`).join('')}</ul>`)
     }
-    const basis = compactRefs(evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
-    const counter = compactRefs(evidenceMap, ins.counter_evidence_ids)
-    if (basis) H.push(`<p class="basis"><b>依据</b>：${esc(basis)}${counter ? ` <b>反证</b>：${esc(counter)}` : ''}</p>`)
+    const basis = compactRefs(t, evidenceMap, ins.cause.evidence_ids, ins.impact.evidence_ids)
+    const counter = compactRefs(t, evidenceMap, ins.counter_evidence_ids)
+    if (basis) H.push(`<p class="basis"><b>${esc(t('insight.reportBasis'))}</b>: ${esc(basis)}${counter ? ` <b>${esc(t('insight.counterEvidence'))}</b>: ${esc(counter)}` : ''}</p>`)
     H.push(`</section>`)
   })
 
   if (output.evidence_gaps && output.evidence_gaps.length > 0) {
-    H.push(`<h2>数据缺口</h2><ul>${output.evidence_gaps.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`)
+    H.push(`<h2>${esc(t('insight.evidenceGaps'))}</h2><ul>${output.evidence_gaps.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`)
   }
 
   const ids = citedIds(output)
   if (ids.length > 0) {
-    H.push(`<h2>证据附录</h2><ul class="appendix">`)
+    H.push(`<h2>${esc(t('insight.reportAppendix'))}</h2><ul class="appendix">`)
     for (const id of ids) {
       const ev = evidenceMap.get(id)
-      const kind = ev?.kind ? (kindLabel[ev.kind] ?? ev.kind) : '证据'
+      const kind = ev?.kind ? (kindKeys[ev.kind] ? t(kindKeys[ev.kind]) : ev.kind) : t('insight.evidence')
       const tag = ev?.turn_index !== undefined ? `T${ev.turn_index}` : kind
       H.push(`<li><span class="tag">${esc(tag)}</span> ${esc(trunc(ev?.statement ?? id, 200))}</li>`)
     }
     H.push(`</ul>`)
   }
 
-  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>根因分析报告</title>
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><title>${esc(t('insight.reportTitle'))}</title>
 <style>
 :root{color-scheme:light dark}
 body{font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;max-width:820px;margin:32px auto;padding:0 20px;color:#1f2328}
@@ -553,33 +573,34 @@ ${H.join('\n')}
 }
 
 function SendPreviewCard({ preview, onConfirm, onCancel }: { preview: SendPreview; onConfirm: () => void; onCancel: () => void }) {
+  const { t } = useI18n()
   return (
     <div className="rounded-md border border-[var(--accent-blue)] bg-[var(--bg-inset)] p-3">
-      <div className="text-body font-semibold text-[var(--text-primary)]">首次发送到该模型目标前请确认</div>
-      <div className="mt-1 text-nav text-[var(--text-secondary)]">目标：{preview.target_label}</div>
-      <div className="mt-1 text-nav text-[var(--text-secondary)]">将发送的数据类别：{preview.data_categories.join('、')}</div>
+      <div className="text-body font-semibold text-[var(--text-primary)]">{t('insight.previewTitle')}</div>
+      <div className="mt-1 text-nav text-[var(--text-secondary)]">{t('insight.previewTarget', { target: preview.target_label })}</div>
+      <div className="mt-1 text-nav text-[var(--text-secondary)]">{t('insight.previewCategories', { categories: preview.data_categories.join(', ') })}</div>
       <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-0.5 text-nav text-[var(--text-muted)]">
-        <span>证据事实：{preview.fact_count} 条</span>
-        <span>字符数：约 {preview.char_count}</span>
-        <span>已截断片段：{preview.truncated_count}</span>
-        <span>已脱敏项：{preview.redacted_count}</span>
+        <span>{t('insight.previewFacts', { count: preview.fact_count })}</span>
+        <span>{t('insight.previewChars', { count: preview.char_count })}</span>
+        <span>{t('insight.previewTruncated', { count: preview.truncated_count })}</span>
+        <span>{t('insight.previewRedacted', { count: preview.redacted_count })}</span>
       </div>
       <div className="mt-1 text-nav text-[var(--text-muted)]">{preview.note}</div>
       <div className="mt-2 flex items-center gap-2">
-        <button onClick={onConfirm} className={`${btnCls} border-[var(--accent-blue)] text-[var(--accent-blue)]`}>确认并发送</button>
-        <button onClick={onCancel} className={btnCls}>取消</button>
-        <button onClick={() => void revokeInsightTargets()} className="text-nav text-[var(--text-muted)] underline">撤销所有已授权目标</button>
+        <button onClick={onConfirm} className={`${btnCls} border-[var(--accent-blue)] text-[var(--accent-blue)]`}>{t('insight.previewConfirm')}</button>
+        <button onClick={onCancel} className={btnCls}>{t('common.cancel')}</button>
+        <button onClick={() => void revokeInsightTargets()} className="text-nav text-[var(--text-muted)] underline">{t('insight.previewRevoke')}</button>
       </div>
     </div>
   )
 }
 
-function staleReason(reasons: string[]): string {
+function staleReason(reasons: string[], t: Translate): string {
   const map: Record<string, string> = {
-    session_revision_changed: '会话已变化',
-    skill_version_changed: '分析规则已更新',
+    session_revision_changed: 'insight.stale.session',
+    skill_version_changed: 'insight.stale.skill',
   }
-  return reasons.map(r => map[r] ?? r).join('、') || '未知原因'
+  return reasons.map(r => map[r] ? t(map[r]) : r).join(', ') || t('insight.stale.unknown')
 }
 
 const btnCls = 'h-7 rounded-md border border-[var(--border-default)] px-2.5 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50'

@@ -6,7 +6,7 @@
 
 [English](README.md)
 
-![带工具调用和语义小地图的会话回放](assets/screenshots/replay.png)
+![带工具调用和语义小地图的会话回放](assets/screenshots/zh-CN/replay.png)
 
 <p align="center"><sub>截图来自真实开发会话，个人路径和联系方式已脱敏。</sub></p>
 
@@ -26,11 +26,11 @@
 
 | 交互消息 | 设置与字体 |
 |:--:|:--:|
-| ![合并用户消息与助手回复的导航面板](assets/screenshots/interaction.png) | ![提供界面和终端字体控制的设置中心](assets/screenshots/settings.png) |
+| ![合并用户消息与助手回复的导航面板](assets/screenshots/zh-CN/interaction.png) | ![提供界面和终端字体控制的设置中心](assets/screenshots/zh-CN/settings.png) |
 
 | 会话分析 | 结构化代码阅读器 |
 |:--:|:--:|
-| ![Token、缓存、工具用量和异常分析](assets/screenshots/analytics.png) | ![文件树、代码视图、搜索和结构大纲](assets/screenshots/code-reader.png) |
+| ![Token、缓存、工具用量和异常分析](assets/screenshots/zh-CN/analytics.png) | ![文件树、代码视图、搜索和结构大纲](assets/screenshots/zh-CN/code-reader.png) |
 
 ## 支持的 Agent
 
@@ -105,6 +105,17 @@ bash run.sh all
 从 linked Git worktree 执行 `run.sh` 时，脚本在首次运行使用操作系统分配的随机
 loopback 端口，并在后续重启时复用同一端口（持久化到 `.runtime/session-insight.port`），
 数据库隔离在 `.runtime/session-insight` 中。`Ready:` 行会输出实际可访问的完整应用地址。
+
+### 贡献双语界面
+
+所有新增或修改的用户可见文案都必须同时加入 `frontend/src/i18n.tsx` 的 `en` 与 `zh-CN`，并通过 `t(...)` 渲染。原始会话文本、工具输出和文件内容保持原文。提交 PR 前运行：
+
+```bash
+npm --prefix frontend run test:i18n
+npm --prefix frontend run test:i18n-source
+```
+
+涉及渲染界面的改动还必须在完整应用中分别验证中英文。仅在移除或有意迁移遗留文案时更新 source ratchet，并检查 baseline diff。
 
 ## 隐私说明
 

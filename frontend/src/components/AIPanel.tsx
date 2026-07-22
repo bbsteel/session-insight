@@ -18,10 +18,10 @@ interface Props {
   onTitleApplied: (title: string | null) => void
 }
 
-const TABS: { kind: AIKind; label: string; scenario: string }[] = [
-  { kind: 'summary', label: '会话总结', scenario: '适用场景：回顾复盘这个会话做了什么，或整理成日报 / 分享给他人。' },
-  { kind: 'title', label: '会话标题', scenario: '适用场景：侧边栏会话名不直观时，生成简短标题方便日后查找。' },
-  { kind: 'handoff', label: '会话交接', scenario: '适用场景：把任务交给新会话或另一个模型继续做，正文可直接粘贴。' },
+const TABS: { kind: AIKind; labelKey: string; scenarioKey: string }[] = [
+  { kind: 'summary', labelKey: 'ai.tab.summary', scenarioKey: 'ai.scenario.summary' },
+  { kind: 'title', labelKey: 'ai.tab.title', scenarioKey: 'ai.scenario.title' },
+  { kind: 'handoff', labelKey: 'ai.tab.handoff', scenarioKey: 'ai.scenario.handoff' },
 ]
 
 // One line of the generation progress log: ms is null while the step is
@@ -61,7 +61,7 @@ function AnimatedDots() {
 // produces a draft the user must explicitly apply — nothing renames a
 // session without confirmation.
 export default function AIPanel({ sessionId, agentType, sessionName, onClose, onTitleApplied }: Props) {
-  const { locale } = useI18n()
+  const { locale, t } = useI18n()
   const [tab, setTab] = useState<AIKind>('summary')
   const [states, setStates] = useState<Record<AIKind, TabState>>({
     summary: emptyTab, title: emptyTab, handoff: emptyTab,
@@ -203,7 +203,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
     if (id == null) return
     const provider = providers.find(p => p.id === id)
     const label = provider?.name ?? `#${id}`
-    if (!window.confirm(`删除已不可用的模型源「${label}」？`)) return
+    if (!window.confirm(t('ai.deleteUnavailableConfirm', { name: label }))) return
     try {
       await deleteLLMProvider(id)
       const next = providers.filter(p => p.id !== id)
@@ -214,7 +214,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
       })
       window.dispatchEvent(new Event('si-ai-providers-changed'))
     } catch (err) {
-      patch(tab, { error: `删除模型源失败：${err instanceof Error ? err.message : String(err)}` })
+      patch(tab, { error: t('ai.deleteProviderFailed', { error: err instanceof Error ? err.message : String(err) }) })
     }
   }
 
@@ -233,9 +233,9 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
               <button
                 onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))}
                 className="h-7 rounded-md px-2 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
-                title="配置模型源"
+                title={t('ai.configureProviders')}
               >
-                ⚙ 模型源
+                ⚙ {t('ai.providers')}
               </button>
               <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none px-1">✕</button>
             </div>
@@ -243,17 +243,17 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
           <div className="mt-1.5 flex items-center gap-3">
             <span className="text-sm font-medium text-[var(--text-primary)]">✨ AI</span>
             <div className="flex items-center gap-1">
-              {TABS.map(t => (
+              {TABS.map(tabDef => (
                 <button
-                  key={t.kind}
-                  onClick={() => setTab(t.kind)}
+                  key={tabDef.kind}
+                  onClick={() => setTab(tabDef.kind)}
                   className={`h-7 rounded-md px-2.5 text-helper ${
-                    tab === t.kind
+                    tab === tabDef.kind
                       ? 'bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] text-[var(--accent-blue)]'
                       : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
                   }`}
                 >
-                  {t.label}
+                  {t(tabDef.labelKey)}
                 </button>
               ))}
             </div>
@@ -269,10 +269,10 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                   onChange={e => setProviderId(Number(e.target.value))}
                   disabled={st.busy}
                   className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
-                  title="用哪个模型源生成"
+                  title={t('ai.providerPicker')}
                 >
                   <option value={0}>
-                    {defaultProvider ? `${defaultProvider.name}（默认）` : '（未设置默认）'}
+                    {defaultProvider ? t('ai.defaultProvider', { name: defaultProvider.name }) : t('ai.noDefaultProvider')}
                   </option>
                   {providers.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
@@ -281,11 +281,11 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
               )}
               <div className="flex items-center gap-2">
                 <button className={btnCls} disabled={st.busy} onClick={() => void generate(tab)}>
-                  {st.busy ? '生成中…' : st.generation ? '重新生成' : (tab === 'summary' ? '生成总结' : tab === 'title' ? '生成标题' : '生成交接提示词')}
+                  {st.busy ? t('ai.generating') : st.generation ? t('ai.regenerate') : t(tab === 'summary' ? 'ai.generateSummary' : tab === 'title' ? 'ai.generateTitle' : 'ai.generateHandoff')}
                 </button>
                 {!st.busy && st.generation && tab === 'summary' && (
                   <button className={btnCls} onClick={() => copy(displayedContent)}>
-                    {copied ? '已复制 ✓' : '复制'}
+                    {copied ? t('ai.copied') : t('common.copy')}
                   </button>
                 )}
               </div>
@@ -309,7 +309,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                 ))}
                 {!st.busy && st.generation && (
                   <div className="mt-1 border-t border-[var(--border-muted)] pt-1 text-meta text-[var(--text-muted)]">
-                    <span className="font-semibold text-[var(--text-secondary)]">{st.generation.model_id}</span> generated at {st.generation.created_at}
+                    <span className="font-semibold text-[var(--text-secondary)]">{st.generation.model_id}</span> {t('ai.generatedAt', { time: st.generation.created_at })}
                   </div>
                 )}
               </div>
@@ -320,13 +320,13 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
         <div className="flex-1 overflow-auto p-4">
           {st.noProvider && (
             <div className="rounded-md border border-dashed border-[var(--border-default)] p-4 text-center">
-              <div className="text-helper text-[var(--text-primary)]">还没有配置 AI 模型</div>
-              <div className="mt-1 text-meta text-[var(--text-muted)]">支持 OpenAI 兼容 API，或直接复用本机 claude / codex / gemini / grok CLI</div>
+              <div className="text-helper text-[var(--text-primary)]">{t('ai.noProvider')}</div>
+              <div className="mt-1 text-meta text-[var(--text-muted)]">{t('ai.noProviderHelp')}</div>
               <button
                 className={`${btnCls} mt-3 border-[var(--accent-blue)] text-[var(--accent-blue)]`}
                 onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))}
               >
-                去配置模型源
+                {t('ai.configure')}
               </button>
             </div>
           )}
@@ -339,7 +339,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                   className={`${btnCls} flex-shrink-0 border-[var(--error)] text-[var(--error)]`}
                   onClick={() => void removeUnavailableProvider()}
                 >
-                  删除此模型源
+                  {t('ai.deleteProvider')}
                 </button>
               )}
             </div>
@@ -347,15 +347,13 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
 
           {!st.noProvider && !st.generation && !st.busy && st.loaded && !st.error && (
             <div className="pt-8 text-center text-helper text-[var(--text-muted)]">
-              {tab === 'summary' && '为这个会话生成一份 markdown 总结：做了什么、关键结论与决策、遗留问题。'}
-              {tab === 'title' && '为这个会话生成一个简短中文标题，确认后替换侧边栏的显示名（不改动 agent 原始日志）。'}
-              {tab === 'handoff' && '生成一段自包含的交接提示词，并附难度评估与建议执行模型。'}
+              {t(`ai.empty.${tab}`)}
             </div>
           )}
 
           {!st.busy && st.generation && tab === 'title' && (
             <div className="mx-auto max-w-[480px] pt-6 text-center">
-              <div className="text-meta text-[var(--text-muted)]">标题草稿</div>
+              <div className="text-meta text-[var(--text-muted)]">{t('ai.titleDraft')}</div>
               <div className="mt-2 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-4 py-3 text-body font-medium text-[var(--text-primary)]">
                 {st.generation.content}
               </div>
@@ -365,11 +363,11 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                   disabled={titleApplied}
                   onClick={() => void applyTitle(st.generation!.content)}
                 >
-                  {titleApplied ? '已应用 ✓' : '应用为显示标题'}
+                  {titleApplied ? t('ai.titleApplied') : t('ai.applyTitle')}
                 </button>
-                <button className={btnCls} onClick={() => void restoreTitle()}>恢复原始标题</button>
+                <button className={btnCls} onClick={() => void restoreTitle()}>{t('ai.restoreTitle')}</button>
               </div>
-              <div className="mt-2 text-meta text-[var(--text-muted)]">只影响本应用的显示，agent 日志文件不会被修改</div>
+              <div className="mt-2 text-meta text-[var(--text-muted)]">{t('ai.titleLocalOnly')}</div>
             </div>
           )}
 
@@ -385,14 +383,14 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                 if (!meta) return null
                 return (
                   <div className="mb-3 rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] px-3 py-2">
-                    <div className="text-helper font-semibold text-[var(--text-primary)]">会话评估</div>
+                    <div className="text-helper font-semibold text-[var(--text-primary)]">{t('ai.assessment')}</div>
                     {meta.difficulty && (
                       <div className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 text-helper text-[var(--text-secondary)]">
-                        <span>难度：</span>
+                        <span>{t('ai.difficulty')}</span>
                         <div>
                           <span className={`font-medium ${
-                          meta.difficulty === '困难' ? 'text-[var(--error)]'
-                            : meta.difficulty === '中等' ? 'text-[var(--warning)]'
+                          meta.difficulty === '困难' || meta.difficulty === 'hard' ? 'text-[var(--error)]'
+                            : meta.difficulty === '中等' || meta.difficulty === 'medium' ? 'text-[var(--warning)]'
                             : 'text-[var(--success)]'
                         }`}>
                           {meta.difficulty}
@@ -403,23 +401,23 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
                     )}
                     {meta.recommended && meta.recommended.length > 0 && (
                       <div className="mt-1 text-helper text-[var(--text-secondary)]">
-                        推荐接手 agent：
+                        {t('ai.recommendedAgent')}
                         {meta.recommended.map((r, i) => (
                           <span key={i}>
-                            {i > 0 && '，'}
+                            {i > 0 && ', '}
                             <span className="font-medium text-[var(--text-primary)]" title={r.reason || undefined}>{r.executor}</span>
                           </span>
                         ))}
                       </div>
                     )}
-                    <div className="mt-1.5 text-meta text-[var(--text-muted)]">以上评估不包含在交接提示词里，「复制」只复制正文</div>
+                    <div className="mt-1.5 text-meta text-[var(--text-muted)]">{t('ai.assessmentCopyHelp')}</div>
                   </div>
                 )
               })()}
               {tab === 'handoff' && (
                 <div className="mb-2 flex justify-end">
                   <button className={btnCls} onClick={() => copy(displayedContent)}>
-                    {copied ? '已复制 ✓' : '复制交接正文'}
+                    {copied ? t('ai.copied') : t('ai.copyHandoff')}
                   </button>
                 </div>
               )}

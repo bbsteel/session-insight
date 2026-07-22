@@ -33,6 +33,9 @@ import type { Panel, ViewUpdate } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { outlineFromTree, type OutlineItem, type OutlineLanguage } from '../codeOutline'
 import { useIsDark } from '../terminalTheme'
+import { useI18n } from '../i18n'
+
+type Translate = (key: string, vars?: Record<string, string | number>) => string
 
 export interface CodeReaderHandle {
   reveal: (offset: number) => void
@@ -293,20 +296,20 @@ class ReaderSearchPanel implements Panel {
   private readonly count: HTMLSpanElement
   private highlightAll = true
 
-  constructor(private readonly view: EditorView) {
+  constructor(private readonly view: EditorView, private readonly t: Translate) {
     this.query = new SearchQuery({ search: '' })
     this.input = document.createElement('input')
-    this.input.placeholder = '在代码中查找'
-    this.input.setAttribute('aria-label', '在代码中查找')
+    this.input.placeholder = t('reader.searchPlaceholder')
+    this.input.setAttribute('aria-label', t('reader.searchPlaceholder'))
     this.input.setAttribute('main-field', 'true')
     this.input.addEventListener('input', () => this.commit())
 
-    this.caseButton = this.optionButton('Aa', '区分大小写', () => ({ caseSensitive: !this.query.caseSensitive }))
-    this.wordButton = this.optionButton('wd', '全词匹配', () => ({ wholeWord: !this.query.wholeWord }))
+    this.caseButton = this.optionButton('Aa', t('terminalSearch.caseSensitive'), () => ({ caseSensitive: !this.query.caseSensitive }))
+    this.wordButton = this.optionButton('wd', t('terminalSearch.wholeWord'), () => ({ wholeWord: !this.query.wholeWord }))
     this.wordButton.style.textDecoration = 'underline'
     this.wordButton.style.textUnderlineOffset = '2px'
-    this.regexButton = this.optionButton('.*', '正则表达式', () => ({ regexp: !this.query.regexp }))
-    this.highlightButton = this.button('全亮', '高亮全部命中', () => {
+    this.regexButton = this.optionButton('.*', t('terminalSearch.regex'), () => ({ regexp: !this.query.regexp }))
+    this.highlightButton = this.button(t('terminalSearch.highlightAllShort'), t('terminalSearch.highlightAll'), () => {
       this.highlightAll = !this.highlightAll
       this.highlightButton.dataset.active = String(this.highlightAll)
       this.view.dom.classList.toggle('cm-search-hide-highlights', !this.highlightAll)
@@ -315,9 +318,9 @@ class ReaderSearchPanel implements Panel {
     this.count = document.createElement('span')
     this.count.className = 'cm-search-count'
 
-    const previous = this.button('↑', '上一个 (Shift+Enter)', () => findPrevious(this.view))
-    const next = this.button('↓', '下一个 (Enter)', () => findNext(this.view))
-    const close = this.button('✕', '关闭 (Esc)', () => closeSearchPanel(this.view))
+    const previous = this.button('↑', t('terminalSearch.previous'), () => findPrevious(this.view))
+    const next = this.button('↓', t('terminalSearch.next'), () => findNext(this.view))
+    const close = this.button('✕', t('terminalSearch.close'), () => closeSearchPanel(this.view))
     this.dom = document.createElement('div')
     this.dom.className = 'cm-search'
     this.dom.append(this.input, this.caseButton, this.wordButton, this.regexButton, this.highlightButton, this.count, previous, next, close)
@@ -395,7 +398,7 @@ class ReaderSearchPanel implements Panel {
       return
     }
     if (!this.query.valid) {
-      this.count.textContent = '无效正则'
+      this.count.textContent = this.t('terminalSearch.invalidRegex')
       this.count.dataset.invalid = 'true'
       return
     }
@@ -409,7 +412,7 @@ class ReaderSearchPanel implements Panel {
       total++
     }
     this.count.dataset.invalid = 'false'
-    this.count.textContent = total ? `${index >= 0 ? index + 1 : 0}/${total}` : '无结果'
+    this.count.textContent = total ? `${index >= 0 ? index + 1 : 0}/${total}` : this.t('terminalSearch.noResults')
   }
 
   update(update: ViewUpdate) {
@@ -448,6 +451,7 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const isDark = useIsDark()
+  const { t } = useI18n()
 
   useImperativeHandle(ref, () => ({
     reveal(offset: number) {
@@ -486,11 +490,11 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
         highlightActiveLineGutter(),
         bracketMatching(),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        search({ top: true, createPanel: view => new ReaderSearchPanel(view) }),
+        search({ top: true, createPanel: view => new ReaderSearchPanel(view, t) }),
         keymap.of([...searchKeymap, ...foldKeymap]),
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
-        EditorView.contentAttributes.of({ 'aria-label': '代码阅读器' }),
+        EditorView.contentAttributes.of({ 'aria-label': t('reader.ariaLabel') }),
         EditorView.updateListener.of(update => {
           if (update.selectionSet) onActivePosition(semanticPosition(update.view, update.state.selection.main.head))
           else if (update.viewportChanged) onActivePosition(semanticPosition(update.view, update.view.viewport.from))
@@ -538,7 +542,7 @@ const CodeReader = forwardRef<CodeReaderHandle, Props>(function CodeReader(
       viewRef.current = null
       host.replaceChildren()
     }
-  }, [content, path, initialLine, parseLanguage, isDark, onOutline, onActivePosition])
+  }, [content, path, initialLine, parseLanguage, isDark, onOutline, onActivePosition, t])
 
   return <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />
 })

@@ -139,11 +139,19 @@ func TestFsEndpoints(t *testing.T) {
 	if w.Code != 415 {
 		t.Fatalf("fs/read binary should be 415: %d", w.Code)
 	}
+	var apiErr apiError
+	if err := json.NewDecoder(w.Body).Decode(&apiErr); err != nil || apiErr.Code != "binary_file" {
+		t.Fatalf("fs/read binary error contract: body=%q error=%v decoded=%+v", w.Body.String(), err, apiErr)
+	}
 
 	w = httptest.NewRecorder()
 	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/read?path="+filepath.Join(dir, "nope.go"), nil))
 	if w.Code != 404 {
 		t.Fatalf("fs/read missing: %d", w.Code)
+	}
+	apiErr = apiError{}
+	if err := json.NewDecoder(w.Body).Decode(&apiErr); err != nil || apiErr.Code != "file_read_failed" {
+		t.Fatalf("fs/read missing error contract: body=%q error=%v decoded=%+v", w.Body.String(), err, apiErr)
 	}
 }
 

@@ -1,5 +1,6 @@
 import { useLayoutEffect, useEffect, useRef, useState } from 'react'
 import InstantTooltip from './InstantTooltip'
+import { useI18n } from '../i18n'
 
 // Sectioned context menu for the terminal area. Sections render in order with
 // a separator between them; an empty section shows its emptyText placeholder
@@ -27,6 +28,7 @@ interface Props {
 }
 
 export default function TerminalContextMenu({ x, y, sections, onClose }: Props) {
+  const { t } = useI18n()
   const menuRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ left: x, top: y })
 
@@ -78,7 +80,7 @@ export default function TerminalContextMenu({ x, y, sections, onClose }: Props) 
           <div className="px-2.5 pb-0.5 pt-1 text-meta text-[var(--text-muted)] select-none">{section.title}</div>
           {section.items.length === 0 ? (
             <div className="px-2.5 py-1 text-meta text-[var(--text-muted)] italic select-none">
-              {section.emptyText ?? '暂无操作'}
+              {section.emptyText ?? t('menu.noActions')}
             </div>
           ) : (
             section.items.map(item => {

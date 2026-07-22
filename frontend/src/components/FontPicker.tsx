@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { queryLocalSystemFonts, fallbackSystemFonts, type SystemFontInfo } from '../systemFonts'
+import { useI18n } from '../i18n'
 
 interface FontPickerProps {
   label: string
@@ -9,6 +10,7 @@ interface FontPickerProps {
 }
 
 export default function FontPicker({ label, value, onChange, monospaceOnly }: FontPickerProps) {
+  const { t } = useI18n()
   const [fonts, setFonts] = useState<SystemFontInfo[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -59,7 +61,7 @@ export default function FontPicker({ label, value, onChange, monospaceOnly }: Fo
         ))}
       </select>
       {loading && (
-        <div className="mt-1 text-meta text-[var(--text-muted)]">加载本地字体中…</div>
+        <div className="mt-1 text-meta text-[var(--text-muted)]">{t('font.loadingLocal')}</div>
       )}
     </label>
   )

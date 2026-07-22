@@ -4,6 +4,7 @@ import { fetchSessionEdits } from '../api'
 import { langForPath } from '../langMap'
 import { useIsDark } from '../terminalTheme'
 import type { EditCall } from '../types'
+import { useI18n } from '../i18n'
 
 // ---------- diff algorithm ----------
 
@@ -328,6 +329,7 @@ interface Props {
 }
 
 export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props) {
+  const { t } = useI18n()
   const [edits, setEdits] = useState<EditCall[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -367,7 +369,7 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
   const removeCount = diff.filter(d => d.kind === 'remove').length
   const addCount    = diff.filter(d => d.kind === 'add').length
   const lang = edit ? resolveLang(langForPath(edit.file_path)) : null
-  const shortcutHint = '快捷键：Esc 关闭 · ←/→ 或 H/L 切换编辑 · M 最大化 · W 换行'
+  const shortcutHint = t('diff.shortcuts')
 
   const modalStyle: React.CSSProperties = maximized
     ? { width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: pal.surface, border: 'none', borderRadius: 0, overflow: 'hidden' }
@@ -441,7 +443,7 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
                 onClick={() => setViewMode(mode)}
                 style={{ padding: '3px 10px', fontSize: 12, border: 'none', cursor: 'pointer', background: viewMode === mode ? pal.accentBg : 'transparent', color: viewMode === mode ? pal.accentText : pal.muted, borderRight: mode === 'inline' ? `1px solid ${pal.border}` : 'none' }}
               >
-                {mode === 'inline' ? '合并' : '并列'}
+                {t(mode === 'inline' ? 'diff.inline' : 'diff.split')}
               </button>
             ))}
           </div>
@@ -450,16 +452,16 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
           <button
             onClick={() => setSoftWrap(w => !w)}
             style={{ padding: '3px 10px', fontSize: 12, borderRadius: 6, border: `1px solid ${pal.border}`, background: softWrap ? pal.accentBg : 'transparent', color: softWrap ? pal.accentText : pal.muted, cursor: 'pointer', flexShrink: 0 }}
-            title={softWrap ? '关闭软换行 (W)' : '开启软换行 (W)'}
+            title={t(softWrap ? 'diff.wrapOff' : 'diff.wrapOn')}
           >
-            换行
+            {t('diff.wrap')}
           </button>
 
           {/* maximize */}
           <button
             onClick={() => setMaximized(m => !m)}
             style={{ width: 26, height: 26, borderRadius: 5, border: `1px solid ${pal.border}`, background: 'transparent', color: pal.muted, cursor: 'pointer', fontSize: 14, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            title={maximized ? '还原 (M)' : '最大化 (M)'}
+            title={t(maximized ? 'diff.restore' : 'diff.maximize')}
           >
             {maximized ? '❐' : '⛶'}
           </button>
@@ -468,7 +470,7 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
           <button
             onClick={onClose}
             style={{ width: 26, height: 26, borderRadius: 5, border: `1px solid ${pal.border}`, background: 'transparent', color: pal.muted, cursor: 'pointer', fontSize: 16, flexShrink: 0 }}
-            title="关闭 (Esc)"
+            title={t('diff.close')}
           >×</button>
         </div>
 
@@ -485,13 +487,13 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
         {/* body */}
         <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: viewMode === 'split' ? 'hidden' : 'auto', background: pal.surface }}>
           {loading && (
-            <div style={{ padding: 32, textAlign: 'center', color: pal.muted, fontSize: 13 }}>加载中…</div>
+            <div style={{ padding: 32, textAlign: 'center', color: pal.muted, fontSize: 13 }}>{t('common.loading')}</div>
           )}
           {error && (
             <div style={{ padding: 32, textAlign: 'center', color: pal.removeSig, fontSize: 13 }}>{error}</div>
           )}
           {!loading && !error && edits.length === 0 && (
-            <div style={{ padding: 32, textAlign: 'center', color: pal.muted, fontSize: 13 }}>本次会话没有 Edit 操作。</div>
+            <div style={{ padding: 32, textAlign: 'center', color: pal.muted, fontSize: 13 }}>{t('diff.empty')}</div>
           )}
           {!loading && edit && (
             viewMode === 'inline'

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { AgentInfo } from '../types'
 import AgentIcon from './AgentIcon'
 import { getAgentLabel } from '../sidebarRows'
+import { useI18n } from '../i18n'
 
 interface AgentFilterProps {
   agents: AgentInfo[]
@@ -32,6 +33,7 @@ export function AllAgentsIcon({ size = 20 }: { size?: number }) {
 }
 
 export default function AgentFilter({ agents, selected, onSelect }: AgentFilterProps) {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const overflowRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(0)
@@ -115,7 +117,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
           type="button"
           onClick={() => selectAgent('')}
           aria-pressed={selected === ''}
-          title={`All (${totalLive}/${totalSessions})`}
+          title={`${t('filter.allAgents')} (${totalLive}/${totalSessions})`}
           className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
             selected === ''
               ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
@@ -150,7 +152,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
               {live > 0 && (
                 <span
                   className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-[var(--success)] ring-1 ring-[var(--bg-surface)]"
-                  title={`${live} 活跃中`}
+                  title={t('filter.liveCount', { count: live })}
                 />
               )}
             </button>
@@ -164,8 +166,8 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
               onClick={() => setOverflowOpen(v => !v)}
               aria-expanded={overflowOpen}
               aria-haspopup="listbox"
-              aria-label="更多 Agent"
-              title="更多 Agent"
+              aria-label={t('filter.moreAgents')}
+              title={t('filter.moreAgents')}
               className={`flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                 overflowOpen
                   ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
@@ -183,7 +185,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
             {overflowOpen && (
               <div
                 role="listbox"
-                aria-label="全部 Agent"
+                aria-label={t('filter.allAgents')}
                 className="absolute top-full right-0 mt-1 z-[var(--z-dropdown)] w-56 max-h-[28rem] overflow-y-auto rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1"
               >
                 {sortedAgents.map(agent => {

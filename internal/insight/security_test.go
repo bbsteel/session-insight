@@ -24,6 +24,16 @@ func TestSkillContainsBoundaries(t *testing.T) {
 	}
 }
 
+func TestSkillEnglishOutputDirective(t *testing.T) {
+	english := SystemInstructionForLocale("en")
+	if !strings.Contains(english, "human-readable value") || !strings.Contains(english, skillSystem) {
+		t.Fatalf("English locale must retain the versioned policy and add an output-language directive")
+	}
+	if got := SystemInstructionForLocale("zh-CN"); got != skillSystem {
+		t.Fatalf("Chinese locale changed the versioned policy")
+	}
+}
+
 // TestUserMessageIsJSONNotConcatenation is the core injection defense: the
 // bundle is JSON-serialized, so adversarial session text carrying forged role
 // tags, closing delimiters or "echo the secret" instructions can only appear

@@ -10,6 +10,8 @@ const baseURL = process.env.BASE_URL ?? fs.readFileSync(path.join(repoRoot, '.ru
 const screenshot = path.join(repoRoot, '.runtime/i18n-validation.png')
 const englishBookmarkScreenshot = path.join(repoRoot, '.runtime/i18n-bookmark-en.png')
 const chineseBookmarkScreenshot = path.join(repoRoot, '.runtime/i18n-bookmark-zh.png')
+const sourceScreenshot = path.join(repoRoot, '.runtime/i18n-six-sources-en.png')
+const expectedSources = ['claude', 'codex', 'copilot', 'grok', 'opencode', 'chrys']
 
 console.log(`Launching browser for ${baseURL}`)
 const browser = await chromium.launch({ headless: true })
@@ -18,6 +20,50 @@ const page = await context.newPage()
 const problems = []
 page.on('console', message => { if (message.type() === 'error') problems.push(message.text()) })
 page.on('pageerror', error => problems.push(String(error)))
+
+const response = await context.request.get(`${baseURL.replace(/\/$/, '')}/api/sessions`)
+assert.equal(response.ok(), true, `session API failed: ${response.status()}`)
+const liveSessions = await response.json()
+const sourceSamples = new Map()
+for (const session of liveSessions) {
+  if (expectedSources.includes(session.agent_type) && !sourceSamples.has(session.agent_type)) {
+    sourceSamples.set(session.agent_type, session)
+  }
+}
+// A developer machine may not have used every supported agent. Keep the live
+// browser matrix deterministic by adding a list-only sample for absent sources;
+// the selected detail remains a real session and source readers retain their
+// own Go fixture coverage.
+const fallback = liveSessions[0]
+assert.ok(fallback, 'i18n validation requires at least one indexed session')
+const fixtureSources = expectedSources.filter(source => !sourceSamples.has(source))
+const fixtureSessionIDs = new Map()
+for (const source of fixtureSources) {
+  const id = `i18n-fixture-${source}-${fallback.id}`
+  fixtureSessionIDs.set(id, fallback.id)
+  sourceSamples.set(source, { ...fallback, id, agent_type: source, name: `[i18n fixture] ${source}` })
+}
+if (fixtureSources.length > 0) {
+  await page.route('**/api/sessions', async route => {
+    const url = new URL(route.request().url())
+    if (route.request().method() !== 'GET') return route.continue()
+    if (url.pathname === '/api/sessions') {
+      const upstream = await route.fetch()
+      const sessions = await upstream.json()
+      await route.fulfill({ response: upstream, json: [...sessions, ...fixtureSources.map(source => sourceSamples.get(source))] })
+      return
+    }
+    for (const [fixtureID, realID] of fixtureSessionIDs) {
+      if (!url.pathname.includes(fixtureID)) continue
+      url.pathname = url.pathname.replace(fixtureID, realID)
+      const upstream = await route.fetch({ url: url.toString() })
+      await route.fulfill({ response: upstream })
+      return
+    }
+    await route.continue()
+  })
+}
+console.log(`Six-source matrix: ${expectedSources.length - fixtureSources.length} live, ${fixtureSources.length} fixture-backed (${fixtureSources.join(', ') || 'none'})`)
 
 try {
   console.log('Checking saved English preference')
@@ -37,6 +83,22 @@ try {
   await englishLanguageSwitch.click()
   await page.keyboard.press('Escape')
   assert.equal(await englishLanguageSwitch.evaluate(element => document.activeElement === element), true)
+
+  console.log('Checking one session path for each supported source')
+  const sessionFilter = page.getByPlaceholder(/Filter sessions/)
+  for (const source of expectedSources) {
+    const sample = sourceSamples.get(source)
+    const selectionName = fixtureSources.includes(source) ? fallback.name : sample.name
+    await sessionFilter.fill(selectionName)
+    const row = page.getByText(selectionName, { exact: true }).first()
+    await row.waitFor({ state: 'visible' })
+    await row.click()
+    await page.getByRole('button', { name: 'Analytics', exact: true }).waitFor({ state: 'visible' })
+    assert.equal(await page.locator('html').getAttribute('lang'), 'en')
+  }
+  await page.screenshot({ path: sourceScreenshot })
+  await sessionFilter.fill(liveSessions[0].name)
+  await page.getByText(liveSessions[0].name, { exact: true }).first().click()
 
   const bookmark = page.locator('button[aria-label="Bookmark"]').first()
   await bookmark.waitFor({ state: 'attached' })
@@ -76,7 +138,7 @@ try {
 
   assert.deepEqual(problems, [])
   await page.screenshot({ path: screenshot })
-  console.log(`PASS: language choice persists and both locales render (${screenshot})`)
+  console.log(`PASS: language choice persists, six source paths render, and both locales pass (${screenshot})`)
 } finally {
   await browser.close()
 }

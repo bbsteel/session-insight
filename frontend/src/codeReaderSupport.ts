@@ -1,5 +1,6 @@
 // Capability matrix for Code Reader: which extensions get syntax highlight
 // and/or structure outline. Keep in sync with languageForPath in CodeReader.tsx.
+import { translate, type Locale } from './i18n'
 
 export type LanguageSupportLevel = 'full' | 'partial' | 'highlight_only' | 'none'
 
@@ -11,7 +12,7 @@ export interface LanguageSupportInfo {
   label: string | null
   highlight: boolean
   outline: OutlineSupport
-  /** One-line Chinese status for the incomplete-support banner. */
+  /** One-line localized status for the incomplete-support banner. */
   summary: string
 }
 
@@ -20,7 +21,7 @@ type ExtEntry = {
   highlight: true
   outline: OutlineSupport
   /** Optional extra note appended after the default summary. */
-  note?: string
+  noteKey?: string
 }
 
 const FULL: Omit<ExtEntry, 'label'> = { highlight: true, outline: 'full' }
@@ -28,7 +29,7 @@ const HIGHLIGHT: Omit<ExtEntry, 'label'> = { highlight: true, outline: 'none' }
 const PARTIAL_CS: Omit<ExtEntry, 'label'> = {
   highlight: true,
   outline: 'approximate',
-  note: '结构大纲为近似提取，可能遗漏构造函数或嵌套不准确。',
+  noteKey: 'reader.support.partialNote',
 }
 
 const BY_EXT: Record<string, ExtEntry> = {
@@ -95,22 +96,22 @@ function levelFor(outline: OutlineSupport, known: boolean): LanguageSupportLevel
   return 'highlight_only'
 }
 
-function summaryFor(label: string | null, ext: string, outline: OutlineSupport, note?: string): string {
+function summaryFor(locale: Locale, label: string | null, ext: string, outline: OutlineSupport, noteKey?: string): string {
   if (!label) {
     return ext
-      ? `未识别的文件类型（.${ext}）：无语法高亮与结构大纲，按纯文本显示。`
-      : '未识别的文件类型：无语法高亮与结构大纲，按纯文本显示。'
+      ? translate(locale, 'reader.support.unknownExt', { ext })
+      : translate(locale, 'reader.support.unknown')
   }
-  if (outline === 'full') return `${label}：语法高亮与结构大纲均已支持。`
+  if (outline === 'full') return translate(locale, 'reader.support.full', { language: label })
   if (outline === 'approximate') {
-    return note
-      ? `${label}：语法高亮可用；${note}`
-      : `${label}：语法高亮可用；结构大纲为近似提取，可能不完整。`
+    return noteKey
+      ? translate(locale, 'reader.support.partial', { language: label, note: translate(locale, noteKey) })
+      : translate(locale, 'reader.support.partialDefault', { language: label })
   }
-  return `${label}：已支持语法高亮，暂无结构大纲。`
+  return translate(locale, 'reader.support.highlight', { language: label })
 }
 
-export function languageSupportForPath(path: string): LanguageSupportInfo {
+export function languageSupportForPath(path: string, locale: Locale = 'zh-CN'): LanguageSupportInfo {
   const base = path.split(/[\\/]/).pop() ?? path
   const dot = base.lastIndexOf('.')
   const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
@@ -121,7 +122,7 @@ export function languageSupportForPath(path: string): LanguageSupportInfo {
       label: null,
       highlight: false,
       outline: 'none',
-      summary: summaryFor(null, ext, 'none'),
+      summary: summaryFor(locale, null, ext, 'none'),
     }
   }
   return {
@@ -129,7 +130,7 @@ export function languageSupportForPath(path: string): LanguageSupportInfo {
     label: entry.label,
     highlight: entry.highlight,
     outline: entry.outline,
-    summary: summaryFor(entry.label, ext, entry.outline, entry.note),
+    summary: summaryFor(locale, entry.label, ext, entry.outline, entry.noteKey),
   }
 }
 

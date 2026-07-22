@@ -4,6 +4,7 @@ import {
   testLLMProvider, updateLLMProvider,
   type LLMModel, type LLMProvider, type LLMProviderInput,
 } from '../api'
+import { useI18n } from '../i18n'
 
 interface Props {
   onClose: () => void
@@ -25,16 +26,16 @@ const LOCAL_AGENTS = ['claude', 'codex', 'gemini', 'grok'] as const
 const API_PRESETS: { name: string; baseUrl: string; models: string[] }[] = [
   { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', models: ['deepseek-chat', 'deepseek-reasoner'] },
   { name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', models: ['kimi-k2-turbo-preview', 'kimi-k2-0905-preview', 'moonshot-v1-auto'] },
-  { name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen3-max', 'qwen-plus', 'qwen-turbo'] },
-  { name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4.6', 'glm-4.5-air'] },
+  { name: 'Qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen3-max', 'qwen-plus', 'qwen-turbo'] },
+  { name: 'Zhipu GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4.6', 'glm-4.5-air'] },
   { name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', models: ['MiniMax-M2'] },
-  { name: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', models: [] },
+  { name: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', models: [] },
   { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', models: [] },
   { name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', models: [] },
   { name: 'xAI', baseUrl: 'https://api.x.ai/v1', models: ['grok-4'] },
   { name: 'Mistral', baseUrl: 'https://api.mistral.ai/v1', models: [] },
   { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.1', 'gpt-5-mini', 'gpt-4o'] },
-  { name: 'ollama 本机', baseUrl: 'http://127.0.0.1:11434/v1', models: [] },
+  { name: 'Ollama Local', baseUrl: 'http://127.0.0.1:11434/v1', models: [] },
 ]
 
 interface HeaderRow {
@@ -81,16 +82,16 @@ function headersToRecord(rows: HeaderRow[]): Record<string, string> {
 
 // Common header names for gateways / OpenRouter / Anthropic-style endpoints.
 // Picking one from the dropdown inserts an editable row (name prefilled).
-const HEADER_PRESETS: { name: string; hint: string }[] = [
-  { name: 'x-auth-token', hint: '部分企业网关鉴权' },
-  { name: 'X-Api-Key', hint: '通用 API Key 头' },
-  { name: 'api-key', hint: 'Azure / 部分国内网关' },
-  { name: 'Authorization', hint: '覆盖默认 Bearer，或填非 Bearer 方案' },
-  { name: 'HTTP-Referer', hint: 'OpenRouter 推荐' },
-  { name: 'X-Title', hint: 'OpenRouter 应用名' },
-  { name: 'anthropic-version', hint: 'Anthropic 兼容端点' },
-  { name: 'OpenAI-Organization', hint: 'OpenAI 组织' },
-  { name: 'OpenAI-Project', hint: 'OpenAI 项目' },
+const HEADER_PRESETS: { name: string; hintKey: string }[] = [
+  { name: 'x-auth-token', hintKey: 'aiSettings.headerHint.enterprise' },
+  { name: 'X-Api-Key', hintKey: 'aiSettings.headerHint.apiKey' },
+  { name: 'api-key', hintKey: 'aiSettings.headerHint.azure' },
+  { name: 'Authorization', hintKey: 'aiSettings.headerHint.authorization' },
+  { name: 'HTTP-Referer', hintKey: 'aiSettings.headerHint.openRouter' },
+  { name: 'X-Title', hintKey: 'aiSettings.headerHint.appName' },
+  { name: 'anthropic-version', hintKey: 'aiSettings.headerHint.anthropic' },
+  { name: 'OpenAI-Organization', hintKey: 'aiSettings.headerHint.organization' },
+  { name: 'OpenAI-Project', hintKey: 'aiSettings.headerHint.project' },
 ]
 
 function headerKeyEquals(a: string, b: string): boolean {
@@ -108,6 +109,7 @@ function HeaderPresetPicker({
   onPick: (name: string) => void
   triggerClassName: string
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -134,7 +136,7 @@ function HeaderPresetPicker({
         aria-expanded={open}
         onClick={() => setOpen(v => !v)}
       >
-        <span>添加常见 Header…</span>
+        <span>{t('aiSettings.commonHeader')}</span>
         <span className="opacity-70" aria-hidden>{open ? '▴' : '▾'}</span>
       </button>
       {open && (
@@ -149,7 +151,7 @@ function HeaderPresetPicker({
                 <button
                   type="button"
                   disabled={used}
-                  title={used ? `${preset.name} 已添加` : undefined}
+                  title={used ? `${preset.name} · ${t('aiSettings.alreadyAdded')}` : undefined}
                   onClick={() => {
                     if (used) return
                     onPick(preset.name)
@@ -161,7 +163,7 @@ function HeaderPresetPicker({
                     {preset.name}
                   </span>
                   <span className="flex-shrink-0 text-right text-meta text-[var(--text-muted)]">
-                    {used ? '已添加' : preset.hint}
+                    {used ? t('aiSettings.alreadyAdded') : t(preset.hintKey)}
                   </span>
                 </button>
               </li>
@@ -188,6 +190,7 @@ interface FetchState {
 // covers both successes and failures; 强制刷新 bypasses it); API lists come
 // from 测试连接 or the preset fallbacks.
 export default function AISettingsModal({ onClose }: Props) {
+  const { t } = useI18n()
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [acpAgents, setAcpAgents] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -329,7 +332,7 @@ export default function AISettingsModal({ onClose }: Props) {
   const save = async () => {
     if (!form) return
     if (takenModelIds.has(form.modelId)) {
-      setFormError(`model_id「${form.modelId}」已被其他模型源占用，不可重复配置`)
+      setFormError(t('aiSettings.modelTakenValue', { model: form.modelId }))
       return
     }
     const input: LLMProviderInput = {
@@ -357,7 +360,7 @@ export default function AISettingsModal({ onClose }: Props) {
   }
 
   const remove = async (p: LLMProvider) => {
-    if (!window.confirm(`删除模型源「${p.name}」？`)) return
+    if (!window.confirm(t('aiSettings.deleteConfirm', { name: p.name }))) return
     try {
       await deleteLLMProvider(p.id)
       reload()
@@ -392,12 +395,12 @@ export default function AISettingsModal({ onClose }: Props) {
         onClick={e => e.stopPropagation()}
       >
         <div className="flex flex-shrink-0 items-center justify-between px-4 py-2.5 border-b border-[var(--border-default)]">
-          <div className="text-sm font-medium text-[var(--text-primary)]">AI 模型源</div>
+          <div className="text-sm font-medium text-[var(--text-primary)]">{t('aiSettings.title')}</div>
           <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-lg leading-none px-1">✕</button>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-          {loading && <div className="text-helper text-[var(--text-secondary)]">加载中…</div>}
+          {loading && <div className="text-helper text-[var(--text-secondary)]">{t('common.loading')}</div>}
           {listError && <div className="mb-2 flex-shrink-0 text-helper text-[var(--error)]">{listError}</div>}
 
           {!loading && !form && (
@@ -405,11 +408,10 @@ export default function AISettingsModal({ onClose }: Props) {
               <div className="min-h-0 flex-1 overflow-y-auto">
                 {providers.length === 0 ? (
                   <div className="rounded-md border border-dashed border-[var(--border-default)] p-4 text-center text-helper text-[var(--text-secondary)]">
-                    还没有配置模型源。支持 OpenAI 兼容 API（DeepSeek、通义、Kimi、ollama…），
-                    或直接使用本机已安装的 agent CLI（无需 API key）。
+                    {t('aiSettings.empty')}
                     {acpAgents.length > 0 && (
                       <div className="mt-1 text-meta text-[var(--text-muted)]">
-                        本机已检测到：{acpAgents.map(a => AGENT_LABELS[a] ?? a).join('、')}
+                        {t('aiSettings.detected', { agents: acpAgents.map(a => AGENT_LABELS[a] ?? a).join(', ') })}
                       </div>
                     )}
                   </div>
@@ -431,7 +433,7 @@ export default function AISettingsModal({ onClose }: Props) {
                               {p.kind === 'api' ? 'API' : (AGENT_LABELS[p.agent] ?? p.agent)}
                             </span>
                             {p.is_default && (
-                              <span className="flex-shrink-0 rounded bg-[var(--accent-blue)] px-1.5 py-px text-meta font-medium text-[var(--text-inverse)]">✓ 使用中</span>
+                              <span className="flex-shrink-0 rounded bg-[var(--accent-blue)] px-1.5 py-px text-meta font-medium text-[var(--text-inverse)]">✓ {t('aiSettings.inUse')}</span>
                             )}
                           </div>
                           <div className="mt-0.5 truncate text-meta text-[var(--text-muted)]">
@@ -439,16 +441,16 @@ export default function AISettingsModal({ onClose }: Props) {
                           </div>
                         </div>
                         {!p.is_default && (
-                          <button className={btnCls} onClick={() => void makeDefault(p)}>设为默认</button>
+                          <button className={btnCls} onClick={() => void makeDefault(p)}>{t('aiSettings.setDefault')}</button>
                         )}
-                        <button className={btnCls} onClick={() => openEdit(p)}>编辑</button>
-                        <button className={`${btnCls} text-[var(--error)]`} onClick={() => void remove(p)}>删除</button>
+                        <button className={btnCls} onClick={() => openEdit(p)}>{t('aiSettings.edit')}</button>
+                        <button className={`${btnCls} text-[var(--error)]`} onClick={() => void remove(p)}>{t('aiSettings.delete')}</button>
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
-              <button className={`${btnCls} mt-3 flex-shrink-0 self-start`} onClick={openAdd}>+ 添加模型源</button>
+              <button className={`${btnCls} mt-3 flex-shrink-0 self-start`} onClick={openAdd}>+ {t('aiSettings.add')}</button>
             </div>
           )}
 
@@ -480,18 +482,18 @@ export default function AISettingsModal({ onClose }: Props) {
                         }}
                         className={`h-7 rounded-md px-3 text-helper ${form.kind === kind ? chipOn : chipOff}`}
                       >
-                        {kind === 'api' ? 'OpenAI 兼容 API' : '本机 Agent CLI'}
+                        {t(kind === 'api' ? 'aiSettings.apiKind' : 'aiSettings.acpKind')}
                       </button>
                     ))}
                   </div>
 
                   {form.kind === 'api' ? (
                     <label className="block text-helper text-[var(--text-primary)]">
-                      常用大模型服务
+                      {t('aiSettings.commonServices')}
                       <select
                         className={`${inputCls} font-mono`}
                         value={API_PRESETS.find(p => p.baseUrl === form.baseUrl.trim())?.baseUrl ?? ''}
-                        aria-label="选择常用大模型服务以填充端点"
+                        aria-label={t('aiSettings.serviceLabel')}
                         onChange={e => {
                           const v = e.target.value
                           if (!v) {
@@ -502,7 +504,7 @@ export default function AISettingsModal({ onClose }: Props) {
                           if (preset) applyPreset(preset)
                         }}
                       >
-                        <option value="">选择服务以填充端点…</option>
+                        <option value="">{t('aiSettings.servicePlaceholder')}</option>
                         {API_PRESETS.map(preset => (
                           <option key={preset.name} value={preset.baseUrl}>
                             {preset.name}
@@ -522,7 +524,7 @@ export default function AISettingsModal({ onClose }: Props) {
                               key={a}
                               type="button"
                               disabled={!detected}
-                              title={detected ? undefined : '本机未检测到该 CLI，无法选用'}
+                              title={detected ? undefined : t('aiSettings.cliMissing')}
                               onClick={() => {
                                 if (!detected || selected) return
                                 setForm({ ...form, agent: a, modelId: '', modelLabel: '' })
@@ -533,13 +535,13 @@ export default function AISettingsModal({ onClose }: Props) {
                                   : selected ? chipOn : chipOff
                               }`}
                             >
-                              {AGENT_LABELS[a]}{detected ? '' : '（未检测到）'}
+                              {AGENT_LABELS[a]}{detected ? '' : t('aiSettings.notDetected')}
                             </button>
                           )
                         })}
                       </div>
                       <div className="mt-1 text-meta text-[var(--text-muted)]">
-                        复用本机 CLI 登录态，无需 API key。
+                        {t('aiSettings.cliHelp')}
                       </div>
                     </div>
                   )}
@@ -561,7 +563,7 @@ export default function AISettingsModal({ onClose }: Props) {
                         <input
                           type="password"
                           value={form.apiKey}
-                          placeholder={form.hasStoredKey ? '已保存（留空则不修改）' : 'sk-…'}
+                          placeholder={form.hasStoredKey ? t('aiSettings.keyStored') : 'sk-…'}
                           onChange={e => setForm({ ...form, apiKey: e.target.value })}
                           className={`${inputCls} font-mono`}
                         />
@@ -571,15 +573,15 @@ export default function AISettingsModal({ onClose }: Props) {
                       <div className="rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] p-2">
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="text-helper text-[var(--text-primary)]">自定义 Headers</div>
-                            <div className="text-meta text-[var(--text-muted)]">可选 · 同名头覆盖默认 Authorization</div>
+                            <div className="text-helper text-[var(--text-primary)]">{t('aiSettings.headers')}</div>
+                            <div className="text-meta text-[var(--text-muted)]">{t('aiSettings.headersHelp')}</div>
                           </div>
                           <button
                             type="button"
                             className={`${btnCls} h-7 flex-shrink-0 bg-[var(--bg-surface)] px-2 text-meta`}
                             onClick={() => setForm({ ...form, headers: [...form.headers, { key: '', value: '' }] })}
                           >
-                            + 自定义
+                            + {t('aiSettings.customHeader')}
                           </button>
                         </div>
                         <div className="mt-1.5">
@@ -596,7 +598,7 @@ export default function AISettingsModal({ onClose }: Props) {
                           />
                         </div>
                         {form.headers.length === 0 ? (
-                          <div className="mt-1.5 text-meta text-[var(--text-muted)]">未添加请求头</div>
+                          <div className="mt-1.5 text-meta text-[var(--text-muted)]">{t('aiSettings.noHeaders')}</div>
                         ) : (
                           <div className="mt-1.5 max-h-[6.75rem] space-y-1.5 overflow-y-auto pr-0.5">
                             {form.headers.map((row, idx) => (
@@ -604,31 +606,31 @@ export default function AISettingsModal({ onClose }: Props) {
                                 <input
                                   type="text"
                                   value={row.key}
-                                  placeholder="Header 名"
+                                  placeholder={t('aiSettings.headerName')}
                                   onChange={e => {
                                     const headers = form.headers.slice()
                                     headers[idx] = { ...headers[idx], key: e.target.value }
                                     setForm({ ...form, headers })
                                   }}
                                   className={`${inputCls} mt-0 h-7 min-w-0 flex-1 bg-[var(--bg-surface)] font-mono`}
-                                  aria-label={`Header 名称 ${idx + 1}`}
+                                  aria-label={t('aiSettings.headerNameLabel', { index: idx + 1 })}
                                 />
                                 <input
                                   type="text"
                                   value={row.value}
-                                  placeholder="值"
+                                  placeholder={t('aiSettings.headerValue')}
                                   onChange={e => {
                                     const headers = form.headers.slice()
                                     headers[idx] = { ...headers[idx], value: e.target.value }
                                     setForm({ ...form, headers })
                                   }}
                                   className={`${inputCls} mt-0 h-7 min-w-0 flex-[1.4] bg-[var(--bg-surface)] font-mono`}
-                                  aria-label={`Header 值 ${idx + 1}`}
+                                  aria-label={t('aiSettings.headerValueLabel', { index: idx + 1 })}
                                 />
                                 <button
                                   type="button"
                                   className={`${btnCls} h-7 flex-shrink-0 bg-[var(--bg-surface)] px-2 text-[var(--error)]`}
-                                  title="删除此 header"
+                                  title={t('aiSettings.deleteHeader')}
                                   onClick={() => setForm({ ...form, headers: form.headers.filter((_, i) => i !== idx) })}
                                 >
                                   ✕
@@ -641,10 +643,10 @@ export default function AISettingsModal({ onClose }: Props) {
 
                       <div className="flex h-7 flex-wrap items-center gap-2">
                         <button className={btnCls} disabled={st?.status === 'loading' || !form.baseUrl.trim()} onClick={() => void fetchModels(form, false)}>
-                          {st?.status === 'loading' ? '连接中…' : '测试连接并获取模型'}
+                          {t(st?.status === 'loading' ? 'aiSettings.connecting' : 'aiSettings.testConnection')}
                         </button>
                         {st?.status === 'ok' && !st.preset && (
-                          <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ 获取到 {st.models!.length} 个模型</span>
+                          <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ {t('aiSettings.modelsFetched', { count: st.models!.length })}</span>
                         )}
                       </div>
                     </>
@@ -652,13 +654,13 @@ export default function AISettingsModal({ onClose }: Props) {
 
                   {form.kind === 'acp' && (
                     <div className="flex h-7 flex-wrap items-center gap-2">
-                      {st?.status === 'loading' && <span className="text-meta text-[var(--text-muted)]" role="status">正在获取模型列表…</span>}
+                      {st?.status === 'loading' && <span className="text-meta text-[var(--text-muted)]" role="status">{t('aiSettings.fetchingModels')}</span>}
                       {st?.status === 'ok' && (
-                        <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ {st.models!.length} 个模型</span>
+                        <span className="text-meta text-[var(--accent-green,#3fb950)]">✓ {t('aiSettings.modelsFetched', { count: st.models!.length })}</span>
                       )}
                       {st && st.status !== 'loading' && (
                         <button type="button" className={`${btnCls} h-6 px-2 text-meta`} onClick={() => void fetchModels(form, true)}>
-                          强制刷新
+                          {t('aiSettings.forceRefresh')}
                         </button>
                       )}
                     </div>
@@ -674,14 +676,14 @@ export default function AISettingsModal({ onClose }: Props) {
                 {/* Model list absorbs remaining height — only this region scrolls long lists. */}
                 <div className="flex min-h-0 flex-1 flex-col text-helper text-[var(--text-primary)]">
                   <div className="flex flex-shrink-0 items-baseline gap-2">
-                    <span>模型（必选）</span>
+                    <span>{t('aiSettings.modelRequired')}</span>
                     {st?.preset && (
-                      <span className="text-meta text-[var(--text-muted)]">预置常见模型，建议「测试连接」获取实际列表</span>
+                      <span className="text-meta text-[var(--text-muted)]">{t('aiSettings.presetHelp')}</span>
                     )}
                   </div>
                   <div className="mt-1 min-h-0 flex-1 overflow-y-auto rounded-md border border-[var(--border-muted)] bg-[var(--bg-inset)] p-1.5">
                     {st?.status === 'loading' && (
-                      <div className="px-2 py-3 text-meta text-[var(--text-muted)]">正在获取模型列表…</div>
+                      <div className="px-2 py-3 text-meta text-[var(--text-muted)]">{t('aiSettings.fetchingModels')}</div>
                     )}
                     {st?.status === 'ok' && st.models!.length > 0 && (
                       <div className="space-y-1">
@@ -693,7 +695,7 @@ export default function AISettingsModal({ onClose }: Props) {
                               type="button"
                               disabled={taken}
                               onClick={() => !taken && selectModel(m.id)}
-                              title={taken ? '该 model_id 已被其他模型源占用' : undefined}
+                              title={taken ? t('aiSettings.modelTaken') : undefined}
                               className={`flex w-full items-baseline gap-2 rounded-md border px-2.5 py-1.5 text-left ${
                                 taken
                                   ? 'cursor-not-allowed border-[var(--border-muted)] opacity-50'
@@ -707,7 +709,7 @@ export default function AISettingsModal({ onClose }: Props) {
                                 <span className="flex-shrink-0 font-mono text-meta opacity-70">{m.id}</span>
                               )}
                               {taken && (
-                                <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">已占用</span>
+                                <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">{t('aiSettings.taken')}</span>
                               )}
                               {m.description && !taken && (
                                 <span className="min-w-0 truncate text-meta text-[var(--text-muted)]">{m.description}</span>
@@ -718,27 +720,27 @@ export default function AISettingsModal({ onClose }: Props) {
                       </div>
                     )}
                     {st?.status === 'ok' && st.models!.length === 0 && (
-                      <div className="px-2 py-3 text-meta text-[var(--text-muted)]">未返回模型，可手动填写下方 ID</div>
+                      <div className="px-2 py-3 text-meta text-[var(--text-muted)]">{t('aiSettings.noModels')}</div>
                     )}
                     {!st && (
                       <div className="px-2 py-3 text-meta text-[var(--text-muted)]">
-                        {form.kind === 'api' ? '测试连接后显示模型列表，或手动填写 ID' : '选择 Agent 后自动获取模型列表'}
+                        {t(form.kind === 'api' ? 'aiSettings.apiModelHelp' : 'aiSettings.acpModelHelp')}
                       </div>
                     )}
                     {st?.status === 'error' && (
-                      <div className="px-2 py-3 text-meta text-[var(--text-muted)]">获取失败，可手动填写下方 ID 或强制刷新</div>
+                      <div className="px-2 py-3 text-meta text-[var(--text-muted)]">{t('aiSettings.fetchFailed')}</div>
                     )}
                   </div>
                   <input
                     type="text"
                     value={listedIds.has(form.modelId) ? '' : form.modelId}
-                    placeholder="或手动填写模型 ID（列表里没有的型号）"
+                    placeholder={t('aiSettings.manualModel')}
                     onChange={e => selectModel(e.target.value.trim())}
                     className={`${inputCls} flex-shrink-0 font-mono`}
                   />
                   {form.modelId && takenModelIds.has(form.modelId) && (
                     <div className="mt-1 flex-shrink-0 text-meta text-[var(--error)]">
-                      model_id「{form.modelId}」已被其他模型源占用
+                      {t('aiSettings.modelTakenValue', { model: form.modelId })}
                     </div>
                   )}
                 </div>
@@ -746,11 +748,11 @@ export default function AISettingsModal({ onClose }: Props) {
 
               {/* 名称在两个 tab 都放在最下方（保存前），便于先配连接/模型再改展示名。 */}
               <label className="mt-2 block flex-shrink-0 text-helper text-[var(--text-primary)]">
-                名称
+                {t('aiSettings.name')}
                 <input
                   type="text"
                   value={form.name}
-                  placeholder="选择模型后自动生成，可修改"
+                  placeholder={t('aiSettings.namePlaceholder')}
                   onChange={e => setForm({ ...form, name: e.target.value })}
                   className={inputCls}
                 />
@@ -769,10 +771,10 @@ export default function AISettingsModal({ onClose }: Props) {
                   disabled={saving || !form.name.trim() || !form.modelId || takenModelIds.has(form.modelId)}
                   onClick={() => void save()}
                 >
-                  {saving ? '保存中…' : '保存'}
+                  {t(saving ? 'common.saving' : 'common.save')}
                 </button>
-                <button type="button" className={btnCls} onClick={() => setForm(null)}>取消</button>
-                {!form.modelId && <span className="text-meta text-[var(--text-muted)]">先选择一个模型</span>}
+                <button type="button" className={btnCls} onClick={() => setForm(null)}>{t('common.cancel')}</button>
+                {!form.modelId && <span className="text-meta text-[var(--text-muted)]">{t('aiSettings.chooseModel')}</span>}
               </div>
             </div>
           )}

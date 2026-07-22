@@ -194,9 +194,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   useEffect(() => {
     fetchSessions()
       .then(data => { setSessions(data); setError(null) })
-      .catch(err => setError(err instanceof Error ? err.message : '会话列表加载失败'))
+      .catch(err => setError(err instanceof Error ? err.message : t('sidebar.loadFailed')))
       .finally(() => setLoading(false))
-  }, [])
+  }, [t])
 
   // Live refresh: the backend pings over SSE after an index round lands;
   // refetch the list, throttled to one request per 2s. In-flight guard: a
@@ -344,21 +344,21 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     const id = session.resume_id || session.id
     try {
       await navigator.clipboard.writeText(id)
-      showToast('已复制会话 ID')
+      showToast(t('sidebar.copiedSessionId'))
     } catch {
-      showToast('复制失败')
+      showToast(t('sidebar.copyFailed'))
     }
-  }, [showToast])
+  }, [showToast, t])
 
   const copyAgentAndId = useCallback(async (session: SessionSummary) => {
     const id = session.resume_id || session.id
     try {
       await navigator.clipboard.writeText(`agent: ${getAgentLabel(session.agent_type)}, id: ${id}`)
-      showToast('已复制 Agent 名称和会话 ID')
+      showToast(t('sidebar.copiedAgentAndId'))
     } catch {
-      showToast('复制失败')
+      showToast(t('sidebar.copyFailed'))
     }
-  }, [showToast])
+  }, [showToast, t])
 
   const copyResumeCmd = useCallback(async (session: SessionSummary, shell: ResumeShell, mode: ResumeCommandMode) => {
     const option = getResumeCommandOptions(session).find(item => item.shell === shell && item.mode === mode)
@@ -366,11 +366,11 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     try {
       await navigator.clipboard.writeText(option.command)
       writeStorage(getResumePreferenceKey(session), shell)
-      showToast(`已复制${shell === 'powershell' ? ' PowerShell' : ' Git Bash'} 恢复命令`)
+      showToast(t('sidebar.copiedResume', { shell: shell === 'powershell' ? 'PowerShell' : 'Git Bash' }))
     } catch {
-      showToast('复制失败')
+      showToast(t('sidebar.copyFailed'))
     }
-  }, [showToast])
+  }, [showToast, t])
 
   const openContextMenu = useCallback((e: React.MouseEvent, session: SessionSummary) => {
     e.preventDefault()
@@ -495,8 +495,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       list.filter(s => !(s.id === session.id && s.agent_type === session.agent_type)),
     )
     onSessionDeleted?.(session)
-    showToast('会话已删除')
-  }, [onSessionDeleted, showToast])
+    showToast(t('sidebar.deleted'))
+  }, [onSessionDeleted, showToast, t])
 
   const liveCount = useMemo(() => sessions.filter(s => isSessionLive(s, now)).length, [sessions, now])
 
@@ -705,7 +705,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           tabIndex={-1}
           className="absolute right-1 top-1.5 w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
           aria-hidden="true"
-          title="复制会话 ID"
+          title={t('sidebar.copySessionId')}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
@@ -764,7 +764,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         {isMobile && onClose && (
           <button
             onClick={onClose}
-            aria-label="关闭会话列表"
+            aria-label={t('sidebar.close')}
             className="ml-1 w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -870,10 +870,10 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         <span className="truncate text-meta text-[var(--text-muted)]" data-testid="sidebar-version">
           Session Insight{version ? ` ${version}` : ''}
         </span>
-        <InstantTooltip text="关于 Session Insight" placement="top">
+        <InstantTooltip text={t('sidebar.about')} placement="top">
           <button
             type="button"
-            aria-label="关于 Session Insight"
+            aria-label={t('sidebar.about')}
             onClick={() =>
               window.dispatchEvent(new CustomEvent('si-open-settings', { detail: { tab: 'about' } }))
             }
@@ -889,7 +889,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         <div
           onPointerDown={beginResize}
           className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-[var(--accent-blue)]/30 active:cursor-col-resize"
-          title="拖拽调整侧栏宽度"
+          title={t('sidebar.resize')}
         />
       )}
 
@@ -945,13 +945,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
               onClick={() => { copyId(contextMenu.session); setContextMenu(null) }}
             >
-              复制会话 ID
+              {t('sidebar.copySessionId')}
             </button>
             <button
               className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
               onClick={() => { void copyAgentAndId(contextMenu.session); setContextMenu(null) }}
             >
-              复制 Agent 名称 + 会话 ID
+              {t('sidebar.copyAgentAndId')}
             </button>
             {(() => {
               const session = contextMenu.session
@@ -962,9 +962,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               const windows = isWindowsSession(session, hostIsWindows())
               const visibleOptions = windows ? options : options.filter(option => option.shell === 'git-bash')
               const disabled = visibleOptions.length === 0
-              if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title="此 Agent 暂不支持命令行恢复">复制会话恢复命令</button>
+              if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={t('sidebar.resumeUnsupported')}>{t('sidebar.copyResume')}</button>
               const rollbackInfo = (session.rolled_back_turn_count ?? 0) > 0
-                ? `${session.rolled_back_turn_count} 个 turn 已回滚；CLI 将从第 ${session.turn_count} 轮恢复`
+                ? t('sidebar.rollbackInfo', { count: session.rolled_back_turn_count ?? 0, turn: session.turn_count })
                 : ''
               return <>
                 {rollbackInfo && (
@@ -974,22 +974,22 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 )}
                 {visibleOptions.map(option => {
                 const shellLabel = windows ? option.shell === 'powershell' ? 'PowerShell' : 'Git Bash' : ''
-                const reason = option.reason === 'last-used' ? '，上次使用' : windows && option.reason === 'recommended' ? '，推荐' : ''
+                const reason = option.reason === 'last-used' ? t('sidebar.lastUsed') : windows && option.reason === 'recommended' ? t('sidebar.recommended') : ''
                 const dangerous = option.mode === 'skip-permissions'
                 return (
                   <button
                     key={`${option.shell}:${option.mode}`}
                     className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
-                    title={dangerous ? `跳过权限检查并允许执行危险命令${rollbackInfo ? `；${rollbackInfo}` : ''}` : rollbackInfo || undefined}
+                    title={dangerous ? t('sidebar.unsafeHint', { rollback: rollbackInfo ? `; ${rollbackInfo}` : '' }) : rollbackInfo || undefined}
                     onClick={() => {
                       if (isLive) setResumeConfirm({ session, shell: option.shell, mode: option.mode })
                       else void copyResumeCmd(session, option.shell, option.mode)
                       setContextMenu(null)
                     }}
                   >
-                    {dangerous ? '复制免确认执行恢复命令' : '复制恢复命令'}
+                    {dangerous ? t('sidebar.copyResumeUnsafe') : t('sidebar.copyResume')}
                     {(shellLabel || dangerous) && (
-                      <>（{shellLabel}{reason}{shellLabel && dangerous ? '，' : ''}{dangerous && <span className="text-[var(--error)]">危险</span>}）</>
+                      <> ({[shellLabel, reason].filter(Boolean).join(', ')}{(shellLabel || reason) && dangerous ? ', ' : ''}{dangerous && <span className="text-[var(--error)]">{t('sidebar.unsafe')}</span>})</>
                     )}
                   </button>
                 )
@@ -1003,7 +1003,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   className="w-full text-left px-3 py-1.5 text-[var(--error)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
                   onClick={() => { setDeleteTarget(contextMenu.session); setContextMenu(null) }}
                 >
-                  删除会话…
+                  {t('sidebar.deleteSession')}
                 </button>
               </>
             )}
@@ -1049,21 +1049,20 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="复制恢复命令"
+            aria-label={t('sidebar.resumeTitle')}
             className="fixed left-1/2 top-1/3 z-[calc(var(--z-toast,50)+2)] w-[420px] -translate-x-1/2 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 shadow-lg"
           >
-            <h3 className="text-nav font-semibold text-[var(--text-primary)]">复制恢复命令</h3>
+            <h3 className="text-nav font-semibold text-[var(--text-primary)]">{t('sidebar.resumeTitle')}</h3>
             <div className="mt-2 text-body text-[var(--text-secondary)] break-all">
               <span className="text-[var(--text-primary)]">{getSessionName(resumeConfirm.session)}</span>
               <span className="ml-1.5 text-meta text-[var(--text-muted)]">{getAgentLabel(resumeConfirm.session.agent_type)}</span>
             </div>
             <p className="mt-3 text-body text-[var(--text-secondary)]">
-              该会话仍在运行（活跃中）。在另一个终端恢复它，可能与正在写入的
-              CLI 实例产生双写冲突。确定要复制恢复命令吗？
+              {t('sidebar.resumeLiveWarning')}
             </p>
             {(resumeConfirm.session.rolled_back_turn_count ?? 0) > 0 && (
               <p className="mt-2 text-body text-[var(--warning)]">
-                ↩ 已回滚 {resumeConfirm.session.rolled_back_turn_count} 个 turn；CLI 将从第 {resumeConfirm.session.turn_count} 轮恢复。
+                {t('sidebar.resumeRollback', { count: resumeConfirm.session.rolled_back_turn_count ?? 0, turn: resumeConfirm.session.turn_count })}
               </p>
             )}
             <div className="mt-4 flex items-center justify-end gap-2">
@@ -1071,7 +1070,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 onClick={() => setResumeConfirm(null)}
                 className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={() => {
@@ -1081,7 +1080,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 }}
                 className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white hover:opacity-90 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
-                仍要复制
+                {t('sidebar.copyAnyway')}
               </button>
             </div>
           </div>
