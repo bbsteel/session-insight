@@ -77,8 +77,12 @@ go build -tags sqlite_fts5 -o session-insight.exe .
 ```powershell
 $env:PORT = "9090"
 $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\projects"
+# 可选：不自动打开浏览器（脚本/二次启动时有用）
+# $env:SI_NO_OPEN_BROWSER = "1"
 .\session-insight.exe
 ```
+
+启动后会用实际监听地址打开浏览器（`http://127.0.0.1:<port>/`）。若默认 `PORT` 已被占用并回退到系统分配端口，打开的也是回退后的地址。
 
 ## 常见问题
 

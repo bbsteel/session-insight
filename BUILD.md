@@ -77,8 +77,12 @@ You can configure it via environment variables:
 ```powershell
 $env:PORT = "9090"
 $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\projects"
+# Optional: skip auto-opening the browser (useful for scripts / second instances)
+# $env:SI_NO_OPEN_BROWSER = "1"
 .\session-insight.exe
 ```
+
+On start the binary opens the actual bound URL (`http://127.0.0.1:<port>/`), including when `PORT` was busy and an OS-assigned port was used instead.
 
 ## Troubleshooting
 
