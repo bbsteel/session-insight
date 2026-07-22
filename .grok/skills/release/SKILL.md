@@ -85,21 +85,21 @@ approval when the version was auto-proposed.
 
 Write notes from the actual diff and commit subjects since `PREV_TAG`.
 Group and rewrite into product language — do not dump raw commit subjects
-as the final notes.
+as the final notes. Prefer **short** notes over exhaustive ones.
 
 ### Required structure (English first, then Chinese)
 
-Mirror the style of existing releases (see `gh release view v0.2.0`):
+Sections are optional when empty. Use only what earns a place:
 
 ```markdown
 ## Highlights
-- **Short title**: one-line impact for the 3–5 biggest user-facing wins
+- **Short title**: one-line impact for the 2–4 biggest user-facing wins
 
 ## Features
-- **area**: what shipped (user-facing; skip pure refactors unless visible)
+- **area**: additional shipped work not already covered in Highlights
 
 ## Bug Fixes
-- **area**: what was broken and is now fixed
+- **area**: what was broken and is now fixed (not restated above)
 
 ## Other
 - optional: docs, CI, internal notes worth mentioning
@@ -110,7 +110,7 @@ Mirror the style of existing releases (see `gh release view v0.2.0`):
 - **短标题**：与英文 Highlights 一一对应
 
 ## 新功能
-- **领域**：与英文 Features 对应
+- **领域**：与英文 Features 对应（无则整节省略）
 
 ## 修复
 - **领域**：与英文 Bug Fixes 对应
@@ -121,19 +121,39 @@ Mirror the style of existing releases (see `gh release view v0.2.0`):
 **Full Changelog**: https://github.com/<owner>/<repo>/compare/<PREV_TAG>...<NEW_TAG>
 ```
 
-Rules:
+### Anti-duplication (required — avoid v0.3.2-style bloat)
 
-- **Highlights** are curated marketing/impact bullets, not a full feature list.
-- **Features** / **Bug Fixes** use a bold **area** prefix (`sidebar`, `grok`,
-  `terminal`, `analytics`, …) then a concise clause.
-- Omit empty sections (no empty `## Other`).
-- Chinese sections must match English substance; natural Chinese, not
-  machine-calque word salad.
-- End with the compare link when `PREV_TAG` exists; otherwise link commits
-  for the new tag.
-- Save the full notes body to a temp file, e.g.
-  `/tmp/session-insight-release-notes-<NEW_TAG>.md` (never under `$HOME`
-  cleanup paths).
+**Each user-facing change appears in exactly one primary section.**
+Do not rephrase the same win under Highlights **and** Features **and** Bug Fixes.
+
+| Section | Role | Length |
+|---------|------|--------|
+| **Highlights** | Curated “why care” pitch only — impact titles, not a full inventory | **2–4** bullets max; often fewer on patch releases |
+| **Features** | Inventory of **other** user-facing additions **not** already stated in Highlights | Skip the section entirely if Highlights already covers everything new |
+| **Bug Fixes** | Real fixes only | Do not promote a fix into Highlights *and* restate it here unless the highlight is a broader theme that bundles multiple fixes |
+| **Other** | Docs / CI / internals | Omit when empty |
+
+Rules of thumb:
+
+1. **Write Highlights last from the inventory**, or write them first then **delete** matching Feature/Fix lines. Either way, do a final pass: if a Features bullet is the same fact as a Highlight (even with different wording), drop the Features bullet.
+2. **Highlights ≠ Features restated.** Highlight is the short marketing line; Features is only for extra items or, rarely, a **materially denser** breakdown that adds facts not in the highlight (sub-capabilities, new surfaces). Prefer dropping the feature line over “Highlights says X; Features says X again with an area tag.”
+3. **Patch / small releases:** 2–3 Highlights + Bug Fixes is enough. Empty Features is good. Do not pad Features just to fill the template.
+4. **One fact, one home:** e.g. Chinese UI belongs in Highlights *or* Features, not both; Goal parsing belongs in Bug Fixes *or* Highlights, not both.
+5. **Features** / **Bug Fixes** use a bold **area** prefix (`sidebar`, `grok`, `terminal`, `analytics`, …) then a **concise** clause — one clause per bullet, not a paragraph.
+6. Omit empty sections (no empty `## Other` / `## Features` / `## 新功能`).
+7. Chinese sections must match English substance and **the same non-duplication**; natural Chinese, not machine-calque word salad.
+8. End with the compare link when `PREV_TAG` exists; otherwise link commits for the new tag.
+9. Save the full notes body to a temp file, e.g.
+   `/tmp/session-insight-release-notes-<NEW_TAG>.md` (never under `$HOME`
+   cleanup paths).
+
+### Self-check before showing the draft
+
+- [ ] No Highlights bullet is restated in Features (same change, any wording)
+- [ ] No Highlights bullet is restated in Bug Fixes unless the fix section adds distinct residual items
+- [ ] Features section omitted if it would only echo Highlights
+- [ ] Highlights ≤ 4 bullets; each bullet is one sentence
+- [ ] EN and ZH section sets match (same omissions)
 
 Show the draft notes to the user with the version. Incorporate feedback
 before publishing.
@@ -258,17 +278,45 @@ Use this order so CI attaches binaries to **your** notes (not the fallback):
 - **Provider-aware model filters**: expand provider submenus, sort by model
   id, and group unknowns under Other
 
-**Bad**
+**Bad (raw commit)**
 
 - `62e152e feat(sessions): add provider-aware model filters`
 
-**Good Feature line**
+**Good Feature line** (only when this item is **not** already a Highlight)
 
-- **sidebar**: agent filter as an icon bar with overflow dropdown
+- **sidebar**: copy resume command for active sessions (confirm before copy)
 
 **Good 亮点**
 
 - **Provider 感知的模型筛选**：按提供商展开子菜单，按模型 id 排序，未知归入 Other
+
+**Bad — Highlights and Features say the same thing** (v0.3.2 anti-pattern)
+
+```markdown
+## Highlights
+- **Chinese (简体中文) interface**: full Chinese localization with a language switcher…
+- **Port conflict auto-resolution**: falls back to an OS-assigned port…
+
+## Features
+- **i18n**: complete Chinese (zh-CN) interface with language switch button…
+- **server**: automatic OS-assigned port fallback when the port is unavailable…
+```
+
+**Good — same release, no echo** (Features omitted or only non-highlight items)
+
+```markdown
+## Highlights
+- **Chinese (简体中文) interface**: full localization and a language switcher next to the theme toggle
+- **Port conflict auto-resolution**: fall back to an OS-assigned port when the default is in use
+- **Codex context compaction**: compaction events appear in the replay timeline
+
+## Bug Fixes
+- **Codex**: harder Goal-message parsing for edge-case goal output
+- **bookmarks**: localized note UI with translation coverage for note actions
+- **terminal search**: search bar no longer overlaps pinned navigation
+```
+
+(Here Features is omitted because every new capability is already a Highlight.)
 
 ## Out of scope
 
