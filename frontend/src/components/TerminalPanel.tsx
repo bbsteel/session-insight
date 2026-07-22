@@ -266,6 +266,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // Safety-net timer for post-rewrite snapshot drop + force-repaint; cleared
     // on unmount so a disposed terminal is never stick/refreshed after switch.
     let finishPaintTimeout: ReturnType<typeof setTimeout> | null = null
+    // Bumps on every writeComposed so a lagging rAF/timeout from rewrite A
+    // cannot drop rewrite B's snapshot or scroll a disposed/newer terminal.
+    let repaintGeneration = 0
 
     // Line interaction state
     let lineMatchers: TerminalLineMatcher<unknown>[] = []
@@ -1082,6 +1085,13 @@ const snapshotTerminal = () => {
       if (followOutputRef.current) followWakeRef.current(true)
 
       const writeComposed = (afterWrite?: () => void) => {
+        const generation = ++repaintGeneration
+        // Supersede any pending finishPaint from a prior rewrite before we
+        // install a new snapshot (stale finishPaint must not remove it).
+        if (finishPaintTimeout) {
+          clearTimeout(finishPaintTimeout)
+          finishPaintTimeout = null
+        }
         if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
         // term.reset() below discards the buffer without disposing its
@@ -1097,6 +1107,9 @@ const snapshotTerminal = () => {
         term.reset()
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
         term.write(foldView?.text ?? rawAnsi, () => {
+          // A newer writeComposed may have already reset+written; do not
+          // inject/scroll/finishPaint for this stale completion.
+          if (disposed || generation !== repaintGeneration) return
           hasWrittenOnce = true
           scanBuffer()
           injectFoldRows()
@@ -1128,7 +1141,9 @@ const snapshotTerminal = () => {
           // so Windows does not leave a cleared canvas after snapshot-removed.
           let finishedInRaf = false
           const finishPaint = (reason: string) => {
-            if (finishedInRaf) return
+            // Stale generation: pure no-op (do not clear the newer rewrite's
+            // timeout or call its removeSnapshot).
+            if (finishedInRaf || generation !== repaintGeneration) return
             finishedInRaf = true
             if (finishPaintTimeout) {
               clearTimeout(finishPaintTimeout)
@@ -1146,14 +1161,13 @@ const snapshotTerminal = () => {
             forceViewportRepaint(reason)
           }
           requestAnimationFrame(() => {
-            if (disposed) return
+            if (disposed || generation !== repaintGeneration) return
             stickOpenAtTop()
             requestAnimationFrame(() => finishPaint('post-rewrite'))
           })
           // Safety net: if the double-RAF never fires (tab backgrounded,
           // rAF throttled by 0Hz display), drop the snapshot by the next
           // macrotask so it can't permanently mask the terminal.
-          if (finishPaintTimeout) clearTimeout(finishPaintTimeout)
           finishPaintTimeout = setTimeout(() => {
             finishPaintTimeout = null
             if (!finishedInRaf) {
