@@ -106,7 +106,7 @@ Use only sections that have content:
 
 ```markdown
 ## Highlights
-- **Short title**: one-line impact for the biggest user-facing wins
+- **Short title**: one-line impact (use this section only with 2–4 bullets)
 
 ## Features
 - **area**: other user-facing additions not listed under Highlights
@@ -138,15 +138,26 @@ Use only sections that have content:
 
 | Section | Put it here when… |
 |---------|-------------------|
-| **Highlights** | Top-impact “why upgrade” wins (curated pitch). Optional on tiny patches. |
+| **Highlights** | Curated “why upgrade” pitch: **exactly 2–4** bullets when the section is used. |
 | **Features** | User-facing additions that did **not** go into Highlights. |
 | **Bug Fixes** | Fixes that did **not** go into Highlights/Features. |
 | **Other** | Docs / CI / internals only if worth mentioning. |
 
+**Highlights cardinality (required):**
+
+- When **Highlights** is present, it must have **2–4** curated entries — not
+  1, and not a dump of 5+.
+- **Fewer than 2** highlight-worthy items (typical tiny patch): **omit
+  Highlights entirely**. Put the real changes in Features / Bug Fixes /
+  Other. Do **not** pad a single win into a fake second bullet.
+- **More than 4** strong wins: keep only the top 2–4 in Highlights; put the
+  rest in Features (or Bug Fixes if they are fixes). Overall notes still
+  list every real change once — just not all under Highlights.
+
 Placement guide:
 
-- Prefer **Highlights** for the most visible wins; remaining features go to
-  **Features**; remaining fixes to **Bug Fixes**.
+- Prefer **Highlights** for the most visible wins (within the 2–4 bound);
+  remaining features go to **Features**; remaining fixes to **Bug Fixes**.
 - A single change is never split or echoed across sections. Example: Chinese
   UI is Highlights *or* Features, never both; Goal parsing is Bug Fixes *or*
   Highlights, never both.
@@ -164,6 +175,7 @@ Placement guide:
 
 - [ ] Every listed item is a real change from this release (no padding)
 - [ ] No item appears in more than one section (same fact, any wording)
+- [ ] Highlights is either omitted or has exactly 2–4 bullets
 - [ ] Empty sections omitted
 - [ ] EN and ZH match (same items, same section placement)
 
