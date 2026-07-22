@@ -121,8 +121,9 @@ func main() {
 	fileServer := http.FileServer(http.FS(frontendFS))
 	srv.Mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if p == "/" || p == "/index.html" {
-			// index.html must revalidate so the browser picks up new asset hashes after a build.
+		if p == "/" || p == "/index.html" || p == "/favicon.ico" || p == "/favicon.png" || p == "/apple-touch-icon.png" {
+			// Entry-point and identity assets must revalidate so browsers pick up new builds
+			// and do not retain a favicon from another app that previously used this port.
 			w.Header().Set("Cache-Control", "no-cache")
 		} else {
 			// Vite content-hashes all JS/CSS/font filenames; safe to cache indefinitely.
