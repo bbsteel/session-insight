@@ -263,6 +263,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let disposed = false
     let currentCols = 0
     let resizeDebounce: ReturnType<typeof setTimeout> | null = null
+    // Safety-net timer for post-rewrite snapshot drop + force-repaint; cleared
+    // on unmount so a disposed terminal is never stick/refreshed after switch.
+    let finishPaintTimeout: ReturnType<typeof setTimeout> | null = null
+    // Bumps on every writeComposed so a lagging rAF/timeout from rewrite A
+    // cannot drop rewrite B's snapshot or scroll a disposed/newer terminal.
+    let repaintGeneration = 0
 
     // Line interaction state
     let lineMatchers: TerminalLineMatcher<unknown>[] = []
@@ -1038,6 +1044,30 @@ const snapshotTerminal = () => {
         term.scrollToLine(0)
       }
 
+      // Windows WebGL often leaves a cleared canvas after reset+large write
+      // even though the buffer is full: chrome (e.g. Turn N/M) stays visible
+      // but the terminal is blank until a user wheel scroll forces a repaint.
+      // Logs that pin this: rewrite-done → snapshot-removed (holdMs ~50ms)
+      // with the viewport still blank. term.refresh marks the full viewport
+      // dirty so xterm's RenderDebouncer schedules a paint (not a sync GPU
+      // blit) without changing scroll position.
+      const forceViewportRepaint = (reason: string) => {
+        if (disposed || term.rows <= 0) return
+        try {
+          term.refresh(0, term.rows - 1)
+        } catch (e) {
+          dbg('force-repaint-error', { reason, msg: String(e) })
+          return
+        }
+        dbg('force-repaint', {
+          reason,
+          rows: term.rows,
+          cols: term.cols,
+          viewportY: term.buffer.active.viewportY,
+          bufLen: term.buffer.active.length,
+        })
+      }
+
       // Follow edge hook: on the rising edge leave open-at-top mode and jump
       // to the tail (follow already on at mount takes the openAtTop=false
       // init above and parks at the bottom on the initial write instead);
@@ -1055,6 +1085,13 @@ const snapshotTerminal = () => {
       if (followOutputRef.current) followWakeRef.current(true)
 
       const writeComposed = (afterWrite?: () => void) => {
+        const generation = ++repaintGeneration
+        // Supersede any pending finishPaint from a prior rewrite before we
+        // install a new snapshot (stale finishPaint must not remove it).
+        if (finishPaintTimeout) {
+          clearTimeout(finishPaintTimeout)
+          finishPaintTimeout = null
+        }
         if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
         // term.reset() below discards the buffer without disposing its
@@ -1070,6 +1107,9 @@ const snapshotTerminal = () => {
         term.reset()
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
         term.write(foldView?.text ?? rawAnsi, () => {
+          // A newer writeComposed may have already reset+written; do not
+          // inject/scroll/finishPaint for this stale completion.
+          if (disposed || generation !== repaintGeneration) return
           hasWrittenOnce = true
           scanBuffer()
           injectFoldRows()
@@ -1090,22 +1130,50 @@ const snapshotTerminal = () => {
           // notify folds / restore an anchor). xterm parks at the bottom after
           // large writes; without this, session open lands at the end.
           stickOpenAtTop()
+          // Schedule a full-viewport refresh (rAF-debounced by xterm): covers
+          // the first rewrite (no snapshot) and seeds canvas pixels for the
+          // next write's anti-flicker snapshot when paint does run.
+          forceViewportRepaint('rewrite-sync')
           openAtTopGraceUntil = performance.now() + 800
           writingContent = false
-          // Re-stick across two frames: fold inject / WebGL paint can nudge
-          // the viewport after the write callback returns.
-          requestAnimationFrame(() => {
+          // Two frames: drop the anti-flicker snapshot past xterm's paint,
+          // re-stick open-at-top, then schedule another full-viewport refresh
+          // so Windows does not leave a cleared canvas after snapshot-removed.
+          let finishedInRaf = false
+          const finishPaint = (reason: string) => {
+            // Stale generation: pure no-op (do not clear the newer rewrite's
+            // timeout or call its removeSnapshot).
+            if (finishedInRaf || generation !== repaintGeneration) return
+            finishedInRaf = true
+            if (finishPaintTimeout) {
+              clearTimeout(finishPaintTimeout)
+              finishPaintTimeout = null
+            }
+            // Unmount / session switch can land between write and this rAF or
+            // the 250ms safety net; forceViewportRepaint already no-ops, but
+            // stickOpenAtTop would still call scrollToLine on a disposed term.
+            if (disposed) {
+              removeSnapshot?.()
+              return
+            }
+            removeSnapshot?.()
             stickOpenAtTop()
-            requestAnimationFrame(stickOpenAtTop)
+            forceViewportRepaint(reason)
+          }
+          requestAnimationFrame(() => {
+            if (disposed || generation !== repaintGeneration) return
+            stickOpenAtTop()
+            requestAnimationFrame(() => finishPaint('post-rewrite'))
           })
-          // Two frames: one for xterm's render, one to be past the paint.
-          let removedInRaf = false
-          requestAnimationFrame(() => requestAnimationFrame(() => { removeSnapshot?.(); removedInRaf = true }))
           // Safety net: if the double-RAF never fires (tab backgrounded,
           // rAF throttled by 0Hz display), drop the snapshot by the next
           // macrotask so it can't permanently mask the terminal.
-          setTimeout(() => {
-            if (removeSnapshot && !removedInRaf) { dbg('snapshot-timeout-remove'); removeSnapshot() }
+          finishPaintTimeout = setTimeout(() => {
+            finishPaintTimeout = null
+            if (!finishedInRaf) {
+              if (removeSnapshot) dbg('snapshot-timeout-remove')
+              finishPaint('post-rewrite-timeout')
+            }
           }, 250)
           dbg('rewrite-done', { ms: Math.round(performance.now() - rewriteStart), bytes: wroteBytes, bufLen: term.buffer.active.length })
         })
@@ -1629,6 +1697,7 @@ const snapshotTerminal = () => {
     return () => {
       disposed = true
       if (resizeDebounce) clearTimeout(resizeDebounce)
+      if (finishPaintTimeout) clearTimeout(finishPaintTimeout)
       observer?.disconnect()
       disposeOnScroll?.dispose()
       disposeOnSelectionChange?.dispose()
