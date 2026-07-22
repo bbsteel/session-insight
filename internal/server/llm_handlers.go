@@ -464,7 +464,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !llm.ValidKind(kind) {
-		http.Error(w, "kind must be summary, title or handoff", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "kind must be summary, title or handoff")
 		return
 	}
 
@@ -476,11 +476,11 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "generation_failed", err.Error())
 		return
 	}
 	if provider == nil {
-		http.Error(w, "未配置模型:请先在设置中添加 AI 模型", http.StatusPreconditionFailed)
+		writeAPIError(w, http.StatusPreconditionFailed, "no_provider")
 		return
 	}
 
@@ -493,7 +493,7 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if detail == nil {
-		http.Error(w, "session not found", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "session_not_found")
 		return
 	}
 
@@ -503,13 +503,13 @@ func (s *Server) handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	prompt, err := llm.BuildPrompt(llm.GenerationKind(kind), detail, candidates, req.Locale)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "generation_failed", err.Error())
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "generation_failed", "streaming not supported")
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")

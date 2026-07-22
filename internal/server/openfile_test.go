@@ -2,6 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +17,21 @@ import (
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/reader"
 )
+
+func TestFilesystemErrorStatus(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{fs.ErrNotExist, http.StatusNotFound},
+		{fmt.Errorf("wrapped: %w", fs.ErrPermission), http.StatusForbidden},
+		{errors.New("I/O failure"), http.StatusInternalServerError},
+	} {
+		if got := filesystemErrorStatus(tc.err); got != tc.want {
+			t.Errorf("filesystemErrorStatus(%v) = %d, want %d", tc.err, got, tc.want)
+		}
+	}
+}
 
 func TestBuildEditorArgs(t *testing.T) {
 	cases := []struct {
@@ -139,11 +157,19 @@ func TestFsEndpoints(t *testing.T) {
 	if w.Code != 415 {
 		t.Fatalf("fs/read binary should be 415: %d", w.Code)
 	}
+	var apiErr apiError
+	if err := json.NewDecoder(w.Body).Decode(&apiErr); err != nil || apiErr.Code != "binary_file" {
+		t.Fatalf("fs/read binary error contract: body=%q error=%v decoded=%+v", w.Body.String(), err, apiErr)
+	}
 
 	w = httptest.NewRecorder()
 	srv.Mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/fs/read?path="+filepath.Join(dir, "nope.go"), nil))
 	if w.Code != 404 {
 		t.Fatalf("fs/read missing: %d", w.Code)
+	}
+	apiErr = apiError{}
+	if err := json.NewDecoder(w.Body).Decode(&apiErr); err != nil || apiErr.Code != "file_read_failed" {
+		t.Fatalf("fs/read missing error contract: body=%q error=%v decoded=%+v", w.Body.String(), err, apiErr)
 	}
 }
 

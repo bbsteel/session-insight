@@ -36,7 +36,7 @@ const (
 // must be loopback. Non-browser local clients (curl) send no Origin and pass.
 func rejectUnsafeWrite(w http.ResponseWriter, r *http.Request) bool {
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		http.Error(w, "expected application/json", http.StatusUnsupportedMediaType)
+		writeAPIError(w, http.StatusUnsupportedMediaType, "invalid_request", "expected application/json")
 		return true
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
@@ -46,7 +46,7 @@ func rejectUnsafeWrite(w http.ResponseWriter, r *http.Request) bool {
 			host = u.Hostname()
 		}
 		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "request_forbidden", "cross-origin request rejected")
 			return true
 		}
 	}
@@ -166,7 +166,7 @@ func findLineBySearch(path, needle string) int {
 func (s *Server) handleResolveFile(w http.ResponseWriter, r *http.Request) {
 	resolved, err := resolveExistingFile(r.URL.Query().Get("path"), r.URL.Query().Get("cwd"))
 	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "open_file_failed", "file not found")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -184,12 +184,12 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 		Search string `json:"search"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "open_file_failed", "invalid request body")
 		return
 	}
 	resolved, err := resolveExistingFile(req.Path, req.Cwd)
 	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
+		writeAPIError(w, http.StatusNotFound, "open_file_failed", "file not found")
 		return
 	}
 
@@ -200,11 +200,11 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 
 	args := buildEditorArgs(s.editorCommandTemplate(), resolved, line)
 	if len(args) == 0 {
-		http.Error(w, "editor command not configured", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "open_file_failed", "editor command not configured")
 		return
 	}
 	if err := startEditorCommand(exec.Command(args[0], args[1:]...)); err != nil {
-		http.Error(w, fmt.Sprintf("failed to launch editor: %v", err), http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "open_file_failed", fmt.Sprintf("failed to launch editor: %v", err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

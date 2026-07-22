@@ -11,6 +11,7 @@ import {
 import { getMiniMapEventKind, getMiniMapTurnPositionPercent, getTokenPressureTone, type MiniMapEventKind, type TokenPressureTone } from '../minimapSemantics'
 import { TERMINAL_LINE_HEIGHT } from '../terminalControl'
 import type { VisibleTurnRange } from '../scrollSync'
+import { formatNumber, useI18n } from '../i18n'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 
@@ -43,11 +44,8 @@ const pressureColors: Record<TokenPressureTone, string> = {
   critical: 'var(--error)',
 }
 
-const eventLabels: Record<MiniMapEventKind, string> = {
-  anomaly: '异常',
-  compaction: '压缩',
-  rollback: '回滚',
-  user: '用户输入',
+function eventLabel(kind: MiniMapEventKind, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  return t(`minimap.${kind}`)
 }
 
 const eventShortLabels: Record<MiniMapEventKind, string> = {
@@ -118,12 +116,12 @@ function fmtCost(v: number, unit?: string): string {
   return v.toFixed(2)
 }
 
-function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit?: string): string {
+function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string): string {
   if (!turn) return ''
-  const parts = [`Turn ${turn.turn_index}`]
-  if (tw?.estCost != null) parts.push(`~${fmtCost(tw.estCost, unit)}（估算）`)
-  parts.push(`${getTotalTokens(turn).toLocaleString()} tokens`)
-  if ((turn.request_count ?? 0) > 0) parts.push(`${turn.request_count} req`)
+  const parts = [t('minimap.turnTitle', { turn: turn.turn_index })]
+  if (tw?.estCost != null) parts.push(`~${fmtCost(tw.estCost, unit)} (${t('minimap.estimated')})`)
+  parts.push(t('minimap.tokenValue', { count: formatNumber(locale, getTotalTokens(turn)) }))
+  if ((turn.request_count ?? 0) > 0) parts.push(t('minimap.requestValue', { count: formatNumber(locale, turn.request_count ?? 0) }))
   return parts.join(' · ')
 }
 
@@ -150,6 +148,7 @@ function PositionModeContent({
   activeKey,
   onMarkerClick,
 }: PositionModeProps) {
+  const { locale, t } = useI18n()
   const { total_lines: totalLines, positions: items } = positions
   if (totalLines <= 0) return null
 
@@ -197,7 +196,7 @@ function PositionModeContent({
               // NOT stopped here so dragging through a segment still scrolls.
               className="pointer-events-auto absolute left-[40px] right-[14px]"
               style={{ top: segStart + 1, height: segHeight }}
-              title={turnTitle(turns[pos.turn_index], tw, billingUnit)}
+              title={turnTitle(turns[pos.turn_index], tw, billingUnit, locale, t)}
             >
               <span
                 className="absolute left-0 top-0 h-full rounded-[2px]"
@@ -224,8 +223,8 @@ function PositionModeContent({
                   eventClassNames[eventKind]
                 } ${isActive ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
                 style={{ minWidth: '16px', minHeight: '16px' }}
-                title={`${eventLabels[eventKind]} · line ${pos.line_start}`}
-                aria-label={`${eventLabels[eventKind]} · 跳转`}
+                title={t('minimap.markerLine', { event: eventLabel(eventKind, t), line: pos.line_start })}
+                aria-label={`${eventLabel(eventKind, t)} · ${t('minimap.jump')}`}
                 onPointerDown={e => e.stopPropagation()}
                 onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}
               >
@@ -243,6 +242,7 @@ function PositionModeContent({
 // ── Main MiniMap component ────────────────────────────────────────────────────
 
 export default function MiniMap({ turns, positions, billing, controlRef, scrollToIndexRef, scrollToTopRef }: Props) {
+  const { locale, t } = useI18n()
   const barCount = turns.length
   const containerRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -470,8 +470,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       <button
         type="button"
         className="flex h-[22px] flex-shrink-0 items-center justify-center border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
-        title="滚动到顶部"
-        aria-label="滚动到顶部"
+        title={t('minimap.top')}
+        aria-label={t('minimap.top')}
         onPointerDown={e => e.stopPropagation()}
         onClick={e => {
           e.stopPropagation()
@@ -514,8 +514,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
               const pressureRatio = tokens / maxTokens
               const pressureTone = getTokenPressureTone(pressureRatio)
               const eventKind = getMiniMapEventKind(turn)
-              const eventLabel = eventKind ? eventLabels[eventKind] : ''
-              const title = `${turnTitle(turn, weights.get(turn.turn_index), billing?.billing_unit)}${eventLabel ? ` · ${eventLabel}` : ''}`
+              const eventName = eventKind ? eventLabel(eventKind, t) : ''
+              const title = `${turnTitle(turn, weights.get(turn.turn_index), billing?.billing_unit, locale, t)}${eventName ? ` · ${eventName}` : ''}`
 
               return (
                 <div
@@ -530,8 +530,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
                       className={`pointer-events-auto absolute left-[7px] top-1/2 flex h-[16px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                         eventClassNames[eventKind]
                       } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
-                      title={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
-                      aria-label={`${eventLabel} · 跳转到 Turn ${turn.turn_index}`}
+                      title={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
+                      aria-label={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
                       onPointerDown={e => e.stopPropagation()}
                       onClick={e => {
                         e.stopPropagation()
@@ -574,8 +574,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       <button
         type="button"
         className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
-        title="滚动到底部"
-        aria-label="滚动到底部"
+        title={t('minimap.bottom')}
+        aria-label={t('minimap.bottom')}
         onPointerDown={e => e.stopPropagation()}
         onClick={e => {
           e.stopPropagation()

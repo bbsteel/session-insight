@@ -1,4 +1,53 @@
 import type { AgentInfo, EditCall, PositionsResponse, SearchResult, SessionDetail, SessionSummary } from './types'
+import { localize } from './i18nRuntime.js'
+
+export class APIError extends Error {
+  constructor(readonly code: string, readonly status: number, readonly detail = '') {
+    super(localize(`error.${code}`))
+    this.name = 'APIError'
+  }
+}
+
+async function responseError(res: Response, fallbackCode = 'request_failed'): Promise<APIError> {
+  let code = fallbackCode
+  let detail = ''
+  const contentType = res.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    const payload = await res.clone().json().catch(() => null) as { code?: unknown; detail?: unknown; error?: unknown } | null
+    if (typeof payload?.code === 'string' && payload.code) code = payload.code
+    if (typeof payload?.detail === 'string') detail = payload.detail
+    else if (typeof payload?.error === 'string') detail = payload.error
+  } else {
+    detail = (await res.clone().text().catch(() => '')).trim()
+  }
+  return new APIError(code, res.status, detail)
+}
+
+const stageKeys: Record<string, string> = {
+  '构建上下文': 'ai.stage.buildContext',
+  '构建证据': 'ai.stage.buildEvidence',
+  '启动适配器': 'ai.stage.startAdapter',
+  '初始化适配器': 'ai.stage.initializeAdapter',
+  '创建模型会话': 'ai.stage.createSession',
+  '设置安全执行模式': 'ai.stage.safeMode',
+  '选择模型': 'ai.stage.selectModel',
+  '提交生成请求': 'ai.stage.submit',
+  '接收模型输出': 'ai.stage.receive',
+  '接收模型响应': 'ai.stage.receive',
+  '整理模型结果': 'ai.stage.finalize',
+  '准备模型请求': 'ai.stage.prepareRequest',
+  '等待模型响应': 'ai.stage.waitResponse',
+  '准备 Grok CLI': 'ai.stage.prepareGrok',
+  '调用 Grok CLI': 'ai.stage.callGrok',
+}
+
+function localizedStage(stage: string): string {
+  if (stage.startsWith('已选择模型 ')) {
+    return localize('ai.stage.modelSelected', { model: stage.slice('已选择模型 '.length) })
+  }
+  const key = stageKeys[stage]
+  return key ? localize(key) : stage
+}
 
 export interface VersionInfo {
   version: string
@@ -12,8 +61,8 @@ let versionPromise: Promise<VersionInfo> | null = null
 export function fetchVersion(): Promise<VersionInfo> {
   if (!versionPromise) {
     versionPromise = fetch('/api/version')
-      .then(res => {
-        if (!res.ok) throw new Error(`Failed to fetch version: ${res.status}`)
+      .then(async res => {
+        if (!res.ok) throw await responseError(res)
         return readJson<VersionInfo>(res, 'version')
       })
       .catch(() => ({ version: 'dev', commit: '' }))
@@ -26,7 +75,7 @@ export async function fetchSessions(agent?: string): Promise<SessionSummary[]> {
   if (agent) params.set('agent', agent)
 
   const res = await fetch(`/api/sessions?${params}`)
-  if (!res.ok) throw new Error(`Failed to fetch sessions: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'sessions_load_failed')
   return readJson<SessionSummary[]>(res, 'sessions')
 }
 
@@ -39,32 +88,32 @@ export interface TruncatedOutput {
 
 export async function fetchToolOutputs(id: string): Promise<TruncatedOutput[]> {
   const res = await fetch(`/api/sessions/${id}/tool-outputs`)
-  if (!res.ok) throw new Error(`Failed to fetch tool outputs: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'render_load_failed')
   return res.json()
 }
 
 export async function fetchSession(id: string): Promise<SessionDetail> {
   const res = await fetch(`/api/sessions/${id}`)
-  if (!res.ok) throw new Error(`Failed to fetch session: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'session_load_failed')
   return readJson<SessionDetail>(res, 'session')
 }
 
 export async function fetchBookmarks(): Promise<SessionSummary[]> {
   const res = await fetch('/api/bookmarks')
-  if (!res.ok) throw new Error(`Failed to fetch bookmarks: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'bookmarks_load_failed')
   return readJson<SessionSummary[]>(res, 'bookmarks')
 }
 
 export async function addBookmark(session: Pick<SessionSummary, 'id' | 'agent_type'>): Promise<void> {
   const params = new URLSearchParams({ agent: session.agent_type })
   const res = await fetch(`/api/sessions/${session.id}/bookmark?${params}`, { method: 'PUT' })
-  if (!res.ok) throw new Error(`Failed to add bookmark: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'bookmark_save_failed')
 }
 
 export async function removeBookmark(session: Pick<SessionSummary, 'id' | 'agent_type'>): Promise<void> {
   const params = new URLSearchParams({ agent: session.agent_type })
   const res = await fetch(`/api/sessions/${session.id}/bookmark?${params}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(`Failed to remove bookmark: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'bookmark_save_failed')
 }
 
 export async function updateBookmarkNote(session: Pick<SessionSummary, 'id' | 'agent_type'>, note: string): Promise<void> {
@@ -74,7 +123,7 @@ export async function updateBookmarkNote(session: Pick<SessionSummary, 'id' | 'a
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ note }),
   })
-  if (!res.ok) throw new Error(`Failed to update bookmark note: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'bookmark_save_failed')
 }
 
 /** Thrown by deleteSession when the session's agent process is still running. */
@@ -92,19 +141,19 @@ export async function deleteSession(id: string): Promise<void> {
     const body = await res.json().catch(() => ({ pids: [] }))
     throw new SessionRunningError(Array.isArray(body.pids) ? body.pids : [])
   }
-  if (!res.ok) throw new Error(await res.text().catch(() => `Failed to delete session: ${res.status}`))
+  if (!res.ok) throw await responseError(res, 'session_delete_failed')
 }
 
 export async function stopSession(id: string): Promise<number> {
   const res = await fetch(`/api/sessions/${id}/stop`, { method: 'POST' })
-  if (!res.ok) throw new Error(await res.text().catch(() => `Failed to stop session: ${res.status}`))
+  if (!res.ok) throw await responseError(res, 'session_stop_failed')
   const body = await res.json()
   return typeof body.stopped === 'number' ? body.stopped : 0
 }
 
 export async function fetchAgents(): Promise<AgentInfo[]> {
   const res = await fetch('/api/agents')
-  if (!res.ok) throw new Error(`Failed to fetch agents: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'agents_load_failed')
   return readJson<AgentInfo[]>(res, 'agents')
 }
 
@@ -114,13 +163,13 @@ export async function fetchRenderANSI(id: string, cols?: number, ts?: string): P
   if (ts) params.set('ts', ts)
   const q = params.toString()
   const res = await fetch(q ? `/api/sessions/${id}/render?${q}` : `/api/sessions/${id}/render`)
-  if (!res.ok) throw new Error(`Failed to fetch render: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'render_load_failed')
   return res.text()
 }
 
 export async function fetchSessionEdits(id: string): Promise<EditCall[]> {
   const res = await fetch(`/api/sessions/${id}/edits`)
-  if (!res.ok) throw new Error(`Failed to fetch edits: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'edits_load_failed')
   return res.json()
 }
 
@@ -133,7 +182,7 @@ export async function fetchPositions(
   if (ts) params.set('ts', ts)
   const res = await fetch(`/api/sessions/${id}/positions?${params}`)
   if (res.status === 202) return { status: 'building' }
-  if (!res.ok) throw new Error(`Failed to fetch positions: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'positions_load_failed')
   const data = await res.json() as PositionsResponse
   return { status: 'ready', data }
 }
@@ -141,7 +190,7 @@ export async function fetchPositions(
 export async function fetchSearch(q: string): Promise<SearchResult[]> {
   const params = new URLSearchParams({ q })
   const res = await fetch(`/api/search?${params}`)
-  if (!res.ok) throw new Error(`Search failed: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'search_failed')
   return res.json()
 }
 
@@ -155,7 +204,7 @@ export interface IndexStatus {
 
 export async function fetchIndexStatus(): Promise<IndexStatus> {
   const res = await fetch('/api/index/status')
-  if (!res.ok) throw new Error(`Index status failed: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'index_status_failed')
   return res.json()
 }
 
@@ -175,7 +224,7 @@ export async function openFile(req: { path: string; cwd?: string; line?: number;
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   })
-  if (!res.ok) throw new Error(`Failed to open file: ${res.status} ${await res.text()}`)
+  if (!res.ok) throw await responseError(res, 'open_file_failed')
 }
 
 // Cheap stat-level change marker for live tail; null = unsupported for this
@@ -194,13 +243,13 @@ export interface FsEntry {
 
 export async function fsList(dir: string): Promise<FsEntry[]> {
   const res = await fetch(`/api/fs/list?${new URLSearchParams({ dir })}`)
-  if (!res.ok) throw new Error(`Failed to list ${dir}: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'directory_list_failed')
   return res.json()
 }
 
 export async function fsRead(path: string): Promise<{ path: string; content: string; truncated: boolean; size: number }> {
   const res = await fetch(`/api/fs/read?${new URLSearchParams({ path })}`)
-  if (!res.ok) throw new Error(res.status === 415 ? '二进制文件无法预览' : `读取失败: ${res.status}`)
+  if (!res.ok) throw await responseError(res, res.status === 415 ? 'binary_file' : 'file_read_failed')
   return res.json()
 }
 
@@ -213,7 +262,7 @@ export interface AppSettings {
 
 export async function fetchSettings(): Promise<AppSettings> {
   const res = await fetch('/api/settings')
-  if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'settings_load_failed')
   return res.json()
 }
 
@@ -223,7 +272,7 @@ export async function saveSettings(settings: { editor_command?: string; file_ope
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
   })
-  if (!res.ok) throw new Error(`Failed to save settings: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'settings_save_failed')
 }
 
 export interface LLMModel {
@@ -360,7 +409,8 @@ function splitMetadataFence(raw: string): { rest: string; metadata: HandoffMetad
 
 function startsHandoffHeading(raw: string): boolean {
   const content = unwrapMarkdownFence(raw.trim())
-  return content === '# 任务交接' || content.startsWith('# 任务交接\n')
+  return content === '# 任务交接' || content.startsWith('# 任务交接\n') ||
+    content === '# Task handoff' || content.startsWith('# Task handoff\n')
 }
 
 function unwrapMarkdownFence(raw: string): string {
@@ -372,7 +422,7 @@ export type AIKind = 'summary' | 'title' | 'handoff'
 
 export async function fetchLLMProviders(): Promise<{ providers: LLMProvider[]; acp_agents: string[] }> {
   const res = await fetch('/api/llm/providers')
-  if (!res.ok) throw new Error(`获取模型源失败: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'providers_load_failed')
   return res.json()
 }
 
@@ -382,7 +432,7 @@ export async function addLLMProvider(input: LLMProviderInput): Promise<number> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'provider_save_failed')
   const data = await res.json() as { id: number }
   return data.id
 }
@@ -393,12 +443,12 @@ export async function updateLLMProvider(id: number, input: LLMProviderInput): Pr
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'provider_save_failed')
 }
 
 export async function deleteLLMProvider(id: number): Promise<void> {
   const res = await fetch(`/api/llm/providers/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'provider_delete_failed')
 }
 
 export async function setDefaultLLMProvider(id: number): Promise<void> {
@@ -407,7 +457,7 @@ export async function setDefaultLLMProvider(id: number): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider_id: id }),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'provider_save_failed')
 }
 
 // Validates a (possibly unsaved) provider config by fetching its model list.
@@ -420,7 +470,7 @@ export async function testLLMProvider(input: Partial<LLMProviderInput> & { provi
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'provider_test_failed')
   const data = await res.json() as { models: LLMModel[] }
   return data.models
 }
@@ -429,7 +479,7 @@ export async function fetchLatestGeneration(kind: AIKind, sessionId: string, age
   const params = new URLSearchParams({ agent })
   const res = await fetch(`/api/sessions/${sessionId}/ai/${kind}/latest?${params}`)
   if (res.status === 404) return null
-  if (!res.ok) throw new Error(`获取生成记录失败: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'generations_load_failed')
   return res.json()
 }
 
@@ -462,8 +512,8 @@ export async function generateAI(
     body: JSON.stringify({ ...(providerId ? { provider_id: providerId } : {}), ...(locale ? { locale } : {}) }),
     signal,
   })
-  if (res.status === 412) throw new NoProviderError(await res.text())
-  if (!res.ok || !res.body) throw new Error(await res.text() || `生成失败: ${res.status}`)
+  if (res.status === 412) throw new NoProviderError(localize('error.no_provider'))
+  if (!res.ok || !res.body) throw await responseError(res, 'generation_failed')
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -483,19 +533,19 @@ export async function generateAI(
         else if (line.startsWith('data: ')) data += line.slice(6)
       }
       if (!event || !data) continue
-      if (event === 'status') onStatus((JSON.parse(data) as { stage: string }).stage)
+      if (event === 'status') onStatus(localizedStage((JSON.parse(data) as { stage: string }).stage))
       else if (event === 'error') {
         const payload = JSON.parse(data) as { message: string; code?: string; provider_id?: number }
         if (payload.code === 'model_unavailable' && typeof payload.provider_id === 'number') {
-          throw new ModelUnavailableError(payload.message, payload.provider_id)
+          throw new ModelUnavailableError(localize('error.model_unavailable'), payload.provider_id)
         }
-        throw new Error(payload.message)
+        throw new APIError(payload.code || 'generation_failed', 500, payload.message)
       }
       else if (event === 'done') result = JSON.parse(data) as AIGeneration
     }
     if (done) break
   }
-  if (!result) throw new Error('生成中断：服务未返回结果')
+  if (!result) throw new APIError('generation_interrupted', 500)
   return result
 }
 
@@ -578,7 +628,7 @@ export async function fetchLatestInsight(sessionId: string, agent: string): Prom
   const params = new URLSearchParams({ agent })
   const res = await fetch(`/api/sessions/${sessionId}/ai/insight/latest?${params}`)
   if (res.status === 404) return null
-  if (!res.ok) throw new Error(`获取洞察失败: ${res.status}`)
+  if (!res.ok) throw await responseError(res, 'insights_load_failed')
   return res.json()
 }
 
@@ -587,7 +637,7 @@ export async function revokeInsightTargets(): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'insight_target_revoke_failed')
 }
 
 // Reasons the server refuses to start an insight generation, surfaced so the
@@ -608,21 +658,23 @@ export async function generateInsight(
   signal?: AbortSignal,
   providerId?: number,
   confirm?: boolean,
+  locale?: 'zh-CN' | 'en',
 ): Promise<InsightResult | SendPreview> {
   const res = await fetch(`/api/sessions/${sessionId}/ai/insight`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ provider_id: providerId || 0, confirm_target: !!confirm }),
+    body: JSON.stringify({ provider_id: providerId || 0, confirm_target: !!confirm, ...(locale ? { locale } : {}) }),
     signal,
   })
-  if (res.status === 412) throw new NoProviderError(await res.text())
-  if (res.status === 404) throw new InsightBlockedError('not_found', '会话不存在')
+  if (res.status === 412) throw new NoProviderError(localize('error.no_provider'))
+  if (res.status === 404) throw new InsightBlockedError('not_found', localize('error.session_not_found'))
   if (res.status === 409) {
-    const t = (await res.text()).trim()
-    throw new InsightBlockedError(t.includes('active') ? 'session_active' : 'session_changing', t)
+    const err = await responseError(res, 'session_changing')
+    const reason = err.code === 'session_active' ? 'session_active' : 'session_changing'
+    throw new InsightBlockedError(reason, err.message)
   }
-  if (res.status === 422) throw new InsightBlockedError('no_findings', '没有可分析的初步 Finding')
-  if (!res.ok || !res.body) throw new Error(await res.text() || `分析失败: ${res.status}`)
+  if (res.status === 422) throw new InsightBlockedError('no_findings', localize('error.no_findings'))
+  if (!res.ok || !res.body) throw await responseError(res, 'insight_failed')
 
   // A JSON body (not an event stream) is the send-confirmation preview.
   if ((res.headers.get('content-type') || '').includes('application/json')) {
@@ -646,13 +698,16 @@ export async function generateInsight(
         else if (line.startsWith('data: ')) data += line.slice(6)
       }
       if (!event || !data) continue
-      if (event === 'status') onStatus((JSON.parse(data) as { stage: string }).stage)
-      else if (event === 'error') throw new Error((JSON.parse(data) as { message: string }).message)
+      if (event === 'status') onStatus(localizedStage((JSON.parse(data) as { stage: string }).stage))
+      else if (event === 'error') {
+        const payload = JSON.parse(data) as { message?: string; code?: string }
+        throw new APIError(payload.code || 'insight_failed', 500, payload.message || '')
+      }
       else if (event === 'done') result = JSON.parse(data) as InsightResult
     }
     if (done) break
   }
-  if (!result) throw new Error('分析中断：服务未返回结果')
+  if (!result) throw new APIError('insight_interrupted', 500)
   return result
 }
 
@@ -663,13 +718,13 @@ export async function setSessionTitle(sessionId: string, agent: string, title: s
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title }),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'title_save_failed')
 }
 
 export async function removeSessionTitle(sessionId: string, agent: string): Promise<void> {
   const params = new URLSearchParams({ agent })
   const res = await fetch(`/api/sessions/${sessionId}/title?${params}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await responseError(res, 'title_remove_failed')
 }
 
 // Subscribe to the backend's sessions_changed SSE stream (fed by the file
@@ -692,7 +747,7 @@ export function watchSessionsChanged(
 async function readJson<T>(res: Response, label: string): Promise<T> {
   const contentType = res.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {
-    throw new Error(`Failed to fetch ${label}: expected JSON, got ${contentType || 'unknown content type'}`)
+    throw new APIError('invalid_response', res.status, `Expected JSON for ${label}; got ${contentType || 'unknown content type'}`)
   }
   return res.json()
 }

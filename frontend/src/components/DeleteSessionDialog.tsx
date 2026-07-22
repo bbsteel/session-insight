@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { deleteSession, stopSession, SessionRunningError } from '../api'
 import type { SessionSummary } from '../types'
 import { getAgentLabel } from '../sidebarRows'
+import { useI18n } from '../i18n'
 
 interface DeleteSessionDialogProps {
   session: SessionSummary
@@ -15,6 +16,7 @@ interface DeleteSessionDialogProps {
 type Phase = 'confirm' | 'deleting' | 'running' | 'stopping' | 'stopped'
 
 export default function DeleteSessionDialog({ session, onClose, onDeleted }: DeleteSessionDialogProps) {
+  const { t } = useI18n()
   const [phase, setPhase] = useState<Phase>('confirm')
   const [pids, setPids] = useState<number[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -44,7 +46,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
         setPids(err.pids)
         setPhase('running')
       } else {
-        setError(err instanceof Error ? err.message : '删除失败')
+        setError(err instanceof Error ? err.message : t('delete.failed'))
         setPhase('confirm')
       }
     }
@@ -57,7 +59,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
       await stopSession(session.id)
       setPhase('stopped')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '停止失败')
+      setError(err instanceof Error ? err.message : t('delete.stopFailed'))
       setPhase('running')
     }
   }
@@ -71,10 +73,10 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="删除会话"
+        aria-label={t('delete.title')}
         className="fixed left-1/2 top-1/3 z-[calc(var(--z-toast,50)+2)] w-[420px] -translate-x-1/2 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 shadow-lg"
       >
-        <h3 className="text-nav font-semibold text-[var(--text-primary)]">删除会话</h3>
+        <h3 className="text-nav font-semibold text-[var(--text-primary)]">{t('delete.title')}</h3>
         <div className="mt-2 text-body text-[var(--text-secondary)] break-all">
           <span className="text-[var(--text-primary)]">{sessionName}</span>
           <span className="ml-1.5 text-meta text-[var(--text-muted)]">{getAgentLabel(session.agent_type)}</span>
@@ -82,41 +84,40 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
 
         {(phase === 'confirm' || phase === 'deleting') && (
           <p className="mt-3 text-body text-[var(--text-secondary)]">
-            将从磁盘永久删除该会话的原始记录文件、Agent 全局历史中的对应条目，
-            以及本站的索引、书签和 AI 生成记录。<span className="text-[var(--error)]">此操作不可恢复。</span>
+            {t('delete.confirm')} <span className="text-[var(--error)]">{t('delete.irreversible')}</span>
           </p>
         )}
         {(phase === 'running' || phase === 'stopping') && (
           <p className="mt-3 text-body text-[var(--text-secondary)]">
-            该会话正在运行
+            {t('delete.running')}
             {pids.length > 0 ? (
               <>
-                （PID{' '}
+                {t('delete.pidPrefix')}
                 {pids.map((pid, i) => (
                   <span key={pid}>
-                    {i > 0 && '、'}
+                    {i > 0 && ', '}
                     <button
                       onClick={() => copyPid(pid)}
-                      title="点击复制 PID"
+                      title={t('delete.copyPid')}
                       className="font-mono font-semibold text-[var(--error)] hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)] rounded-sm"
                     >
                       {pid}
                     </button>
                   </span>
                 ))}
-                ）
-                ，无法直接删除。请先在对应终端结束它，或点击"强制停止"结束该进程后再删除。
+                {t('delete.pidSuffix')}
+                {t('delete.runningWithPid')}
               </>
             ) : (
               // 无精确 PID 的 agent（opencode/chrys）：只能拦截，
               // 不能替用户杀进程，请求用户自行结束后重试。
-              <>，无法直接删除。该类 agent 无法定位具体进程，请在对应工具中结束该会话后点击"重试删除"。</>
+              <>{t('delete.runningWithoutPid')}</>
             )}
           </p>
         )}
         {phase === 'stopped' && (
           <p className="mt-3 text-body text-[var(--text-secondary)]">
-            会话进程已停止，现在可以执行删除。<span className="text-[var(--error)]">此操作不可恢复。</span>
+            {t('delete.stopped')} <span className="text-[var(--error)]">{t('delete.irreversible')}</span>
           </p>
         )}
         {error && <p className="mt-2 text-meta text-[var(--error)] break-all">{error}</p>}
@@ -124,14 +125,14 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
         <div className="mt-4 flex items-center justify-end gap-2">
           {/* 复制反馈固定在底部按钮行左侧，不插入正文，避免文字被推挤 */}
           {copiedPid !== null && (
-            <span className="mr-auto text-meta text-[var(--success)]">已复制 PID {copiedPid}</span>
+            <span className="mr-auto text-meta text-[var(--success)]">{t('delete.pidCopied', { pid: copiedPid })}</span>
           )}
           <button
             onClick={onClose}
             disabled={busy}
             className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-50 transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
-            取消
+            {t('common.cancel')}
           </button>
           {(phase === 'running' || phase === 'stopping') && pids.length > 0 ? (
             <button
@@ -139,7 +140,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
               disabled={busy}
               className="h-7 px-3 rounded-md bg-[var(--error)] text-nav text-white hover:opacity-90 disabled:opacity-50 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)]"
             >
-              {phase === 'stopping' ? '正在停止…' : '强制停止'}
+              {t(phase === 'stopping' ? 'delete.stopping' : 'delete.forceStop')}
             </button>
           ) : (
             <button
@@ -147,7 +148,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
               disabled={busy}
               className="h-7 px-3 rounded-md bg-[var(--error)] text-nav text-white hover:opacity-90 disabled:opacity-50 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)]"
             >
-              {phase === 'deleting' ? '正在删除…' : phase === 'running' ? '重试删除' : '永久删除'}
+              {t(phase === 'deleting' ? 'delete.deleting' : phase === 'running' ? 'delete.retry' : 'delete.permanent')}
             </button>
           )}
         </div>

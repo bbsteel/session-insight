@@ -42,6 +42,12 @@ For **every** change set (including small fixes and agent-instruction edits):
 6. After merge (by user or explicit request), continue the next task from a **new** branch off updated **`origin/main`** (fetch first). Do not merge the feature branch into local `main` as a substitute for the remote PR merge. Do not reuse the previous feature branch as the base for the next task without rebasing onto fresh `origin/main`.
 7. **Delete the remote feature branch after the PR is merged** (e.g. `git push origin --delete <branch>`) to keep the repository tidy.
 
+### GitHub authentication from sandboxed agents
+
+- A sandboxed command may be unable to access the host keyring even when the user has a valid `gh` login. If `gh auth status` fails inside the sandbox, do not immediately conclude that the stored credential is invalid or ask the user to log in again.
+- Re-run the minimal `gh auth status` check with the environment's controlled sandbox-escalation mechanism. If the host login is valid, use similarly scoped, approved sandbox-external `gh` commands for the required PR operation.
+- Escalate only the GitHub command needed for the workflow; do not use authentication troubleshooting as permission to run unrelated commands outside the sandbox. Never print or request the user's token.
+
 ### Local `main` is remote-only (required)
 
 Local `main` is a **mirror of `origin/main`**, not a place to integrate feature work.

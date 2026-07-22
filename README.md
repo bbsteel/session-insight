@@ -6,7 +6,7 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 
 [中文](README_ZH.md)
 
-![Session replay with tool calls and semantic minimap](assets/screenshots/replay.png)
+![Session replay with tool calls and semantic minimap](assets/screenshots/en/replay.png)
 
 <p align="center"><sub>Real development session shown with personal paths and contact details sanitized.</sub></p>
 
@@ -26,11 +26,11 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 
 | Interaction messages | Settings and fonts |
 |:--:|:--:|
-| ![Combined user and assistant message navigation](assets/screenshots/interaction.png) | ![Settings center with UI and terminal font controls](assets/screenshots/settings.png) |
+| ![Combined user and assistant message navigation](assets/screenshots/en/interaction.png) | ![Settings center with UI and terminal font controls](assets/screenshots/en/settings.png) |
 
 | Session analytics | Structured code reader |
 |:--:|:--:|
-| ![Token, cache, tool usage, and anomaly analytics](assets/screenshots/analytics.png) | ![File tree, code view, search, and document outline](assets/screenshots/code-reader.png) |
+| ![Token, cache, tool usage, and anomaly analytics](assets/screenshots/en/analytics.png) | ![File tree, code view, search, and document outline](assets/screenshots/en/code-reader.png) |
 
 ## Supported Agents
 
@@ -107,6 +107,17 @@ random loopback port on the first run and reuses the same port on subsequent
 restarts (persisted to `.runtime/session-insight.port`), with an isolated
 `.runtime/session-insight` data directory. The `Ready:` line reports the
 actual full application URL.
+
+### Contributing localized UI
+
+Every new or changed user-facing string must be added to both `en` and `zh-CN` in `frontend/src/i18n.tsx` and rendered through `t(...)`. Keep raw session text, tool output, and file content unchanged. Before opening a PR, run:
+
+```bash
+npm --prefix frontend run test:i18n
+npm --prefix frontend run test:i18n-source
+```
+
+Rendered UI changes must also be checked in both languages against the full app. Update the source ratchet only when removing or intentionally migrating legacy literals, and review the baseline diff.
 
 ## Privacy
 

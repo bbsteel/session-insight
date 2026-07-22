@@ -81,7 +81,7 @@ func (s *Server) handleRevokeInsightTargets(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := s.DB.SetSetting(confirmedTargetsKey, ""); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "insight_failed", err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -188,28 +188,36 @@ type sendPreview struct {
 // persistence. It is invoked from handleAIGenerate for kind == "insight".
 func (s *Server) generateInsight(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
-		ProviderID    int64 `json:"provider_id"`
-		ConfirmTarget bool  `json:"confirm_target"`
+		ProviderID    int64  `json:"provider_id"`
+		ConfirmTarget bool   `json:"confirm_target"`
+		Locale        string `json:"locale"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
 
 	provider, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "insight_failed", err.Error())
 		return
 	}
 	if provider == nil {
-		http.Error(w, "未配置模型:请先在设置中添加 AI 模型", http.StatusPreconditionFailed)
+		writeAPIError(w, http.StatusPreconditionFailed, "no_provider")
 		return
 	}
 
 	snap, status, msg := s.buildInsightSnapshot(id)
 	if snap == nil {
-		http.Error(w, msg, status)
+		code := msg
+		if code == "session not found" {
+			code = "session_not_found"
+		}
+		writeAPIError(w, status, code)
 		return
 	}
 	if len(snap.bundle.Findings) == 0 {
-		http.Error(w, "no_findings", http.StatusUnprocessableEntity)
+		writeAPIError(w, http.StatusUnprocessableEntity, "no_findings")
 		return
 	}
 
@@ -219,7 +227,7 @@ func (s *Server) generateInsight(w http.ResponseWriter, r *http.Request, id stri
 	fp := modelTargetFingerprint(provider)
 
 	if !s.targetConfirmed(fp) && !req.ConfirmTarget {
-		writeJSON(w, buildSendPreview(redacted, redactStats, provider, fp))
+		writeJSON(w, buildSendPreview(redacted, redactStats, provider, fp, req.Locale))
 		return
 	}
 	// Confirmation covers only this target; a later endpoint change re-triggers
@@ -264,11 +272,11 @@ func (s *Server) generateInsight(w http.ResponseWriter, r *http.Request, id stri
 	var raw string
 	if sg, ok := client.(llm.SystemPromptGenerator); ok {
 		// API path: real system role separating instruction from untrusted data.
-		raw, err = sg.GenerateWithSystem(ctx, insight.SystemInstruction(), userMsg, onStatus)
+		raw, err = sg.GenerateWithSystem(ctx, insight.SystemInstructionForLocale(req.Locale), userMsg, onStatus)
 	} else {
 		// ACP path: weaker boundary — instruction then JSON in one tool-less
 		// message; safety rests on isolation + validation, not the separator.
-		combined, cErr := insight.BuildCombinedPrompt(redacted)
+		combined, cErr := insight.BuildCombinedPrompt(redacted, req.Locale)
 		if cErr != nil {
 			sendEvent("error", map[string]string{"message": cErr.Error()})
 			return
@@ -356,7 +364,7 @@ func (s *Server) insightFreshness(gen *db.AIGeneration, rd reader.BaseSessionRea
 	}
 }
 
-func buildSendPreview(redacted insight.Bundle, stats insight.RedactionStats, provider *db.LLMProvider, fp string) sendPreview {
+func buildSendPreview(redacted insight.Bundle, stats insight.RedactionStats, provider *db.LLMProvider, fp, locale string) sendPreview {
 	charCount, truncated := 0, 0
 	for _, f := range redacted.Facts {
 		charCount += len([]rune(f.Statement))
@@ -370,15 +378,27 @@ func buildSendPreview(redacted insight.Bundle, stats insight.RedactionStats, pro
 	} else if provider.BaseURL != "" {
 		label += "（" + provider.BaseURL + "）"
 	}
+	categories := []string{"会话元数据", "初步 Findings 指标", "证据事实（Turn 摘要/工具错误/subagent 委派）", "账单与上下文指标"}
+	note := "已对已知凭据格式、邮箱与本机 home 路径做确定性脱敏；这不能保证识别所有自然语言 PII。仅本次目标授权，可在设置中撤销。"
+	if locale == "en" {
+		label = provider.Name
+		if provider.Kind == "acp" {
+			label += " (ACP:" + provider.Agent + ")"
+		} else if provider.BaseURL != "" {
+			label += " (" + provider.BaseURL + ")"
+		}
+		categories = []string{"Session metadata", "Preliminary finding metrics", "Evidence facts (turn summaries, tool errors, and subagent delegation)", "Billing and context metrics"}
+		note = "Known credential formats, email addresses, and local home paths were deterministically redacted. This cannot guarantee detection of all natural-language PII. Authorization applies only to this target and can be revoked in Settings."
+	}
 	return sendPreview{
 		NeedsConfirmation: true,
 		TargetFingerprint: fp,
 		TargetLabel:       label,
-		DataCategories:    []string{"会话元数据", "初步 Findings 指标", "证据事实（Turn 摘要/工具错误/subagent 委派）", "账单与上下文指标"},
+		DataCategories:    categories,
 		FactCount:         len(redacted.Facts),
 		CharCount:         charCount,
 		TruncatedCount:    truncated,
 		RedactedCount:     stats.Total(),
-		Note:              "已对已知凭据格式、邮箱与本机 home 路径做确定性脱敏；这不能保证识别所有自然语言 PII。仅本次目标授权，可在设置中撤销。",
+		Note:              note,
 	}
 }

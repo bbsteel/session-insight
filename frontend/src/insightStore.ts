@@ -91,7 +91,7 @@ function finalizeStages(id: string) {
   }
 }
 
-export function start(id: string, confirm: boolean, providerId = 0) {
+export function start(id: string, confirm: boolean, providerId = 0, locale: 'zh-CN' | 'en' = 'zh-CN') {
   const e = entry(id)
   if (e.current.status === 'running') return
   const ac = new AbortController()
@@ -99,7 +99,7 @@ export function start(id: string, confirm: boolean, providerId = 0) {
   e.lastAt = performance.now()
   patch(id, { status: 'running', stages: [], error: null, blocked: null, preview: null, noProvider: false })
 
-  generateInsight(id, stage => onStage(id, stage), ac.signal, providerId, confirm)
+  generateInsight(id, stage => onStage(id, stage), ac.signal, providerId, confirm, locale)
     .then(out => {
       if (ac.signal.aborted) return
       if ('needs_confirmation' in out) {

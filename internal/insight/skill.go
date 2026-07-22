@@ -23,6 +23,15 @@ var skillSystem string
 // SystemInstruction returns the immutable analysis instruction.
 func SystemInstruction() string { return skillSystem }
 
+// SystemInstructionForLocale keeps the versioned analysis policy intact while
+// selecting the language of human-readable output fields.
+func SystemInstructionForLocale(locale string) string {
+	if locale == "en" {
+		return skillSystem + "\n\nLanguage requirement: write every human-readable value in the output JSON in English. Keep schema keys, enum values, evidence IDs, code identifiers, file paths, commands, and quoted source text unchanged."
+	}
+	return skillSystem
+}
+
 // BuildUserMessage serializes the evidence bundle as the user message. The
 // bundle is produced by a JSON serializer, never string-concatenated into the
 // prompt: XML tags or markdown fences are for readability only and are not a
@@ -47,10 +56,14 @@ func BuildUserMessage(b Bundle) (string, error) {
 // weaker boundary than a real system message, so the ACP path must still rely
 // on tool-less isolation, strict JSON serialization and output validation — the
 // separator is not the security mechanism.
-func BuildCombinedPrompt(b Bundle) (string, error) {
+func BuildCombinedPrompt(b Bundle, locale ...string) (string, error) {
 	user, err := BuildUserMessage(b)
 	if err != nil {
 		return "", err
 	}
-	return skillSystem + "\n\n---\n\n" + user, nil
+	instruction := skillSystem
+	if len(locale) > 0 {
+		instruction = SystemInstructionForLocale(locale[0])
+	}
+	return instruction + "\n\n---\n\n" + user, nil
 }

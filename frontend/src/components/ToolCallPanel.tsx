@@ -355,7 +355,7 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
               <div
                 className="flex cursor-pointer items-stretch hover:bg-[var(--bg-surface-hover)]"
                 onClick={() => jump(e)}
-                title={`跳转到终端第 ${e.line} 行 · Turn ${e.turn}`}
+                title={t('panel.jumpLineTurn', { line: e.line, turn: e.turn })}
               >
                 {/* 展开三角列:悬停只高亮这一列的背景,与"点行跳转"区分。 */}
                 <div

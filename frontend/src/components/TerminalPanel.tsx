@@ -16,6 +16,7 @@ import {
   useTerminalFont,
   useTerminalFontSize,
 } from '../fontPrefs'
+import { useI18n } from '../i18n'
 
 // Text the backend renders for a chrys turn still in progress; the frontend
 // finds this row and overlays a spinning hourglass. Keep in sync with the
@@ -29,10 +30,9 @@ const PROGRESS_SCAN_ROWS = 400
 // 1 cell …, so the row text ends at cell 8; the button starts one cell
 // later). Shown only while live follow is on; clicking it pauses follow.
 const PROGRESS_HINT_X = 10
-const PROGRESS_HINT_TEXT = '跟随中 · 点击暂停'
 // Cell width of PROGRESS_HINT_TEXT (CJK glyphs are double-width), plus slack
 // for the button padding so the last glyph never clips.
-const PROGRESS_HINT_CELLS = 19
+const PROGRESS_HINT_CELLS = 32
 
 // Diagnostic instrumentation for the intermittent "scroll → blank screen,
 // recovers after a few clicks" symptom. Logs are prefixed [si-term] so they
@@ -151,6 +151,8 @@ type XtermCoreWithMouse = {
 }
 
 export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
+  const { t } = useI18n()
+  const translatorRef = useRef(t)
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onScrollMetricsRef = useRef(onScrollMetrics)
@@ -222,6 +224,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   // decoration closures; this ref lets the userPositions effect re-apply
   // them without re-mounting the terminal.
   const applyUserHighlightsRef = useRef<(() => void) | null>(null)
+  const relocalizeTerminalRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -320,10 +323,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // disposed — always clear these before a rewrite, not just after.
     let progressDecoration: IDecoration | null = null
     let progressHintDecoration: IDecoration | null = null
+    let progressHintElement: HTMLElement | null = null
     let progressMarker: IMarker | null = null
     const disposeProgressHint = () => {
       progressHintDecoration?.dispose()
       progressHintDecoration = null
+      progressHintElement = null
     }
     const clearProgress = () => {
       progressDecoration?.dispose()
@@ -347,6 +352,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       }
       if (!hintDecoration) return
       hintDecoration.onRender(element => {
+        progressHintElement = element
         if (element.dataset.siFollowHint) return // onRender fires per xterm paint
         element.dataset.siFollowHint = '1'
         const bgIdle = 'color-mix(in srgb, var(--accent-green) 15%, transparent)'
@@ -358,8 +364,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         element.style.padding = '0 4px'
         element.style.color = 'var(--accent-green)'
         element.style.background = bgIdle
-        element.textContent = PROGRESS_HINT_TEXT
-        element.title = '暂停跟随，自由浏览之前的消息'
+        element.textContent = translatorRef.current('terminal.followingHint')
+        element.title = translatorRef.current('terminal.pauseFollow')
         element.addEventListener('mouseenter', () => { element.style.background = bgHover })
         element.addEventListener('mouseleave', () => { element.style.background = bgIdle })
         element.addEventListener('click', e => {
@@ -510,7 +516,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       }
       stickyBarEl.style.display = 'flex'
       if (stickyLabelEl) {
-        stickyLabelEl.textContent = `↑ 用户消息${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
+        stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
       }
       if (stickyTextEl) {
         const text = next.text || ''
@@ -632,10 +638,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         'white-space:nowrap', 'overflow:hidden',
         'border-bottom:1px solid var(--border-default)',
       ].join(';')
-      stickyBarEl.title = '点击返回这条用户消息'
+      stickyBarEl.title = translatorRef.current('terminal.returnUserMessage')
       stickyBarEl.setAttribute('role', 'button')
       stickyBarEl.setAttribute('tabindex', '0')
-      stickyBarEl.setAttribute('aria-label', '返回用户消息')
+      stickyBarEl.setAttribute('aria-label', translatorRef.current('terminal.returnUserMessageLabel'))
       onStickyKeyDown = (e: KeyboardEvent) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
@@ -645,7 +651,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       stickyBarEl.addEventListener('click', onStickyClick)
       stickyBarEl.addEventListener('keydown', onStickyKeyDown)
       stickyLabelEl = document.createElement('span')
-      stickyLabelEl.textContent = '↑ 用户消息'
+      stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}`
       stickyLabelEl.style.cssText = [
         'flex-shrink:0', 'font-weight:600',
         'color:var(--accent-blue)',
@@ -885,7 +891,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       }
       const makeFoldMatcher = (): TerminalLineMatcher<FoldRange> => ({
         match: () => null, // rows come from fold geometry, not text scanning
-        tooltip: '收起/展开内容',
+        tooltip: translatorRef.current('terminal.toggleContent'),
         onActivate: (bufLine, fold, _matchIndex, meta) => {
           const groupStart = wrapGroupStart(bufLine)
           const joined = joinWrappedLineText(groupStart)
@@ -924,7 +930,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           const matcher: TerminalLineMatcher<unknown> = hasPath
             ? {
                 ...foldMatcher,
-                tooltip: '打开文件（编辑器 / 新 Tab）· 菜单内可展开/收起',
+                tooltip: translatorRef.current('terminal.fileMenuHint'),
               }
             : foldMatcher
           const entry = { matcher, data: f, matchIndex: 0 }
@@ -1106,11 +1112,38 @@ const snapshotTerminal = () => {
       }
 
       const recompose = (afterWrite?: () => void) => {
-        foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys)
+        foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines'))
         writeComposed(() => {
           afterWrite?.()
           onFoldChangeRef.current?.()
         })
+      }
+
+      relocalizeTerminalRef.current = () => {
+        if (progressHintElement) {
+          progressHintElement.textContent = translatorRef.current('terminal.followingHint')
+          progressHintElement.title = translatorRef.current('terminal.pauseFollow')
+        }
+        if (stickyBarEl) {
+          stickyBarEl.title = translatorRef.current('terminal.returnUserMessage')
+          stickyBarEl.setAttribute('aria-label', translatorRef.current('terminal.returnUserMessageLabel'))
+        }
+        if (stickyLabelEl) {
+          const seq = currentStickyRange?.seq
+          stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof seq === 'number' ? ` #${seq}` : ''}`
+        }
+        if (foldView) {
+          const anchorOriginal = toOriginalLine(term.buffer.active.viewportY)
+          const viewportOffset = toDisplayLine(anchorOriginal) - term.buffer.active.viewportY
+          foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines'))
+          writeComposed(() => {
+            term.scrollToLine(Math.max(0, toDisplayLine(anchorOriginal) - viewportOffset))
+            onFoldChangeRef.current?.()
+          })
+        } else {
+          scanBuffer()
+          injectFoldRows()
+        }
       }
 
       const toggleFold = (fold: FoldRange) => {
@@ -1305,7 +1338,7 @@ const snapshotTerminal = () => {
           .then(ansi => {
             if (disposed) return
             rawAnsi = ansi
-            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys) : null
+            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
             writeComposed(() => {
               if (foldView) onFoldChangeRef.current?.()
             })
@@ -1468,7 +1501,7 @@ const snapshotTerminal = () => {
 
             const keepRow = buf.viewportY
             rawAnsi = ansi
-            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys) : null
+            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
             await new Promise<void>(resolve => writeComposed(() => {
               if (pinBottom) {
                 openAtTop = false
@@ -1628,10 +1661,16 @@ const snapshotTerminal = () => {
       applyFoldsRef.current = null
       applyUserHighlightsRef.current = null
       followWakeRef.current = null
+      relocalizeTerminalRef.current = null
       termRef.current = null
       term.dispose()
     }
   }, [sessionId, tsKinds, terminalFont, terminalFontFamily, terminalFontSize])
+
+  useEffect(() => {
+    translatorRef.current = t
+    relocalizeTerminalRef.current?.()
+  }, [t])
 
   useEffect(() => {
     if (termRef.current) {
@@ -1683,11 +1722,11 @@ const snapshotTerminal = () => {
           }}
         >
           <span style={{ flex: 1 }}>
-            ⚠ 未开启浏览器硬件加速（WebGL 不可用），部分会话的终端化渲染（如中文表格边框对齐）可能有偏差。开启浏览器硬件加速后刷新即可修复。
+            ⚠ {t('terminal.webglWarning')}
           </span>
           <button
             onClick={dismissWebglWarn}
-            title="不再提示"
+            title={t('terminal.dismissWarning')}
             style={{
               flexShrink: 0,
               border: 'none',

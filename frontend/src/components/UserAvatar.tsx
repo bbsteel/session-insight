@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { getUserAvatar, subscribeUserAvatar } from '../userAvatar'
 import { UserIcon } from './icons'
+import { useI18n } from '../i18n'
 
 // 交互消息面板/设置共用的用户头像:设置了自定义图像则渲染圆形 img,
 // 否则渲染内置人头图标。默认图标不设底圈、按 size 全尺寸描边渲染,
@@ -15,12 +16,13 @@ interface Props {
 }
 
 export default function UserAvatar({ size = 14, className = '' }: Props) {
+  const { t } = useI18n()
   const avatar = useUserAvatar()
   if (avatar) {
     return (
       <img
         src={avatar}
-        alt="用户头像"
+        alt={t('avatar.user')}
         className={`flex-shrink-0 rounded-full object-cover ${className}`}
         style={{ width: size, height: size }}
         draggable={false}

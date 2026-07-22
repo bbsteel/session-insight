@@ -101,6 +101,18 @@ func TestInsightNoProviderReturns412(t *testing.T) {
 	}
 }
 
+func TestInsightMalformedRequestReturns400(t *testing.T) {
+	s := newInsightServer(t, findingDetail())
+	w := postInsight(t, s, `{"locale":`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("malformed request should be 400 before provider resolution, got %d: %s", w.Code, w.Body.String())
+	}
+	var apiErr apiError
+	if err := json.Unmarshal(w.Body.Bytes(), &apiErr); err != nil || apiErr.Code != "invalid_request" {
+		t.Fatalf("malformed request error contract: body=%q error=%v decoded=%+v", w.Body.String(), err, apiErr)
+	}
+}
+
 func TestInsightSessionNotFound(t *testing.T) {
 	s := newInsightServer(t, findingDetail())
 	addProvider(t, s, "http://unused")
@@ -143,7 +155,7 @@ func TestInsightNoFindings(t *testing.T) {
 func TestInsightUnconfirmedTargetReturnsPreview(t *testing.T) {
 	s := newInsightServer(t, findingDetail())
 	addProvider(t, s, "http://unused")
-	w := postInsight(t, s, `{}`) // no confirm
+	w := postInsight(t, s, `{"locale":"en"}`) // no confirm
 	if w.Code != http.StatusOK {
 		t.Fatalf("preview should be 200, got %d", w.Code)
 	}
@@ -153,6 +165,12 @@ func TestInsightUnconfirmedTargetReturnsPreview(t *testing.T) {
 	}
 	if !pv.NeedsConfirmation || pv.FactCount == 0 || pv.TargetFingerprint == "" {
 		t.Errorf("bad preview: %+v", pv)
+	}
+	if !strings.Contains(pv.Note, "redacted") || len(pv.DataCategories) == 0 || pv.DataCategories[0] != "Session metadata" {
+		t.Errorf("English preview was not localized: %+v", pv)
+	}
+	if pv.TargetLabel != "fake (http://unused)" {
+		t.Errorf("English target label should use ASCII parentheses: %q", pv.TargetLabel)
 	}
 }
 

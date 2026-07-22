@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../i18n'
 
 export interface ProjectEntry {
   name: string
@@ -30,6 +31,7 @@ function FolderIcon({ size = 16 }: { size?: number }) {
 }
 
 export default function ProjectFilter({ projects, selected, onSelect }: ProjectFilterProps) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -37,7 +39,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
 
   const total = projects.reduce((n, p) => n + p.session_count, 0)
   const selectedEntry = selected ? projects.find(p => p.name === selected) : undefined
-  const label = selectedEntry?.name ?? 'All Projects'
+  const label = selectedEntry?.name ?? t('filter.allProjects')
   const count = selectedEntry?.session_count ?? total
 
   useEffect(() => {
@@ -107,7 +109,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
         {open && (
           <div
             role="listbox"
-            aria-label="按项目筛选会话"
+            aria-label={t('filter.projectsLabel')}
             className="absolute top-full mt-1 left-0 right-0 z-[var(--z-dropdown)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg"
           >
             {/* Search box */}
@@ -119,7 +121,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
                 <input
                   ref={searchRef}
                   type="text"
-                  placeholder="搜索项目..."
+                  placeholder={t('filter.searchProjects')}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   className="w-full h-7 rounded border border-[var(--border-default)] bg-[var(--bg-inset)] pl-6 pr-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
@@ -140,7 +142,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
                   }`}
                 >
                   <span className="text-[var(--text-muted)] flex-shrink-0"><FolderIcon size={16} /></span>
-                  <span className="text-body text-[var(--text-primary)] truncate">All Projects</span>
+                  <span className="text-body text-[var(--text-primary)] truncate">{t('filter.allProjects')}</span>
                   <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
                 </button>
               )}
@@ -163,7 +165,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
               ))}
 
               {visible.length === 0 && (
-                <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">无匹配项目</div>
+                <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noProjects')}</div>
               )}
             </div>
           </div>

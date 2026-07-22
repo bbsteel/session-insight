@@ -90,7 +90,7 @@ export interface FoldView {
   toComposedLogical(orig: number): number
 }
 
-export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: ReadonlySet<string>): FoldView {
+export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: ReadonlySet<string>, lineUnit = 'lines'): FoldView {
   const collapsedFolds = folds.filter(f => collapsed.has(f.key))
   // De-nest: when a group is collapsed it already hides its member tool folds,
   // so drop any collapsed range fully contained in another collapsed range.
@@ -121,7 +121,7 @@ export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: Rea
       // when a long untruncated summary soft-wraps. offset < 0 (e.g. group
       // headers) → append before the line's trailing reset.
       const flipped = line.replace('▼', '▶')
-      const badge = `\x1b[2m (${hidden} 行)\x1b[0m`
+      const badge = `\x1b[2m (${hidden} ${lineUnit})\x1b[0m`
       if (offset >= 0 && offset <= flipped.length) {
         return flipped.slice(0, offset) + badge + flipped.slice(offset)
       }

@@ -7,11 +7,12 @@ import {
   type ThemePreference,
 } from '../theme'
 import { MoonIcon, SunIcon } from './icons'
+import { useI18n } from '../i18n'
 
-const OPTIONS: { value: ThemePreference; label: string }[] = [
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-  { value: 'system', label: '跟随系统' },
+const OPTIONS: { value: ThemePreference; labelKey: string }[] = [
+  { value: 'light', labelKey: 'theme.light' },
+  { value: 'dark', labelKey: 'theme.dark' },
+  { value: 'system', labelKey: 'theme.system' },
 ]
 
 function useThemePref(): [ThemePreference, boolean, (p: ThemePreference) => void] {
@@ -35,17 +36,18 @@ function useThemePref(): [ThemePreference, boolean, (p: ThemePreference) => void
 /** Settings-panel select: light / dark / system. */
 export function ThemeSelect() {
   const [pref, , setPref] = useThemePref()
+  const { t } = useI18n()
   return (
     <label className="flex items-center justify-between gap-2 text-helper text-[var(--text-primary)]">
-      主题
+      {t('theme.label')}
       <select
         value={pref}
         onChange={e => setPref(e.target.value as ThemePreference)}
         className="h-7 max-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-1.5 text-helper text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
-        aria-label="主题"
+        aria-label={t('theme.label')}
       >
         {OPTIONS.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
+          <option key={o.value} value={o.value}>{t(o.labelKey)}</option>
         ))}
       </select>
     </label>
@@ -55,9 +57,10 @@ export function ThemeSelect() {
 /** Header theme toggle. Shows both sun and moon icons; the active one is framed. */
 export function ThemeSwitch() {
   const [pref, dark, setPref] = useThemePref()
+  const { t } = useI18n()
   const nextTheme: ThemePreference = dark ? 'light' : 'dark'
-  const currentLabel = dark ? '深色' : '浅色'
-  const nextLabel = dark ? '浅色' : '深色'
+  const currentLabel = t(dark ? 'theme.dark' : 'theme.light')
+  const nextLabel = t(dark ? 'theme.light' : 'theme.dark')
 
   const activeIconBox =
     'flex h-5 w-6 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-sm'
@@ -68,10 +71,10 @@ export function ThemeSwitch() {
       type="button"
       onClick={() => setPref(nextTheme)}
       aria-pressed={dark}
-      aria-label={`切换到${nextLabel}主题`}
+      aria-label={t('theme.switchTo', { theme: nextLabel })}
       title={pref === 'system'
-        ? `当前跟随系统（${currentLabel}）；点击切换到${nextLabel}`
-        : `当前为${currentLabel}；点击切换到${nextLabel}`}
+        ? t('theme.systemTitle', { current: currentLabel, next: nextLabel })
+        : t('theme.currentTitle', { current: currentLabel, next: nextLabel })}
       className="inline-flex h-7 w-14 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-primary)] shadow-sm transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
     >
       <span className="flex w-full items-center justify-between px-1">
