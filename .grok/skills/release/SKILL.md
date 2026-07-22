@@ -85,21 +85,34 @@ approval when the version was auto-proposed.
 
 Write notes from the actual diff and commit subjects since `PREV_TAG`.
 Group and rewrite into product language — do not dump raw commit subjects
-as the final notes. Prefer **short** notes over exhaustive ones.
+as the final notes.
+
+### Core writing rules (required)
+
+1. **有多少说多少 (say only what shipped).** List every real user-facing
+   change once. Do not pad bullets to fill a template, invent items, or
+   stretch thin releases into long notes. Do not hide real changes either —
+   if there are five distinct wins, write five; if there are two, write two.
+2. **One change → one section only.** If an item appears under Highlights,
+   it must **not** also appear under Features, Bug Fixes, or Other (even
+   reworded, even with a different bold area prefix). Same rule across any
+   pair of sections. Pick the best home and stop.
+3. **Omit empty sections.** No empty `## Features` / `## 新功能` / etc.
+   just because the template lists them.
 
 ### Required structure (English first, then Chinese)
 
-Sections are optional when empty. Use only what earns a place:
+Use only sections that have content:
 
 ```markdown
 ## Highlights
-- **Short title**: one-line impact for the 2–4 biggest user-facing wins
+- **Short title**: one-line impact for the biggest user-facing wins
 
 ## Features
-- **area**: additional shipped work not already covered in Highlights
+- **area**: other user-facing additions not listed under Highlights
 
 ## Bug Fixes
-- **area**: what was broken and is now fixed (not restated above)
+- **area**: what was broken and is now fixed (only items not listed above)
 
 ## Other
 - optional: docs, CI, internal notes worth mentioning
@@ -121,39 +134,38 @@ Sections are optional when empty. Use only what earns a place:
 **Full Changelog**: https://github.com/<owner>/<repo>/compare/<PREV_TAG>...<NEW_TAG>
 ```
 
-### Anti-duplication (required — avoid v0.3.2-style bloat)
+### How to place each change
 
-**Each user-facing change appears in exactly one primary section.**
-Do not rephrase the same win under Highlights **and** Features **and** Bug Fixes.
+| Section | Put it here when… |
+|---------|-------------------|
+| **Highlights** | Top-impact “why upgrade” wins (curated pitch). Optional on tiny patches. |
+| **Features** | User-facing additions that did **not** go into Highlights. |
+| **Bug Fixes** | Fixes that did **not** go into Highlights/Features. |
+| **Other** | Docs / CI / internals only if worth mentioning. |
 
-| Section | Role | Length |
-|---------|------|--------|
-| **Highlights** | Curated “why care” pitch only — impact titles, not a full inventory | **2–4** bullets max; often fewer on patch releases |
-| **Features** | Inventory of **other** user-facing additions **not** already stated in Highlights | Skip the section entirely if Highlights already covers everything new |
-| **Bug Fixes** | Real fixes only | Do not promote a fix into Highlights *and* restate it here unless the highlight is a broader theme that bundles multiple fixes |
-| **Other** | Docs / CI / internals | Omit when empty |
+Placement guide:
 
-Rules of thumb:
-
-1. **Write Highlights last from the inventory**, or write them first then **delete** matching Feature/Fix lines. Either way, do a final pass: if a Features bullet is the same fact as a Highlight (even with different wording), drop the Features bullet.
-2. **Highlights ≠ Features restated.** Highlight is the short marketing line; Features is only for extra items or, rarely, a **materially denser** breakdown that adds facts not in the highlight (sub-capabilities, new surfaces). Prefer dropping the feature line over “Highlights says X; Features says X again with an area tag.”
-3. **Patch / small releases:** 2–3 Highlights + Bug Fixes is enough. Empty Features is good. Do not pad Features just to fill the template.
-4. **One fact, one home:** e.g. Chinese UI belongs in Highlights *or* Features, not both; Goal parsing belongs in Bug Fixes *or* Highlights, not both.
-5. **Features** / **Bug Fixes** use a bold **area** prefix (`sidebar`, `grok`, `terminal`, `analytics`, …) then a **concise** clause — one clause per bullet, not a paragraph.
-6. Omit empty sections (no empty `## Other` / `## Features` / `## 新功能`).
-7. Chinese sections must match English substance and **the same non-duplication**; natural Chinese, not machine-calque word salad.
-8. End with the compare link when `PREV_TAG` exists; otherwise link commits for the new tag.
-9. Save the full notes body to a temp file, e.g.
-   `/tmp/session-insight-release-notes-<NEW_TAG>.md` (never under `$HOME`
-   cleanup paths).
+- Prefer **Highlights** for the most visible wins; remaining features go to
+  **Features**; remaining fixes to **Bug Fixes**.
+- A single change is never split or echoed across sections. Example: Chinese
+  UI is Highlights *or* Features, never both; Goal parsing is Bug Fixes *or*
+  Highlights, never both.
+- **Features** / **Bug Fixes** bullets: bold **area** prefix (`sidebar`,
+  `grok`, `terminal`, …) + one concise clause.
+- Chinese sections match English substance and the **same exclusive
+  placement**; natural Chinese, not machine-calque.
+- End with the compare link when `PREV_TAG` exists; otherwise link commits
+  for the new tag.
+- Save the full notes body to a temp file, e.g.
+  `/tmp/session-insight-release-notes-<NEW_TAG>.md` (never under `$HOME`
+  cleanup paths).
 
 ### Self-check before showing the draft
 
-- [ ] No Highlights bullet is restated in Features (same change, any wording)
-- [ ] No Highlights bullet is restated in Bug Fixes unless the fix section adds distinct residual items
-- [ ] Features section omitted if it would only echo Highlights
-- [ ] Highlights ≤ 4 bullets; each bullet is one sentence
-- [ ] EN and ZH section sets match (same omissions)
+- [ ] Every listed item is a real change from this release (no padding)
+- [ ] No item appears in more than one section (same fact, any wording)
+- [ ] Empty sections omitted
+- [ ] EN and ZH match (same items, same section placement)
 
 Show the draft notes to the user with the version. Incorporate feedback
 before publishing.
@@ -282,7 +294,7 @@ Use this order so CI attaches binaries to **your** notes (not the fallback):
 
 - `62e152e feat(sessions): add provider-aware model filters`
 
-**Good Feature line** (only when this item is **not** already a Highlight)
+**Good Feature line** (only if this item is **not** already in Highlights)
 
 - **sidebar**: copy resume command for active sessions (confirm before copy)
 
@@ -290,7 +302,7 @@ Use this order so CI attaches binaries to **your** notes (not the fallback):
 
 - **Provider 感知的模型筛选**：按提供商展开子菜单，按模型 id 排序，未知归入 Other
 
-**Bad — Highlights and Features say the same thing** (v0.3.2 anti-pattern)
+**Bad — same change in two sections** (v0.3.2 anti-pattern)
 
 ```markdown
 ## Highlights
@@ -302,7 +314,7 @@ Use this order so CI attaches binaries to **your** notes (not the fallback):
 - **server**: automatic OS-assigned port fallback when the port is unavailable…
 ```
 
-**Good — same release, no echo** (Features omitted or only non-highlight items)
+**Good — each change once; empty Features omitted**
 
 ```markdown
 ## Highlights
@@ -315,8 +327,6 @@ Use this order so CI attaches binaries to **your** notes (not the fallback):
 - **bookmarks**: localized note UI with translation coverage for note actions
 - **terminal search**: search bar no longer overlaps pinned navigation
 ```
-
-(Here Features is omitted because every new capability is already a Highlight.)
 
 ## Out of scope
 
