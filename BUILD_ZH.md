@@ -77,8 +77,6 @@ go build -tags sqlite_fts5 -o session-insight.exe .
 ```powershell
 $env:PORT = "9090"
 $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\projects"
-# 可选：不自动打开浏览器（脚本/二次启动时有用）
-# $env:SI_NO_OPEN_BROWSER = "1"
 .\session-insight.exe
 ```
 

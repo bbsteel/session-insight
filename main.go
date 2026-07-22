@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"time"
 
@@ -147,8 +146,8 @@ func main() {
 	url := "http://" + listener.Addr().String() + "/"
 	log.Printf("SessionInsight listening on %s", url)
 	// Open the real bound URL (may differ from PORT when fallback kicks in).
-	// Non-blocking so a slow browser launch never delays Serve.
-	maybeOpenBrowser(url)
+	// Start is fire-and-forget so a slow browser never delays Serve.
+	openBrowser(url)
 	log.Fatal(http.Serve(listener, srv.Mux))
 }
 
@@ -184,18 +183,6 @@ func isAddrInUse(err error) bool {
 	return errors.As(err, &opErr) && opErr.Op == "listen" && errors.Is(err, syscall.EADDRINUSE)
 }
 
-// envDisablesBrowser reports whether SI_NO_OPEN_BROWSER is set to a common
-// truthy value (1/true/yes/on). Used by double-click releases (open by
-// default) and by dev/automation that sets the env var to stay quiet.
-func envDisablesBrowser(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
 // browserOpenCmd returns the platform command that opens url in the default
 // browser. goos is injected so tests can cover Windows/macOS/Linux without
 // depending on the host OS. The empty title arg on Windows `start` prevents
@@ -227,13 +214,9 @@ var startBrowserCommand = func(name string, args ...string) error {
 	return nil
 }
 
-// maybeOpenBrowser opens url in the default browser unless the user opted
-// out via SI_NO_OPEN_BROWSER. Failures are logged only — the server still
-// starts so the user can open the URL manually from the log line.
-func maybeOpenBrowser(url string) {
-	if envDisablesBrowser(os.Getenv("SI_NO_OPEN_BROWSER")) {
-		return
-	}
+// openBrowser opens url in the default browser. Failures are logged only —
+// the server still starts so the user can open the URL manually from the log.
+func openBrowser(url string) {
 	name, args := browserOpenCmd(runtime.GOOS, url)
 	if err := startBrowserCommand(name, args...); err != nil {
 		log.Printf("failed to open browser: %v (open %s manually)", err, url)

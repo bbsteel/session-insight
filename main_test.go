@@ -112,19 +112,6 @@ func TestListenWithFallback(t *testing.T) {
 	}
 }
 
-func TestEnvDisablesBrowser(t *testing.T) {
-	for _, v := range []string{"1", "true", "TRUE", "yes", "on", " Yes ", "ON"} {
-		if !envDisablesBrowser(v) {
-			t.Errorf("expected %q to disable browser", v)
-		}
-	}
-	for _, v := range []string{"", "0", "false", "no", "off", "maybe"} {
-		if envDisablesBrowser(v) {
-			t.Errorf("expected %q not to disable browser", v)
-		}
-	}
-}
-
 func TestBrowserOpenCmd(t *testing.T) {
 	const url = "http://127.0.0.1:8080/"
 	cases := []struct {
@@ -145,13 +132,12 @@ func TestBrowserOpenCmd(t *testing.T) {
 	}
 }
 
-func TestMaybeOpenBrowser(t *testing.T) {
+func TestOpenBrowser(t *testing.T) {
 	const url = "http://127.0.0.1:9090/"
 	origStart := startBrowserCommand
 	defer func() { startBrowserCommand = origStart }()
 
 	t.Run("invokes platform command", func(t *testing.T) {
-		t.Setenv("SI_NO_OPEN_BROWSER", "")
 		var gotName string
 		var gotArgs []string
 		startBrowserCommand = func(name string, args ...string) error {
@@ -159,34 +145,18 @@ func TestMaybeOpenBrowser(t *testing.T) {
 			gotArgs = append([]string(nil), args...)
 			return nil
 		}
-		maybeOpenBrowser(url)
-		// maybeOpenBrowser always uses runtime.GOOS.
+		openBrowser(url)
 		wantName, wantArgs := browserOpenCmd(runtime.GOOS, url)
 		if gotName != wantName || !reflect.DeepEqual(gotArgs, wantArgs) {
 			t.Fatalf("got (%q, %v), want (%q, %v)", gotName, gotArgs, wantName, wantArgs)
 		}
 	})
 
-	t.Run("respects SI_NO_OPEN_BROWSER", func(t *testing.T) {
-		t.Setenv("SI_NO_OPEN_BROWSER", "1")
-		called := false
-		startBrowserCommand = func(name string, args ...string) error {
-			called = true
-			return nil
-		}
-		maybeOpenBrowser(url)
-		if called {
-			t.Fatal("expected startBrowserCommand not to run when SI_NO_OPEN_BROWSER=1")
-		}
-	})
-
 	t.Run("start failure does not panic", func(t *testing.T) {
-		t.Setenv("SI_NO_OPEN_BROWSER", "")
 		startBrowserCommand = func(name string, args ...string) error {
 			return errors.New("no browser")
 		}
-		// Should log and return; no panic.
-		maybeOpenBrowser(url)
+		openBrowser(url)
 	})
 }
 
