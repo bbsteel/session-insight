@@ -577,6 +577,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // unavailable, addon throws, or a later context loss) reverts to the DOM
       // renderer and flags the degraded state so the hint banner can show.
       let webglOk = false
+      // Kept so post-rewrite repaint can clearTextureAtlas when refresh alone
+      // leaves a blank canvas on Windows (wheel scroll still worked).
+      let webglAddon: WebglAddon | null = null
       try {
         webglOk = !!document.createElement('canvas').getContext('webgl2')
       } catch {
@@ -593,9 +596,11 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           webgl.onContextLoss(() => {
             dbg('webgl-context-loss')
             webgl.dispose()
+            webglAddon = null
             setWebglDegraded(true)
           })
           term.loadAddon(webgl)
+          webglAddon = webgl
           dbg('webgl-loaded', { cols: term.cols, rows: term.rows })
         } catch {
           webglOk = false
@@ -1044,18 +1049,46 @@ const snapshotTerminal = () => {
         term.scrollToLine(0)
       }
 
+      // While true, onScroll must not cancel openAtTop (micro-scroll nudge
+      // briefly leaves line 0 to force a WebGL viewport paint).
+      let repaintNudgeActive = false
+
       // Windows WebGL often leaves a cleared canvas after reset+large write
       // even though the buffer is full: chrome (e.g. Turn N/M) stays visible
       // but the terminal is blank until a user wheel scroll forces a repaint.
-      // Logs that pin this: rewrite-done → snapshot-removed (holdMs ~50ms)
-      // with the viewport still blank. term.refresh marks the full viewport
-      // dirty so xterm's RenderDebouncer schedules a paint (not a sync GPU
-      // blit) without changing scroll position.
+      // term.refresh alone was not enough (logs end at force-repaint while
+      // still blank). Wheel works because it changes viewportY — so we:
+      // 1) clear the WebGL glyph atlas, 2) mark rows dirty, 3) micro-scroll
+      // away and back when scrollback allows (same path as the wheel).
       const forceViewportRepaint = (reason: string) => {
         if (disposed || term.rows <= 0) return
+        const buf = term.buffer.active
+        const y = buf.viewportY
+        const maxScroll = Math.max(0, buf.length - term.rows)
+        let nudged = false
         try {
+          webglAddon?.clearTextureAtlas()
           term.refresh(0, term.rows - 1)
+          if (maxScroll > 0) {
+            const alt = y >= maxScroll ? y - 1 : y + 1
+            repaintNudgeActive = true
+            try {
+              term.scrollToLine(alt)
+              term.scrollToLine(y)
+              nudged = true
+            } finally {
+              repaintNudgeActive = false
+            }
+            // Re-assert open-at-top after the nudge in case scroll landed off 0.
+            stickOpenAtTop()
+            term.refresh(0, term.rows - 1)
+          } else {
+            // No scroll room (short session): re-fit can reallocate the canvas.
+            fitAddon.fit()
+            term.refresh(0, term.rows - 1)
+          }
         } catch (e) {
+          repaintNudgeActive = false
           dbg('force-repaint-error', { reason, msg: String(e) })
           return
         }
@@ -1064,7 +1097,10 @@ const snapshotTerminal = () => {
           rows: term.rows,
           cols: term.cols,
           viewportY: term.buffer.active.viewportY,
-          bufLen: term.buffer.active.length,
+          bufLen: buf.length,
+          maxScroll,
+          nudged,
+          webgl: !!webglAddon,
         })
       }
 
@@ -1159,6 +1195,13 @@ const snapshotTerminal = () => {
             removeSnapshot?.()
             stickOpenAtTop()
             forceViewportRepaint(reason)
+            // One more frame: some Windows GPU drivers drop the paint that
+            // lands in the same turn as snapshot removal; wheel still worked
+            // later, so a deferred hard repaint matches that delayed path.
+            requestAnimationFrame(() => {
+              if (disposed || generation !== repaintGeneration) return
+              forceViewportRepaint(`${reason}-deferred`)
+            })
           }
           requestAnimationFrame(() => {
             if (disposed || generation !== repaintGeneration) return
@@ -1592,14 +1635,21 @@ const snapshotTerminal = () => {
         // User (or intentional programmatic) scroll away from the top ends
         // open-at-top mode. Ignore mid-rewrite scrolls and the short grace
         // after writes (xterm's bottom park / lagging scroll events).
+        // Also ignore the micro-scroll inside forceViewportRepaint.
         if (
-          !writingContent
+          !repaintNudgeActive
+          && !writingContent
           && openAtTop
           && performance.now() >= openAtTopGraceUntil
           && term.buffer.active.viewportY > 0
         ) {
           openAtTop = false
-        } else if (openAtTop && !followOutputRef.current && term.buffer.active.viewportY > 0) {
+        } else if (
+          !repaintNudgeActive
+          && openAtTop
+          && !followOutputRef.current
+          && term.buffer.active.viewportY > 0
+        ) {
           // During rewrite/grace, pull back to the top if something nudged us.
           term.scrollToLine(0)
         }
