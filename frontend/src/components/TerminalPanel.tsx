@@ -1038,6 +1038,29 @@ const snapshotTerminal = () => {
         term.scrollToLine(0)
       }
 
+      // Windows WebGL often leaves a cleared canvas after reset+large write
+      // even though the buffer is full: chrome (e.g. Turn N/M) stays visible
+      // but the terminal is blank until a user wheel scroll forces a repaint.
+      // Logs that pin this: rewrite-done → snapshot-removed (holdMs ~50ms)
+      // with the viewport still blank. term.refresh re-blits buffer → canvas
+      // without changing scroll position.
+      const forceViewportRepaint = (reason: string) => {
+        if (disposed || term.rows <= 0) return
+        try {
+          term.refresh(0, term.rows - 1)
+        } catch (e) {
+          dbg('force-repaint-error', { reason, msg: String(e) })
+          return
+        }
+        dbg('force-repaint', {
+          reason,
+          rows: term.rows,
+          cols: term.cols,
+          viewportY: term.buffer.active.viewportY,
+          bufLen: term.buffer.active.length,
+        })
+      }
+
       // Follow edge hook: on the rising edge leave open-at-top mode and jump
       // to the tail (follow already on at mount takes the openAtTop=false
       // init above and parks at the bottom on the initial write instead);
@@ -1090,22 +1113,34 @@ const snapshotTerminal = () => {
           // notify folds / restore an anchor). xterm parks at the bottom after
           // large writes; without this, session open lands at the end.
           stickOpenAtTop()
+          // Immediate blit: covers the first rewrite (no snapshot) and seeds a
+          // non-empty canvas for the next write's anti-flicker snapshot.
+          forceViewportRepaint('rewrite-sync')
           openAtTopGraceUntil = performance.now() + 800
           writingContent = false
-          // Re-stick across two frames: fold inject / WebGL paint can nudge
-          // the viewport after the write callback returns.
+          // Two frames: drop the anti-flicker snapshot past xterm's paint,
+          // re-stick open-at-top, then force a WebGL blit so Windows does not
+          // leave a cleared canvas after snapshot-removed.
+          let finishedInRaf = false
+          const finishPaint = (reason: string) => {
+            if (finishedInRaf) return
+            finishedInRaf = true
+            removeSnapshot?.()
+            stickOpenAtTop()
+            forceViewportRepaint(reason)
+          }
           requestAnimationFrame(() => {
             stickOpenAtTop()
-            requestAnimationFrame(stickOpenAtTop)
+            requestAnimationFrame(() => finishPaint('post-rewrite'))
           })
-          // Two frames: one for xterm's render, one to be past the paint.
-          let removedInRaf = false
-          requestAnimationFrame(() => requestAnimationFrame(() => { removeSnapshot?.(); removedInRaf = true }))
           // Safety net: if the double-RAF never fires (tab backgrounded,
           // rAF throttled by 0Hz display), drop the snapshot by the next
           // macrotask so it can't permanently mask the terminal.
           setTimeout(() => {
-            if (removeSnapshot && !removedInRaf) { dbg('snapshot-timeout-remove'); removeSnapshot() }
+            if (!finishedInRaf) {
+              if (removeSnapshot) dbg('snapshot-timeout-remove')
+              finishPaint('post-rewrite-timeout')
+            }
           }, 250)
           dbg('rewrite-done', { ms: Math.round(performance.now() - rewriteStart), bytes: wroteBytes, bufLen: term.buffer.active.length })
         })
