@@ -31,16 +31,29 @@ pacman -Syu
 pacman -S mingw-w64-x86_64-gcc
 ```
 
-3. Add `C:\msys64\mingw64\bin` to your system PATH:
+3. Add the MinGW-w64 **`bin` directory that contains `gcc.exe`** to your system `Path`. That location depends on where MSYS2 (or another MinGW-w64 toolchain) was installed—for a default MSYS2 layout it is often `<MSYS2 root>\mingw64\bin` (for example `C:\msys64\mingw64\bin` if MSYS2 was installed to `C:\msys64`).
    - Right-click "This PC" → Properties → Advanced system settings → Environment Variables
-   - Find `Path` in "System variables", edit it, and add `C:\msys64\mingw64\bin`
+   - Find `Path` in "System variables", edit it, and add that `bin` directory
    - Restart your terminal for the PATH to take effect
 
 Verify:
 
 ```powershell
+where.exe gcc
 gcc --version
 ```
+
+### 4. Allow Go’s CGO toolchain to run
+
+The Windows build uses CGO (`CGO_ENABLED=1` and the `sqlite_fts5` build tag). In addition to a working `gcc`, the Go installation’s **`cgo` tool must be allowed to execute** (typically `cgo.exe` under `GOROOT\pkg\tool\<GOOS>_<GOARCH>\`).
+
+On some machines, **Windows Application Control** (including Smart App Control, WDAC, or AppLocker) blocks that binary. When that happens, `go build` fails before compiling project code, with an error similar to:
+
+```text
+go: error obtaining buildID for go tool cgo: fork/exec ...\cgo.exe: An Application Control policy has blocked this file.
+```
+
+Local builds require that policy environment to permit Go’s `cgo` tool.
 
 ## Build
 
@@ -86,11 +99,15 @@ On start the binary opens the actual bound URL (`http://127.0.0.1:<port>/`), inc
 
 **`gcc: not found` or `exec: "gcc": executable file not found`**
 
-The mingw64 gcc is not in your PATH. Confirm that `C:\msys64\mingw64\bin` has been added to your system PATH and restart your terminal.
+MinGW-w64 `gcc` is not on your PATH. Confirm the `bin` directory that contains `gcc.exe` is on the system `Path`, then restart the terminal. Use `where.exe gcc` to see which binary (if any) is resolved.
 
 **`sqlite3-binding.c: fatal error C1083: Cannot open include file: 'stdio.h'`**
 
-This indicates you're using MSVC instead of mingw-w64's gcc. Ensure the mingw64 path comes before MSVC in your PATH, or run the build commands in the MSYS2 MinGW 64-bit terminal.
+This indicates you're using MSVC instead of mingw-w64's gcc. Ensure the MinGW-w64 `bin` path comes before MSVC in your PATH, or run the build commands in the MSYS2 MinGW 64-bit terminal.
+
+**`An Application Control policy has blocked this file` (often for `cgo.exe`)**
+
+Windows Application Control is preventing Go’s `cgo` tool from running. See [Allow Go’s CGO toolchain to run](#4-allow-gos-cgo-toolchain-to-run). This is a host policy constraint, not a missing project dependency.
 
 **`npm run build` fails**
 

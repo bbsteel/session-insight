@@ -31,16 +31,29 @@ pacman -Syu
 pacman -S mingw-w64-x86_64-gcc
 ```
 
-3. 将 `C:\msys64\mingw64\bin` 添加到系统 PATH：
+3. 将 **包含 `gcc.exe` 的 MinGW-w64 `bin` 目录** 加入系统 `Path`。该路径取决于 MSYS2（或其他 MinGW-w64 工具链）的实际安装位置——默认 MSYS2 布局下通常是 `<MSYS2 根目录>\mingw64\bin`（若安装在 `C:\msys64`，则为 `C:\msys64\mingw64\bin`，仅作示例）。
    - 右键「此电脑」→ 属性 → 高级系统设置 → 环境变量
-   - 在「系统变量」中找到 `Path`，编辑，新增 `C:\msys64\mingw64\bin`
+   - 在「系统变量」中找到 `Path`，编辑并新增上述 `bin` 目录
    - 重启终端使 PATH 生效
 
 验证：
 
 ```powershell
+where.exe gcc
 gcc --version
 ```
+
+### 4. 允许 Go 的 CGO 工具运行
+
+Windows 构建依赖 CGO（`CGO_ENABLED=1` 与 `sqlite_fts5` build tag）。除可用的 `gcc` 外，还须保证 Go 安装目录中的 **`cgo` 工具可被执行**（通常位于 `GOROOT\pkg\tool\<GOOS>_<GOARCH>\cgo.exe`）。
+
+在部分机器上，**Windows 应用程序控制**（包括智能应用控制 Smart App Control、WDAC、AppLocker 等）会拦截该二进制。此时 `go build` 会在编译项目代码之前失败，错误类似：
+
+```text
+go: error obtaining buildID for go tool cgo: fork/exec ...\cgo.exe: An Application Control policy has blocked this file.
+```
+
+本地构建要求当前策略环境允许运行 Go 的 `cgo` 工具。
 
 ## 构建
 
@@ -86,11 +99,15 @@ $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\p
 
 **`gcc: not found` 或 `exec: "gcc": executable file not found`**
 
-PATH 中没有 mingw64 的 gcc。确认 `C:\msys64\mingw64\bin` 已加入系统 PATH 并重启终端。
+PATH 中没有 MinGW-w64 的 `gcc`。确认包含 `gcc.exe` 的 `bin` 目录已加入系统 `Path`，并重启终端。可用 `where.exe gcc` 查看实际解析到的路径。
 
 **`sqlite3-binding.c: fatal error C1083: Cannot open include file: 'stdio.h'`**
 
-说明使用了 MSVC 而非 mingw-w64 的 gcc。确保 PATH 中 mingw64 的路径排在 MSVC 之前，或在 MSYS2 MinGW 64-bit 终端中执行构建命令。
+说明使用了 MSVC 而非 mingw-w64 的 gcc。确保 PATH 中 MinGW-w64 的 `bin` 路径排在 MSVC 之前，或在 MSYS2 MinGW 64-bit 终端中执行构建命令。
+
+**`An Application Control policy has blocked this file`（常见于 `cgo.exe`）**
+
+Windows 应用程序控制阻止了 Go 的 `cgo` 工具运行。见 [允许 Go 的 CGO 工具运行](#4-允许-go-的-cgo-工具运行)。这是主机策略限制，不是项目缺少依赖。
 
 **`npm run build` 失败**
 
