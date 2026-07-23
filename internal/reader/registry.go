@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 
+	"github.com/bbsteel/session-insight/internal/reader/capability"
 	"github.com/bbsteel/session-insight/internal/reader/chrys"
 	"github.com/bbsteel/session-insight/internal/reader/claude"
 	"github.com/bbsteel/session-insight/internal/reader/codex"
@@ -14,6 +16,42 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 )
 
+// AgentDefinitions returns the static capability catalog for every supported
+// Agent. The catalog is always available, even when an Agent's local storage
+// is not installed or discovered.
+//
+// Declarations are owned by each adapter package; this function only
+// aggregates exports and never re-states capability values.
+// Order is stable: sorted by AgentType ascending.
+func AgentDefinitions() []capability.AgentCapabilities {
+	defs := []capability.AgentCapabilities{
+		claude.Capabilities(),
+		chrys.Capabilities(),
+		codex.Capabilities(),
+		copilot.Capabilities(),
+		grok.Capabilities(),
+		opencode.Capabilities(),
+	}
+	sort.Slice(defs, func(i, j int) bool {
+		return defs[i].AgentType < defs[j].AgentType
+	})
+	return defs
+}
+
+// AgentDefinition returns the static declaration for agentType, if known.
+func AgentDefinition(agentType string) (capability.AgentCapabilities, bool) {
+	for _, d := range AgentDefinitions() {
+		if d.AgentType == agentType {
+			return d, true
+		}
+	}
+	return capability.AgentCapabilities{}, false
+}
+
+// Discover returns BaseSessionReader instances for Agents whose storage exists
+// on the current machine. It is independent of AgentDefinitions: an Agent may
+// appear in the catalog without a discovered reader, and a discovered reader
+// always has a matching catalog entry.
 func Discover() []BaseSessionReader {
 	var readers []BaseSessionReader
 
