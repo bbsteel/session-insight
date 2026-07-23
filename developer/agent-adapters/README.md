@@ -2,11 +2,13 @@
 
 This directory is the development entry point for adding a new Agent to SessionInsight. It is intended for maintainers, external contributors, and Claude/Codex sessions performing adapter work. It is not end-user product documentation.
 
-Use these sources in priority order:
+Use these in priority order:
 
-1. [Capability contract](capability-contract.md): defines what SI can read, determine, and manage for an Agent.
-2. [Shared conformance testing](conformance-testing.md): proves that capability declarations match actual behavior.
-3. This guide: defines the research, implementation, validation, and delivery workflow.
+1. The current Go interfaces and adapter implementation.
+2. This guide, which defines the research, implementation, validation, and delivery workflow.
+3. The shared capability contract and conformance suite after they land in code.
+
+Architecture proposals and unpublished implementation designs belong in the private SessionInsight documentation repository, not in this code repository. This guide records only the durable instructions that a future coding Agent needs while changing an adapter.
 
 Do not add a `session-insight adapter init` command before capability declarations and conformance tests exist. Scaffolding can generate files, but it cannot replace format research, representative fixtures, or behavioral evidence. Consider an internal generator only after several new adapters have established a stable directory structure.
 
@@ -73,7 +75,7 @@ Then add automatic discovery in `internal/reader/registry.go`. Platform-specific
 
 ### 3. Declare capabilities
 
-Use the [capability contract](capability-contract.md) to declare all ten baseline capabilities:
+After the runtime capability contract lands, declare all ten baseline capabilities:
 
 - discovery
 - replay
@@ -107,7 +109,7 @@ Sanitization must replace usernames, home directories, repository remotes, secre
 
 ### 5. Run shared conformance tests
 
-The adapter test calls `adaptertest.Run` and explicitly supplies the fixtures that cover its declarations. See the [shared conformance testing design](conformance-testing.md) for the proposed structure.
+After the shared suite lands, the adapter test calls `adaptertest.Run` and explicitly supplies the fixtures that cover its declarations. Until then, do not invent a parallel capability schema or copy a provisional test API into an adapter.
 
 Minimum validation:
 

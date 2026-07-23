@@ -11,12 +11,11 @@
 - Before adding or changing support for an agent, read the
   [Agent adapter onboarding guide](developer/agent-adapters/README.md) and
   follow its Definition of Done.
-- Treat the contract in `developer/agent-adapters/capability-contract.md` as
-  the planned user-facing source of truth. When implementing it, do not add a
-  separate capability matrix in frontend code, documentation, or tests.
-- Every declared capability must be covered by the shared conformance suite
-  and sanitized fixtures as described in
-  `developer/agent-adapters/conformance-testing.md`.
+- Once the runtime capability contract exists, treat adapter declarations as
+  the user-facing source of truth. Do not add a separate capability matrix in
+  frontend code, documentation, or tests.
+- Cover every declared capability with the shared conformance suite and
+  sanitized fixtures once that suite is available.
 
 ## Branch and PR Workflow (required)
 
