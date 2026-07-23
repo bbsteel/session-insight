@@ -1274,9 +1274,9 @@ const snapshotTerminal = () => {
           forceViewportRepaint('rewrite-sync', { soft: true })
           openAtTopGraceUntil = performance.now() + 800
           writingContent = false
-          // Two frames: drop the anti-flicker snapshot past xterm's paint,
-          // re-stick open-at-top, then one hard repaint so Windows does not
-          // leave a cleared canvas after snapshot-removed.
+          // Two frames: re-stick open-at-top, hard-repaint under the snapshot
+          // cover, then drop the snapshot so the user sees one reveal (not
+          // blank-then-reattach).
           let finishedInRaf = false
           const finishPaint = (reason: string) => {
             // Stale generation: pure no-op (do not clear the newer rewrite's
@@ -1294,12 +1294,14 @@ const snapshotTerminal = () => {
               removeSnapshot?.()
               return
             }
-            removeSnapshot?.()
             stickOpenAtTop()
-            // One hard recovery paint (reattach XOR resize). A second soft
-            // atlas-clear pass was still a visible flash on some drivers.
+            // Hard recovery while snapshot still covers the canvas. Removing
+            // the snapshot first (old order) exposed a cleared buffer, then
+            // reattach flashed again — two visible flashes. Logs:
+            // snapshot-removed → force-repaint post-rewrite reattached:true.
             forceViewportRepaint(reason, { reattachWebgl: TEMP_PLATFORM === 'win32' })
-            // Light present only: no atlas clear / resize / reattach.
+            removeSnapshot?.()
+            // Light present after cover drops: no atlas clear / resize / reattach.
             requestAnimationFrame(() => {
               if (disposed || generation !== repaintGeneration || term.rows <= 0) return
               try {
