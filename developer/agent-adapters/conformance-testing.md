@@ -42,7 +42,12 @@
 
 ### 第三层：能力行为检查
 
-仅对声明支持且提供相应 fixture 的能力运行：
+这一层必须按顺序执行两个阶段，不能用“没有 fixture”作为跳过理由：
+
+1. **Fixture 覆盖门禁**：枚举所有声明为 `exact` 或 `estimated` 的能力，检查其所需 fixture 是否存在并包含对应能力证据；任何缺口立即失败。
+2. **行为验证**：覆盖门禁通过后，仅对已经确认存在的 fixture 运行相应行为断言。
+
+行为断言包括：
 
 - `realtime`：记录变化后 revision 单调变化，未变化时保持稳定；
 - `tokens`：精确字段保持 presence，异常退出按预期标记缺失；
@@ -152,7 +157,7 @@ func TestClaudeConformance(t *testing.T) {
 
 - `sanitized` 必须为 `true`；
 - `agent_type` 与适配器一致；
-- 声明支持的每项数据能力至少被一个 fixture 覆盖；
+- 在运行任何能力行为断言前，声明支持的每项能力至少被一个适用 fixture 覆盖，否则测试立即失败；
 - 平台限定不会被误报为全平台验证。
 
 不要提交真实用户名、绝对主目录、仓库远端、令牌、设备标识或未经审核的对话正文。
@@ -166,7 +171,7 @@ func TestClaudeConformance(t *testing.T) {
 | replay | exact | BaseSessionReader | basic | 通过 |
 | realtime | estimated | LiveRevisionProvider | realtime | 通过 |
 | tokens | exact | SessionDetail.Billing | interrupted, basic | 通过 |
-| diff | exact | RenderEvent/EditCall | diff | 缺失 |
+| diff | exact | RenderEvent/EditCall | diff | 通过 |
 | terminate | unsupported | — | — | 通过 |
 
 结果规则：

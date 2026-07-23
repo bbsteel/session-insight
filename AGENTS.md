@@ -8,8 +8,9 @@
 
 ## Agent Adapter Changes
 
-- Before adding or changing support for an agent, read
-  `developer/agent-adapters/README.md` and follow its Definition of Done.
+- Before adding or changing support for an agent, read the
+  [Agent adapter onboarding guide](developer/agent-adapters/README.md) and
+  follow its Definition of Done.
 - Treat the contract in `developer/agent-adapters/capability-contract.md` as
   the planned user-facing source of truth. When implementing it, do not add a
   separate capability matrix in frontend code, documentation, or tests.
