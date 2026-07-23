@@ -279,6 +279,11 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // Safety-net timer for post-rewrite snapshot drop + force-repaint; cleared
     // on unmount so a disposed terminal is never stick/refreshed after switch.
     let finishPaintTimeout: ReturnType<typeof setTimeout> | null = null
+    // Coalesces Windows WebGL hard reattach across rapid rewrites (open often
+    // does content write then folds recompose within ~70ms — two reattaches
+    // flash twice). Cleared on the next writeComposed / unmount.
+    let hardRepaintTimer: ReturnType<typeof setTimeout> | null = null
+    const HARD_REPAINT_DEBOUNCE_MS = 64
     // Bumps on every writeComposed so a lagging rAF/timeout from rewrite A
     // cannot drop rewrite B's snapshot or scroll a disposed/newer terminal.
     let repaintGeneration = 0
@@ -1223,11 +1228,15 @@ const snapshotTerminal = () => {
 
       const writeComposed = (afterWrite?: () => void) => {
         const generation = ++repaintGeneration
-        // Supersede any pending finishPaint from a prior rewrite before we
-        // install a new snapshot (stale finishPaint must not remove it).
+        // Supersede any pending finishPaint / coalesced hard from a prior
+        // rewrite before we install a new snapshot.
         if (finishPaintTimeout) {
           clearTimeout(finishPaintTimeout)
           finishPaintTimeout = null
+        }
+        if (hardRepaintTimer) {
+          clearTimeout(hardRepaintTimer)
+          hardRepaintTimer = null
         }
         if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
@@ -1274,9 +1283,9 @@ const snapshotTerminal = () => {
           forceViewportRepaint('rewrite-sync', { soft: true })
           openAtTopGraceUntil = performance.now() + 800
           writingContent = false
-          // Two frames: re-stick open-at-top, hard-repaint under the snapshot
-          // cover, then drop the snapshot so the user sees one reveal (not
-          // blank-then-reattach).
+          // Two frames then a short debounce: open often chains content write
+          // + folds recompose (~70ms). Each used to hard-reattach → two flashes.
+          // Keep the snapshot up and run one hard paint for the latest generation.
           let finishedInRaf = false
           const finishPaint = (reason: string) => {
             // Stale generation: pure no-op (do not clear the newer rewrite's
@@ -1295,21 +1304,26 @@ const snapshotTerminal = () => {
               return
             }
             stickOpenAtTop()
-            // Hard recovery while snapshot still covers the canvas. Removing
-            // the snapshot first (old order) exposed a cleared buffer, then
-            // reattach flashed again — two visible flashes. Logs:
-            // snapshot-removed → force-repaint post-rewrite reattached:true.
-            forceViewportRepaint(reason, { reattachWebgl: TEMP_PLATFORM === 'win32' })
-            removeSnapshot?.()
-            // Light present after cover drops: no atlas clear / resize / reattach.
-            requestAnimationFrame(() => {
-              if (disposed || generation !== repaintGeneration || term.rows <= 0) return
-              try {
-                term.refresh(0, term.rows - 1)
-              } catch {
-                // disposed mid-frame
-              }
-            })
+            // Soft while cover is still up (or first paint with no snapshot).
+            forceViewportRepaint(`${reason}-pre-hard`, { soft: true })
+            // Coalesce hard reattach: a newer writeComposed clears this timer.
+            if (hardRepaintTimer) clearTimeout(hardRepaintTimer)
+            const hardGeneration = generation
+            hardRepaintTimer = setTimeout(() => {
+              hardRepaintTimer = null
+              if (disposed || hardGeneration !== repaintGeneration) return
+              // Hard under snapshot cover, then one uncover (not blank→reattach).
+              forceViewportRepaint(reason, { reattachWebgl: TEMP_PLATFORM === 'win32' })
+              removeSnapshot?.()
+              requestAnimationFrame(() => {
+                if (disposed || hardGeneration !== repaintGeneration || term.rows <= 0) return
+                try {
+                  term.refresh(0, term.rows - 1)
+                } catch {
+                  // disposed mid-frame
+                }
+              })
+            }, HARD_REPAINT_DEBOUNCE_MS)
           }
           requestAnimationFrame(() => {
             if (disposed || generation !== repaintGeneration) return
@@ -1398,6 +1412,7 @@ const snapshotTerminal = () => {
       }
 
       applyFoldsRef.current = (next: FoldRange[]) => {
+        const prev = foldRanges
         foldRanges = next
         // Drop collapsed state for folds that no longer exist (session grew).
         const valid = new Set(next.map(f => f.key))
@@ -1418,12 +1433,22 @@ const snapshotTerminal = () => {
           }
         }
         // Open race: mount applies folds before loadRender fills rawAnsi.
-        // Rewriting an empty buffer here forces a hard repaint, then the
-        // real content write hard-paints again (double flash). Keep fold
-        // state only; loadRender composes with collapsedKeys on first write.
+        // Keep fold state only; loadRender composes with collapsedKeys on first write.
         if (!rawAnsi) return
-        if (collapsedKeys.size > 0 || dropped || addedDefault || foldView) recompose()
-        else { injectFoldRows(); injectProgressRow(); injectUserHighlights() }
+        // Do not recompose on every folds effect re-fire: `collapsedKeys.size > 0
+        // || foldView` was always true after the first collapse and forced a
+        // second full rewrite (and hard reattach) right after open.
+        const foldSig = (rs: FoldRange[]) =>
+          rs.map(f => `${f.key}:${f.headerLogical}:${f.logicalStart}:${f.logicalEnd}:${f.displayStart}:${f.displayEnd}`).join('|')
+        const rangesChanged = foldSig(prev) !== foldSig(next)
+        if (dropped || addedDefault || rangesChanged) {
+          if (collapsedKeys.size > 0 || foldView || addedDefault || dropped) recompose()
+          else { injectFoldRows(); injectProgressRow(); injectUserHighlights() }
+        } else {
+          injectFoldRows()
+          injectProgressRow()
+          injectUserHighlights()
+        }
       }
 
       // Re-apply user-message highlights when the prop changes without a
@@ -1858,6 +1883,7 @@ const snapshotTerminal = () => {
       disposed = true
       if (resizeDebounce) clearTimeout(resizeDebounce)
       if (finishPaintTimeout) clearTimeout(finishPaintTimeout)
+      if (hardRepaintTimer) clearTimeout(hardRepaintTimer)
       observer?.disconnect()
       disposeOnScroll?.dispose()
       disposeOnSelectionChange?.dispose()
