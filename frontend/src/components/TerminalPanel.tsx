@@ -1123,51 +1123,48 @@ const snapshotTerminal = () => {
       // clear were not enough (logs: force-repaint with viewportY:0 still
       // blank; wheel scroll paints). Open-at-top keeps viewportY at 0, so a
       // scroll-only nudge is easy to miss when maxScroll is 0 (folded short
-      // view). Strategy:
+      // view).
+      //
+      // Hard path (finishPaint once):
       // 1) resize bounce — reallocates the WebGL framebuffer (works at y=0)
       // 2) clearTextureAtlas + refresh
-      // 3) micro-scroll when scrollback exists
-      // 4) reattachWebgl — dispose+reload addon (last resort, Windows-heavy)
-      const forceViewportRepaint = (reason: string, opts?: { reattachWebgl?: boolean }) => {
+      // 3) optional reattachWebgl (Windows last resort)
+      // 4) micro-scroll across a frame when scrollback exists (avoid coalescing)
+      // Soft path (rewrite-sync / deferred): atlas clear + refresh only — calling
+      // the hard path three times per rewrite made open/switch flash repeatedly.
+      const forceViewportRepaint = (
+        reason: string,
+        opts?: { reattachWebgl?: boolean; soft?: boolean },
+      ) => {
         if (disposed || term.rows <= 0) return
-        const buf = term.buffer.active
-        const y = buf.viewportY
-        const maxScroll = Math.max(0, buf.length - term.rows)
+        const soft = !!opts?.soft
         let nudged = false
         let resized = false
         let reattached = false
+        // Assigned after resize/reattach so logs and nudge use live geometry.
+        let maxScroll: number
         try {
-          // Resize bounce always: viewportY:0 sessions still get a full
-          // renderer handleResize, which is what FitAddon/window resize do.
-          const cols = term.cols
-          const rows = term.rows
-          if (cols > 0 && rows > 1) {
-            term.resize(cols, rows - 1)
-            term.resize(cols, rows)
-            resized = true
-          } else {
-            fitAddon.fit()
-            resized = true
+          if (!soft) {
+            // Resize bounce: viewportY:0 sessions still get a full renderer
+            // handleResize (same effect as FitAddon / window resize).
+            const cols = term.cols
+            const rows = term.rows
+            if (cols > 0 && rows > 1) {
+              term.resize(cols, rows - 1)
+              term.resize(cols, rows)
+              resized = true
+            } else {
+              fitAddon.fit()
+              resized = true
+            }
           }
 
           webglAddon?.clearTextureAtlas()
-          term.refresh(0, term.rows - 1)
+          term.refresh(0, Math.max(0, term.rows - 1))
 
-          if (maxScroll > 0) {
-            const alt = y >= maxScroll ? y - 1 : y + 1
-            repaintNudgeActive = true
-            try {
-              term.scrollToLine(alt)
-              term.scrollToLine(y)
-              nudged = true
-            } finally {
-              repaintNudgeActive = false
-            }
-            stickOpenAtTop()
-            term.refresh(0, term.rows - 1)
-          }
-
-          if (opts?.reattachWebgl && webglAddon) {
+          // Reattach before the scroll nudge so the new renderer paints the
+          // alternate viewport rather than the disposed one.
+          if (!soft && opts?.reattachWebgl && webglAddon) {
             try {
               webglAddon.dispose()
             } catch {
@@ -1179,25 +1176,34 @@ const snapshotTerminal = () => {
               fitAddon.fit()
               stickOpenAtTop()
               term.refresh(0, Math.max(0, term.rows - 1))
-              if (maxScroll > 0) {
-                const y2 = term.buffer.active.viewportY
-                const max2 = Math.max(0, term.buffer.active.length - term.rows)
-                if (max2 > 0) {
-                  const alt = y2 >= max2 ? y2 - 1 : y2 + 1
-                  repaintNudgeActive = true
-                  try {
-                    term.scrollToLine(alt)
-                    term.scrollToLine(y2)
-                    nudged = true
-                  } finally {
-                    repaintNudgeActive = false
-                  }
-                  stickOpenAtTop()
-                }
-              }
             } else {
               setWebglDegraded(true)
             }
+          }
+
+          maxScroll = Math.max(0, term.buffer.active.length - term.rows)
+          if (!soft && maxScroll > 0) {
+            const y = term.buffer.active.viewportY
+            const alt = y >= maxScroll ? y - 1 : y + 1
+            // Keep repaintNudgeActive until restore runs so onScroll does not
+            // clear openAtTop. Restore on the next frame so xterm cannot
+            // coalesce alt+y into a no-op paint.
+            repaintNudgeActive = true
+            term.scrollToLine(alt)
+            nudged = true
+            requestAnimationFrame(() => {
+              if (disposed) {
+                repaintNudgeActive = false
+                return
+              }
+              try {
+                term.scrollToLine(y)
+                stickOpenAtTop()
+                term.refresh(0, Math.max(0, term.rows - 1))
+              } finally {
+                repaintNudgeActive = false
+              }
+            })
           }
         } catch (e) {
           repaintNudgeActive = false
@@ -1207,6 +1213,7 @@ const snapshotTerminal = () => {
         const canvas = container.querySelector<HTMLCanvasElement>('.xterm-screen canvas')
         dbg('force-repaint', {
           reason,
+          soft,
           rows: term.rows,
           cols: term.cols,
           viewportY: term.buffer.active.viewportY,
@@ -1283,15 +1290,16 @@ const snapshotTerminal = () => {
           // notify folds / restore an anchor). xterm parks at the bottom after
           // large writes; without this, session open lands at the end.
           stickOpenAtTop()
-          // Schedule a full-viewport refresh (rAF-debounced by xterm): covers
-          // the first rewrite (no snapshot) and seeds canvas pixels for the
-          // next write's anti-flicker snapshot when paint does run.
-          forceViewportRepaint('rewrite-sync')
+          // Soft refresh only: hard repaint (resize bounce / reattach) flashes
+          // visibly; reserve it for finishPaint after the snapshot drops.
+          // Still marks the viewport dirty so the first write seeds canvas
+          // pixels for the next write's anti-flicker snapshot.
+          forceViewportRepaint('rewrite-sync', { soft: true })
           openAtTopGraceUntil = performance.now() + 800
           writingContent = false
           // Two frames: drop the anti-flicker snapshot past xterm's paint,
-          // re-stick open-at-top, then schedule another full-viewport refresh
-          // so Windows does not leave a cleared canvas after snapshot-removed.
+          // re-stick open-at-top, then one hard repaint so Windows does not
+          // leave a cleared canvas after snapshot-removed.
           let finishedInRaf = false
           const finishPaint = (reason: string) => {
             // Stale generation: pure no-op (do not clear the newer rewrite's
@@ -1311,15 +1319,15 @@ const snapshotTerminal = () => {
             }
             removeSnapshot?.()
             stickOpenAtTop()
-            // Final paint of a rewrite: on Windows, reattach WebGL so the
+            // Single hard paint per rewrite: on Windows, reattach WebGL so the
             // renderer is rebuilt after reset+large write (viewportY stays 0
             // under open-at-top; refresh/nudge alone still left a blank canvas).
             forceViewportRepaint(reason, { reattachWebgl: TEMP_PLATFORM === 'win32' })
-            // One more frame without reattach: catch drivers that drop the
-            // first present after snapshot removal.
+            // Soft follow-up: catch drivers that drop the first present after
+            // snapshot removal without a second resize-bounce flash.
             requestAnimationFrame(() => {
               if (disposed || generation !== repaintGeneration) return
-              forceViewportRepaint(`${reason}-deferred`)
+              forceViewportRepaint(`${reason}-deferred`, { soft: true })
             })
           }
           requestAnimationFrame(() => {
