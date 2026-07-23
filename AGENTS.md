@@ -6,6 +6,18 @@
 - Documentation, comments, repository metadata, and agent-instruction-only changes do not require starting or restarting the application; validate them with an appropriate diff, lint, or text-check command instead.
 - Write Git commit messages in English, including both the subject and body.
 
+## Agent Adapter Changes
+
+- Before adding or changing support for an agent, read the
+  [Agent adapter onboarding guide](developer/agent-adapters/README.md) and
+  follow its Definition of Done.
+- Treat the contract in `developer/agent-adapters/capability-contract.md` as
+  the planned user-facing source of truth. When implementing it, do not add a
+  separate capability matrix in frontend code, documentation, or tests.
+- Every declared capability must be covered by the shared conformance suite
+  and sanitized fixtures as described in
+  `developer/agent-adapters/conformance-testing.md`.
+
 ## Branch and PR Workflow (required)
 
 All code and docs changes land on `main` **only via pull request**. Do not commit product work directly onto `main`, and do not `git push origin main` for feature or fix delivery.
