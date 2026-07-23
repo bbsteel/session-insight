@@ -81,6 +81,19 @@ function getJumpFlashPulses(): number {
   return Number.isFinite(n) && n >= 1 && n <= 10 ? n : 2
 }
 
+// Match si-jump-flash keyframes peak (app.css). Used only when the OS asks
+// for reduced motion so we can approximate the pulse without CSS animation.
+const JUMP_FLASH_BG = 'rgba(37, 99, 235, 0.32)'
+
+function prefersReducedMotion(): boolean {
+  if (typeof matchMedia !== 'function') return false
+  try {
+    return matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
 function dbg(tag: string, info?: Record<string, unknown>) {
   if (!TERM_DEBUG) return
   const t = (performance.now() / 1000).toFixed(3)
@@ -266,6 +279,11 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // Safety-net timer for post-rewrite snapshot drop + force-repaint; cleared
     // on unmount so a disposed terminal is never stick/refreshed after switch.
     let finishPaintTimeout: ReturnType<typeof setTimeout> | null = null
+    // Coalesces Windows WebGL hard reattach across rapid rewrites (open often
+    // does content write then folds recompose within ~70ms — two reattaches
+    // flash twice). Cleared on the next writeComposed / unmount.
+    let hardRepaintTimer: ReturnType<typeof setTimeout> | null = null
+    const HARD_REPAINT_DEBOUNCE_MS = 64
     // Bumps on every writeComposed so a lagging rAF/timeout from rewrite A
     // cannot drop rewrite B's snapshot or scroll a disposed/newer terminal.
     let repaintGeneration = 0
@@ -311,8 +329,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let flashMarkers: IMarker[] = []
     let flashDecorations: IDecoration[] = []
     let flashTimer: ReturnType<typeof setTimeout> | null = null
+    // Reduced-motion path schedules hold/gap timers per decoration; clear with flash.
+    let flashPulseTimers: ReturnType<typeof setTimeout>[] = []
     const clearFlash = () => {
       if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
+      for (const t of flashPulseTimers) clearTimeout(t)
+      flashPulseTimers = []
       flashDecorations.forEach(d => d.dispose())
       flashMarkers.forEach(m => m.dispose())
       flashDecorations = []
@@ -577,15 +599,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // unavailable, addon throws, or a later context loss) reverts to the DOM
       // renderer and flags the degraded state so the hint banner can show.
       let webglOk = false
-      try {
-        webglOk = !!document.createElement('canvas').getContext('webgl2')
-      } catch {
-        // keep webglOk false when WebGL2 probe throws
-      }
-      if (webglOk) {
+      // Kept so post-rewrite repaint can clearTextureAtlas / reattach when
+      // refresh alone leaves a blank canvas on Windows (wheel scroll still worked).
+      let webglAddon: WebglAddon | null = null
+      // Shared by initial open() load and Windows post-rewrite reattach so
+      // preserveDrawingBuffer / context-loss handling cannot drift apart.
+      const attachWebgl = (): boolean => {
         try {
           // preserveDrawingBuffer: true so the anti-flicker snapshot
-          // (snapshotTerminal → drawImage of the live canvas) can read real
+          // (snapshotTerminal — drawImage of the live canvas) can read real
           // pixels. Without it WebGL clears the buffer outside its render loop,
           // the fold-rewrite cover snapshot comes out blank, and toggling a
           // fold flickers the terminal blank for a couple of frames.
@@ -593,11 +615,26 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           webgl.onContextLoss(() => {
             dbg('webgl-context-loss')
             webgl.dispose()
+            if (webglAddon === webgl) webglAddon = null
             setWebglDegraded(true)
           })
           term.loadAddon(webgl)
-          dbg('webgl-loaded', { cols: term.cols, rows: term.rows })
+          webglAddon = webgl
+          return true
         } catch {
+          webglAddon = null
+          return false
+        }
+      }
+      try {
+        webglOk = !!document.createElement('canvas').getContext('webgl2')
+      } catch {
+        // keep webglOk false when WebGL2 probe throws
+      }
+      if (webglOk) {
+        if (attachWebgl()) {
+          dbg('webgl-loaded', { cols: term.cols, rows: term.rows })
+        } else {
           webglOk = false
         }
       }
@@ -709,6 +746,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         clearFlash()
         const pulses = getJumpFlashPulses()
         const pulseMs = 900
+        // Windows "Animation effects" off maps to prefers-reduced-motion.
+        // Keep the original CSS keyframe path when motion is allowed so the
+        // open-animation look is unchanged; only approximate when reduced.
+        const reduceMotion = prefersReducedMotion()
+        dbg('flash-start', { startLine, count, pulses, pulseMs, reduceMotion })
+        // Keyframes hold solid through 40% then ease out; mirror hold/gap for JS.
+        const holdMs = Math.round(pulseMs * 0.4)
+        const gapMs = pulseMs - holdMs
         for (let i = 0; i < count; i++) {
           const offset = getMarkerOffsetForBufferLine({
             bufferLine: startLine + i,
@@ -729,12 +774,33 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           dbg('flash-decoration', { created: !!decoration })
           if (!decoration) { marker.dispose(); continue }
           decoration.onRender(element => {
-            dbg('flash-render', { y: element.getBoundingClientRect().top })
+            // onRender fires every xterm paint; init once so CSS animation is
+            // not restarted every frame (would freeze the pulse at 0%).
+            if (element.dataset.siFlash === '1') return
+            element.dataset.siFlash = '1'
+            dbg('flash-render', { y: element.getBoundingClientRect().top, reduceMotion })
             element.style.pointerEvents = 'none'
             element.style.left = '0'
             element.style.width = '100%'
             element.style.boxSizing = 'border-box'
-            element.style.animation = `si-jump-flash ${pulseMs}ms ease-out ${pulses}`
+            if (!reduceMotion) {
+              // Original path — identical to pre-change behavior.
+              element.style.animation = `si-jump-flash ${pulseMs}ms ease-out ${pulses}`
+              return
+            }
+            // Reduced motion: timed solid / clear pulses (no CSS animation).
+            const runPulse = (n: number) => {
+              if (n >= pulses || element.dataset.siFlash !== '1') return
+              element.style.backgroundColor = JUMP_FLASH_BG
+              const tHold = setTimeout(() => {
+                if (element.dataset.siFlash !== '1') return
+                element.style.backgroundColor = 'transparent'
+                const tGap = setTimeout(() => runPulse(n + 1), gapMs)
+                flashPulseTimers.push(tGap)
+              }, holdMs)
+              flashPulseTimers.push(tHold)
+            }
+            runPulse(0)
           })
           flashMarkers.push(marker)
           flashDecorations.push(decoration)
@@ -1045,26 +1111,93 @@ const snapshotTerminal = () => {
       }
 
       // Windows WebGL often leaves a cleared canvas after reset+large write
-      // even though the buffer is full: chrome (e.g. Turn N/M) stays visible
-      // but the terminal is blank until a user wheel scroll forces a repaint.
-      // Logs that pin this: rewrite-done → snapshot-removed (holdMs ~50ms)
-      // with the viewport still blank. term.refresh marks the full viewport
-      // dirty so xterm's RenderDebouncer schedules a paint (not a sync GPU
-      // blit) without changing scroll position.
-      const forceViewportRepaint = (reason: string) => {
+      // even though the buffer is full. term.refresh alone and even atlas
+      // clear were not enough (logs: force-repaint with viewportY:0 still
+      // blank; wheel scroll paints). Open-at-top keeps viewportY at 0, so a
+      // scroll-only nudge is easy to miss when maxScroll is 0 (folded short
+      // view).
+      //
+      // Hard path (finishPaint once per rewrite settle) uses ONE recovery
+      // technique so open/switch does not flash twice:
+      // - Windows + reattach: dispose/reload WebGL + fit + refresh
+      // - else: resize bounce + atlas clear + refresh
+      // Soft path: atlas clear + refresh only.
+      const forceViewportRepaint = (
+        reason: string,
+        opts?: { reattachWebgl?: boolean; soft?: boolean },
+      ) => {
         if (disposed || term.rows <= 0) return
+        const soft = !!opts?.soft
+        let resized = false
+        let reattached = false
         try {
-          term.refresh(0, term.rows - 1)
+          if (soft) {
+            webglAddon?.clearTextureAtlas()
+            term.refresh(0, Math.max(0, term.rows - 1))
+          } else if (opts?.reattachWebgl && webglAddon) {
+            // Single hard step on Windows: reattach rebuilds the renderer.
+            // Do not also resize-bounce or micro-scroll (that was a second flash).
+            try {
+              webglAddon.dispose()
+            } catch {
+              // dispose may throw if already torn down; still try reload
+            }
+            webglAddon = null
+            if (attachWebgl()) {
+              reattached = true
+              fitAddon.fit()
+              stickOpenAtTop()
+              // Fresh addon has an empty atlas; refresh is enough.
+              term.refresh(0, Math.max(0, term.rows - 1))
+            } else {
+              setWebglDegraded(true)
+              // Fall back to resize bounce if reattach failed.
+              const cols = term.cols
+              const rows = term.rows
+              if (cols > 0 && rows > 1) {
+                term.resize(cols, rows - 1)
+                term.resize(cols, rows)
+                resized = true
+              } else {
+                fitAddon.fit()
+                resized = true
+              }
+              term.refresh(0, Math.max(0, term.rows - 1))
+            }
+          } else {
+            // Non-Windows / no-reattach hard path: one resize bounce.
+            const cols = term.cols
+            const rows = term.rows
+            if (cols > 0 && rows > 1) {
+              term.resize(cols, rows - 1)
+              term.resize(cols, rows)
+              resized = true
+            } else {
+              fitAddon.fit()
+              resized = true
+            }
+            webglAddon?.clearTextureAtlas()
+            stickOpenAtTop()
+            term.refresh(0, Math.max(0, term.rows - 1))
+          }
         } catch (e) {
           dbg('force-repaint-error', { reason, msg: String(e) })
           return
         }
+        const canvas = container.querySelector<HTMLCanvasElement>('.xterm-screen canvas')
         dbg('force-repaint', {
           reason,
+          soft,
           rows: term.rows,
           cols: term.cols,
           viewportY: term.buffer.active.viewportY,
           bufLen: term.buffer.active.length,
+          maxScroll: Math.max(0, term.buffer.active.length - term.rows),
+          resized,
+          reattached,
+          webgl: !!webglAddon,
+          canvasW: canvas?.width,
+          canvasH: canvas?.height,
         })
       }
 
@@ -1086,11 +1219,15 @@ const snapshotTerminal = () => {
 
       const writeComposed = (afterWrite?: () => void) => {
         const generation = ++repaintGeneration
-        // Supersede any pending finishPaint from a prior rewrite before we
-        // install a new snapshot (stale finishPaint must not remove it).
+        // Supersede any pending finishPaint / coalesced hard from a prior
+        // rewrite before we install a new snapshot.
         if (finishPaintTimeout) {
           clearTimeout(finishPaintTimeout)
           finishPaintTimeout = null
+        }
+        if (hardRepaintTimer) {
+          clearTimeout(hardRepaintTimer)
+          hardRepaintTimer = null
         }
         if (hasWrittenOnce) snapshotTerminal()
         clearHoverDecoration()
@@ -1130,15 +1267,16 @@ const snapshotTerminal = () => {
           // notify folds / restore an anchor). xterm parks at the bottom after
           // large writes; without this, session open lands at the end.
           stickOpenAtTop()
-          // Schedule a full-viewport refresh (rAF-debounced by xterm): covers
-          // the first rewrite (no snapshot) and seeds canvas pixels for the
-          // next write's anti-flicker snapshot when paint does run.
-          forceViewportRepaint('rewrite-sync')
+          // Soft refresh only: hard repaint (resize bounce / reattach) flashes
+          // visibly; reserve it for finishPaint after the snapshot drops.
+          // Still marks the viewport dirty so the first write seeds canvas
+          // pixels for the next write's anti-flicker snapshot.
+          forceViewportRepaint('rewrite-sync', { soft: true })
           openAtTopGraceUntil = performance.now() + 800
           writingContent = false
-          // Two frames: drop the anti-flicker snapshot past xterm's paint,
-          // re-stick open-at-top, then schedule another full-viewport refresh
-          // so Windows does not leave a cleared canvas after snapshot-removed.
+          // Two frames then a short debounce: open often chains content write
+          // + folds recompose (~70ms). Each used to hard-reattach → two flashes.
+          // Keep the snapshot up and run one hard paint for the latest generation.
           let finishedInRaf = false
           const finishPaint = (reason: string) => {
             // Stale generation: pure no-op (do not clear the newer rewrite's
@@ -1156,9 +1294,27 @@ const snapshotTerminal = () => {
               removeSnapshot?.()
               return
             }
-            removeSnapshot?.()
             stickOpenAtTop()
-            forceViewportRepaint(reason)
+            // Soft while cover is still up (or first paint with no snapshot).
+            forceViewportRepaint(`${reason}-pre-hard`, { soft: true })
+            // Coalesce hard reattach: a newer writeComposed clears this timer.
+            if (hardRepaintTimer) clearTimeout(hardRepaintTimer)
+            const hardGeneration = generation
+            hardRepaintTimer = setTimeout(() => {
+              hardRepaintTimer = null
+              if (disposed || hardGeneration !== repaintGeneration) return
+              // Hard under snapshot cover, then one uncover (not blank→reattach).
+              forceViewportRepaint(reason, { reattachWebgl: TEMP_PLATFORM === 'win32' })
+              removeSnapshot?.()
+              requestAnimationFrame(() => {
+                if (disposed || hardGeneration !== repaintGeneration || term.rows <= 0) return
+                try {
+                  term.refresh(0, term.rows - 1)
+                } catch {
+                  // disposed mid-frame
+                }
+              })
+            }, HARD_REPAINT_DEBOUNCE_MS)
           }
           requestAnimationFrame(() => {
             if (disposed || generation !== repaintGeneration) return
@@ -1247,6 +1403,7 @@ const snapshotTerminal = () => {
       }
 
       applyFoldsRef.current = (next: FoldRange[]) => {
+        const prev = foldRanges
         foldRanges = next
         // Drop collapsed state for folds that no longer exist (session grew).
         const valid = new Set(next.map(f => f.key))
@@ -1266,8 +1423,23 @@ const snapshotTerminal = () => {
             addedDefault = true
           }
         }
-        if (collapsedKeys.size > 0 || dropped || addedDefault || foldView) recompose()
-        else { injectFoldRows(); injectProgressRow(); injectUserHighlights() }
+        // Open race: mount applies folds before loadRender fills rawAnsi.
+        // Keep fold state only; loadRender composes with collapsedKeys on first write.
+        if (!rawAnsi) return
+        // Do not recompose on every folds effect re-fire: `collapsedKeys.size > 0
+        // || foldView` was always true after the first collapse and forced a
+        // second full rewrite (and hard reattach) right after open.
+        const foldSig = (rs: FoldRange[]) =>
+          rs.map(f => `${f.key}:${f.headerLogical}:${f.logicalStart}:${f.logicalEnd}:${f.displayStart}:${f.displayEnd}`).join('|')
+        const rangesChanged = foldSig(prev) !== foldSig(next)
+        if (dropped || addedDefault || rangesChanged) {
+          if (collapsedKeys.size > 0 || foldView || addedDefault || dropped) recompose()
+          else { injectFoldRows(); injectProgressRow(); injectUserHighlights() }
+        } else {
+          injectFoldRows()
+          injectProgressRow()
+          injectUserHighlights()
+        }
       }
 
       // Re-apply user-message highlights when the prop changes without a
@@ -1599,7 +1771,11 @@ const snapshotTerminal = () => {
           && term.buffer.active.viewportY > 0
         ) {
           openAtTop = false
-        } else if (openAtTop && !followOutputRef.current && term.buffer.active.viewportY > 0) {
+        } else if (
+          openAtTop
+          && !followOutputRef.current
+          && term.buffer.active.viewportY > 0
+        ) {
           // During rewrite/grace, pull back to the top if something nudged us.
           term.scrollToLine(0)
         }
@@ -1698,6 +1874,7 @@ const snapshotTerminal = () => {
       disposed = true
       if (resizeDebounce) clearTimeout(resizeDebounce)
       if (finishPaintTimeout) clearTimeout(finishPaintTimeout)
+      if (hardRepaintTimer) clearTimeout(hardRepaintTimer)
       observer?.disconnect()
       disposeOnScroll?.dispose()
       disposeOnSelectionChange?.dispose()
