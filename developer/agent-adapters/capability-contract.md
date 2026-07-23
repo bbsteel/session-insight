@@ -1,69 +1,69 @@
-# Agent 能力契约方案
+# Agent Capability Contract Design
 
-## 目标
+## Goal
 
-建立由 Agent 适配器拥有的唯一能力事实来源，使后端 API、设置页、会话页和共享测试读取同一份数据。契约回答两个不同问题：
+Establish a single, adapter-owned source of truth for Agent capabilities so the backend API, settings, session views, and shared tests all consume the same data. The contract answers two separate questions:
 
-1. **Agent 能力**：SI 对这种 Agent 通常能做到什么？
-2. **会话状态**：SI 对当前这一条会话实际拿到了什么？
+1. **Agent capability:** What can SI normally do with this kind of Agent?
+2. **Session status:** What did SI actually obtain for this specific session?
 
-这两层不能合并。Agent 支持 Token，而某次异常退出没有写入 Token，分别应表达为：
+These layers must not be merged. If an Agent supports tokens but an interrupted session never persisted them, represent that as:
 
 ```text
-Agent 能力：tokens = exact
-本次会话：tokens = missing
+Agent capability: tokens = exact
+Current session: tokens = missing
 ```
 
-## 统一术语
+## Shared Terminology
 
-对用户统一显示五种状态：
+Use five consistent user-facing states:
 
-| 标识 | 代码值 | 含义 |
+| Symbol | Code value | Meaning |
 |---|---|---|
-| `✓` | `exact` | 直接读取结构化事实，或执行结果可精确确认 |
-| `≈` | `estimated` | 通过启发式、时间窗口或不完整证据推断 |
-| `!` | `missing` | Agent 通常能记录，但本次会话没有该数据 |
-| `—` | `not_applicable` | 该 Agent 不存在这个概念 |
-| `×` | `unsupported` | 概念存在，但 SI 当前不能可靠读取或管理 |
+| `✓` | `exact` | Read directly from structured facts, or an operation whose result can be confirmed exactly |
+| `≈` | `estimated` | Inferred from a heuristic, time window, or incomplete evidence |
+| `!` | `missing` | The Agent normally records the data, but this session does not contain it |
+| `—` | `not_applicable` | The concept does not exist for this Agent |
+| `×` | `unsupported` | The concept exists, but SI cannot currently read or manage it reliably |
 
-`—` 不使用圆圈图标。颜色不能作为唯一识别方式，文本和符号必须同时存在。
+Use an em dash, not a circle icon, for `not_applicable`. Color must never be the only differentiator; always pair the symbol with text.
 
-### 状态允许范围
+### Allowed states by layer
 
-Agent 级静态声明只允许：
+Static Agent declarations allow only:
 
 ```text
 exact | estimated | not_applicable | unsupported
 ```
 
-会话级解析结果允许全部五种状态。`missing` 永远不能写入 Agent 静态声明，因为它描述的是一条具体记录，而不是产品能力。
+Resolved session status allows all five values. `missing` must never appear in a static Agent declaration because it describes one concrete record rather than a product capability.
 
-开发进度使用另一套内部术语，例如 `investigating`、`implementing`、`verified`、`blocked`，不得进入用户能力契约。
+Engineering progress uses a separate internal vocabulary such as `investigating`, `implementing`, `verified`, and `blocked`. Progress states never enter the user-facing capability contract.
 
-## v0.4.0 基线能力
+## v0.4.0 Baseline Capabilities
 
-能力 ID 是稳定 API，不使用显示文案作为标识。
+Capability IDs are stable API values. Display labels are not identifiers.
 
-| ID | 用户名称 | 精确定义 |
+| ID | User label | Exact definition |
 |---|---|---|
-| `discovery` | 发现 | SI 能自动定位并列出该 Agent 的本地会话，无需用户逐条导入 |
-| `replay` | 回放 | SI 能按持久化顺序重建用户消息、助手消息和已识别事件 |
-| `realtime` | 实时 | 打开会话后，SI 能检测持久化内容修订并增量或重新加载最新记录 |
-| `tokens` | Token | SI 能读取或有明确规则估算 Token/计费字段，并保留字段存在性 |
-| `tool_results` | 工具结果 | SI 能关联工具调用与其结果、失败或拒绝状态 |
-| `diff` | Diff | SI 能从结构化记录恢复文件修改前后内容或等价补丁 |
-| `subtasks` | 子任务 | SI 能识别父子 Agent/任务关系并保持稳定身份 |
-| `resume` | 恢复 | SI 能提供该 Agent 原生恢复会话所需的稳定标识或命令参数 |
-| `delete` | 删除 | SI 能完整删除该 Agent 自有的会话记录，并确认目标身份 |
-| `terminate` | 终止运行 | SI 能把当前会话精确关联到运行进程并终止该进程 |
+| `discovery` | Discovery | SI can automatically locate and list the Agent's local sessions without importing them individually |
+| `replay` | Replay | SI can reconstruct user messages, assistant messages, and recognized events in persisted order |
+| `realtime` | Realtime | While a session is open, SI can detect persisted content revisions and incrementally load or refresh the record |
+| `tokens` | Tokens | SI can read token or billing fields, or estimate them under an explicit rule, while preserving field presence |
+| `tool_results` | Tool results | SI can associate tool calls with results, failures, or rejection states |
+| `diff` | Diff | SI can reconstruct before-and-after edit content or an equivalent patch from structured records |
+| `subtasks` | Subtasks | SI can identify parent-child Agent or task relationships with stable identities |
+| `resume` | Resume | SI can provide the stable identifier or command argument required by the Agent's native resume flow |
+| `delete` | Delete | SI can completely remove the Agent-owned session records and confirm the target identity |
+| `terminate` | Terminate run | SI can map the current session to its running process exactly and terminate that process |
 
-“实时”不等于“运行状态”。内容修订检测和进程存活判断必须分别描述在证据中；未来若 UI 需要独立比较，可新增 `liveness` 能力，不能悄悄改变 `realtime` 的定义。
+`realtime` does not mean process liveness. Content revision detection and process-state detection must be described separately in evidence. If the UI later needs an independent comparison, add a `liveness` capability rather than silently changing the meaning of `realtime`.
 
-“终止运行”不等于停止回放，也不表示 SI 能向 Agent 发送消息。未来的 Agent 控制能力应使用新的能力 ID，例如 `message_send`，并单独设计权限、确认和失败语义。
+`terminate` does not mean stopping replay, and it does not imply that SI can send a message to an Agent. Future Agent-control features require separate capability IDs such as `message_send` plus their own authorization, confirmation, and failure semantics.
 
-## 建议的 Go 模型
+## Proposed Go Model
 
-第一阶段以强类型 Go 声明为事实来源，不引入 YAML 或手写 JSON。能力类型放在不依赖具体 reader 的叶子包，例如 `internal/reader/capability`，避免 registry 与适配器之间形成循环依赖。示意：
+Use strongly typed Go declarations as the first source of truth. Do not introduce YAML or hand-written JSON. Put capability types in a leaf package such as `internal/reader/capability` that does not depend on concrete readers, avoiding cycles between the registry and adapters:
 
 ```go
 package capability
@@ -107,28 +107,28 @@ type AgentCapabilities struct {
 }
 ```
 
-实现时可以将 `map` 换成固定字段结构以获得编译期完整性，但 API 输出应保留稳定的能力 ID。`DetailKey` 是本地化键，不在后端硬编码用户文案。`ReasonCode` 是机器可读原因，用于测试、遥测和会话级覆盖。
+The implementation may replace the map with fixed fields for compile-time completeness, but API output must retain stable capability IDs. `DetailKey` is a localization key; the backend does not hard-code user-facing explanations. `ReasonCode` is machine-readable and supports tests, diagnostics, and session-level overrides.
 
-`AdapterRevision` 在能力语义、解析映射或支持范围变化时递增；它不是 Agent 自身版本。
+Increment `AdapterRevision` when capability semantics, parser mappings, or supported scope changes. It is not the Agent's own version.
 
-每个适配器包导出静态声明：
+Each adapter package exports a static declaration:
 
 ```go
 func Capabilities() capability.AgentCapabilities
 ```
 
-静态声明不能只挂在已创建的 reader 实例上。当前 `Discover()` 只有在本机发现 Agent 存储时才创建实例，而设置页需要描述全部已支持 Agent，包括尚未安装或尚无会话的 Agent。
+Do not attach the declaration only to an instantiated reader. The current `Discover()` creates readers only when Agent storage exists locally, while settings must be able to describe every supported Agent, including Agents that are not installed or have no sessions.
 
-`internal/reader/registry.go` 因此同时维护：
+`internal/reader/registry.go` therefore maintains both:
 
-- **定义目录**：汇总六个适配器的静态声明，始终可查询；
-- **发现结果**：根据本机存储创建的 `BaseSessionReader` 实例。
+- **definition catalog:** aggregates static declarations from all six adapters and is always queryable;
+- **discovery result:** contains `BaseSessionReader` instances created from storage found on the current machine.
 
-registry 只聚合各适配器导出的声明，不能重新填写能力值。未来可进一步把发现函数与声明组合为注册定义，但不应为消除几行显式注册引入 `init()` 全局副作用。
+The registry aggregates declarations exported by adapters; it never re-enters capability values. A future registration definition may combine discovery functions and declarations, but do not introduce `init()` global side effects merely to remove a few explicit registry lines.
 
-## 会话级覆盖
+## Session-Level Overrides
 
-会话详情不应让前端根据字段是否为零自行猜测状态。建议由后端解析为：
+The session detail API must not make the frontend infer status from whether a number is zero. Resolve status in the backend:
 
 ```go
 type SessionCapabilityStatus struct {
@@ -143,19 +143,19 @@ type SessionCapabilities struct {
 }
 ```
 
-解析规则：
+Resolution rules:
 
-1. 以 Agent 静态声明为基线。
-2. `unsupported` 和 `not_applicable` 原样进入会话状态。
-3. 静态为 `exact` 或 `estimated`，但本次应有的数据没有落盘时，覆盖为 `missing`。
-4. 有效的零值仍保持 `exact`，例如精确记录的 `0` 次工具调用。
-5. 当前会话只能降低数据可用性，不能把 Agent 未声明支持的能力临时提升为 `exact`。
+1. Start with the static Agent declaration.
+2. Preserve `unsupported` and `not_applicable`.
+3. If the static declaration is `exact` or `estimated` but expected data was not persisted for this session, override it with `missing`.
+4. Preserve valid zero values as `exact`, such as an exactly recorded count of zero tool calls.
+5. A session may reduce availability, but it cannot promote an undeclared capability to `exact`.
 
-操作能力还需返回当前可用性。例如 Agent 支持恢复，但当前会话缺少稳定的 `ResumeID`，本次状态为 `missing`，恢复按钮不可用，并展示对应原因。
+Operation capabilities also return current availability. For example, an Agent may support resume while the current session lacks a stable `ResumeID`; the session status is `missing`, the resume action is disabled, and the reason is displayed.
 
-## 原因码
+## Reason Codes
 
-原因码保持稳定、不可本地化，文案由前端 i18n 映射。建议初始集合：
+Reason codes are stable and non-localized. Frontend i18n maps them to display copy. An initial set may include:
 
 ```text
 source_not_recorded
@@ -170,43 +170,43 @@ concept_absent
 platform_not_supported
 ```
 
-每个 `estimated`、`missing`、`unsupported` 和 `not_applicable` 声明必须提供原因码。`exact` 可以省略，但高风险操作如删除和终止运行仍建议注明证据类型。
+Every `estimated`, `missing`, `unsupported`, and `not_applicable` state requires a reason code. `exact` may omit one, although high-risk operations such as delete and terminate should still identify their evidence type.
 
-## 契约校验规则
+## Contract Validation Rules
 
-共享测试至少强制：
+At minimum, shared tests enforce:
 
-- 十项基线能力全部存在且只出现一次。
-- `AgentType` 与 reader 的 `AgentType()` 相同。
-- `DisplayName` 非空。
-- Agent 静态声明不包含 `missing`。
-- 状态值属于已知枚举。
-- 非 `exact` 状态包含 `ReasonCode`。
-- 声明 `realtime = exact/estimated` 时，实现内容修订检测接口。
-- 声明 `delete = exact` 时，实现 `SessionDeleter`。
-- 声明 `terminate = exact` 时，实现 `SessionProcessFinder`。
-- `terminate` 不允许 `estimated`。
-- 支持型数据能力具有对应 fixture 和行为检查。
+- all ten baseline capabilities exist exactly once;
+- `AgentType` matches the reader's `AgentType()`;
+- `DisplayName` is non-empty;
+- static Agent declarations never contain `missing`;
+- every state is a known enum value;
+- every non-`exact` state contains a `ReasonCode`;
+- `realtime = exact/estimated` requires a content revision implementation;
+- `delete = exact` requires `SessionDeleter`;
+- `terminate = exact` requires `SessionProcessFinder`;
+- `terminate` cannot be `estimated`;
+- every supported data capability has a fixture and behavior check.
 
-Go 接口存在只能证明“有实现入口”，不能证明实现正确；最终可信度来自 fixture 行为测试。
+The existence of a Go interface proves only that an implementation entry point exists. Fixture-backed behavioral tests provide the final evidence.
 
-## API 与 UI 消费
+## API and UI Consumption
 
-建议提供 Agent 列表级 API：
+Provide an Agent catalog API:
 
 ```text
 GET /api/agents
 ```
 
-它返回全部已注册 Agent 的显示名、适配器修订、能力声明以及本机是否已发现。会话详情返回或链接会话级状态。未安装 Agent 的能力仍然可见，但不能伪造会话数量或可执行操作。
+It returns every registered Agent's display name, adapter revision, capability declarations, and whether the Agent was discovered locally. Session detail returns or links to resolved session status. Capabilities remain visible for an uninstalled Agent, but the API must not invent session counts or executable actions.
 
-设置页展示 Agent 之间的基础能力比较；会话页展示当前 Agent 的入口和本次会话覆盖。两处都不得硬编码 Agent 能力。
+Settings compares baseline capabilities across Agents. A session view provides an entry point for the current Agent and overlays current-session status. Neither surface hard-codes Agent capabilities.
 
-会话页只摘要影响当前使用的问题，例如“2 项缺失”，不展示十个常驻徽章。完整状态在 Agent 详情面板中查看。
+The session header summarizes only issues relevant to current use, such as "2 missing," rather than showing ten persistent badges. The full state belongs in the Agent details panel.
 
-## 扩展方式
+## Extension Model
 
-能力 ID 可以按稳定命名空间扩展，例如：
+Capability IDs may later use stable namespaces:
 
 ```text
 memory.inspect
@@ -217,24 +217,24 @@ message_send
 liveness
 ```
 
-记忆与本地存储分析涉及敏感路径、内容读取、保留策略和删除语义，应单独设计能力组与权限边界，不塞进 `replay` 或 `discovery`。
+Memory and local-storage analysis involve sensitive paths, content access, retention rules, and deletion semantics. Design them as separate capability groups with explicit permission boundaries rather than overloading `replay` or `discovery`.
 
-新增能力时必须：
+Adding a capability requires:
 
-1. 给出不依赖某个 Agent 的精确定义。
-2. 明确允许的状态和会话级覆盖规则。
-3. 增加契约校验及至少一个支持、一个不支持案例。
-4. 为全部已注册 Agent 补充显式声明。
-5. 再由 API 和 UI 自动呈现。
+1. a precise definition independent of any one Agent;
+2. explicit allowed states and session override rules;
+3. contract validation plus at least one supported and one unsupported case;
+4. an explicit declaration for every registered Agent;
+5. API and UI presentation generated from those declarations.
 
-## 落地顺序
+## Implementation Order
 
-1. 定义类型、十项 ID 和契约校验，不改变 UI。
-2. 为六个现有 reader 补齐能力声明及原因。
-3. 引入共享符合性测试，并让六个适配器通过契约层检查。
-4. 逐步补足 fixture 行为层，不把旧测试一次性重写。
-5. 暴露 Agent 能力 API。
-6. 设置页和会话页改为消费 API。
-7. 删除任何重复的前端或说明性能力表。
+1. Define types, the ten IDs, and contract validation without changing the UI.
+2. Add declarations and reasons for all six existing readers.
+3. Introduce shared conformance tests and make all six adapters pass contract-level checks.
+4. Add fixture-backed behavior coverage incrementally rather than rewriting every old test at once.
+5. Expose the Agent capability API.
+6. Make settings and session views consume the API.
+7. Remove any duplicate frontend or explanatory capability matrix.
 
-每一步都应独立可测试，不能先上线宣传表再等待适配器声明追上。
+Each step must be independently testable. Do not ship a promotional matrix before adapter declarations can support it.

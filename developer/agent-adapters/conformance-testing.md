@@ -1,66 +1,66 @@
-# 共享 Agent 符合性测试方案
+# Shared Agent Conformance Testing Design
 
-## 目标
+## Goal
 
-共享符合性测试用于证明：
+The shared conformance suite proves that:
 
-1. 能力契约结构完整；
-2. 声明与 Go 接口实现一致；
-3. 适配器在脱敏 fixture 上表现符合声明；
-4. 新增 Agent 不会因为复制旧测试而漏掉通用边界。
+1. the capability contract is structurally complete;
+2. declarations agree with Go interface implementations;
+3. adapter behavior on sanitized fixtures agrees with its declarations;
+4. a new Agent cannot miss common boundaries by copying an existing adapter's tests.
 
-它不是替代适配器自己的格式解析测试，而是在所有适配器之上提供同一组最低验收标准。
+The suite does not replace format-specific parser tests. It establishes a shared minimum acceptance standard above every adapter.
 
-## 分层设计
+## Layered Design
 
-### 第一层：契约检查
+### Layer 1: contract checks
 
-不读取真实用户目录，只检查 reader 和能力声明：
+This layer reads no real user directories. It checks only the reader and capability declaration:
 
-- Agent 标识、显示名和适配器修订合法；
-- 十项基线能力完整；
-- 状态和原因码合法；
-- 静态声明没有 `missing`；
-- 操作能力与可选 Go 接口一致；
-- 禁止 `terminate = estimated` 等危险组合。
+- the Agent ID, display name, and adapter revision are valid;
+- all ten baseline capabilities are present;
+- states and reason codes are valid;
+- static declarations do not contain `missing`;
+- operation capabilities agree with optional Go interfaces;
+- unsafe combinations such as `terminate = estimated` are rejected.
 
-这一层应能立即覆盖六个现有适配器。
+This layer should be immediately applicable to all six existing adapters.
 
-### 第二层：通用行为检查
+### Layer 2: common behavior checks
 
-对调用方提供的 fixture 运行统一断言：
+Run shared assertions against caller-provided fixtures:
 
-- `ListSessions` 可重复且顺序稳定；
-- 列表和详情的 Agent 类型、会话 ID、时间一致；
-- 会话 ID 非空且唯一；
-- `GetSession` 对未知 ID 返回明确错误；
-- 回合和事件顺序稳定；
-- 时间戳处于合理范围；
-- 有效零值不会变成缺失；
-- 相同 fixture 重读不会产生重复事件；
-- 渲染不 panic，空记录与不支持可区分。
+- repeated `ListSessions` calls are stable and deterministically ordered;
+- list and detail results agree on Agent type, session ID, and timestamps;
+- session IDs are non-empty and unique;
+- `GetSession` returns a clear error for an unknown ID;
+- turn and event ordering is stable;
+- timestamps are within a reasonable range;
+- valid zero values do not become missing;
+- rereading the same fixture does not duplicate events;
+- rendering does not panic, and empty records remain distinguishable from unsupported rendering.
 
-### 第三层：能力行为检查
+### Layer 3: capability behavior checks
 
-这一层必须按顺序执行两个阶段，不能用“没有 fixture”作为跳过理由：
+This layer must run in two ordered phases. Missing fixtures are never a reason to skip a supported declaration:
 
-1. **Fixture 覆盖门禁**：枚举所有声明为 `exact` 或 `estimated` 的能力，检查其所需 fixture 是否存在并包含对应能力证据；任何缺口立即失败。
-2. **行为验证**：覆盖门禁通过后，仅对已经确认存在的 fixture 运行相应行为断言。
+1. **Fixture coverage gate:** enumerate every capability declared `exact` or `estimated`, verify that its required fixture exists and contains matching capability evidence, and fail immediately on any gap.
+2. **Behavior validation:** after the coverage gate passes, run the relevant behavior assertions against the confirmed fixtures.
 
-行为断言包括：
+Behavior assertions include:
 
-- `realtime`：记录变化后 revision 单调变化，未变化时保持稳定；
-- `tokens`：精确字段保持 presence，异常退出按预期标记缺失；
-- `tool_results`：调用与结果可关联，失败/拒绝状态不丢失；
-- `diff`：路径、旧内容、新内容及 replace-all 语义正确；
-- `subtasks`：父子 ID 稳定，不把子任务重复列为根会话；
-- `resume`：恢复 ID 稳定且不误用文件名；
-- `delete`：只删除 fixture 沙箱中的目标及明确关联记录；
-- `terminate`：只针对注入的假进程查找器测试目标解析，CI 不终止真实 Agent。
+- `realtime`: the revision changes monotonically when the record changes and remains stable otherwise;
+- `tokens`: exact fields preserve presence, and interrupted sessions become missing as expected;
+- `tool_results`: calls remain associated with results, including failure and rejection states;
+- `diff`: paths, old content, new content, and replace-all semantics are preserved;
+- `subtasks`: parent and child IDs are stable, and child sessions are not duplicated as roots;
+- `resume`: the resume ID is stable and is not confused with a filename;
+- `delete`: only the target and explicitly associated records inside the fixture sandbox are removed;
+- `terminate`: target resolution uses an injected fake process finder; CI never terminates a real Agent.
 
-`discovery` 的平台路径逻辑使用临时主目录和环境注入测试，不能依赖运行测试机器恰好安装某个 Agent。
+Test platform path logic for `discovery` with a temporary home directory and injected environment. Never rely on the CI host having a particular Agent installed.
 
-## 推荐包结构
+## Proposed Package Layout
 
 ```text
 internal/reader/adaptertest/
@@ -71,9 +71,9 @@ internal/reader/adaptertest/
 └── report.go
 ```
 
-`adaptertest` 可以导入 `internal/model` 和叶子能力包，但不能导入父包 `internal/reader`。当前 `reader/registry.go` 会导入所有具体适配器；若适配器测试再通过 `adaptertest` 反向导入 `reader`，会形成测试期循环依赖。
+`adaptertest` may import `internal/model` and the leaf capability package, but it must not import the parent `internal/reader` package. Today, `reader/registry.go` imports every concrete adapter. If an adapter test imported `reader` through `adaptertest`, the test build would form an import cycle.
 
-共享包应声明满足测试所需的最小结构化接口；Go 的隐式接口实现让所有 `BaseSessionReader` 实现无需适配即可传入：
+The shared package declares the smallest structural interface required by its tests. Go's implicit interface implementation allows every `BaseSessionReader` implementation to satisfy it without an adapter:
 
 ```go
 type Reader interface {
@@ -86,9 +86,9 @@ type Reader interface {
 }
 ```
 
-删除、进程查找和 revision 等可选能力也在 `adaptertest` 中以相同方法签名声明局部接口。生产 reader 不导入 `adaptertest`。各适配器的 `_test.go` 文件调用共享套件。
+Declare local optional interfaces with matching method signatures for deletion, process discovery, revisions, and other optional capabilities. Production readers never import `adaptertest`. Each adapter's `_test.go` file calls the shared suite.
 
-示意 API：
+Proposed API:
 
 ```go
 type FixtureSet struct {
@@ -113,7 +113,7 @@ func Run(
 )
 ```
 
-每个适配器的入口保持短小：
+Keep each adapter entry point short:
 
 ```go
 func TestClaudeConformance(t *testing.T) {
@@ -130,16 +130,16 @@ func TestClaudeConformance(t *testing.T) {
 }
 ```
 
-具体 API 在实现阶段可根据 SQLite 与目录型 reader 的差异调整，但必须保持：
+The implementation may adjust the API for differences between SQLite-backed and directory-backed readers, but it must preserve these properties:
 
-- 工厂由适配器测试提供；
-- 共享包不读取开发者真实主目录；
-- fixture 缺失不能自动视为跳过；
-- 支持的能力没有 fixture 时明确失败。
+- the adapter test provides the factory;
+- the shared package never reads the developer's real home directory;
+- an absent fixture cannot become an implicit skip;
+- a supported capability without a fixture fails explicitly.
 
-## Fixture 清单与元数据
+## Fixture Inventory and Metadata
 
-每个 fixture 应附带机器可读元数据，例如 `fixture.json`：
+Each fixture includes machine-readable metadata such as `fixture.json`:
 
 ```json
 {
@@ -153,90 +153,90 @@ func TestClaudeConformance(t *testing.T) {
 }
 ```
 
-元数据不复制完整能力契约，只说明该样本可验证哪些行为。测试需要验证：
+Metadata does not duplicate the full capability contract. It identifies the behaviors that a sample can verify. Tests enforce:
 
-- `sanitized` 必须为 `true`；
-- `agent_type` 与适配器一致；
-- 在运行任何能力行为断言前，声明支持的每项能力至少被一个适用 fixture 覆盖，否则测试立即失败；
-- 平台限定不会被误报为全平台验证。
+- `sanitized` is `true`;
+- `agent_type` matches the adapter;
+- before any capability behavior assertion runs, every supported capability is covered by at least one applicable fixture or the test fails immediately;
+- platform-limited evidence is never presented as all-platform verification.
 
-不要提交真实用户名、绝对主目录、仓库远端、令牌、设备标识或未经审核的对话正文。
+Never commit real usernames, absolute home paths, repository remotes, tokens, device identifiers, or unreviewed conversation content.
 
-## 能力与测试证据映射
+## Capability-to-Evidence Mapping
 
-共享报告应生成如下映射，而不是维护人工完成百分比：
+The shared report generates an evidence mapping instead of a manually maintained completion percentage:
 
-| 能力 | 声明 | 接口证据 | Fixture 证据 | 结果 |
+| Capability | Declaration | Interface evidence | Fixture evidence | Result |
 |---|---|---|---|---|
-| replay | exact | BaseSessionReader | basic | 通过 |
-| realtime | estimated | LiveRevisionProvider | realtime | 通过 |
-| tokens | exact | SessionDetail.Billing | interrupted, basic | 通过 |
-| diff | exact | RenderEvent/EditCall | diff | 通过 |
-| terminate | unsupported | — | — | 通过 |
+| replay | exact | BaseSessionReader | basic | pass |
+| realtime | estimated | LiveRevisionProvider | realtime | pass |
+| tokens | exact | SessionDetail.Billing | interrupted, basic | pass |
+| diff | exact | RenderEvent/EditCall | diff | pass |
+| terminate | unsupported | — | — | pass |
 
-结果规则：
+Result rules:
 
-- 声明支持、接口缺失：失败。
-- 声明支持、fixture 缺失：失败。
-- 声明不支持，却实现高风险操作接口：失败或要求显式例外。
-- 声明不适用：不要求行为 fixture，但要求原因码。
-- 某次会话为 `missing`：必须有 fixture 证明覆盖规则，而不是降低静态声明。
+- supported declaration with missing interface evidence: fail;
+- supported declaration with missing fixture evidence: fail;
+- unsupported declaration that exposes a high-risk operation interface: fail or require an explicit exception;
+- not-applicable declaration: no behavior fixture required, but a reason code is mandatory;
+- session-level `missing`: a fixture must prove the override rule instead of weakening the static declaration.
 
-## CI 集成
+## CI Integration
 
-第一阶段不新增独立 CLI。共享测试挂入现有 Go 测试：
+Do not add a standalone CLI in the first phase. Attach shared tests to the existing Go suite:
 
 ```bash
 go test ./internal/reader/...
 ```
 
-仓库完整 CI 仍运行：
+The full repository CI continues to run:
 
 ```bash
 go test ./...
 ```
 
-如果未来报告需要独立展示，可以从测试库提取只读报告工具：
+If a standalone report becomes useful later, extract a read-only tool from the testing library:
 
 ```bash
 go run ./internal/tools/adapter-report
 ```
 
-报告工具必须读取同一份能力声明和测试证据索引，不能另建配置文件。只有当外部贡献者数量或接入频率证明有需要时，才考虑脚手架命令。
+The reporting tool must read the same capability declarations and test-evidence index. It cannot introduce another configuration file. Consider a scaffolding command only when external contributor volume or onboarding frequency demonstrates a need.
 
-## 渐进迁移六个现有适配器
+## Incremental Migration of the Six Existing Adapters
 
-为了避免一次重写全部 reader 测试：
+Avoid rewriting every reader test at once:
 
-1. 先让六个适配器通过契约检查。
-2. 复用现有测试数据接入基础行为检查。
-3. 按能力逐步整理脱敏 fixture。
-4. 每当修复一个真实解析缺陷，就补充最小回归 fixture。
-5. 所有支持能力拥有 fixture 后，启用“无证据即失败”的严格门禁。
+1. Make all six adapters pass contract checks.
+2. Reuse existing test data for basic behavior checks.
+3. Organize sanitized fixtures capability by capability.
+4. Add a minimal regression fixture whenever a real parser defect is fixed.
+5. Enable the strict "no evidence, no support" gate after every supported capability has fixture coverage.
 
-过渡期间的豁免必须是代码中带原因和到期条件的显式条目，不能使用无说明的 `t.Skip`。
+During migration, an exception must be explicit in code with a reason and an expiration condition. Do not use an unexplained `t.Skip`.
 
-## 非目标
+## Non-Goals
 
-共享符合性测试不负责：
+The shared conformance suite does not:
 
-- 评估某个 Agent 的商业质量；
-- 比较 Agent 本身的功能多少；
-- 访问开发者的真实会话作为 CI 输入；
-- 根据通过用例数估算开发工时；
-- 在 CI 中删除或终止真实 Agent 会话；
-- 替代解析器针对格式细节的单元测试。
+- judge an Agent's commercial quality;
+- compare how many features Agents provide;
+- use a developer's real sessions as CI input;
+- estimate engineering effort from passing test counts;
+- delete or terminate real Agent sessions in CI;
+- replace parser unit tests for format-specific details.
 
-它只验证 SI 对能力所作的声明是否具有可重复的工程证据。
+It verifies only that SI's capability claims have repeatable engineering evidence.
 
-## 实施顺序
+## Implementation Order
 
-1. 实现纯契约检查及其自测试。
-2. 为六个现有 Agent 添加声明并通过检查。
-3. 实现 basic 行为套件。
-4. 接入已有的最小样本。
-5. 实现能力行为套件。
-6. 补齐缺失 fixture，逐项开启严格门禁。
-7. 在 PR 模板或 CI 摘要中输出证据映射。
+1. Implement pure contract checks and their self-tests.
+2. Add declarations for all six existing Agents and make them pass.
+3. Implement the basic behavior suite.
+4. Connect the smallest existing samples.
+5. Implement capability behavior suites.
+6. Fill fixture gaps and enable strict gates capability by capability.
+7. Emit the evidence mapping in the PR template or CI summary.
 
-每个阶段都应保持 `go test ./internal/reader/...` 可独立验证，不能依赖本机安装 Agent。
+Every phase must keep `go test ./internal/reader/...` independently verifiable and must not depend on a locally installed Agent.
