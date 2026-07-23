@@ -602,19 +602,15 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // Kept so post-rewrite repaint can clearTextureAtlas / reattach when
       // refresh alone leaves a blank canvas on Windows (wheel scroll still worked).
       let webglAddon: WebglAddon | null = null
-      try {
-        webglOk = !!document.createElement('canvas').getContext('webgl2')
-      } catch {
-        // keep webglOk false when WebGL2 probe throws
-      }
-      if (webglOk) {
-        // preserveDrawingBuffer: true so the anti-flicker snapshot
-        // (snapshotTerminal → drawImage of the live canvas) can read real
-        // pixels. Without it WebGL clears the buffer outside its render loop,
-        // the fold-rewrite cover snapshot comes out blank, and toggling a
-        // fold flickers the terminal blank for a couple of frames.
-        // attachWebgl is defined below after open() helpers; inline first load.
+      // Shared by initial open() load and Windows post-rewrite reattach so
+      // preserveDrawingBuffer / context-loss handling cannot drift apart.
+      const attachWebgl = (): boolean => {
         try {
+          // preserveDrawingBuffer: true so the anti-flicker snapshot
+          // (snapshotTerminal — drawImage of the live canvas) can read real
+          // pixels. Without it WebGL clears the buffer outside its render loop,
+          // the fold-rewrite cover snapshot comes out blank, and toggling a
+          // fold flickers the terminal blank for a couple of frames.
           const webgl = new WebglAddon(true)
           webgl.onContextLoss(() => {
             dbg('webgl-context-loss')
@@ -624,8 +620,21 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           })
           term.loadAddon(webgl)
           webglAddon = webgl
-          dbg('webgl-loaded', { cols: term.cols, rows: term.rows })
+          return true
         } catch {
+          webglAddon = null
+          return false
+        }
+      }
+      try {
+        webglOk = !!document.createElement('canvas').getContext('webgl2')
+      } catch {
+        // keep webglOk false when WebGL2 probe throws
+      }
+      if (webglOk) {
+        if (attachWebgl()) {
+          dbg('webgl-loaded', { cols: term.cols, rows: term.rows })
+        } else {
           webglOk = false
         }
       }
@@ -1099,24 +1108,6 @@ const snapshotTerminal = () => {
       const stickOpenAtTop = () => {
         if (!openAtTop || followOutputRef.current) return
         term.scrollToLine(0)
-      }
-
-      const attachWebgl = (): boolean => {
-        try {
-          const webgl = new WebglAddon(true)
-          webgl.onContextLoss(() => {
-            dbg('webgl-context-loss')
-            webgl.dispose()
-            if (webglAddon === webgl) webglAddon = null
-            setWebglDegraded(true)
-          })
-          term.loadAddon(webgl)
-          webglAddon = webgl
-          return true
-        } catch {
-          webglAddon = null
-          return false
-        }
       }
 
       // Windows WebGL often leaves a cleared canvas after reset+large write
