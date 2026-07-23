@@ -5,6 +5,7 @@
 - After completing a modification that affects functionality or runtime behavior, first check the orchestration environment's active-agent record and follow **Worktree Development and Runtime Isolation** below, then run `./run.sh all` in the correct checkout so the complete local app is restarted and ready for validation.
 - Documentation, comments, repository metadata, and agent-instruction-only changes do not require starting or restarting the application; validate them with an appropriate diff, lint, or text-check command instead.
 - Write Git commit messages in English, including both the subject and body.
+- **Line endings (required):** all text files you create or edit **must** use Unix newlines only — the single-character line break `\n` (LF). Do **not** use Windows CRLF (`\r\n`) or introduce mixed endings. On Windows hosts, write and commit LF content (configure the editor / avoid tools that rewrite files to CRLF). Do not “normalize” a file to CRLF just because the shell or `git` warns about `LF will be replaced by CRLF`.
 
 ## Agent Adapter Changes
 
