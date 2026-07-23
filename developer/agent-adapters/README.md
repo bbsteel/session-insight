@@ -2,11 +2,11 @@
 
 This directory is the development entry point for adding a new Agent to SessionInsight. It is intended for maintainers, external contributors, and Claude/Codex sessions performing adapter work. It is not end-user product documentation.
 
-Use these in priority order:
+Use the authoritative source for each concern:
 
-1. The current Go interfaces and adapter implementation.
-2. This guide, which defines the research, implementation, validation, and delivery workflow.
-3. The shared capability contract and conformance suite after they land in code.
+- For implementation details, use the current Go interfaces and adapter implementation.
+- For research, validation, and delivery workflow, use this guide.
+- For user-facing capability declarations and conformance, use the shared runtime contract and conformance suite after they land in code.
 
 Architecture proposals and unpublished implementation designs belong in the private SessionInsight documentation repository, not in this code repository. This guide records only the durable instructions that a future coding Agent needs while changing an adapter.
 
