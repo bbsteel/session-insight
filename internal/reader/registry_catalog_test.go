@@ -104,12 +104,22 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 	}
 	// opencode.New needs a real sqlite file; skip construction and only
 	// check exported Capabilities vs AgentType constants via other adapters.
+	ocDB := filepath.Join(tmp, "opencode-identity.db")
+	if err := writeMinimalOpenCodeDB(ocDB); err != nil {
+		t.Fatalf("seed opencode db: %v", err)
+	}
+	ocReader, err := opencode.New(ocDB)
+	if err != nil {
+		t.Fatalf("opencode.New: %v", err)
+	}
+
 	pairs := []pair{
 		{claude.Capabilities(), claude.New(tmp)},
 		{codex.Capabilities(), codex.New(tmp)},
 		{copilot.Capabilities(), copilot.New(tmp)},
 		{chrys.Capabilities(), chrys.New(tmp)},
 		{grok.Capabilities(), grok.New(tmp)},
+		{opencode.Capabilities(), ocReader},
 	}
 	for _, p := range pairs {
 		if p.decl.AgentType != p.reader.AgentType() {
@@ -119,11 +129,6 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 			t.Errorf("%s: decl DisplayName %q != reader %q",
 				p.decl.AgentType, p.decl.DisplayName, p.reader.DisplayName())
 		}
-	}
-	// OpenCode identity from declaration alone (New requires DB).
-	oc := opencode.Capabilities()
-	if oc.AgentType != "opencode" || oc.DisplayName != "OpenCode" {
-		t.Errorf("opencode identity: %+v", oc)
 	}
 }
 

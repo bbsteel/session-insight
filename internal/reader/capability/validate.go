@@ -37,6 +37,7 @@ func (errs ValidationErrors) Error() string {
 // Error codes for ValidateStatic rules.
 const (
 	CodeEmptyAgentType         = "empty_agent_type"
+	CodeInvalidAgentType       = "invalid_agent_type"
 	CodeEmptyDisplayName       = "empty_display_name"
 	CodeInvalidAdapterRevision = "invalid_adapter_revision"
 	CodeMissingCapability      = "missing_capability"
@@ -61,6 +62,14 @@ func ValidateStatic(ac AgentCapabilities) ValidationErrors {
 			Field:   "agent_type",
 			Code:    CodeEmptyAgentType,
 			Message: "AgentType must be a non-empty stable identifier",
+		})
+	} else if !isNormalizedAgentType(ac.AgentType) {
+		// Must already be trimmed and lowercase so AgentDefinition(lookup)
+		// matches reader.AgentType() without a second normalization pass.
+		errs = append(errs, ValidationError{
+			Field:   "agent_type",
+			Code:    CodeInvalidAgentType,
+			Message: "AgentType must be trimmed lowercase (no leading/trailing space, no uppercase)",
 		})
 	}
 	if strings.TrimSpace(ac.DisplayName) == "" {
@@ -174,6 +183,20 @@ func isBaselineID(id CapabilityID) bool {
 		}
 	}
 	return false
+}
+
+// isNormalizedAgentType reports whether s is already a stable lookup key:
+// non-empty after trim, equal to its trimmed form, and fully lowercase.
+func isNormalizedAgentType(s string) bool {
+	if s == "" || strings.TrimSpace(s) != s {
+		return false
+	}
+	for _, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 func sortErrors(errs ValidationErrors) ValidationErrors {

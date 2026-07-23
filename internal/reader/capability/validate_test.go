@@ -52,6 +52,20 @@ func TestValidateStaticEmptyAgentType(t *testing.T) {
 	requireCode(t, errs, CodeEmptyAgentType)
 }
 
+func TestValidateStaticAgentTypeMustBeNormalized(t *testing.T) {
+	for _, bad := range []string{"Claude", " claude", "claude ", " claude ", "CODEX"} {
+		ac := validBase()
+		ac.AgentType = bad
+		errs := ValidateStatic(ac)
+		requireCode(t, errs, CodeInvalidAgentType)
+	}
+	ac := validBase()
+	ac.AgentType = "claude"
+	errs := ValidateStatic(ac)
+	requireNoCode(t, errs, CodeInvalidAgentType)
+	requireNoCode(t, errs, CodeEmptyAgentType)
+}
+
 func TestValidateStaticEmptyDisplayName(t *testing.T) {
 	ac := validBase()
 	ac.DisplayName = ""
