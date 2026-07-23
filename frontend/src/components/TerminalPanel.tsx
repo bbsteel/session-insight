@@ -81,6 +81,19 @@ function getJumpFlashPulses(): number {
   return Number.isFinite(n) && n >= 1 && n <= 10 ? n : 2
 }
 
+// Match si-jump-flash keyframes peak (app.css). Used only when the OS asks
+// for reduced motion so we can approximate the pulse without CSS animation.
+const JUMP_FLASH_BG = 'rgba(37, 99, 235, 0.32)'
+
+function prefersReducedMotion(): boolean {
+  if (typeof matchMedia !== 'function') return false
+  try {
+    return matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
 function dbg(tag: string, info?: Record<string, unknown>) {
   if (!TERM_DEBUG) return
   const t = (performance.now() / 1000).toFixed(3)
@@ -311,8 +324,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let flashMarkers: IMarker[] = []
     let flashDecorations: IDecoration[] = []
     let flashTimer: ReturnType<typeof setTimeout> | null = null
+    // Reduced-motion path schedules hold/gap timers per decoration; clear with flash.
+    let flashPulseTimers: ReturnType<typeof setTimeout>[] = []
     const clearFlash = () => {
       if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
+      for (const t of flashPulseTimers) clearTimeout(t)
+      flashPulseTimers = []
       flashDecorations.forEach(d => d.dispose())
       flashMarkers.forEach(m => m.dispose())
       flashDecorations = []
@@ -715,6 +732,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         clearFlash()
         const pulses = getJumpFlashPulses()
         const pulseMs = 900
+        // Windows "Animation effects" off maps to prefers-reduced-motion.
+        // Keep the original CSS keyframe path when motion is allowed so the
+        // open-animation look is unchanged; only approximate when reduced.
+        const reduceMotion = prefersReducedMotion()
+        dbg('flash-start', { startLine, count, pulses, pulseMs, reduceMotion })
+        // Keyframes hold solid through 40% then ease out; mirror hold/gap for JS.
+        const holdMs = Math.round(pulseMs * 0.4)
+        const gapMs = pulseMs - holdMs
         for (let i = 0; i < count; i++) {
           const offset = getMarkerOffsetForBufferLine({
             bufferLine: startLine + i,
@@ -735,12 +760,33 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           dbg('flash-decoration', { created: !!decoration })
           if (!decoration) { marker.dispose(); continue }
           decoration.onRender(element => {
-            dbg('flash-render', { y: element.getBoundingClientRect().top })
+            // onRender fires every xterm paint; init once so CSS animation is
+            // not restarted every frame (would freeze the pulse at 0%).
+            if (element.dataset.siFlash === '1') return
+            element.dataset.siFlash = '1'
+            dbg('flash-render', { y: element.getBoundingClientRect().top, reduceMotion })
             element.style.pointerEvents = 'none'
             element.style.left = '0'
             element.style.width = '100%'
             element.style.boxSizing = 'border-box'
-            element.style.animation = `si-jump-flash ${pulseMs}ms ease-out ${pulses}`
+            if (!reduceMotion) {
+              // Original path — identical to pre-change behavior.
+              element.style.animation = `si-jump-flash ${pulseMs}ms ease-out ${pulses}`
+              return
+            }
+            // Reduced motion: timed solid / clear pulses (no CSS animation).
+            const runPulse = (n: number) => {
+              if (n >= pulses || element.dataset.siFlash !== '1') return
+              element.style.backgroundColor = JUMP_FLASH_BG
+              const tHold = setTimeout(() => {
+                if (element.dataset.siFlash !== '1') return
+                element.style.backgroundColor = 'transparent'
+                const tGap = setTimeout(() => runPulse(n + 1), gapMs)
+                flashPulseTimers.push(tGap)
+              }, holdMs)
+              flashPulseTimers.push(tHold)
+            }
+            runPulse(0)
           })
           flashMarkers.push(marker)
           flashDecorations.push(decoration)
