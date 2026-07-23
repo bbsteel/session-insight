@@ -5,6 +5,31 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 BIN_PATH="${BIN_PATH:-$ROOT_DIR/session-insight}"
 
+# Git Bash / MSYS / Cygwin on Windows: no setsid, Go emits *.exe, and kill/ps
+# behavior differs from Linux. Detect once and adapt start/stop paths.
+IS_WINDOWS=0
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT*) IS_WINDOWS=1 ;;
+esac
+# Native Windows PowerShell may invoke bash without uname matching above when
+# OS env is set (Git Bash still reports MINGW*).
+if [[ "${OS:-}" == "Windows_NT" ]]; then
+  IS_WINDOWS=1
+fi
+if [[ "$IS_WINDOWS" -eq 1 && "$BIN_PATH" != *.exe ]]; then
+  BIN_PATH="${BIN_PATH}.exe"
+fi
+
+# Convert a path to a Windows path when cygpath exists (Git Bash); otherwise
+# leave as-is for PowerShell/cmd which accept forward slashes.
+win_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 # A linked worktree is an isolated development instance. Keep its mutable
 # application state inside the worktree. The first run picks a free OS-assigned
 # loopback port and persists it to .runtime/session-insight.port so subsequent
@@ -37,9 +62,18 @@ PID_FILE="$RUNTIME_DIR/session-insight.pid"
 LOG_FILE="$RUNTIME_DIR/session-insight.log"
 URL_FILE="$RUNTIME_DIR/session-insight.url"
 
+pid_alive() {
+  local pid="$1"
+  if [[ "$IS_WINDOWS" -eq 1 ]] && command -v tasklist.exe >/dev/null 2>&1; then
+    tasklist.exe //FI "PID eq $pid" //NH 2>/dev/null | grep -q "$pid"
+    return
+  fi
+  kill -0 "$pid" 2>/dev/null
+}
+
 pid_is_owned() {
   local pid="$1"
-  if ! kill -0 "$pid" 2>/dev/null; then
+  if ! pid_alive "$pid"; then
     return 1
   fi
 
@@ -50,11 +84,22 @@ pid_is_owned() {
     return
   fi
 
+  # Windows: compare process image path via PowerShell (no /proc).
+  if [[ "$IS_WINDOWS" -eq 1 ]] && command -v powershell.exe >/dev/null 2>&1; then
+    local proc_path want
+    proc_path=$(powershell.exe -NoProfile -Command \
+      "(Get-Process -Id $pid -ErrorAction SilentlyContinue).Path" 2>/dev/null | tr -d '\r')
+    want=$(win_path "$BIN_PATH")
+    # Case-insensitive path compare (Windows).
+    [[ -n "$proc_path" && "${proc_path,,}" == "${want,,}" ]]
+    return
+  fi
+
   # Portable fallback for platforms without procfs. The binary is launched by
   # absolute path, so the first command token still identifies this worktree.
   local command
   command=$(ps -p "$pid" -o command= 2>/dev/null || true)
-  [[ "$command" == "$BIN_PATH" || "$command" == "$BIN_PATH "* ]]
+  [[ "$command" == "$BIN_PATH" || "$command" == "$BIN_PATH "* || "$command" == "$BIN_PATH.exe" || "$command" == "$BIN_PATH.exe "* ]]
 }
 
 usage() {
@@ -123,13 +168,87 @@ do_build() {
   echo "==> Build complete: $BIN_PATH"
 }
 
+# Probe whether the HTTP server answers (log may be empty on some
+# Windows launch paths; HTTP is an authoritative Ready signal when PORT is fixed).
+http_ready() {
+  local probe_url="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -sf --max-time 1 "$probe_url" >/dev/null 2>&1
+    return
+  fi
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command \
+      "try { (Invoke-WebRequest -Uri '$probe_url' -UseBasicParsing -TimeoutSec 1).StatusCode -eq 200 } catch { \$false }" \
+      2>/dev/null | tr -d '\r' | grep -qi true
+    return
+  fi
+  return 1
+}
+
+# Start the binary detached from this shell so it survives shell exit.
+# Linux: nohup + setsid when available.
+# Windows/Git Bash: scripts/windows-start.ps1 via PowerShell -File
+# (setsid is not shipped with MSYS — "nohup: failed to run command 'setsid'").
+start_detached() {
+  : >"$LOG_FILE"
+  rm -f "${LOG_FILE}.stderr"
+  local pid=""
+  if [[ "$IS_WINDOWS" -eq 1 ]] && command -v powershell.exe >/dev/null 2>&1; then
+    local win_bin win_wd win_log win_err win_data win_script
+    win_bin=$(win_path "$BIN_PATH")
+    win_wd=$(win_path "$ROOT_DIR")
+    win_log=$(win_path "$LOG_FILE")
+    win_err=$(win_path "${LOG_FILE}.stderr")
+    win_script=$(win_path "$ROOT_DIR/scripts/windows-start.ps1")
+    win_data=""
+    if [[ -n "$SI_DATA_DIR" ]]; then
+      win_data=$(win_path "$SI_DATA_DIR")
+    fi
+    local ps_args=(
+      -NoProfile -ExecutionPolicy Bypass -File "$win_script"
+      -BinPath "$win_bin"
+      -WorkDir "$win_wd"
+      -LogPath "$win_log"
+      -ErrLogPath "$win_err"
+      -Port "$PORT"
+    )
+    # PowerShell rejects -DataDir "" (missing argument); only pass when set.
+    if [[ -n "$win_data" ]]; then
+      ps_args+=(-DataDir "$win_data")
+    fi
+    pid=$(
+      powershell.exe "${ps_args[@]}" 2>/dev/null | tr -d '\r' | tail -1
+    )
+  elif command -v setsid >/dev/null 2>&1; then
+    nohup setsid env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
+    pid=$!
+  else
+    nohup env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
+    pid=$!
+  fi
+
+  if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: failed to start $BIN_PATH (could not resolve PID)"
+    tail -20 "$LOG_FILE" 2>/dev/null || true
+    tail -20 "${LOG_FILE}.stderr" 2>/dev/null || true
+    return 1
+  fi
+  printf '%s\n' "$pid" >"$PID_FILE"
+  echo "    PID: $pid"
+}
+
 do_start() {
   cd "$ROOT_DIR"
 
   mkdir -p "$RUNTIME_DIR"
 
-  if [[ ! -x "$BIN_PATH" ]]; then
+  if [[ ! -f "$BIN_PATH" ]]; then
     echo "ERROR: binary not found at $BIN_PATH, run 'build' first."
+    exit 1
+  fi
+  # Windows Git Bash often lacks +x on .exe built by go; -f is enough.
+  if [[ "$IS_WINDOWS" -eq 0 && ! -x "$BIN_PATH" ]]; then
+    echo "ERROR: binary not executable at $BIN_PATH"
     exit 1
   fi
 
@@ -151,20 +270,25 @@ do_start() {
   fi
   echo "    PID file: $PID_FILE"
   echo "    Log file: $LOG_FILE"
-  nohup setsid env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
-  echo $! >"$PID_FILE"
+  start_detached || return 1
   local pid
   pid=$(cat "$PID_FILE")
-  echo "    PID: $pid"
 
-  # Listening starts after the bounded initial index pass. Wait for the
-  # post-bind log line so a printed URL always belongs to this exact process.
+  # Wait for Ready: prefer the post-bind log line; fall back to HTTP when PORT
+  # is known (Windows redirects sometimes leave the log empty).
   local url attempt
   for ((attempt = 0; attempt < 300; attempt++)); do
     url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$LOG_FILE" 2>/dev/null | tail -1 || true)
+    if [[ -z "$url" && -f "${LOG_FILE}.stderr" ]]; then
+      url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "${LOG_FILE}.stderr" 2>/dev/null | tail -1 || true)
+    fi
+    if [[ -z "$url" && "$PORT" != "0" ]]; then
+      if http_ready "http://127.0.0.1:$PORT/"; then
+        url="http://127.0.0.1:$PORT/"
+      fi
+    fi
     if [[ -n "$url" ]]; then
       printf '%s\n' "$url" >"$URL_FILE"
-      # Persist the bound port for linked worktrees only (PORT_FILE unset on primary).
       if [[ -n "${PORT_FILE:-}" ]]; then
         local bound_port
         bound_port=$(port_from_url "$url")
@@ -175,9 +299,10 @@ do_start() {
       echo "    Ready: $url"
       return 0
     fi
-    if ! kill -0 "$pid" 2>/dev/null; then
+    if ! pid_alive "$pid"; then
       echo "ERROR: SessionInsight exited before becoming ready"
       tail -20 "$LOG_FILE" 2>/dev/null || true
+      tail -20 "${LOG_FILE}.stderr" 2>/dev/null || true
       rm -f "$PID_FILE"
       return 1
     fi
@@ -197,10 +322,14 @@ do_stop() {
     pid=$(cat "$PID_FILE")
     if pid_is_owned "$pid"; then
       echo "==> Stopping SessionInsight (PID: $pid)"
-      kill "$pid"
-      sleep 0.5
-      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
-    elif kill -0 "$pid" 2>/dev/null; then
+      if [[ "$IS_WINDOWS" -eq 1 ]] && command -v taskkill.exe >/dev/null 2>&1; then
+        taskkill.exe //PID "$pid" //F >/dev/null 2>&1 || true
+      else
+        kill "$pid" 2>/dev/null || true
+        sleep 0.5
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+      fi
+    elif pid_alive "$pid"; then
       echo "WARNING: refusing to stop PID $pid because it is not owned by this worktree"
     fi
     rm -f "$PID_FILE"

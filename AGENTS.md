@@ -7,6 +7,18 @@
 - Write Git commit messages in English, including both the subject and body.
 - **Line endings (required):** all text files you create or edit **must** use Unix newlines only — the single-character line break `\n` (LF). Do **not** use Windows CRLF (`\r\n`) or introduce mixed endings. On Windows hosts, write and commit LF content (configure the editor / avoid tools that rewrite files to CRLF). Do not “normalize” a file to CRLF just because the shell or `git` warns about `LF will be replaced by CRLF`.
 
+## Agent Adapter Changes
+
+- Before adding or changing support for an agent, read the
+  [Agent adapter onboarding guide](developer/agent-adapters/README.md) and
+  follow its Definition of Done.
+- Treat the contract in `developer/agent-adapters/capability-contract.md` as
+  the planned user-facing source of truth. When implementing it, do not add a
+  separate capability matrix in frontend code, documentation, or tests.
+- Every declared capability must be covered by the shared conformance suite
+  and sanitized fixtures as described in
+  `developer/agent-adapters/conformance-testing.md`.
+
 ## Branch and PR Workflow (required)
 
 All code and docs changes land on `main` **only via pull request**. Do not commit product work directly onto `main`, and do not `git push origin main` for feature or fix delivery.
