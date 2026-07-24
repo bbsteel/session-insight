@@ -109,11 +109,9 @@ func SessionEstimated(reasonCode string) SessionCapabilityStatus {
 // SessionFromStatic copies a static declaration into a resolved status.
 // It does not allow inventing missing from static.
 func SessionFromStatic(d CapabilityDeclaration) SessionCapabilityStatus {
-	return SessionCapabilityStatus{
-		State:      d.State,
-		ReasonCode: d.ReasonCode,
-		DetailKey:  d.DetailKey,
-	}
+	// CapabilityDeclaration and SessionCapabilityStatus share the same field
+	// layout (state / reason / detail); convert rather than re-list fields.
+	return SessionCapabilityStatus(d)
 }
 
 // ActionAvailableStatus builds an available action entry.
