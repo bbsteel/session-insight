@@ -92,17 +92,13 @@ func TestResolveSixAgentsCatalogIntegration(t *testing.T) {
 				if st.State != capability.CapabilityUnsupported {
 					t.Errorf("%s state=%s want unsupported", id, st.State)
 				}
-				if reason != "" && st.ReasonCode != reason {
-					// Reason may match static; allow any non-empty if static empty.
-					if st.ReasonCode == "" {
-						t.Errorf("%s missing reason", id)
-					}
+				if st.ReasonCode == "" {
+					t.Errorf("%s missing reason (static was %q)", id, reason)
 				}
 			}
-			// Static catalog must not be mutated.
-			if tc.static.Capabilities[capability.CapabilityTokens].State != capability.CapabilityExact &&
-				tc.static.Capabilities[capability.CapabilityTokens].State != capability.CapabilityEstimated {
-				// tokens is exact for all six currently
+			// Static catalog must not be mutated by resolve.
+			if tc.static.Capabilities[capability.CapabilityTokens].State == capability.CapabilityMissing {
+				t.Fatal("static tokens must never be missing")
 			}
 		})
 
