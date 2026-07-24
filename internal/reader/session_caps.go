@@ -118,35 +118,44 @@ func resolveRealtime(decl capability.CapabilityDeclaration, source any) capabili
 }
 
 func resolveTokens(decl capability.CapabilityDeclaration, detail *model.SessionDetail) capability.SessionCapabilityStatus {
+	// Static estimated must never promote to exact (ValidateResolved forbids it).
+	// Session billing/turn presence can only confirm or further downgrade.
+	keepEstimated := func() capability.SessionCapabilityStatus {
+		reason := decl.ReasonCode
+		if reason == "" {
+			reason = capability.ReasonTimestampHeuristic
+		}
+		return capability.SessionEstimated(reason)
+	}
+	maybeExact := func() capability.SessionCapabilityStatus {
+		if decl.State == capability.CapabilityEstimated {
+			return keepEstimated()
+		}
+		return capability.SessionExact()
+	}
+
 	if detail.Billing != nil {
 		switch detail.Billing.Precision {
 		case model.PrecisionExact:
-			// Exact zero with PresenceExact is still exact; do not treat zeros as missing.
-			return capability.SessionExact()
+			// Exact zero with PresenceExact is still exact when static allows it.
+			return maybeExact()
 		case model.PrecisionEstimated:
-			reason := decl.ReasonCode
-			if reason == "" {
-				reason = capability.ReasonTimestampHeuristic
-			}
-			return capability.SessionEstimated(reason)
+			return keepEstimated()
 		case model.PrecisionMissing:
 			// Agent normally records a bill but this session never wrote final usage.
 			return capability.Missing(capability.ReasonSessionNotFinalized)
 		}
 	}
 
-	// No session bill: accept turn-level exact presence (Claude-style) as exact.
+	// No session bill: turn-level exact presence (Claude-style) is exact only
+	// when static is not estimated.
 	if hasExactTurnTokenPresence(detail) {
-		return capability.SessionExact()
+		return maybeExact()
 	}
 
-	// Static estimated without evidence stays estimated.
+	// Static estimated without stronger evidence stays estimated.
 	if decl.State == capability.CapabilityEstimated {
-		reason := decl.ReasonCode
-		if reason == "" {
-			reason = capability.ReasonSourceNotRecorded
-		}
-		return capability.SessionEstimated(reason)
+		return keepEstimated()
 	}
 
 	// Static exact but no structured token evidence on this session.

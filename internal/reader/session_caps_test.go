@@ -207,6 +207,55 @@ func TestResolveTokensEstimatedBilling(t *testing.T) {
 	}
 }
 
+func TestResolveTokensEstimatedStaticNeverPromotesOnExactBilling(t *testing.T) {
+	// Skeptic: static estimated + Billing.PrecisionExact must not return exact
+	// (illegal_promotion → ValidateResolved/GET 500).
+	static := fullExactStatic("x")
+	static.Capabilities[capability.CapabilityTokens] = capability.Estimated("heuristic")
+	d := detailBase("x", "s1")
+	d.Billing = &model.SessionBilling{
+		Precision: model.PrecisionExact,
+		Totals: model.TokenUsage{
+			PromptTokens: 10,
+			Present:      model.TokenPresence{Input: model.PresenceExact},
+		},
+	}
+	src := &capsFakeReader{agentType: "x", live: boolPtr(false), hasRev: true}
+	got, err := ResolveSessionCapabilities(src, d, static)
+	if err != nil {
+		t.Fatalf("must not fail validation: %v", err)
+	}
+	st := got.Status[capability.CapabilityTokens]
+	if st.State != capability.CapabilityEstimated {
+		t.Fatalf("tokens=%+v want estimated (no promote to exact)", st)
+	}
+	if st.ReasonCode != "heuristic" {
+		t.Fatalf("reason=%q want static heuristic", st.ReasonCode)
+	}
+}
+
+func TestResolveTokensEstimatedStaticNeverPromotesOnTurnPresence(t *testing.T) {
+	static := fullExactStatic("x")
+	static.Capabilities[capability.CapabilityTokens] = capability.Estimated("heuristic")
+	d := detailBase("x", "s1")
+	d.Billing = nil
+	d.Turns = []model.TurnVM{{
+		TokenUsage: model.TokenUsage{
+			PromptTokens: 5,
+			Present:      model.TokenPresence{Input: model.PresenceExact, Output: model.PresenceExact},
+		},
+	}}
+	src := &capsFakeReader{agentType: "x", live: boolPtr(false), hasRev: true}
+	got, err := ResolveSessionCapabilities(src, d, static)
+	if err != nil {
+		t.Fatalf("must not fail validation: %v", err)
+	}
+	st := got.Status[capability.CapabilityTokens]
+	if st.State != capability.CapabilityEstimated || st.ReasonCode != "heuristic" {
+		t.Fatalf("tokens=%+v want estimated/heuristic", st)
+	}
+}
+
 func TestResolveTokensNilBillingMissing(t *testing.T) {
 	static := fullExactStatic("x")
 	d := detailBase("x", "s1")
