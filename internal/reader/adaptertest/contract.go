@@ -94,8 +94,8 @@ func CheckOperationInterfaces(caps capability.AgentCapabilities, r Reader) error
 // NewReader must construct a Reader against a test-owned fixture (TempDir or
 // test SQLite). It must not open the developer's real home agent roots.
 //
-// Layer 3 capability suites are intentionally not part of Config yet; add
-// optional fields later without breaking existing adapter tests.
+// Layer 3 evidence is attached via FullConfig / RunFull so Phase 2 Run
+// call sites stay unchanged.
 type Config struct {
 	// Capabilities is the adapter-owned static declaration (e.g. Capabilities()).
 	Capabilities capability.AgentCapabilities
