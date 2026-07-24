@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 )
@@ -32,6 +33,9 @@ func TestCapabilityEvidenceMatrix(t *testing.T) {
 }
 
 func codexEvidenceCases() []adaptertest.EvidenceCase {
+	const parentNative = "parent-native-id"
+	const childNative = "child-native-id"
+
 	return []adaptertest.EvidenceCase{
 		{
 			Scenario: "data-tokens-tools-diff-subtasks-resume", Synthetic: true, Sanitized: true,
@@ -61,25 +65,27 @@ func codexEvidenceCases() []adaptertest.EvidenceCase {
 				if rootID == "" {
 					rootID = list[0].ID
 				}
-				d, err := r.GetSession(rootID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var prompt, completion, cacheRead, reasoning int64
-				for _, tr := range d.Turns {
-					prompt += tr.TokenUsage.PromptTokens
-					completion += tr.TokenUsage.CompletionTokens
-					cacheRead += tr.TokenUsage.CacheReadTokens
-					reasoning += tr.TokenUsage.ReasoningTokens
-				}
-				if prompt != 200 || completion != 100 || cacheRead != 800 || reasoning != 30 {
-					t.Fatalf("token buckets prompt=%d completion=%d cache=%d reasoning=%d want 200/100/800/30",
-						prompt, completion, cacheRead, reasoning)
-				}
-				if reasoning > completion {
-					t.Fatal("reasoning double-count")
-				}
-				adaptertest.AssertToolResults(t, r, rootID, 1)
+				// Inclusive input 1000 with cache 800 → exclusive prompt 200;
+				// output 100 with reasoning 30; cache_write is n/a for Codex.
+				adaptertest.AssertTokens(t, r, adaptertest.TokenExpect{
+					SessionID:         rootID,
+					AllowTurnFallback: true,
+					ExactPrompt:       adaptertest.Int64(200),
+					ExactCompletion:   adaptertest.Int64(100),
+					ExactCacheRead:    adaptertest.Int64(800),
+					ExactReasoning:    adaptertest.Int64(30),
+					PresentInput:      model.PresenceExact,
+					PresentOutput:     model.PresenceExact,
+					PresentCacheRead:  model.PresenceExact,
+					PresentCacheWrite: model.PresenceNA,
+					PresentReasoning:  model.PresenceExact,
+				})
+				adaptertest.AssertToolResults(t, r, adaptertest.ToolResultsExpect{
+					SessionID:      rootID,
+					MinPairs:       2,
+					RequireSuccess: true,
+					RequireFailure: true,
+				})
 				adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{
 					SessionID: rootID, FilePathSub: "notes.md", OldSub: "old", NewSub: "new",
 				})
@@ -88,22 +94,22 @@ func codexEvidenceCases() []adaptertest.EvidenceCase {
 				} else {
 					adaptertest.AssertSubtasks(t, r, adaptertest.SubtaskExpect{SessionID: rootID, MinSubagents: 1})
 				}
+				// Resume must be native payload id, never the rollout file stem.
 				adaptertest.AssertResume(t, r, adaptertest.ResumeExpect{
-					SessionID: rootID, RejectSuffix: ".jsonl",
+					SessionID:            rootID,
+					ExactID:              parentNative,
+					RequireNativeField:   true,
+					RejectEqualSessionID: true,
+					RejectSuffix:         ".jsonl",
 				})
-				// Child resume identity when present
 				if childID != "" {
-					cd, err := r.GetSession(childID)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if cd.ResumeID == "" || strings.HasSuffix(cd.ResumeID, ".jsonl") {
-						t.Fatalf("child ResumeID=%q", cd.ResumeID)
-					}
-					if cd.ResumeID == childID {
-						// filename stem equals resume only if no native id — fail for our fixture
-						t.Logf("note: ResumeID equals file stem %q", cd.ResumeID)
-					}
+					adaptertest.AssertResume(t, r, adaptertest.ResumeExpect{
+						SessionID:            childID,
+						ExactID:              childNative,
+						RequireNativeField:   true,
+						RejectEqualSessionID: true,
+						RejectSuffix:         ".jsonl",
+					})
 				}
 			},
 		},
@@ -119,14 +125,25 @@ func codexEvidenceCases() []adaptertest.EvidenceCase {
 				list, _ := r.ListSessions()
 				id := list[0].ID
 				path := cr.findSessionFile(id)
+				marker := "realtime-marker-codex-more"
 				adaptertest.AssertRealtimeStableThenMutate(t, r, id, func(t *testing.T) {
 					f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 					if err != nil {
 						t.Fatal(err)
 					}
 					defer f.Close()
-					_, _ = f.WriteString(`{"timestamp":"2026-01-01T00:00:09.000Z","type":"event_msg","payload":{"type":"user_message","message":"more"}}` + "\n")
-				})
+					// Codex only surfaces user_message once a turn is open
+					// (task_started). Append a full mini-turn so content is
+					// observable via GetRenderEvents, not only LiveRevision.
+					lines := strings.Join([]string{
+						`{"timestamp":"2026-01-01T00:00:09.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t-live"}}`,
+						`{"timestamp":"2026-01-01T00:00:09.100Z","type":"event_msg","payload":{"type":"user_message","message":"` + marker + `"}}`,
+						`{"timestamp":"2026-01-01T00:00:09.200Z","type":"event_msg","payload":{"type":"agent_message","message":"ack live"}}`,
+					}, "\n") + "\n"
+					if _, err := f.WriteString(lines); err != nil {
+						t.Fatal(err)
+					}
+				}, adaptertest.RealtimeExpect{ContentMarker: marker})
 			},
 		},
 		{
@@ -174,12 +191,15 @@ func writeCodexRichFixture(t *testing.T) (sessionsDir, rootID string) {
 	rootID = "rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa"
 	childFile := "rollout-2026-01-02T00-00-01-019f0000-0000-7000-8000-0000000000bb"
 
+	// Use "Process exited with code N" so extractExitCode surfaces success/failure.
 	rootLines := strings.Join([]string{
 		`{"timestamp":"2026-01-02T00:00:00.000Z","type":"session_meta","payload":{"id":"` + parentNative + `","cwd":"/tmp/proj","model_provider":"openai"}}`,
 		`{"timestamp":"2026-01-02T00:00:00.500Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}`,
 		`{"timestamp":"2026-01-02T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"edit file"}}`,
 		`{"timestamp":"2026-01-02T00:00:02.000Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c1","name":"apply_patch","input":"*** Begin Patch\n*** Update File: notes.md\n@@\n-old\n+new\n*** End Patch"}}`,
-		`{"timestamp":"2026-01-02T00:00:02.500Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"Exit code: 0\nOutput:\nSuccess"}}`,
+		`{"timestamp":"2026-01-02T00:00:02.500Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"Process exited with code 0\nOutput:\nSuccess"}}`,
+		`{"timestamp":"2026-01-02T00:00:02.600Z","type":"response_item","payload":{"type":"function_call","call_id":"c2","name":"shell","arguments":"{\"command\":\"false\"}"}}`,
+		`{"timestamp":"2026-01-02T00:00:02.700Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c2","output":"Process exited with code 1\nOutput:\nfail"}}`,
 		`{"timestamp":"2026-01-02T00:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":30},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":100,"reasoning_output_tokens":30}}}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(day, rootID+".jsonl"), []byte(rootLines), 0o644); err != nil {

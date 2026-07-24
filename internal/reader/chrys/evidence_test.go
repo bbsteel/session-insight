@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 )
@@ -39,14 +40,29 @@ func chrysEvidenceCases() []adaptertest.EvidenceCase {
 				capability.CapabilitySubtasks, capability.CapabilityResume,
 			},
 			NewReader: func(t *testing.T) adaptertest.Reader {
-				return New(writeFixture(t)) // existing rich fixture with edit + subagent
+				return New(writeFixture(t)) // existing rich fixture with edit + subagent + failed tool
 			},
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "28491d6d491e"
+				// writeFixture totals: inclusive input 555593, cache hit 488192 → exclusive prompt 67401;
+				// completion 10759. Fixture includes a failed tool result.
 				adaptertest.AssertTokens(t, r, adaptertest.TokenExpect{
-					SessionID: id, RequireNonNilBilling: true,
+					SessionID:             id,
+					RequireNonNilBilling:  true,
+					RequireExactPrecision: true,
+					ExactPrompt:           adaptertest.Int64(555593 - 488192),
+					ExactCompletion:       adaptertest.Int64(10759),
+					ExactCacheRead:        adaptertest.Int64(488192),
+					PresentInput:          model.PresenceExact,
+					PresentOutput:         model.PresenceExact,
+					PresentCacheRead:      model.PresenceExact,
 				})
-				adaptertest.AssertToolResults(t, r, id, 1)
+				adaptertest.AssertToolResults(t, r, adaptertest.ToolResultsExpect{
+					SessionID:      id,
+					MinPairs:       1,
+					RequireSuccess: true,
+					RequireFailure: true,
+				})
 				adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{
 					SessionID: id, FilePathSub: "a.css", OldSub: "gap", NewSub: "gap",
 				})
@@ -64,15 +80,55 @@ func chrysEvidenceCases() []adaptertest.EvidenceCase {
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "conformance01"
 				path := filepath.Join(r.(*ChrysReader).sessionsDir, id, "session.json")
+				marker := "realtime-marker-chrys-more"
 				adaptertest.AssertRealtimeStableThenMutate(t, r, id, func(t *testing.T) {
-					// Append whitespace to change size+mtime.
-					f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-					if err != nil {
+					// Rewrite session.json with an extra user message so content is observable.
+					body := `{
+  "meta": {
+    "schema_version": 1,
+    "session_id": "conformance01-full",
+    "agent_profile": "Code",
+    "model_id": "test-model",
+    "created_at": "2026-01-01T00:00:00+00:00",
+    "updated_at": "2026-01-01T00:02:00+00:00",
+    "message_count": 3,
+    "primary_cwd": "/tmp/proj",
+    "title": "Conformance"
+  },
+  "state": {
+    "messages": [
+      {
+        "type": "message", "role": "user",
+        "contents": [{"type": "text", "text": "hello conformance", "additional_properties": {}}],
+        "additional_properties": {"_chrys_created_at": "2026-01-01T00:00:00+00:00"}
+      },
+      {
+        "type": "message", "role": "assistant",
+        "contents": [{"type": "text", "text": "hi", "additional_properties": {}}],
+        "additional_properties": {"_chrys_created_at": "2026-01-01T00:00:30+00:00"}
+      },
+      {
+        "type": "message", "role": "user",
+        "contents": [{"type": "text", "text": "` + marker + `", "additional_properties": {}}],
+        "additional_properties": {"_chrys_created_at": "2026-01-01T00:01:30+00:00"}
+      },
+      {
+        "type": "message", "role": "assistant",
+        "contents": [{"type": "text", "text": "", "additional_properties": {}}],
+        "additional_properties": {"_chrys_kind": "turn", "_turn_id": "turn_1", "_turn": 1}
+      }
+    ],
+    "compressed_msgs": [],
+    "turn_counter": 1,
+    "total_session_input_tokens": 12,
+    "total_session_output_tokens": 5,
+    "total_session_cache_hit_tokens": 0
+  }
+}`
+					if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 						t.Fatal(err)
 					}
-					defer f.Close()
-					_, _ = f.WriteString("\n")
-				})
+				}, adaptertest.RealtimeExpect{ContentMarker: marker})
 			},
 		},
 		{

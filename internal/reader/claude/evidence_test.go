@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/procfind"
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
@@ -58,34 +59,27 @@ func claudeEvidenceCases() []adaptertest.EvidenceCase {
 			},
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+				// Fixture usage: input=100, output=40, cache_read=10, cache_write=5
+				// on the assistant message → turn TokenUsage exclusive buckets.
 				adaptertest.AssertTokens(t, r, adaptertest.TokenExpect{
-					SessionID:            id,
-					RequireNonNilBilling: false, // claude may attach usage on turns/events
-					ExactPrompt:          nil,
+					SessionID:         id,
+					AllowTurnFallback: true,
+					ExactPrompt:       adaptertest.Int64(100),
+					ExactCompletion:   adaptertest.Int64(40),
+					ExactCacheRead:    adaptertest.Int64(10),
+					ExactCacheWrite:   adaptertest.Int64(5),
+					PresentInput:      model.PresenceExact,
+					PresentOutput:     model.PresenceExact,
+					PresentCacheRead:  model.PresenceExact,
+					PresentCacheWrite: model.PresenceExact,
+					PresentReasoning:  model.PresenceNA,
 				})
-				// Claude surfaces usage on render events / turns — require non-zero via render TokenUsage or turn.
-				d, err := r.GetSession(id)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var prompt int64
-				for _, tr := range d.Turns {
-					prompt += tr.TokenUsage.PromptTokens
-				}
-				if prompt == 0 {
-					// Accept usage on render events
-					ev, _ := r.GetRenderEvents(id)
-					for _, e := range ev {
-						if e.TokenUsage != nil && e.TokenUsage.InputTokens > 0 {
-							prompt = e.TokenUsage.InputTokens
-							break
-						}
-					}
-				}
-				if prompt == 0 {
-					t.Fatal("expected token usage evidence on turns or render events")
-				}
-				adaptertest.AssertToolResults(t, r, id, 1)
+				adaptertest.AssertToolResults(t, r, adaptertest.ToolResultsExpect{
+					SessionID:      id,
+					MinPairs:       2,
+					RequireSuccess: true,
+					RequireFailure: true,
+				})
 				adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{
 					SessionID: id, FilePathSub: "a.go", OldSub: "old", NewSub: "new",
 				})
@@ -102,21 +96,19 @@ func claudeEvidenceCases() []adaptertest.EvidenceCase {
 			},
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-				// Find the jsonl path under the reader's projects dir via ListSessions cwd layout.
-				// Mutate by appending a line to the session file discovered from TempDir structure.
-				// The NewReader above used writeClaudeBasicFixture which returns projectsDir —
-				// we re-open by scanning for the file.
 				path := findClaudeJSONL(t, r, id)
+				marker := "realtime-marker-claude-more"
 				adaptertest.AssertRealtimeStableThenMutate(t, r, id, func(t *testing.T) {
 					f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 					if err != nil {
 						t.Fatal(err)
 					}
 					defer f.Close()
-					if _, err := f.WriteString(`{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:10.000Z","message":{"role":"user","content":"more"}}` + "\n"); err != nil {
+					line := `{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:10.000Z","message":{"role":"user","content":"` + marker + `"}}` + "\n"
+					if _, err := f.WriteString(line); err != nil {
 						t.Fatal(err)
 					}
-				})
+				}, adaptertest.RealtimeExpect{ContentMarker: marker})
 			},
 		},
 		{
@@ -191,10 +183,12 @@ func writeClaudeRichFixture(t *testing.T) (projectsDir, sessionID string) {
 		t.Fatal(err)
 	}
 
+	// Success Edit + Agent, plus a failing Bash for success+failure pair evidence.
 	main := `{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp/proj","sessionId":"` + sessionID + `","message":{"role":"user","content":"edit and delegate"}}
-{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":40,"cache_read_input_tokens":10,"cache_creation_input_tokens":5},"content":[{"type":"tool_use","id":"toolu_edit_1","name":"Edit","input":{"file_path":"/tmp/proj/a.go","old_string":"old","new_string":"new"}},{"type":"tool_use","id":"toolu_agent_1","name":"Agent","input":{"description":"explore","prompt":"look around"}}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"assistant","model":"claude-sonnet-4","usage":{"input_tokens":100,"output_tokens":40,"cache_read_input_tokens":10,"cache_creation_input_tokens":5},"content":[{"type":"tool_use","id":"toolu_edit_1","name":"Edit","input":{"file_path":"/tmp/proj/a.go","old_string":"old","new_string":"new"}},{"type":"tool_use","id":"toolu_agent_1","name":"Agent","input":{"description":"explore","prompt":"look around"}},{"type":"tool_use","id":"toolu_bash_fail","name":"Bash","input":{"command":"false"}}]}}
 {"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:04.000Z","toolUseResult":{"stdout":"ok"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_edit_1","content":"ok"}]}}
-{"type":"user","uuid":"u3","timestamp":"2026-01-01T00:00:05.000Z","toolUseResult":{"stdout":"done"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_agent_1","content":"done"}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-01-01T00:00:05.000Z","toolUseResult":{"stdout":"done","agentId":"` + agentID + `"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_agent_1","content":"done"}]}}
+{"type":"user","uuid":"u4","timestamp":"2026-01-01T00:00:06.000Z","toolUseResult":{"stderr":"command failed","is_error":true},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bash_fail","is_error":true,"content":"command failed"}]}}
 `
 	if err := os.WriteFile(filepath.Join(proj, sessionID+".jsonl"), []byte(main), 0o644); err != nil {
 		t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 
@@ -61,10 +62,26 @@ func openCodeEvidenceCases() []adaptertest.EvidenceCase {
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "ses_rich_1"
 				adaptertest.AssertTokens(t, r, adaptertest.TokenExpect{
-					SessionID: id, RequireNonNilBilling: true, RequireExactPrecision: true,
-					ExactPrompt: adaptertest.Int64(100), ExactCompletion: adaptertest.Int64(50),
+					SessionID:             id,
+					RequireNonNilBilling:  true,
+					RequireExactPrecision: true,
+					ExactPrompt:           adaptertest.Int64(100),
+					ExactCompletion:       adaptertest.Int64(50),
+					ExactCacheRead:        adaptertest.Int64(11),
+					ExactCacheWrite:       adaptertest.Int64(3),
+					ExactReasoning:        adaptertest.Int64(7),
+					PresentInput:          model.PresenceExact,
+					PresentOutput:         model.PresenceExact,
+					PresentCacheRead:      model.PresenceExact,
+					PresentCacheWrite:     model.PresenceExact,
+					PresentReasoning:      model.PresenceExact,
 				})
-				adaptertest.AssertToolResults(t, r, id, 1)
+				adaptertest.AssertToolResults(t, r, adaptertest.ToolResultsExpect{
+					SessionID:      id,
+					MinPairs:       2,
+					RequireSuccess: true,
+					RequireFailure: true,
+				})
 				adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{
 					SessionID: id, FilePathSub: "a.go", OldSub: "old", NewSub: "new",
 				})
@@ -87,8 +104,11 @@ func openCodeEvidenceCases() []adaptertest.EvidenceCase {
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				or := r.(*OpenCodeReader)
 				id := "ses_conformance_1"
+				marker := "realtime-marker-opencode-more"
 				adaptertest.AssertRealtimeStableThenMutate(t, r, id, func(t *testing.T) {
-					// Touch DB by inserting a no-op message via writable connection.
+					// OpenCode surfaces text from part rows, and only builds a
+					// turn when a user message has an assistant child. Insert a
+					// full mini-turn so content is reader-visible.
 					w, err := sql.Open("sqlite3", or.dbPath)
 					if err != nil {
 						t.Fatal(err)
@@ -97,11 +117,36 @@ func openCodeEvidenceCases() []adaptertest.EvidenceCase {
 					now := time.Now().UnixMilli()
 					if _, err := w.Exec(
 						`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
-						"msg_extra", id, now, now, `{"role":"user","content":"x"}`,
+						"msg_extra_u", id, now, now, `{"role":"user"}`,
 					); err != nil {
 						t.Fatal(err)
 					}
-				})
+					if _, err := w.Exec(
+						`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)`,
+						"part_extra_u", "msg_extra_u", id, now, now,
+						`{"type":"text","text":"`+marker+`"}`,
+					); err != nil {
+						t.Fatal(err)
+					}
+					asst := `{"role":"assistant","parentID":"msg_extra_u","modelID":"test-model","providerID":"test","time":{"created":` + jsonNumber(now+1) + `,"completed":` + jsonNumber(now+2) + `}}`
+					if _, err := w.Exec(
+						`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
+						"msg_extra_a", id, now+1, now+2, asst,
+					); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := w.Exec(
+						`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)`,
+						"part_extra_a", "msg_extra_a", id, now+1, now+1,
+						`{"type":"text","text":"live ack"}`,
+					); err != nil {
+						t.Fatal(err)
+					}
+					// Bump session mtime so LiveRevision moves with the content.
+					if _, err := w.Exec(`UPDATE session SET time_updated = ? WHERE id = ?`, now+2, id); err != nil {
+						t.Fatal(err)
+					}
+				}, adaptertest.RealtimeExpect{ContentMarker: marker})
 			},
 		},
 		{
@@ -151,11 +196,13 @@ func writeOpenCodeRichFixture(t *testing.T) (dbPath, sessionID string) {
 	asst := `{"role":"assistant","parentID":"msg_u1","modelID":"test-model","providerID":"test","agent":"build","tokens":{"input":100,"output":50,"reasoning":7,"cache":{"read":11,"write":3}},"time":{"created":` + jsonNumber(now+1) + `,"completed":` + jsonNumber(now+2) + `}}`
 	mustExec(t, db, `INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)`,
 		"msg_a1", sessionID, now+1, now+2, asst)
-	// tool + edit parts
+	// tool + edit parts: success edit + failure read
 	mustExec(t, db, `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)`,
 		"p1", "msg_a1", sessionID, now+1, now+1, `{"type":"text","text":"working"}`)
 	mustExec(t, db, `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)`,
 		"p2", "msg_a1", sessionID, now+1, now+1, `{"type":"tool","tool":"edit","callID":"call1","state":{"status":"completed","input":{"filePath":"a.go","oldString":"old","newString":"new"},"output":"ok"}}`)
+	mustExec(t, db, `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)`,
+		"p2b", "msg_a1", sessionID, now+1, now+1, `{"type":"tool","tool":"Read","callID":"call2","state":{"status":"error","error":"not found","input":{"path":"missing.go"}}}`)
 	// agent name for subtasks
 	mustExec(t, db, `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)`,
 		"p3", "msg_a1", sessionID, now+1, now+1, `{"type":"agent","name":"explore"}`)

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 )
@@ -44,18 +45,33 @@ func grokEvidenceCases() []adaptertest.EvidenceCase {
 			NewReader: func(t *testing.T) adaptertest.Reader {
 				root := t.TempDir()
 				id := "cccccccc-dddd-eeee-ffff-000000000001"
-				// Include search_replace tool for diff
-				updates := sampleUpdatesWithEdit()
+				// Include success edit + failed tool for pair evidence
+				updates := sampleUpdatesWithEditAndFail()
 				writeSession(t, root, "%2Ftmp%2Fdemo", id, summaryFile{}, updates, sampleEventsClosed())
 				return New(root)
 			},
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "cccccccc-dddd-eeee-ffff-000000000001"
+				// inclusive input 100 − cache 40 → exclusive prompt 60
 				adaptertest.AssertTokens(t, r, adaptertest.TokenExpect{
-					SessionID: id, RequireNonNilBilling: true, RequireExactPrecision: true,
-					ExactPrompt: adaptertest.Int64(60), // 100-40 cache from sample
+					SessionID:             id,
+					RequireNonNilBilling:  true,
+					RequireExactPrecision: true,
+					ExactPrompt:           adaptertest.Int64(60),
+					ExactCompletion:       adaptertest.Int64(20),
+					ExactCacheRead:        adaptertest.Int64(40),
+					ExactReasoning:        adaptertest.Int64(5),
+					PresentInput:          model.PresenceExact,
+					PresentOutput:         model.PresenceExact,
+					PresentCacheRead:      model.PresenceExact,
+					PresentReasoning:      model.PresenceExact,
 				})
-				adaptertest.AssertToolResults(t, r, id, 1)
+				adaptertest.AssertToolResults(t, r, adaptertest.ToolResultsExpect{
+					SessionID:      id,
+					MinPairs:       2,
+					RequireSuccess: true,
+					RequireFailure: true,
+				})
 				adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{
 					SessionID: id, FilePathSub: "a.go", OldSub: "foo", NewSub: "bar",
 				})
@@ -79,14 +95,15 @@ func grokEvidenceCases() []adaptertest.EvidenceCase {
 					t.Fatal(err)
 				}
 				path := filepath.Join(loc.Dir, "updates.jsonl")
+				marker := "realtime-marker-grok-more"
 				adaptertest.AssertRealtimeStableThenMutate(t, r, id, func(t *testing.T) {
 					f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 					if err != nil {
 						t.Fatal(err)
 					}
 					defer f.Close()
-					_, _ = f.WriteString(`{"timestamp":1700000099,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"x"}}}}` + "\n")
-				})
+					_, _ = f.WriteString(`{"timestamp":1700000099,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"` + marker + `"}}}}` + "\n")
+				}, adaptertest.RealtimeExpect{ContentMarker: marker})
 			},
 		},
 		{
@@ -135,10 +152,12 @@ func grokEvidenceCases() []adaptertest.EvidenceCase {
 	}
 }
 
-func sampleUpdatesWithEdit() string {
+func sampleUpdatesWithEditAndFail() string {
 	return `{"timestamp":1700000000,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hello"}}}}
 {"timestamp":1700000001,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"call-edit","title":"search_replace","rawInput":{"file_path":"a.go","old_string":"foo","new_string":"bar"},"_meta":{"x.ai/tool":{"name":"search_replace"}}}}}
 {"timestamp":1700000002,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-edit","status":"completed","content":[{"type":"content","content":{"type":"text","text":"ok"}}]}}}
+{"timestamp":1700000002,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"call-fail","title":"bash","rawInput":{"command":"false"},"_meta":{"x.ai/tool":{"name":"bash"}}}}}
+{"timestamp":1700000003,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-fail","status":"failed","content":[{"type":"content","content":{"type":"text","text":"Tool failed: blocked"}}]}}}
 {"timestamp":1700000003,"method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}}}
 {"timestamp":1700000004,"method":"_x.ai/session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"turn_completed","stop_reason":"end_turn","usage":{"inputTokens":100,"outputTokens":20,"cachedReadTokens":40,"reasoningTokens":5,"modelCalls":1,"apiDurationMs":500,"modelUsage":{"grok-4.5":{"inputTokens":100,"outputTokens":20,"cachedReadTokens":40,"reasoningTokens":5,"modelCalls":1,"apiDurationMs":500}}}}}}
 `

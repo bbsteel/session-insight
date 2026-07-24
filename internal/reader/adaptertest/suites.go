@@ -44,9 +44,18 @@ func RequireSessionProcessFinder(t *testing.T, r Reader) SessionProcessFinder {
 	return p
 }
 
-// AssertRealtimeStableThenMutate checks LiveRevision stability, then requires
-// a change after mutate() alters the test-owned fixture.
-func AssertRealtimeStableThenMutate(t *testing.T, r Reader, sessionID string, mutate func(t *testing.T)) {
+// RealtimeExpect configures AssertRealtimeStableThenMutate.
+type RealtimeExpect struct {
+	// ContentMarker is a substring that must appear after mutate in either
+	// GetSession user/assistant text or GetRenderEvents Text. Distinguishes
+	// content revision from mere process liveness.
+	ContentMarker string
+}
+
+// AssertRealtimeStableThenMutate checks LiveRevision stability, requires a
+// revision change after mutate(), and requires the new content to be
+// observable via GetSession/GetRenderEvents (not SessionRunning).
+func AssertRealtimeStableThenMutate(t *testing.T, r Reader, sessionID string, mutate func(t *testing.T), exp RealtimeExpect) {
 	t.Helper()
 	lr := RequireLiveRevisionProvider(t, r)
 	rev1, err := lr.LiveRevision(sessionID)
@@ -60,6 +69,14 @@ func AssertRealtimeStableThenMutate(t *testing.T, r Reader, sessionID string, mu
 	if rev1 != rev2 {
 		t.Fatalf("LiveRevision unstable without mutation: %d then %d", rev1, rev2)
 	}
+	// Snapshot pre-mutate content so we can prove observability changed.
+	beforeDetail, err := r.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession before mutate: %v", err)
+	}
+	beforeEvents, _ := r.GetRenderEvents(sessionID)
+	beforeSig := contentSignature(beforeDetail, beforeEvents)
+
 	mutate(t)
 	rev3, err := lr.LiveRevision(sessionID)
 	if err != nil {
@@ -68,27 +85,76 @@ func AssertRealtimeStableThenMutate(t *testing.T, r Reader, sessionID string, mu
 	if rev3 == rev1 {
 		t.Fatalf("LiveRevision did not change after mutation (still %d)", rev3)
 	}
-	// Monotonic in the sense of "different"; size+mtime encoding may not be
-	// strictly greater for all agents, so inequality is the contract.
+	// Content must become observable through the reader — not process liveness.
+	afterDetail, err := r.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession after mutate: %v", err)
+	}
+	afterEvents, _ := r.GetRenderEvents(sessionID)
+	afterSig := contentSignature(afterDetail, afterEvents)
+	if exp.ContentMarker != "" {
+		if !strings.Contains(afterSig, exp.ContentMarker) {
+			t.Fatalf("after mutate, content marker %q not visible in session/render (sig len=%d)",
+				exp.ContentMarker, len(afterSig))
+		}
+	} else if afterSig == beforeSig {
+		// Without an explicit marker, require some observable growth/change.
+		if len(afterDetail.Turns) <= len(beforeDetail.Turns) && len(afterEvents) <= len(beforeEvents) {
+			t.Fatal("after mutate, session/render content did not become observably larger")
+		}
+	}
+}
+
+func contentSignature(d *model.SessionDetail, events []model.RenderEvent) string {
+	var b strings.Builder
+	if d != nil {
+		b.WriteString(d.Name)
+		for _, tr := range d.Turns {
+			b.WriteString(tr.UserMessage)
+			b.WriteString(tr.AssistantMessage)
+			for _, td := range tr.ToolDetails {
+				b.WriteString(td.Name)
+				b.WriteString(td.ErrorMessage)
+			}
+		}
+	}
+	for _, e := range events {
+		b.WriteString(e.Type)
+		b.WriteString(e.Text)
+		b.WriteString(e.Stdout)
+		b.WriteString(e.Stderr)
+		b.WriteString(e.ToolName)
+		b.WriteString(e.ToolCallID)
+	}
+	return b.String()
 }
 
 // TokenExpect holds expected exclusive-bucket values for a session bill.
 type TokenExpect struct {
-	// SessionID is loaded via GetSession.
 	SessionID string
-	// MinPrompt / MinCompletion are lower bounds when exact equality is
-	// awkward across agents; Exact* when non-nil force equality.
+	// Exact* force equality when non-nil.
 	ExactPrompt     *int64
 	ExactCompletion *int64
 	ExactCacheRead  *int64
+	ExactCacheWrite *int64
 	ExactReasoning  *int64
-	// RequirePresent marks that billing must exist with Precision exact.
+	// Presence expectations: empty string skips the check.
+	// Use model.PresenceExact / PresenceNA / PresenceMissing ("").
+	PresentInput      model.Presence
+	PresentOutput     model.Presence
+	PresentCacheRead  model.Presence
+	PresentCacheWrite model.Presence
+	PresentReasoning  model.Presence
+	// RequireExactPrecision requires Billing.Precision == exact.
 	RequireExactPrecision bool
 	// RequireNonNilBilling fails if Billing is nil.
 	RequireNonNilBilling bool
+	// AllowTurnFallback uses turn TokenUsage sums when Billing is nil.
+	AllowTurnFallback bool
 }
 
-// AssertTokens loads the session and checks token/billing evidence.
+// AssertTokens loads the session and checks token/billing evidence including
+// Presence metadata and exact-zero vs absent distinctions.
 func AssertTokens(t *testing.T, r Reader, exp TokenExpect) {
 	t.Helper()
 	d, err := r.GetSession(exp.SessionID)
@@ -98,105 +164,289 @@ func AssertTokens(t *testing.T, r Reader, exp TokenExpect) {
 	if exp.RequireNonNilBilling && d.Billing == nil {
 		t.Fatal("Billing is nil")
 	}
-	if d.Billing == nil {
-		// Fall back to turn-level token sums.
-		var prompt, completion, cacheRead, reasoning int64
-		for _, tr := range d.Turns {
-			prompt += tr.TokenUsage.PromptTokens
-			completion += tr.TokenUsage.CompletionTokens
-			cacheRead += tr.TokenUsage.CacheReadTokens
-			reasoning += tr.TokenUsage.ReasoningTokens
+	var u model.TokenUsage
+	where := "billing"
+	if d.Billing != nil {
+		if exp.RequireExactPrecision && d.Billing.Precision != model.PrecisionExact {
+			t.Fatalf("Billing.Precision=%q want exact", d.Billing.Precision)
 		}
-		checkTokenBounds(t, "turns", prompt, completion, cacheRead, reasoning, exp)
-		return
+		u = d.Billing.Totals
+	} else if exp.AllowTurnFallback {
+		where = "turns"
+		for _, tr := range d.Turns {
+			u.PromptTokens += tr.TokenUsage.PromptTokens
+			u.CompletionTokens += tr.TokenUsage.CompletionTokens
+			u.CacheReadTokens += tr.TokenUsage.CacheReadTokens
+			u.CacheWriteTokens += tr.TokenUsage.CacheWriteTokens
+			u.ReasoningTokens += tr.TokenUsage.ReasoningTokens
+			// Widen presence from turns (exact and n/a both matter for evidence).
+			model.MergePresence(&u.Present, tr.TokenUsage.Present)
+		}
+	} else {
+		// Try render-event token attachment (Claude path).
+		where = "render"
+		events, _ := r.GetRenderEvents(exp.SessionID)
+		for _, e := range events {
+			if e.TokenUsage == nil {
+				continue
+			}
+			u.PromptTokens += e.TokenUsage.InputTokens
+			u.CompletionTokens += e.TokenUsage.OutputTokens
+			u.CacheReadTokens += e.TokenUsage.CacheReadTokens
+			u.CacheWriteTokens += e.TokenUsage.CacheCreationTokens
+			if e.TokenUsage.InputTokens > 0 || e.TokenUsage.OutputTokens > 0 {
+				u.Present.Input = model.PresenceExact
+				u.Present.Output = model.PresenceExact
+			}
+			if e.TokenUsage.CacheReadTokens > 0 {
+				u.Present.CacheRead = model.PresenceExact
+			}
+			if e.TokenUsage.CacheCreationTokens > 0 {
+				u.Present.CacheWrite = model.PresenceExact
+			}
+		}
+		if u.PromptTokens == 0 && u.CompletionTokens == 0 {
+			t.Fatal("no token evidence on billing, turns, or render events")
+		}
 	}
-	if exp.RequireExactPrecision && d.Billing.Precision != model.PrecisionExact {
-		t.Fatalf("Billing.Precision=%q want exact", d.Billing.Precision)
-	}
-	u := d.Billing.Totals
-	// Reasoning must not exceed completion when both present.
+
+	// Reasoning must not exceed completion when both present as exact.
 	if u.Present.Reasoning == model.PresenceExact && u.Present.Output == model.PresenceExact {
 		if u.ReasoningTokens > u.CompletionTokens {
 			t.Fatalf("reasoning %d > completion %d (double-count risk)", u.ReasoningTokens, u.CompletionTokens)
 		}
 	}
-	checkTokenBounds(t, "billing", u.PromptTokens, u.CompletionTokens, u.CacheReadTokens, u.ReasoningTokens, exp)
+	checkTokenBounds(t, where, u, exp)
+	checkTokenPresence(t, where, u.Present, exp)
 }
 
-func checkTokenBounds(t *testing.T, where string, prompt, completion, cacheRead, reasoning int64, exp TokenExpect) {
+func checkTokenBounds(t *testing.T, where string, u model.TokenUsage, exp TokenExpect) {
 	t.Helper()
-	if exp.ExactPrompt != nil && prompt != *exp.ExactPrompt {
-		t.Errorf("%s prompt=%d want %d", where, prompt, *exp.ExactPrompt)
+	if exp.ExactPrompt != nil && u.PromptTokens != *exp.ExactPrompt {
+		t.Errorf("%s prompt=%d want %d", where, u.PromptTokens, *exp.ExactPrompt)
 	}
-	if exp.ExactCompletion != nil && completion != *exp.ExactCompletion {
-		t.Errorf("%s completion=%d want %d", where, completion, *exp.ExactCompletion)
+	if exp.ExactCompletion != nil && u.CompletionTokens != *exp.ExactCompletion {
+		t.Errorf("%s completion=%d want %d", where, u.CompletionTokens, *exp.ExactCompletion)
 	}
-	if exp.ExactCacheRead != nil && cacheRead != *exp.ExactCacheRead {
-		t.Errorf("%s cache_read=%d want %d", where, cacheRead, *exp.ExactCacheRead)
+	if exp.ExactCacheRead != nil && u.CacheReadTokens != *exp.ExactCacheRead {
+		t.Errorf("%s cache_read=%d want %d", where, u.CacheReadTokens, *exp.ExactCacheRead)
 	}
-	if exp.ExactReasoning != nil && reasoning != *exp.ExactReasoning {
-		t.Errorf("%s reasoning=%d want %d", where, reasoning, *exp.ExactReasoning)
+	if exp.ExactCacheWrite != nil && u.CacheWriteTokens != *exp.ExactCacheWrite {
+		t.Errorf("%s cache_write=%d want %d", where, u.CacheWriteTokens, *exp.ExactCacheWrite)
 	}
-	// At least some token signal when exact equality not specified.
-	if exp.ExactPrompt == nil && exp.ExactCompletion == nil {
-		if prompt == 0 && completion == 0 && cacheRead == 0 {
-			t.Errorf("%s: all token buckets are zero; fixture should include known tokens", where)
+	if exp.ExactReasoning != nil && u.ReasoningTokens != *exp.ExactReasoning {
+		t.Errorf("%s reasoning=%d want %d", where, u.ReasoningTokens, *exp.ExactReasoning)
+	}
+	// For tokens=exact evidence, at least one Exact* must be set — avoid theater.
+	if exp.ExactPrompt == nil && exp.ExactCompletion == nil && exp.ExactCacheRead == nil {
+		t.Error("TokenExpect for exact tokens must set at least one Exact* value")
+	}
+}
+
+func checkTokenPresence(t *testing.T, where string, p model.TokenPresence, exp TokenExpect) {
+	t.Helper()
+	// Only assert when caller specified a non-zero expectation string... Presence is string.
+	// PresenceMissing is "". We use a sentinel approach: if any Present* field was
+	// intentionally set, check. Callers set PresentInput = model.PresenceExact explicitly.
+	// For optional skip, use a special approach - only check if RequirePresent is used.
+	// Here we check when the expected value is non-empty OR is explicitly PresenceNA.
+	// PresenceNA is "n/a", PresenceExact is "exact", Missing is "".
+	// To allow "must be missing", we need a flag. Simpler: always check if any of
+	// Present* in exp is set via a bool RequirePresenceChecks.
+	// Actually: use pointer to Presence? For simplicity check all non-default:
+	// We'll check whenever PresentInput/Output etc. is set to exact or n/a.
+	// PresenceMissing "" means "skip" for the expect field.
+	if exp.PresentInput != "" && p.Input != exp.PresentInput {
+		t.Errorf("%s Present.Input=%q want %q", where, p.Input, exp.PresentInput)
+	}
+	if exp.PresentOutput != "" && p.Output != exp.PresentOutput {
+		t.Errorf("%s Present.Output=%q want %q", where, p.Output, exp.PresentOutput)
+	}
+	if exp.PresentCacheRead != "" && p.CacheRead != exp.PresentCacheRead {
+		t.Errorf("%s Present.CacheRead=%q want %q", where, p.CacheRead, exp.PresentCacheRead)
+	}
+	if exp.PresentCacheWrite != "" && p.CacheWrite != exp.PresentCacheWrite {
+		t.Errorf("%s Present.CacheWrite=%q want %q", where, p.CacheWrite, exp.PresentCacheWrite)
+	}
+	if exp.PresentReasoning != "" && p.Reasoning != exp.PresentReasoning {
+		t.Errorf("%s Present.Reasoning=%q want %q", where, p.Reasoning, exp.PresentReasoning)
+	}
+	// Exact zero vs absent: if ExactPrompt is 0 with PresentInput=exact, value 0 is OK;
+	// if PresentInput is missing, ExactPrompt must not be required as 0 with exact semantics.
+	if exp.ExactPrompt != nil && *exp.ExactPrompt == 0 && exp.PresentInput == model.PresenceExact {
+		if p.Input != model.PresenceExact {
+			t.Errorf("%s exact-zero prompt requires Present.Input=exact, got %q", where, p.Input)
 		}
 	}
 }
 
-// AssertToolResults requires at least one tool invocation associated with a
-// result (or turn-level tool_details / tool_names evidence).
-func AssertToolResults(t *testing.T, r Reader, sessionID string, minTools int) {
+// ToolResultsExpect configures association and success/failure checks.
+type ToolResultsExpect struct {
+	SessionID string
+	// MinPairs is minimum successful invocation↔result associations by call id.
+	MinPairs int
+	// RequireFailure requires at least one ToolResult with ExitCode != 0,
+	// or turn ToolDetails with ExitCode != 0 / Rejected / error.
+	RequireFailure bool
+	// RequireSuccess requires at least one successful result (exit 0).
+	RequireSuccess bool
+}
+
+// AssertToolResults requires invocation/result association by ToolCallID,
+// tool names, exit/failure state, and re-read stability.
+func AssertToolResults(t *testing.T, r Reader, exp ToolResultsExpect) {
 	t.Helper()
-	if minTools < 1 {
-		minTools = 1
+	if exp.MinPairs < 1 {
+		exp.MinPairs = 1
 	}
-	d, err := r.GetSession(sessionID)
+	if !exp.RequireSuccess && !exp.RequireFailure {
+		exp.RequireSuccess = true
+	}
+
+	d, err := r.GetSession(exp.SessionID)
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	toolTurns := 0
-	for _, tr := range d.Turns {
-		if tr.ToolCallCount > 0 || len(tr.ToolNames) > 0 || len(tr.ToolDetails) > 0 {
-			toolTurns++
+	events, err := r.GetRenderEvents(exp.SessionID)
+	if err != nil {
+		t.Fatalf("GetRenderEvents: %v", err)
+	}
+
+	type invInfo struct {
+		name string
+		seq  int
+		key  string
+	}
+	// Index invocations by ToolCallID and by EventID so ParentEventID pairing
+	// works for agents (e.g. OpenCode) that omit ToolCallID on render events.
+	invByID := map[string]invInfo{}
+	var results []model.RenderEvent
+	seq := 0
+	for _, e := range events {
+		seq++
+		switch e.Type {
+		case "ToolInvocation":
+			if e.ToolName == "" {
+				t.Errorf("ToolInvocation missing ToolName (call_id=%q event=%q)", e.ToolCallID, e.EventID)
+			}
+			key := e.ToolCallID
+			if key == "" {
+				key = e.EventID
+			}
+			if key == "" {
+				t.Errorf("ToolInvocation name=%q has neither ToolCallID nor EventID", e.ToolName)
+				continue
+			}
+			info := invInfo{name: e.ToolName, seq: seq, key: key}
+			invByID[key] = info
+			if e.EventID != "" && e.EventID != key {
+				invByID[e.EventID] = info
+			}
+		case "ToolResult":
+			results = append(results, e)
 		}
 	}
-	events, err := r.GetRenderEvents(sessionID)
-	inv, res := 0, 0
-	if err == nil {
+
+	paired := 0
+	success, failure := 0, 0
+	var lastResSeq int
+	for i, res := range results {
+		callKey := res.ToolCallID
+		if callKey == "" {
+			callKey = res.ParentEventID
+		}
+		if callKey == "" {
+			t.Errorf("ToolResult[%d] missing ToolCallID and ParentEventID", i)
+			continue
+		}
+		inv, ok := invByID[callKey]
+		if !ok {
+			t.Errorf("ToolResult call_id/parent=%q has no matching ToolInvocation", callKey)
+			continue
+		}
+		// Ordering: invocation before result in event stream.
+		resSeq := 0
+		s := 0
 		for _, e := range events {
-			switch e.Type {
-			case "ToolInvocation":
-				inv++
-			case "ToolResult":
-				res++
+			s++
+			if e.Type != "ToolResult" {
+				continue
+			}
+			if e.EventID != "" && e.EventID == res.EventID {
+				resSeq = s
+				break
+			}
+			rk := e.ToolCallID
+			if rk == "" {
+				rk = e.ParentEventID
+			}
+			if rk == callKey && resSeq == 0 {
+				resSeq = s
+			}
+		}
+		if resSeq > 0 && inv.seq > resSeq {
+			t.Errorf("ToolResult %q appears before ToolInvocation", callKey)
+		}
+		if lastResSeq > 0 && resSeq < lastResSeq {
+			t.Errorf("ToolResult order unstable/non-monotonic for %q", callKey)
+		}
+		lastResSeq = resSeq
+		paired++
+		// Result content or structured status must survive.
+		hasContent := res.Stdout != "" || res.Stderr != "" || res.Rejected || res.ErrorKind != "" || res.TimedOut
+		if !hasContent && res.ExitCode == 0 && inv.name == "" {
+			t.Errorf("ToolResult %q has no content/status and empty tool name", callKey)
+		}
+		if res.ExitCode != 0 || res.Rejected || res.TimedOut || res.ErrorKind != "" {
+			failure++
+		} else {
+			success++
+		}
+	}
+
+	// Also count turn-level tool_details for agents that pair there.
+	for _, tr := range d.Turns {
+		for _, td := range tr.ToolDetails {
+			if td.Name == "" {
+				continue
+			}
+			if td.ExitCode != 0 || td.Rejected || td.ErrorKind != "" {
+				failure++
+			} else {
+				success++
+			}
+			// tool_details imply association at turn level
+			if paired < exp.MinPairs {
+				paired++
 			}
 		}
 	}
-	if toolTurns == 0 && inv == 0 {
-		t.Fatal("no tool evidence in turns or render events")
+
+	if paired < exp.MinPairs {
+		t.Fatalf("paired tool call/results=%d want >= %d (invocations=%d results=%d)",
+			paired, exp.MinPairs, len(invByID), len(results))
 	}
-	if inv > 0 && res == 0 {
-		// Some agents only surface tools on turns; only fail if we saw inv without any result path.
-		if toolTurns == 0 {
-			t.Fatalf("ToolInvocation=%d but no ToolResult and no turn tool fields", inv)
-		}
+	if exp.RequireSuccess && success < 1 {
+		t.Fatal("expected at least one successful tool result (exit 0)")
 	}
-	total := toolTurns
-	if inv > total {
-		total = inv
+	if exp.RequireFailure && failure < 1 {
+		t.Fatal("expected at least one failed/rejected tool result")
 	}
-	if total < minTools {
-		t.Fatalf("tool evidence count=%d want >= %d", total, minTools)
-	}
+
 	// Re-read stability: no duplication.
-	d2, err := r.GetSession(sessionID)
+	d2, err := r.GetSession(exp.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(d2.Turns) != len(d.Turns) {
 		t.Fatalf("turn count changed on re-read: %d -> %d", len(d.Turns), len(d2.Turns))
+	}
+	events2, err := r.GetRenderEvents(exp.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events2) != len(events) {
+		t.Fatalf("render event count changed on re-read: %d -> %d", len(events), len(events2))
 	}
 }
 
@@ -315,20 +565,34 @@ func AssertSubtasks(t *testing.T, r Reader, exp SubtaskExpect) {
 
 // AssertResume requires a stable native resume identifier.
 type ResumeExpect struct {
-	SessionID    string
-	ExactID      string // if non-empty, ResumeID must equal this
-	RejectSuffix string // ResumeID must not end with this (e.g. ".jsonl")
+	SessionID string
+	// ExactID, when non-empty, must equal detail.ResumeID (not Session.ID fallback).
+	ExactID string
+	// RequireNativeField requires detail.ResumeID to be non-empty (no fallback to ID).
+	RequireNativeField bool
+	// RejectEqualSessionID fails if ResumeID equals the list/file session ID
+	// (e.g. Codex must not use rollout filename stem as resume).
+	RejectEqualSessionID bool
+	// RejectSuffix: ResumeID must not end with this (e.g. ".jsonl").
+	RejectSuffix string
 }
 
 // AssertResume checks ResumeID on list and detail.
+//
+// When RequireNativeField or RejectEqualSessionID is set, detail.ResumeID must
+// be populated (Codex-style native payload id). Otherwise ExactID may match
+// either ResumeID or Session.ID (agents whose CLI resume id is the session id).
 func AssertResume(t *testing.T, r Reader, exp ResumeExpect) {
 	t.Helper()
 	d, err := r.GetSession(exp.SessionID)
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	// Prefer ResumeID; fall back to ID when agent uses session ID as resume key
-	// (claude/chrys/opencode/grok). Detail embeds Session.
+	if exp.RequireNativeField || exp.RejectEqualSessionID {
+		if d.ResumeID == "" {
+			t.Fatal("ResumeID field is empty; native resume id required (not Session.ID fallback)")
+		}
+	}
 	rid := d.ResumeID
 	if rid == "" {
 		rid = d.ID
@@ -336,8 +600,18 @@ func AssertResume(t *testing.T, r Reader, exp ResumeExpect) {
 	if rid == "" {
 		t.Fatal("empty resume identity")
 	}
-	if exp.ExactID != "" && rid != exp.ExactID {
-		t.Fatalf("ResumeID/ID=%q want %q", rid, exp.ExactID)
+	if exp.ExactID != "" {
+		if exp.RequireNativeField || exp.RejectEqualSessionID {
+			if d.ResumeID != exp.ExactID {
+				t.Fatalf("ResumeID=%q want ExactID %q (session ID=%q)", d.ResumeID, exp.ExactID, d.ID)
+			}
+		} else if rid != exp.ExactID {
+			t.Fatalf("resume identity=%q want ExactID %q (ResumeID=%q Session.ID=%q)",
+				rid, exp.ExactID, d.ResumeID, d.ID)
+		}
+	}
+	if exp.RejectEqualSessionID && d.ResumeID != "" && d.ResumeID == d.ID {
+		t.Fatalf("ResumeID %q must not equal session/file id %q", d.ResumeID, d.ID)
 	}
 	if exp.RejectSuffix != "" && strings.HasSuffix(rid, exp.RejectSuffix) {
 		t.Fatalf("resume id %q looks like a filename (suffix %q)", rid, exp.RejectSuffix)
@@ -351,12 +625,11 @@ func AssertResume(t *testing.T, r Reader, exp ResumeExpect) {
 		if s.ID != exp.SessionID && s.ID != d.ID {
 			continue
 		}
-		listRID := s.ResumeID
-		if listRID == "" {
-			listRID = s.ID
+		if d.ResumeID != "" && s.ResumeID != "" && s.ResumeID != d.ResumeID {
+			t.Fatalf("list ResumeID %q != detail %q", s.ResumeID, d.ResumeID)
 		}
-		if listRID != rid && s.ResumeID != "" && d.ResumeID != "" {
-			t.Fatalf("list ResumeID %q != detail %q", listRID, rid)
+		if exp.RejectEqualSessionID && s.ResumeID != "" && s.ResumeID == s.ID {
+			t.Fatalf("list ResumeID equals file stem %q", s.ID)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 )
@@ -45,15 +46,28 @@ func copilotEvidenceCases() []adaptertest.EvidenceCase {
 			},
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "copilot-rich-1"
+				// tokenDetails: input 100, output 50, cache_read 10 (exclusive buckets).
 				adaptertest.AssertTokens(t, r, adaptertest.TokenExpect{
-					SessionID: id, RequireNonNilBilling: true, RequireExactPrecision: true,
+					SessionID:             id,
+					RequireNonNilBilling:  true,
+					RequireExactPrecision: true,
+					ExactPrompt:           adaptertest.Int64(100),
+					ExactCompletion:       adaptertest.Int64(50),
+					ExactCacheRead:        adaptertest.Int64(10),
+					PresentInput:          model.PresenceExact,
+					PresentOutput:         model.PresenceExact,
+					PresentCacheRead:      model.PresenceExact,
 				})
-				adaptertest.AssertToolResults(t, r, id, 1)
+				adaptertest.AssertToolResults(t, r, adaptertest.ToolResultsExpect{
+					SessionID:      id,
+					MinPairs:       2,
+					RequireSuccess: true,
+					RequireFailure: true, // exitCode:1 shell in fixture
+				})
 				adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{
-					SessionID: id, FilePathSub: "a.go", // apply_patch may parse path
+					SessionID: id, FilePathSub: "a.go",
 				})
 				// If patch path extraction fails filters, still require min edit
-				// re-run looser:
 				events, _ := r.GetRenderEvents(id)
 				var edits int
 				for _, e := range events {
@@ -62,7 +76,6 @@ func copilotEvidenceCases() []adaptertest.EvidenceCase {
 					}
 				}
 				if edits == 0 {
-					// AssertDiff may have failed — call with min only
 					adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{SessionID: id, MinEditCalls: 1})
 				}
 				adaptertest.AssertSubtasks(t, r, adaptertest.SubtaskExpect{SessionID: id, MinSubagents: 1})
@@ -78,14 +91,15 @@ func copilotEvidenceCases() []adaptertest.EvidenceCase {
 			Assert: func(t *testing.T, r adaptertest.Reader) {
 				id := "conformance-copilot-1"
 				path := filepath.Join(r.(*CopilotReader).sessionDir, id, "events.jsonl")
+				marker := "realtime-marker-copilot-more"
 				adaptertest.AssertRealtimeStableThenMutate(t, r, id, func(t *testing.T) {
 					f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 					if err != nil {
 						t.Fatal(err)
 					}
 					defer f.Close()
-					_, _ = f.WriteString(`{"type":"user.message","timestamp":"2026-01-01T00:00:10Z","data":{"content":"more"}}` + "\n")
-				})
+					_, _ = f.WriteString(`{"type":"user.message","timestamp":"2026-01-01T00:00:10Z","data":{"content":"` + marker + `"}}` + "\n")
+				}, adaptertest.RealtimeExpect{ContentMarker: marker})
 			},
 		},
 		{
@@ -133,7 +147,7 @@ created_at: 2026-01-01T00:00:00Z
 updated_at: 2026-01-01T00:05:00Z
 `
 	adaptertest.MustWrite(t, filepath.Join(dir, "workspace.yaml"), ws)
-	// Billing via session.shutdown; tools; subagent; apply_patch
+	// Billing via session.shutdown; tools (success+failure); subagent; apply_patch
 	patch := strings.ReplaceAll(`*** Begin Patch
 *** Update File: a.go
 @@
