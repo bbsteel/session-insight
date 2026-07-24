@@ -58,6 +58,8 @@ func TestResolveSixAgentsCatalogIntegration(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name+"/complete-exact-tokens", func(t *testing.T) {
+			// Snapshot static map before resolve so mutation is detectable.
+			before := snapshotCaps(tc.static.Capabilities)
 			d := detailBase(tc.static.AgentType, "sess-complete")
 			d.ResumeID = "native-resume-" + tc.name
 			d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
@@ -92,13 +94,16 @@ func TestResolveSixAgentsCatalogIntegration(t *testing.T) {
 				if st.State != capability.CapabilityUnsupported {
 					t.Errorf("%s state=%s want unsupported", id, st.State)
 				}
+				if reason != "" && st.ReasonCode != reason {
+					t.Errorf("%s reason=%q want static %q", id, st.ReasonCode, reason)
+				}
 				if st.ReasonCode == "" {
-					t.Errorf("%s missing reason (static was %q)", id, reason)
+					t.Errorf("%s missing reason", id)
 				}
 			}
-			// Static catalog must not be mutated by resolve.
-			if tc.static.Capabilities[capability.CapabilityTokens].State == capability.CapabilityMissing {
-				t.Fatal("static tokens must never be missing")
+			after := snapshotCaps(tc.static.Capabilities)
+			if !capsEqual(before, after) {
+				t.Fatalf("static Capabilities map mutated during resolve for %s", tc.name)
 			}
 		})
 
@@ -176,4 +181,25 @@ func TestResolveChrysOpenCodeTerminateUnsupported(t *testing.T) {
 			t.Errorf("%s terminate action=%+v", static.AgentType, act)
 		}
 	}
+}
+
+func snapshotCaps(in map[capability.CapabilityID]capability.CapabilityDeclaration) map[capability.CapabilityID]capability.CapabilityDeclaration {
+	out := make(map[capability.CapabilityID]capability.CapabilityDeclaration, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func capsEqual(a, b map[capability.CapabilityID]capability.CapabilityDeclaration) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, va := range a {
+		vb, ok := b[k]
+		if !ok || va != vb {
+			return false
+		}
+	}
+	return true
 }
