@@ -302,10 +302,14 @@ func AssertSubtasks(t *testing.T, r Reader, exp SubtaskExpect) {
 	if named < min && children < 1 {
 		t.Fatalf("no subtask evidence: turn.Subagents+render=%d children=%d", named, children)
 	}
-	// Child sessions must not be the only roots when RequireChildIDs and children exist.
-	if exp.RequireChildIDs && children > 0 {
-		// At least one non-subagent root should remain if parent is listed.
-		_ = roots
+	if exp.RequireChildIDs {
+		if children < 1 {
+			t.Fatal("RequireChildIDs: expected at least one IsSubagent/ParentSessionID child in ListSessions")
+		}
+		// Parent should remain listable as a non-subagent root when both exist.
+		if roots < 1 {
+			t.Fatal("RequireChildIDs: expected a non-subagent root so children are not the only listed sessions")
+		}
 	}
 }
 
