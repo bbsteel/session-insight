@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -139,6 +140,49 @@ func TestHandleListAgentsMarksDiscoveredAndCountsSessions(t *testing.T) {
 	if !claude.CanDelete {
 		t.Error("claude can_delete should be true from declaration")
 	}
+}
+
+// listErrReader is discovered but fails ListSessions — catalog must still
+// return the Agent as discovered with session_count 0 (not invent data).
+type listErrReader struct {
+	stubReader
+	err error
+}
+
+func (r *listErrReader) ListSessions() ([]model.Session, error) {
+	return nil, r.err
+}
+
+func TestHandleListAgentsListSessionsErrorKeepsDiscovered(t *testing.T) {
+	rd := &listErrReader{
+		stubReader: stubReader{agentType: "claude"},
+		err:        fmt.Errorf("boom"),
+	}
+	srv := New(nil, []reader.BaseSessionReader{rd})
+
+	req := httptest.NewRequest("GET", "/api/agents", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var agents []AgentInfo
+	if err := json.NewDecoder(w.Body).Decode(&agents); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range agents {
+		if a.Type != "claude" {
+			continue
+		}
+		if !a.Discovered {
+			t.Error("claude should remain discovered after ListSessions error")
+		}
+		if a.SessionCount != 0 {
+			t.Errorf("session_count = %d after list error, want 0", a.SessionCount)
+		}
+		return
+	}
+	t.Fatal("claude missing")
 }
 
 func TestHandleListAgentsStableOrder(t *testing.T) {

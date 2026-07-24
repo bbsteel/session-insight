@@ -712,10 +712,16 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		if rd, ok := byType[def.AgentType]; ok {
 			info.Discovered = true
-			sessions, _ := rd.ListSessions()
-			for _, sess := range sessions {
-				if !sess.IsSubagent {
-					info.SessionCount++
+			sessions, err := rd.ListSessions()
+			if err != nil {
+				// Keep the Agent in the catalog as discovered; do not invent a
+				// count. Surface the failure in logs so a stuck reader is visible.
+				log.Printf("GET /api/agents: ListSessions(%s): %v", def.AgentType, err)
+			} else {
+				for _, sess := range sessions {
+					if !sess.IsSubagent {
+						info.SessionCount++
+					}
 				}
 			}
 		}
