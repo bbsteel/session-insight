@@ -1,10 +1,25 @@
+/** One baseline capability declaration from GET /api/agents. */
+export interface CapabilityDeclaration {
+  state: 'exact' | 'estimated' | 'missing' | 'not_applicable' | 'unsupported'
+  reason_code?: string
+  detail_key?: string
+}
+
 export interface AgentInfo {
   type: string
   display_name: string
   session_count: number
   live_count?: number
+  /** Adapter-owned contract revision (not the Agent product version). */
+  adapter_revision?: number
+  /** Whether this Agent's storage was discovered on the local machine. */
+  discovered?: boolean
   /** Whether the backend reader supports permanently deleting sessions of this agent. */
   can_delete?: boolean
+  /** Whether SI can map a session to an exact PID and terminate it. */
+  can_terminate?: boolean
+  /** Adapter-owned capability map (stable IDs). Present from capability contract API. */
+  capabilities?: Record<string, CapabilityDeclaration>
 }
 
 export interface SessionSummary {
