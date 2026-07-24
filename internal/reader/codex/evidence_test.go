@@ -50,16 +50,13 @@ func codexEvidenceCases() []adaptertest.EvidenceCase {
 					t.Fatalf("list: %v n=%d", err, len(list))
 				}
 				// Prefer root (non-subagent) for tools/tokens.
-				var rootID, childID, resumeExact string
+				var rootID, childID string
 				for _, s := range list {
 					if s.IsSubagent {
 						childID = s.ID
 						continue
 					}
 					rootID = s.ID
-					if s.ResumeID != "" {
-						resumeExact = s.ResumeID
-					}
 				}
 				if rootID == "" {
 					rootID = list[0].ID
@@ -90,9 +87,6 @@ func codexEvidenceCases() []adaptertest.EvidenceCase {
 					adaptertest.AssertSubtasks(t, r, adaptertest.SubtaskExpect{SessionID: rootID, MinSubagents: 1, RequireChildIDs: true})
 				} else {
 					adaptertest.AssertSubtasks(t, r, adaptertest.SubtaskExpect{SessionID: rootID, MinSubagents: 1})
-				}
-				if resumeExact == "" {
-					resumeExact = "child-native-id"
 				}
 				adaptertest.AssertResume(t, r, adaptertest.ResumeExpect{
 					SessionID: rootID, RejectSuffix: ".jsonl",
