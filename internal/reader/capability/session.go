@@ -58,13 +58,14 @@ func ActionableIDs() []CapabilityID {
 }
 
 // IsActionable reports whether id may carry a SessionActionStatus entry.
+// Derived from ActionableIDs so the two sources cannot drift.
 func IsActionable(id CapabilityID) bool {
-	switch id {
-	case CapabilityResume, CapabilityDelete, CapabilityTerminate:
-		return true
-	default:
-		return false
+	for _, actionable := range ActionableIDs() {
+		if id == actionable {
+			return true
+		}
 	}
+	return false
 }
 
 // Stable, non-localized reason codes for resolved session status and actions.

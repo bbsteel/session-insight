@@ -534,3 +534,42 @@ func TestIsSessionLiveUnchanged(t *testing.T) {
 		t.Fatal("provider live=true inside window")
 	}
 }
+
+// bareReader implements only BaseSessionReader — no LiveRevisionProvider —
+// so resolveRealtime must downgrade static exact realtime.
+type bareReader struct{ agentType string }
+
+func (b bareReader) AgentType() string   { return b.agentType }
+func (b bareReader) DisplayName() string { return b.agentType }
+func (b bareReader) ListSessions() ([]model.Session, error) {
+	return nil, nil
+}
+func (b bareReader) GetSession(id string) (*model.SessionDetail, error) {
+	return nil, errors.New("n/a")
+}
+func (b bareReader) RenderANSI(id string, cols int) (string, error) {
+	return "", errors.New("n/a")
+}
+func (b bareReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	return nil, errors.New("n/a")
+}
+
+func TestResolveRealtimeDowngradesWithoutLiveRevisionProvider(t *testing.T) {
+	static := fullExactStatic("claude")
+	d := detailBase("claude", "s1")
+	d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
+	src := bareReader{agentType: "claude"}
+	got, err := ResolveSessionCapabilities(src, d, static)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := got.Status[capability.CapabilityRealtime]
+	if st.State != capability.CapabilityEstimated || st.ReasonCode != capability.ReasonRevisionUnavailable {
+		t.Fatalf("realtime=%+v want estimated/revision_unavailable", st)
+	}
+	// Timestamp liveness still works without a liveness provider.
+	if got.Liveness.State != capability.CapabilityEstimated ||
+		got.Liveness.ReasonCode != capability.ReasonTimestampHeuristic {
+		t.Fatalf("liveness=%+v", got.Liveness)
+	}
+}

@@ -294,3 +294,40 @@ func TestHandleListAgentsStillStaticOnly(t *testing.T) {
 		}
 	}
 }
+
+// panicDeleter panics if destructive methods are invoked during GET session.
+type panicDeleter struct {
+	*capsAPIReader
+}
+
+func (p *panicDeleter) DeleteSession(id string) error {
+	panic("DeleteSession must not be called on GET session")
+}
+func (p *panicDeleter) SessionProcesses(id string) ([]int, error) {
+	panic("SessionProcesses must not be called on GET session")
+}
+
+func TestHandleGetSessionNoDestructiveCalls(t *testing.T) {
+	now := time.Now()
+	live := false
+	inner := &capsAPIReader{
+		hasRev: true,
+		live:   &live,
+		detail: &model.SessionDetail{
+			Session: model.Session{
+				ID: "safe-get", AgentType: "claude", ResumeID: "safe-get",
+				UpdatedAt: now.Add(-time.Hour),
+			},
+			Billing: &model.SessionBilling{Precision: model.PrecisionExact},
+		},
+	}
+	rd := &panicDeleter{capsAPIReader: inner}
+	srv := New(nil, []reader.BaseSessionReader{rd})
+	req := httptest.NewRequest("GET", "/api/sessions/safe-get", nil)
+	w := httptest.NewRecorder()
+	// Must not panic.
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", w.Code, w.Body.String())
+	}
+}

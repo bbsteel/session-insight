@@ -122,9 +122,6 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Resolve liveness at serve time through the reader's agent-specific
-		// process/heartbeat/in-progress capabilities.
-		detail.IsLive = reader.IsSessionLive(rd, detail.Session)
 		if s.DB != nil {
 			note, bookmarked, err := s.DB.GetBookmark(detail.AgentType, detail.ID)
 			if err != nil {
@@ -148,12 +145,16 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal: unknown agent type", http.StatusInternalServerError)
 			return
 		}
+		// ResolveSessionCapabilities already computes liveness once (provider
+		// or timestamp heuristic). Reuse that result so top-level is_live and
+		// agent_capabilities.liveness.is_live cannot diverge in one response.
 		resolved, err := reader.ResolveSessionCapabilities(rd, detail, static)
 		if err != nil {
 			log.Printf("GET /api/sessions/%s: resolve capabilities: %v", id, err)
 			http.Error(w, "internal: capability resolution failed", http.StatusInternalServerError)
 			return
 		}
+		detail.IsLive = resolved.Liveness.IsLive
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(sessionDetailResponse{
