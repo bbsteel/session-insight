@@ -16,6 +16,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/reader/capability"
 	"github.com/bbsteel/session-insight/internal/render"
 )
 
@@ -672,34 +673,59 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 	http.Error(w, "session not found", http.StatusNotFound)
 }
 
+// AgentInfo is the GET /api/agents entry for one supported Agent.
+//
+// The catalog always includes every registered Agent (even when local storage
+// is absent). SessionCount is zero for undiscovered Agents — the API does not
+// invent counts. CanDelete / CanTerminate are derived from the adapter-owned
+// capability declaration so the UI does not hard-code agent types.
+type AgentInfo struct {
+	Type            string                                                       `json:"type"`
+	DisplayName     string                                                       `json:"display_name"`
+	AdapterRevision int                                                          `json:"adapter_revision"`
+	Discovered      bool                                                         `json:"discovered"`
+	SessionCount    int                                                          `json:"session_count"`
+	CanDelete       bool                                                         `json:"can_delete"`
+	CanTerminate    bool                                                         `json:"can_terminate"`
+	Capabilities    map[capability.CapabilityID]capability.CapabilityDeclaration `json:"capabilities"`
+}
+
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	type AgentInfo struct {
-		Type         string `json:"type"`
-		DisplayName  string `json:"display_name"`
-		SessionCount int    `json:"session_count"`
-		CanDelete    bool   `json:"can_delete"`
+	// Index discovered readers by AgentType for session counts and for the
+	// discovered flag. Catalog definitions remain the outer loop so Agents
+	// without local storage still appear.
+	byType := make(map[string]reader.BaseSessionReader, len(s.Readers))
+	for _, rd := range s.Readers {
+		byType[rd.AgentType()] = rd
 	}
 
-	var agents []AgentInfo
-	for _, rd := range s.Readers {
-		sessions, _ := rd.ListSessions()
-		count := 0
-		for _, sess := range sessions {
-			if !sess.IsSubagent {
-				count++
+	defs := reader.AgentDefinitions()
+	agents := make([]AgentInfo, 0, len(defs))
+	for _, def := range defs {
+		info := AgentInfo{
+			Type:            def.AgentType,
+			DisplayName:     def.DisplayName,
+			AdapterRevision: def.AdapterRevision,
+			Capabilities:    def.Capabilities,
+			CanDelete:       def.Capabilities[capability.CapabilityDelete].State == capability.CapabilityExact,
+			CanTerminate:    def.Capabilities[capability.CapabilityTerminate].State == capability.CapabilityExact,
+		}
+		if rd, ok := byType[def.AgentType]; ok {
+			info.Discovered = true
+			sessions, err := rd.ListSessions()
+			if err != nil {
+				// Keep the Agent in the catalog as discovered; do not invent a
+				// count. Surface the failure in logs so a stuck reader is visible.
+				log.Printf("GET /api/agents: ListSessions(%s): %v", def.AgentType, err)
+			} else {
+				for _, sess := range sessions {
+					if !sess.IsSubagent {
+						info.SessionCount++
+					}
+				}
 			}
 		}
-		_, canDelete := rd.(reader.SessionDeleter)
-		agents = append(agents, AgentInfo{
-			Type:         rd.AgentType(),
-			DisplayName:  rd.DisplayName(),
-			SessionCount: count,
-			CanDelete:    canDelete,
-		})
-	}
-
-	if agents == nil {
-		agents = []AgentInfo{}
+		agents = append(agents, info)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
