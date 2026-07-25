@@ -136,14 +136,14 @@ export default function SessionCapabilityPanel({
                           <div className="mt-1.5 space-y-0.5 border-t border-[var(--border-muted)] pt-1.5 text-meta text-[var(--text-secondary)]">
                             <div>
                               <span className="text-[var(--text-muted)]">{t('capability.session.currentLabel')}: </span>
-                              {t(`capability.state.${status.state === 'not_applicable' || status.state === 'unsupported' || status.state === 'missing' || status.state === 'estimated' || status.state === 'exact' ? status.state : 'unknown'}`)}
+                              {t(capabilityStateLabelKey(status.state))}
                               {status.reason_code && reasonCodeLabelKey(status.reason_code) && (
                                 <> — {t(reasonCodeLabelKey(status.reason_code)!, status.reason_code ? { code: status.reason_code } : undefined)}</>
                               )}
                             </div>
                             <div>
                               <span className="text-[var(--text-muted)]">{t('capability.session.agentSupportLabel')}: </span>
-                              {t(`capability.state.${staticDecl.state}`)}
+                              {t(capabilityStateLabelKey(staticDecl.state))}
                             </div>
                           </div>
                         )}
