@@ -29,6 +29,8 @@ interface Props {
   building: boolean
   agentType?: string // 助手行图标用;会话未加载时退化为通用 agent 图标
   pinned?: boolean
+  /** When false, click-outside does not dismiss. Defaults to !pinned. */
+  closeOnOutside?: boolean
   onPinnedChange?: (pinned: boolean) => void
   onWidthChange?: (width: number) => void
   onJump: (lineStart: number, logicalStart?: number) => void
@@ -90,7 +92,17 @@ function loadKinds(): InteractionKind[] {
   return ALL_KINDS
 }
 
-export default function UserMessagePanel({ positions, building, agentType, pinned = false, onPinnedChange, onWidthChange, onJump, onClose }: Props) {
+export default function UserMessagePanel({
+  positions,
+  building,
+  agentType,
+  pinned = false,
+  closeOnOutside,
+  onPinnedChange,
+  onWidthChange,
+  onJump,
+  onClose,
+}: Props) {
   const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
@@ -101,6 +113,9 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
     localStorage.setItem(WIDE_STORAGE_KEY, w ? '0' : '1')
     return !w
   })
+  // Session auto-open can hold the panel open without the pin control; pin UI
+  // stays independent. Default matches the historical !pinned rule.
+  const dismissOnOutside = closeOnOutside ?? !pinned
 
   // Report the rendered width rather than the nominal 420/640px so the
   // terminal search bar also handles the panel's responsive max-width.
@@ -121,16 +136,28 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
     return next
   })
 
-  // 面板是覆盖在终端上的浮层;未钉住时点击外部关闭,钉住后保持打开。
+  // Floating overlay: optional outside-click dismiss. Defer listener attach so
+  // the gesture that opened the panel cannot immediately close it.
   useEffect(() => {
-    if (pinned) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && !panelRef.current?.contains(target)) onClose()
+    if (!dismissOnOutside) return
+    let remove: (() => void) | undefined
+    const timer = window.setTimeout(() => {
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target
+        if (!(target instanceof Element)) return
+        if (panelRef.current?.contains(target)) return
+        // Selecting another session re-applies open-on-session; don't fight it.
+        if (target.closest('[data-session-id]')) return
+        onClose()
+      }
+      document.addEventListener('pointerdown', handlePointerDown)
+      remove = () => document.removeEventListener('pointerdown', handlePointerDown)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      remove?.()
     }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [onClose, pinned])
+  }, [onClose, dismissOnOutside])
 
   const entries = useMemo(
     () => (positions?.positions ?? [])

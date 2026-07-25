@@ -27,6 +27,8 @@ interface Props {
   positions: PositionsResponse | null
   building: boolean
   pinned?: boolean
+  /** When false, click-outside does not dismiss. Defaults to !pinned. */
+  closeOnOutside?: boolean
   onPinnedChange?: (pinned: boolean) => void
   onWidthChange?: (width: number) => void
   // 外部筛选请求(分析页 Tool Usage chip):token 变化时应用 name 筛选。
@@ -127,7 +129,17 @@ const summaryClampStyle: React.CSSProperties = {
 
 const WIDE_STORAGE_KEY = 'si-toolpanel-wide'
 
-export default function ToolCallPanel({ positions, building, pinned = false, onPinnedChange, onWidthChange, filterRequest, onJump, onClose }: Props) {
+export default function ToolCallPanel({
+  positions,
+  building,
+  pinned = false,
+  closeOnOutside,
+  onPinnedChange,
+  onWidthChange,
+  filterRequest,
+  onJump,
+  onClose,
+}: Props) {
   const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -138,6 +150,8 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
     localStorage.setItem(WIDE_STORAGE_KEY, w ? '0' : '1')
     return !w
   })
+  // Session auto-open can hold the panel open without the pin control.
+  const dismissOnOutside = closeOnOutside ?? !pinned
 
   // Report the rendered width rather than the nominal 420/640px so the
   // terminal search bar also handles the panel's responsive max-width.
@@ -153,16 +167,27 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
-  // Floating overlay: close on outside click unless pinned.
+  // Floating overlay: optional outside-click dismiss. Defer listener attach so
+  // the gesture that opened the panel cannot immediately close it.
   useEffect(() => {
-    if (pinned) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && !panelRef.current?.contains(target)) onClose()
+    if (!dismissOnOutside) return
+    let remove: (() => void) | undefined
+    const timer = window.setTimeout(() => {
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target
+        if (!(target instanceof Element)) return
+        if (panelRef.current?.contains(target)) return
+        if (target.closest('[data-session-id]')) return
+        onClose()
+      }
+      document.addEventListener('pointerdown', handlePointerDown)
+      remove = () => document.removeEventListener('pointerdown', handlePointerDown)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      remove?.()
     }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [onClose, pinned])
+  }, [onClose, dismissOnOutside])
 
   // 应用来自分析页的筛选请求:只按该工具筛选,并清掉文字过滤避免叠加后空结果。
   useEffect(() => {
