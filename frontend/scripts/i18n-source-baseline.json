@@ -1,11 +1,11 @@
 {
   "src/api.ts": {
     "count": 19,
-    "fingerprint": "0c08ef24d5f0b66b"
+    "fingerprint": "2e6267e0431b5842"
   },
   "src/components/AIPanel.tsx": {
     "count": 2,
-    "fingerprint": "9c2b1c301afc1b97"
+    "fingerprint": "3bcba9345d70cc12"
   },
   "src/components/TerminalPanel.tsx": {
     "count": 1,
