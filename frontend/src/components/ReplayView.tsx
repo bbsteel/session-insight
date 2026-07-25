@@ -1,7 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote } from '../api'
+import { addBookmark, fetchAgents, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
-import type { EditCall, PositionsResponse, SessionDetail } from '../types'
+import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
+import { sessionCapabilityHeaderHint } from '../capabilityPresentation'
+import AgentIcon from './AgentIcon'
+import SessionCapabilityPanel from './SessionCapabilityPanel'
+import AgentCapabilityCompareDialog from './AgentCapabilityCompareDialog'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange } from '../terminalControl'
@@ -54,6 +58,9 @@ function formatDuration(ms: number): string {
 export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
+  const [capPanelOpen, setCapPanelOpen] = useState(false)
+  const [capCompareOpen, setCapCompareOpen] = useState(false)
+  const [agentsCatalog, setAgentsCatalog] = useState<AgentInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const [showHelp, setShowHelp] = useState(false)
@@ -1141,12 +1148,46 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     )
   const modelName = session.model_name || session.agent_type || 'unknown'
   const sessionDuration = formatDuration(session.turns.reduce((sum, t) => sum + t.duration_ms, 0))
+  const agentInfo = agentsCatalog.find(a => a.type === session.agent_type) ?? null
+  const capHint = sessionCapabilityHeaderHint(session.agent_capabilities)
+  const agentDisplayName = agentInfo?.display_name || session.agent_type || 'agent'
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
       <GlobalSearch onSelect={onSelect} />
       <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setCapPanelOpen(true)
+              if (agentsCatalog.length === 0) {
+                void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
+              }
+            }}
+            className="h-7 max-w-[11rem] rounded-md border border-[var(--border-default)] px-2 inline-flex items-center gap-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            aria-label={t('capability.session.openButton')}
+            data-testid="session-agent-capability-button"
+          >
+            <AgentIcon agentType={session.agent_type} size={16} />
+            <span className="truncate">{agentDisplayName}</span>
+            {capHint.kind === 'missing' && (
+              <span className="shrink-0 text-meta text-[var(--warning)]">
+                {t('capability.session.hintMissing', { n: capHint.count })}
+              </span>
+            )}
+            {capHint.kind === 'estimated' && (
+              <span className="shrink-0 text-meta text-[var(--accent-blue)]">
+                {t('capability.session.hintEstimated')}
+              </span>
+            )}
+            {capHint.kind === 'unsupported' && (
+              <span className="shrink-0 text-meta text-[var(--error)]">
+                {t('capability.session.hintUnsupported', { n: capHint.count })}
+              </span>
+            )}
+          </button>
+          <span className="text-[var(--border-default)]">|</span>
           <InstantTooltip
             text={
               session.bookmarked
@@ -1253,7 +1294,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.active')}
             </span>
           )}
-          {session.agent_type || 'agent'} · {modelName} · {fmtTokens(totalTokens, locale)} {t('replay.tokens')} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}
+          {modelName} · {fmtTokens(totalTokens, locale)} {t('replay.tokens')} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}
           {(session.rolled_back_turn_count ?? 0) > 0 && (
             <span className="text-[var(--warning)]"> · +{formatNumber(locale, session.rolled_back_turn_count ?? 0)} {t('replay.rolledBack')}</span>
           )}
@@ -1461,6 +1502,25 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           scrollToTopRef={scrollToTopRef}
         />
       </div>
+
+      <SessionCapabilityPanel
+        open={capPanelOpen}
+        session={session}
+        agentInfo={agentInfo}
+        onClose={() => setCapPanelOpen(false)}
+        onOpenCompare={() => {
+          setCapPanelOpen(false)
+          setCapCompareOpen(true)
+          if (agentsCatalog.length === 0) {
+            void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
+          }
+        }}
+      />
+      <AgentCapabilityCompareDialog
+        open={capCompareOpen}
+        agents={agentsCatalog}
+        onClose={() => setCapCompareOpen(false)}
+      />
     </main>
   )
 }
