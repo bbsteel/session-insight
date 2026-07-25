@@ -12,7 +12,7 @@ export function getNavOpenPref(): NavOpenPref {
   } catch {
     // ignore
   }
-  // Default: open user-message nav with pin when a session is selected.
+  // Default: open user-message nav (unpinned) when a session is selected.
   return 'user'
 }
 

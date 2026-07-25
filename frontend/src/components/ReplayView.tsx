@@ -444,7 +444,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     setFollowOutput(true)
   }, [session, sessionId])
 
-  // On session open: optionally expand nav (user/tool) and pin it (settings).
+  // On session open: optionally expand nav (user/tool) per settings. Never
+  // auto-pin — pin only after the user clicks the panel pin control.
   useEffect(() => {
     if (!sessionId) {
       setShowUserPanel(false)
@@ -456,11 +457,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     if (pref === 'user') {
       setShowUserPanel(true)
       setShowToolPanel(false)
-      setNavPinned(true)
+      setNavPinned(false)
     } else if (pref === 'tool') {
       setShowToolPanel(true)
       setShowUserPanel(false)
-      setNavPinned(true)
+      setNavPinned(false)
     } else {
       setShowUserPanel(false)
       setShowToolPanel(false)
@@ -977,7 +978,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     setToolFilterRequest(prev => ({ name, token: (prev?.token ?? 0) + 1 }))
     setShowToolPanel(true)
     setShowUserPanel(false)
-    setNavPinned(true)
     setViewMode('terminal')
   }, [])
 
@@ -1277,8 +1277,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               const next = !v
               if (next) {
                 setShowToolPanel(false)
-                // Manual open keeps current pin; first open starts unpinned
-                // unless auto-open already pinned this session.
               } else {
                 setNavPinned(false)
               }
