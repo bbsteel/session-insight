@@ -87,6 +87,33 @@ func (db *DB) UpdateSessionResumeID(agentType, sessionID, resumeID string) (bool
 	return rows > 0, nil
 }
 
+// CountRootSessionsByAgent returns the number of non-subagent sessions per
+// agent type from the index DB. Used by GET /api/agents so the catalog does
+// not re-scan every Agent's session files on disk (ListSessions can take tens
+// of seconds with large trees).
+func (db *DB) CountRootSessionsByAgent() (map[string]int, error) {
+	rows, err := db.conn.Query(`
+		SELECT agent_type, COUNT(*)
+		FROM sessions
+		WHERE is_subagent = 0
+		GROUP BY agent_type`)
+	if err != nil {
+		return nil, fmt.Errorf("count root sessions by agent: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var agentType string
+		var n int
+		if err := rows.Scan(&agentType, &n); err != nil {
+			return nil, fmt.Errorf("scan root session count: %w", err)
+		}
+		out[agentType] = n
+	}
+	return out, rows.Err()
+}
+
 // ListSessionSummaries returns every indexed session (optionally filtered by
 // agent type) ordered by updated_at descending — the sidebar list is served
 // straight from this query instead of re-scanning session files on disk.

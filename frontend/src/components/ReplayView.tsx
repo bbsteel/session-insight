@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, star
 import { addBookmark, fetchAgents, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
-import { sessionCapabilityHeaderHint } from '../capabilityPresentation'
+import { sessionCapabilityHeaderHint, sessionTokenHeaderDisplay } from '../capabilityPresentation'
 import AgentIcon from './AgentIcon'
 import SessionCapabilityPanel from './SessionCapabilityPanel'
 import AgentCapabilityCompareDialog from './AgentCapabilityCompareDialog'
@@ -1158,6 +1158,20 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const agentInfo = agentsCatalog.find(a => a.type === session.agent_type) ?? null
   const capHint = sessionCapabilityHeaderHint(session.agent_capabilities)
   const agentDisplayName = agentInfo?.display_name || session.agent_type || 'agent'
+  const tokenHeader = sessionTokenHeaderDisplay(
+    session.agent_capabilities?.status?.tokens?.state,
+    totalTokens,
+  )
+  const tokenHeaderText =
+    tokenHeader.kind === 'missing'
+      ? t('capability.session.tokensMissing')
+      : tokenHeader.kind === 'unsupported'
+        ? t('capability.session.tokensUnsupported')
+        : tokenHeader.kind === 'not_applicable'
+          ? t('capability.session.tokensNA')
+          : tokenHeader.kind === 'unknown'
+            ? t('capability.session.tokensUnknown')
+            : `${fmtTokens(tokenHeader.total, locale)} ${t('replay.tokens')}`
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
@@ -1178,6 +1192,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             <AgentIcon agentType={session.agent_type} size={16} />
             <span className="truncate">{agentDisplayName}</span>
+            {capHint.kind === 'calm' && session.agent_capabilities && (
+              <span
+                className="shrink-0 text-meta font-medium text-[var(--accent-green)]"
+                title={t('capability.session.hintCalm')}
+                aria-label={t('capability.session.hintCalm')}
+                data-testid="session-cap-hint-calm"
+              >
+                ✓
+              </span>
+            )}
             {capHint.kind === 'missing' && (
               <span className="shrink-0 text-meta text-[var(--warning)]">
                 {t('capability.session.hintMissing', { n: capHint.count })}
@@ -1301,7 +1325,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.active')}
             </span>
           )}
-          {modelName} · {fmtTokens(totalTokens, locale)} {t('replay.tokens')} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}
+          <span data-testid="session-token-header">{modelName} · {tokenHeaderText} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}</span>
           {(session.rolled_back_turn_count ?? 0) > 0 && (
             <span className="text-[var(--warning)]"> · +{formatNumber(locale, session.rolled_back_turn_count ?? 0)} {t('replay.rolledBack')}</span>
           )}

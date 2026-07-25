@@ -4,6 +4,7 @@ import {
   actionAvailabilityLabelKey,
   actionRows,
   capabilityDescriptionKey,
+  capabilityIdI18nVars,
   capabilityLabelKey,
   capabilityStateLabelKey,
   livenessPresentation,
@@ -46,12 +47,14 @@ export default function SessionCapabilityPanel({
     closeRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault()
         e.stopPropagation()
+        e.stopImmediatePropagation()
         onClose()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [open, onClose])
 
   if (!open) return null
@@ -101,12 +104,25 @@ export default function SessionCapabilityPanel({
           ) : (
             <>
               <section>
-                <h3 className="mb-2 text-helper font-medium text-[var(--text-primary)]">
+                <h3 className="mb-1 text-helper font-medium text-[var(--text-primary)]">
                   {t('capability.session.currentStatus')}
                 </h3>
+                <p className="mb-2 text-meta text-[var(--text-muted)]">
+                  {t('capability.session.currentStatusHelp')}
+                </p>
                 <ul className="space-y-2">
                   {orderedSessionStatuses(caps.status).map(({ id, status }) => {
                     const staticDecl = agentInfo?.capabilities?.[id]
+                    const showsMissingOverride =
+                      !!status &&
+                      !!staticDecl &&
+                      status.state === 'missing' &&
+                      (staticDecl.state === 'exact' || staticDecl.state === 'estimated')
+                    const showsEstimatedOverride =
+                      !!status &&
+                      !!staticDecl &&
+                      status.state === 'estimated' &&
+                      staticDecl.state === 'exact'
                     return (
                       <li
                         key={id}
@@ -116,10 +132,10 @@ export default function SessionCapabilityPanel({
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <div className="text-helper font-medium text-[var(--text-primary)]">
-                              {t(capabilityLabelKey(id))}
+                              {t(capabilityLabelKey(id), capabilityIdI18nVars(id))}
                             </div>
                             <div className="text-meta text-[var(--text-muted)]">
-                              {t(capabilityDescriptionKey(id))}
+                              {t(capabilityDescriptionKey(id), capabilityIdI18nVars(id))}
                             </div>
                           </div>
                           {status ? (
@@ -134,6 +150,12 @@ export default function SessionCapabilityPanel({
                         </div>
                         {status && staticDecl && status.state !== staticDecl.state && (
                           <div className="mt-1.5 space-y-0.5 border-t border-[var(--border-muted)] pt-1.5 text-meta text-[var(--text-secondary)]">
+                            {showsMissingOverride && (
+                              <p className="text-[var(--text-muted)]">{t('capability.session.overrideNote')}</p>
+                            )}
+                            {showsEstimatedOverride && (
+                              <p className="text-[var(--text-muted)]">{t('capability.session.estimatedOverrideNote')}</p>
+                            )}
                             <div>
                               <span className="text-[var(--text-muted)]">{t('capability.session.currentLabel')}: </span>
                               {t(capabilityStateLabelKey(status.state))}
@@ -188,7 +210,7 @@ export default function SessionCapabilityPanel({
                       className="flex items-center justify-between gap-2 rounded-md border border-[var(--border-muted)] px-2.5 py-2 text-helper"
                       data-testid={`session-action-${id}`}
                     >
-                      <span className="text-[var(--text-primary)]">{t(capabilityLabelKey(id))}</span>
+                      <span className="text-[var(--text-primary)]">{t(capabilityLabelKey(id), capabilityIdI18nVars(id))}</span>
                       <span className="text-right text-meta text-[var(--text-secondary)]">
                         {t(actionAvailabilityLabelKey(action.availability))}
                         {action.reason_code && reasonCodeLabelKey(action.reason_code) && (

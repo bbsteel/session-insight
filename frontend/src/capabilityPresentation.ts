@@ -122,6 +122,37 @@ export function capabilityDescriptionKey(id: string): string {
   return 'capability.desc.unknown'
 }
 
+/** Vars for t(...) when resolving capability label/description (retains machine id for unknowns). */
+export function capabilityIdI18nVars(id: string): { id: string } | undefined {
+  if ((BASELINE_CAPABILITY_IDS as readonly string[]).includes(id)) return undefined
+  return { id }
+}
+
+/**
+ * Header token display from session bill / turns, gated by resolved tokens capability.
+ * When tokens are missing/unsupported/not_applicable, never present a trustworthy numeric count.
+ */
+export function sessionTokenHeaderDisplay(
+  tokensState: string | undefined,
+  totalTokens: number,
+): { kind: 'value' | 'missing' | 'unsupported' | 'not_applicable' | 'unknown'; total: number } {
+  switch (tokensState) {
+    case 'missing':
+      return { kind: 'missing', total: totalTokens }
+    case 'unsupported':
+      return { kind: 'unsupported', total: totalTokens }
+    case 'not_applicable':
+      return { kind: 'not_applicable', total: totalTokens }
+    case 'exact':
+    case 'estimated':
+    case undefined:
+      // undefined: older payload without agent_capabilities — keep legacy numeric display
+      return { kind: 'value', total: totalTokens }
+    default:
+      return { kind: 'unknown', total: totalTokens }
+  }
+}
+
 /** Map stable reason codes to i18n keys; unknown → fallback key. */
 export function reasonCodeLabelKey(code: string | undefined | null): string | null {
   if (!code || !code.trim()) return null
