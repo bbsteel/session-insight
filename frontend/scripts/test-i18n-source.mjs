@@ -50,7 +50,9 @@ function collect() {
           const [kind, text] = key.split('\u0000')
           return { kind, text, count }
         })
-        .sort((a, b) => `${a.kind}\u0000${a.text}`.localeCompare(`${b.kind}\u0000${b.text}`))
+        // Locale-stable sort: bare localeCompare() follows the process LC_ALL and
+        // flips fingerprints between CI (usually C/en) and developer machines (e.g. zh-CN).
+        .sort((a, b) => `${a.kind}\u0000${a.text}`.localeCompare(`${b.kind}\u0000${b.text}`, 'en'))
     }
   }
   return result

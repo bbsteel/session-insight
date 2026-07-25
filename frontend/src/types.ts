@@ -1,8 +1,63 @@
+/** Stable capability availability state (static or session-resolved). */
+export type CapabilityState =
+  | 'exact'
+  | 'estimated'
+  | 'missing'
+  | 'not_applicable'
+  | 'unsupported'
+
+/** Baseline capability IDs (Phase 1–4 contract). */
+export type CapabilityID =
+  | 'discovery'
+  | 'replay'
+  | 'realtime'
+  | 'tokens'
+  | 'tool_results'
+  | 'diff'
+  | 'subtasks'
+  | 'resume'
+  | 'delete'
+  | 'terminate'
+
 /** One baseline capability declaration from GET /api/agents. */
 export interface CapabilityDeclaration {
-  state: 'exact' | 'estimated' | 'missing' | 'not_applicable' | 'unsupported'
+  state: CapabilityState
   reason_code?: string
   detail_key?: string
+}
+
+/** Resolved status of one capability for a single session (Phase 4). */
+export interface SessionCapabilityStatus {
+  state: CapabilityState
+  reason_code?: string
+  detail_key?: string
+}
+
+/** Advisory mutation eligibility (not a capability exact/missing overload). */
+export type ActionAvailability =
+  | 'available'
+  | 'unavailable'
+  | 'runtime_check_required'
+
+export interface SessionActionStatus {
+  availability: ActionAvailability
+  reason_code?: string
+}
+
+/** Liveness quality separate from the realtime capability. */
+export interface SessionLivenessStatus {
+  is_live: boolean
+  state: CapabilityState
+  reason_code?: string
+}
+
+/** Nested payload under GET /api/sessions/{id} as agent_capabilities. */
+export interface SessionCapabilities {
+  agent_type: string
+  adapter_revision: number
+  status: Partial<Record<CapabilityID | string, SessionCapabilityStatus>>
+  actions?: Partial<Record<CapabilityID | string, SessionActionStatus>>
+  liveness: SessionLivenessStatus
 }
 
 export interface AgentInfo {
@@ -19,7 +74,7 @@ export interface AgentInfo {
   /** Whether SI can map a session to an exact PID and terminate it. */
   can_terminate?: boolean
   /** Adapter-owned capability map (stable IDs). Present from capability contract API. */
-  capabilities?: Record<string, CapabilityDeclaration>
+  capabilities?: Partial<Record<CapabilityID | string, CapabilityDeclaration>>
 }
 
 export interface SessionSummary {
@@ -144,4 +199,7 @@ export interface SessionDetail {
   rollback_groups?: RollbackGroupVM[]
   todos?: { id: string; title: string; description: string; status: string; deps?: string[] }[]
   billing?: SessionBillingSummary
+  /** Phase 4 resolved Agent capabilities for this session (optional for degrade path). */
+  agent_capabilities?: SessionCapabilities
+  resume_id?: string
 }
