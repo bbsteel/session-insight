@@ -20,7 +20,6 @@ import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
-import { getNavOpenPref } from '../navPrefs'
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
@@ -67,10 +66,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [edits, setEdits] = useState<EditCall[]>([])
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [showUserPanel, setShowUserPanel] = useState(false)
-  // Pin is user-controlled only (UI + search-bar right inset). Session auto-open
-  // uses navHoldOpen so the panel stays visible without showing as pinned.
+  // Pin and open are user-controlled only — never auto-open or auto-pin on session select.
   const [navPinned, setNavPinned] = useState(false)
-  const [navHoldOpen, setNavHoldOpen] = useState(false)
   const [navPanelWidth, setNavPanelWidth] = useState(0)
   const [showAIPanel, setShowAIPanel] = useState(false)
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
@@ -446,33 +443,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     setFollowOutput(true)
   }, [session, sessionId])
 
-  // On session open: expand nav (user/tool) per settings. Do not auto-pin —
-  // hold the panel open without pin UI until the user pins, unpins, or closes.
+  // Switching sessions closes nav; open/pin only via toolbar or panel controls.
   useEffect(() => {
-    if (!sessionId) {
-      setShowUserPanel(false)
-      setShowToolPanel(false)
-      setNavPinned(false)
-      setNavHoldOpen(false)
-      return
-    }
-    const pref = getNavOpenPref()
-    if (pref === 'user') {
-      setShowUserPanel(true)
-      setShowToolPanel(false)
-      setNavPinned(false)
-      setNavHoldOpen(true)
-    } else if (pref === 'tool') {
-      setShowToolPanel(true)
-      setShowUserPanel(false)
-      setNavPinned(false)
-      setNavHoldOpen(true)
-    } else {
-      setShowUserPanel(false)
-      setShowToolPanel(false)
-      setNavPinned(false)
-      setNavHoldOpen(false)
-    }
+    setShowUserPanel(false)
+    setShowToolPanel(false)
+    setNavPinned(false)
   }, [sessionId])
 
   // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
@@ -984,28 +959,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     setToolFilterRequest(prev => ({ name, token: (prev?.token ?? 0) + 1 }))
     setShowToolPanel(true)
     setShowUserPanel(false)
-    setNavHoldOpen(true)
     setNavPinned(false)
     setViewMode('terminal')
-  }, [])
-
-  // Pin is explicit; unpin drops hold so outside-click dismiss returns.
-  const handleNavPinnedChange = useCallback((pinned: boolean) => {
-    setNavPinned(pinned)
-    if (!pinned) setNavHoldOpen(false)
-  }, [])
-
-  const closeUserPanel = useCallback(() => {
-    setShowUserPanel(false)
-    setNavPinned(false)
-    setNavHoldOpen(false)
-  }, [])
-
-  const closeToolPanel = useCallback(() => {
-    setShowToolPanel(false)
-    setNavPinned(false)
-    setNavHoldOpen(false)
-    setToolFilterRequest(null)
   }, [])
 
   // Keyboard navigation
@@ -1304,11 +1259,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               const next = !v
               if (next) {
                 setShowToolPanel(false)
-                // Manual open is dismissible until the user pins.
-                setNavHoldOpen(false)
               } else {
                 setNavPinned(false)
-                setNavHoldOpen(false)
               }
               return next
             })}
@@ -1326,11 +1278,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               const next = !v
               if (next) {
                 setShowUserPanel(false)
-                setNavHoldOpen(false)
               } else {
                 setToolFilterRequest(null)
                 setNavPinned(false)
-                setNavHoldOpen(false)
               }
               return next
             })}
@@ -1452,11 +1402,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               building={positionsBuilding}
               agentType={session.agent_type}
               pinned={navPinned}
-              closeOnOutside={!navPinned && !navHoldOpen}
-              onPinnedChange={handleNavPinnedChange}
+              onPinnedChange={setNavPinned}
               onWidthChange={setNavPanelWidth}
               onJump={handlePanelJump}
-              onClose={closeUserPanel}
+              onClose={() => {
+                setShowUserPanel(false)
+                setNavPinned(false)
+              }}
             />
           )}
           {/* 浮层覆盖在终端右侧:不改变终端布局宽度,开关面板不会触发
@@ -1466,12 +1418,17 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               positions={positionsData}
               building={positionsBuilding}
               pinned={navPinned}
-              closeOnOutside={!navPinned && !navHoldOpen}
-              onPinnedChange={handleNavPinnedChange}
+              onPinnedChange={setNavPinned}
               onWidthChange={setNavPanelWidth}
               filterRequest={toolFilterRequest}
               onJump={handlePanelJump}
-              onClose={closeToolPanel}
+              onClose={() => {
+                setShowToolPanel(false)
+                setNavPinned(false)
+                // 面板生命周期结束,清掉分析页带来的筛选请求,
+                // 避免下次手动打开时又套用旧筛选。
+                setToolFilterRequest(null)
+              }}
             />
           )}
         </div>

@@ -27,8 +27,6 @@ interface Props {
   positions: PositionsResponse | null
   building: boolean
   pinned?: boolean
-  /** When false, click-outside does not dismiss. Defaults to !pinned. */
-  closeOnOutside?: boolean
   onPinnedChange?: (pinned: boolean) => void
   onWidthChange?: (width: number) => void
   // 外部筛选请求(分析页 Tool Usage chip):token 变化时应用 name 筛选。
@@ -133,7 +131,6 @@ export default function ToolCallPanel({
   positions,
   building,
   pinned = false,
-  closeOnOutside,
   onPinnedChange,
   onWidthChange,
   filterRequest,
@@ -150,8 +147,6 @@ export default function ToolCallPanel({
     localStorage.setItem(WIDE_STORAGE_KEY, w ? '0' : '1')
     return !w
   })
-  // Session auto-open can hold the panel open without the pin control.
-  const dismissOnOutside = closeOnOutside ?? !pinned
 
   // Report the rendered width rather than the nominal 420/640px so the
   // terminal search bar also handles the panel's responsive max-width.
@@ -167,17 +162,16 @@ export default function ToolCallPanel({
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
-  // Floating overlay: optional outside-click dismiss. Defer listener attach so
-  // the gesture that opened the panel cannot immediately close it.
+  // Floating overlay: close on outside click unless pinned. Defer attach so the
+  // open click does not immediately dismiss the panel.
   useEffect(() => {
-    if (!dismissOnOutside) return
+    if (pinned) return
     let remove: (() => void) | undefined
     const timer = window.setTimeout(() => {
       const handlePointerDown = (event: PointerEvent) => {
         const target = event.target
         if (!(target instanceof Element)) return
         if (panelRef.current?.contains(target)) return
-        if (target.closest('[data-session-id]')) return
         onClose()
       }
       document.addEventListener('pointerdown', handlePointerDown)
@@ -187,7 +181,7 @@ export default function ToolCallPanel({
       window.clearTimeout(timer)
       remove?.()
     }
-  }, [onClose, dismissOnOutside])
+  }, [onClose, pinned])
 
   // 应用来自分析页的筛选请求:只按该工具筛选,并清掉文字过滤避免叠加后空结果。
   useEffect(() => {
