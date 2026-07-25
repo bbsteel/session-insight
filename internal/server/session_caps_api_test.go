@@ -242,6 +242,7 @@ func TestHandleGetSessionUnknownAgentType500(t *testing.T) {
 }
 
 func TestHandleGetSessionResumeMissingID(t *testing.T) {
+	// Codex cannot fall back to the storage/file id; empty ResumeID is missing.
 	now := time.Now()
 	falseLive := false
 	rd := &capsAPIReader{
@@ -249,7 +250,7 @@ func TestHandleGetSessionResumeMissingID(t *testing.T) {
 		live:   &falseLive,
 		detail: &model.SessionDetail{
 			Session: model.Session{
-				ID: "sess-no-resume", AgentType: "claude", ResumeID: "",
+				ID: "sess-no-resume", AgentType: "codex", ResumeID: "",
 				UpdatedAt: now.Add(-time.Hour),
 			},
 			Billing: &model.SessionBilling{Precision: model.PrecisionExact},
@@ -269,6 +270,39 @@ func TestHandleGetSessionResumeMissingID(t *testing.T) {
 		t.Fatalf("%+v", st)
 	}
 	if resp.AgentCapabilities.Actions[capability.CapabilityResume].Availability != capability.ActionUnavailable {
+		t.Fatal(resp.AgentCapabilities.Actions[capability.CapabilityResume])
+	}
+}
+
+func TestHandleGetSessionClaudeResumeUsesSessionID(t *testing.T) {
+	// Claude: empty ResumeID still exact — CLI uses session UUID.
+	now := time.Now()
+	falseLive := false
+	rd := &capsAPIReader{
+		hasRev: true,
+		live:   &falseLive,
+		detail: &model.SessionDetail{
+			Session: model.Session{
+				ID: "sess-claude-id", AgentType: "claude", ResumeID: "",
+				UpdatedAt: now.Add(-time.Hour),
+			},
+			Billing: &model.SessionBilling{Precision: model.PrecisionExact},
+		},
+	}
+	srv := New(nil, []reader.BaseSessionReader{rd})
+	req := httptest.NewRequest("GET", "/api/sessions/sess-claude-id", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var resp sessionDetailAPIResponse
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	st := resp.AgentCapabilities.Status[capability.CapabilityResume]
+	if st.State != capability.CapabilityExact {
+		t.Fatalf("claude resume=%+v want exact", st)
+	}
+	if resp.AgentCapabilities.Actions[capability.CapabilityResume].Availability != capability.ActionAvailable {
 		t.Fatal(resp.AgentCapabilities.Actions[capability.CapabilityResume])
 	}
 }
