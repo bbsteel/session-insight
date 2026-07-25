@@ -364,6 +364,27 @@ func TestResolveResumeClaudeUsesSessionIDWhenResumeIDEmpty(t *testing.T) {
 	}
 }
 
+func TestResolveResumeCodexEmptyAgentTypeUsesStaticType(t *testing.T) {
+	// When detail.AgentType is empty, Codex rule must still apply via static type.
+	static := fullExactStatic("codex")
+	d := detailBase("codex", "rollout-stem")
+	d.AgentType = ""
+	d.ResumeID = ""
+	d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
+	src := &capsFakeReader{agentType: "codex", live: boolPtr(false), hasRev: true}
+	got, err := ResolveSessionCapabilities(src, d, static)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := got.Status[capability.CapabilityResume]
+	if st.State != capability.CapabilityMissing || st.ReasonCode != capability.ReasonResumeIDMissing {
+		t.Fatalf("codex empty AgentType must not fall back to id: %+v", st)
+	}
+	if got.Actions[capability.CapabilityResume].Availability != capability.ActionUnavailable {
+		t.Fatalf("resume action=%+v", got.Actions[capability.CapabilityResume])
+	}
+}
+
 func TestResolveResumeExactWithID(t *testing.T) {
 	static := fullExactStatic("claude")
 	d := detailBase("claude", "s1")

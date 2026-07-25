@@ -21,9 +21,11 @@ interface Props {
 export default function AgentCapabilityDetailDialog({ open, agent, onClose }: Props) {
   const { t } = useI18n()
   const closeRef = useRef<HTMLButtonElement>(null)
+  const restoreFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     if (!open) return
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -35,7 +37,15 @@ export default function AgentCapabilityDetailDialog({ open, agent, onClose }: Pr
     }
     // Capture phase so Settings (and other parents) do not also close on Escape.
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      const prev = restoreFocusRef.current
+      restoreFocusRef.current = null
+      // Restore focus to the agent row that opened this dialog.
+      if (prev && document.contains(prev)) {
+        prev.focus({ preventScroll: true })
+      }
+    }
   }, [open, onClose])
 
   if (!open || !agent) return null

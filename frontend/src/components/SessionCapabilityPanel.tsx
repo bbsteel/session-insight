@@ -113,12 +113,16 @@ export default function SessionCapabilityPanel({
                 <ul className="space-y-2">
                   {orderedSessionStatuses(caps.status).map(({ id, status }) => {
                     const staticDecl = agentInfo?.capabilities?.[id]
-                    const showsOverride =
+                    const showsMissingOverride =
                       !!status &&
                       !!staticDecl &&
-                      status.state !== staticDecl.state &&
-                      (status.state === 'missing' || status.state === 'estimated') &&
+                      status.state === 'missing' &&
                       (staticDecl.state === 'exact' || staticDecl.state === 'estimated')
+                    const showsEstimatedOverride =
+                      !!status &&
+                      !!staticDecl &&
+                      status.state === 'estimated' &&
+                      staticDecl.state === 'exact'
                     return (
                       <li
                         key={id}
@@ -146,8 +150,11 @@ export default function SessionCapabilityPanel({
                         </div>
                         {status && staticDecl && status.state !== staticDecl.state && (
                           <div className="mt-1.5 space-y-0.5 border-t border-[var(--border-muted)] pt-1.5 text-meta text-[var(--text-secondary)]">
-                            {showsOverride && (
+                            {showsMissingOverride && (
                               <p className="text-[var(--text-muted)]">{t('capability.session.overrideNote')}</p>
+                            )}
+                            {showsEstimatedOverride && (
+                              <p className="text-[var(--text-muted)]">{t('capability.session.estimatedOverrideNote')}</p>
                             )}
                             <div>
                               <span className="text-[var(--text-muted)]">{t('capability.session.currentLabel')}: </span>
