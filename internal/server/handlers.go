@@ -98,6 +98,14 @@ func writeJSONMaybeGzip(w http.ResponseWriter, r *http.Request, v any) {
 	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }
 
+// sessionDetailResponse embeds SessionDetail so existing top-level session
+// fields remain backward compatible, and nests resolved Agent capability
+// status under agent_capabilities (Phase 4).
+type sessionDetailResponse struct {
+	*model.SessionDetail
+	AgentCapabilities capability.SessionCapabilities `json:"agent_capabilities"`
+}
+
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -114,9 +122,6 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Resolve liveness at serve time through the reader's agent-specific
-		// process/heartbeat/in-progress capabilities.
-		detail.IsLive = reader.IsSessionLive(rd, detail.Session)
 		if s.DB != nil {
 			note, bookmarked, err := s.DB.GetBookmark(detail.AgentType, detail.ID)
 			if err != nil {
@@ -132,8 +137,30 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		static, ok := reader.AgentDefinition(detail.AgentType)
+		if !ok {
+			// A discovered reader must always have a catalog entry; inventing
+			// capabilities would hide the invariant failure.
+			log.Printf("GET /api/sessions/%s: no catalog declaration for agent_type=%q", id, detail.AgentType)
+			http.Error(w, "internal: unknown agent type", http.StatusInternalServerError)
+			return
+		}
+		// ResolveSessionCapabilities already computes liveness once (provider
+		// or timestamp heuristic). Reuse that result so top-level is_live and
+		// agent_capabilities.liveness.is_live cannot diverge in one response.
+		resolved, err := reader.ResolveSessionCapabilities(rd, detail, static)
+		if err != nil {
+			log.Printf("GET /api/sessions/%s: resolve capabilities: %v", id, err)
+			http.Error(w, "internal: capability resolution failed", http.StatusInternalServerError)
+			return
+		}
+		detail.IsLive = resolved.Liveness.IsLive
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(detail)
+		json.NewEncoder(w).Encode(sessionDetailResponse{
+			SessionDetail:     detail,
+			AgentCapabilities: resolved,
+		})
 		return
 	}
 
