@@ -5,6 +5,7 @@ import {
   actionRows,
   capabilityDescriptionKey,
   capabilityLabelKey,
+  capabilityStateLabelKey,
   livenessPresentation,
   orderedSessionStatuses,
   reasonCodeLabelKey,

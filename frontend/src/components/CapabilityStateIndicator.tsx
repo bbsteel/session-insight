@@ -39,14 +39,12 @@ export default function CapabilityStateIndicator({
   const reasonKey = reasonCodeLabelKey(reasonCode)
   let tip = label
   if (reasonKey) {
+    // unknown reason already interpolates {code}; do not append the code again.
     const reasonText =
       reasonKey === 'capability.reason.unknown' && reasonCode
         ? t(reasonKey, { code: reasonCode })
         : t(reasonKey)
     tip = `${label}: ${reasonText}`
-    if (showRawReasonInTooltip && reasonCode && reasonKey === 'capability.reason.unknown') {
-      tip = `${tip} (${reasonCode})`
-    }
   } else if (reasonCode && showRawReasonInTooltip) {
     tip = `${label} (${reasonCode})`
   }
