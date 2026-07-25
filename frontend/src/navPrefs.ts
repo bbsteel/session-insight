@@ -1,4 +1,4 @@
-// Session-open navigation panel defaults (user messages / tools).
+// Session-open navigation panel preference (user messages / tools).
 // Stored in localStorage so settings UI and ReplayView stay in sync.
 
 export type NavOpenPref = 'user' | 'tool' | 'off'
@@ -12,8 +12,8 @@ export function getNavOpenPref(): NavOpenPref {
   } catch {
     // ignore
   }
-  // Default: open user-message nav with pin when a session is selected.
-  return 'user'
+  // Default: do not open or pin navigation when a session is selected.
+  return 'off'
 }
 
 export function setNavOpenPref(pref: NavOpenPref): void {

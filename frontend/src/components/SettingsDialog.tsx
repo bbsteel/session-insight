@@ -455,9 +455,9 @@ export default function SettingsDialog({
                     className={selectCls}
                     aria-label={t('settings.navOpenLabel')}
                   >
+                    <option value="off">{t('settings.navOff')}</option>
                     <option value="user">{t('settings.navUser')}</option>
                     <option value="tool">{t('settings.navTool')}</option>
-                    <option value="off">{t('settings.navOff')}</option>
                   </select>
                 </div>
               </div>

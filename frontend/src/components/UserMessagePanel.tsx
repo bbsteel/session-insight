@@ -90,7 +90,16 @@ function loadKinds(): InteractionKind[] {
   return ALL_KINDS
 }
 
-export default function UserMessagePanel({ positions, building, agentType, pinned = false, onPinnedChange, onWidthChange, onJump, onClose }: Props) {
+export default function UserMessagePanel({
+  positions,
+  building,
+  agentType,
+  pinned = false,
+  onPinnedChange,
+  onWidthChange,
+  onJump,
+  onClose,
+}: Props) {
   const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [activeKey, setActiveKey] = useState<string | null>(null)
@@ -121,15 +130,25 @@ export default function UserMessagePanel({ positions, building, agentType, pinne
     return next
   })
 
-  // 面板是覆盖在终端上的浮层;未钉住时点击外部关闭,钉住后保持打开。
+  // Floating overlay: close on outside click unless pinned. Defer attach so the
+  // open click does not immediately dismiss the panel.
   useEffect(() => {
     if (pinned) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && !panelRef.current?.contains(target)) onClose()
+    let remove: (() => void) | undefined
+    const timer = window.setTimeout(() => {
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target
+        if (!(target instanceof Element)) return
+        if (panelRef.current?.contains(target)) return
+        onClose()
+      }
+      document.addEventListener('pointerdown', handlePointerDown)
+      remove = () => document.removeEventListener('pointerdown', handlePointerDown)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      remove?.()
     }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [onClose, pinned])
 
   const entries = useMemo(

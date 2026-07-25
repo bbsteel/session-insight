@@ -127,7 +127,16 @@ const summaryClampStyle: React.CSSProperties = {
 
 const WIDE_STORAGE_KEY = 'si-toolpanel-wide'
 
-export default function ToolCallPanel({ positions, building, pinned = false, onPinnedChange, onWidthChange, filterRequest, onJump, onClose }: Props) {
+export default function ToolCallPanel({
+  positions,
+  building,
+  pinned = false,
+  onPinnedChange,
+  onWidthChange,
+  filterRequest,
+  onJump,
+  onClose,
+}: Props) {
   const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -153,15 +162,25 @@ export default function ToolCallPanel({ positions, building, pinned = false, onP
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
-  // Floating overlay: close on outside click unless pinned.
+  // Floating overlay: close on outside click unless pinned. Defer attach so the
+  // open click does not immediately dismiss the panel.
   useEffect(() => {
     if (pinned) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Node && !panelRef.current?.contains(target)) onClose()
+    let remove: (() => void) | undefined
+    const timer = window.setTimeout(() => {
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target
+        if (!(target instanceof Element)) return
+        if (panelRef.current?.contains(target)) return
+        onClose()
+      }
+      document.addEventListener('pointerdown', handlePointerDown)
+      remove = () => document.removeEventListener('pointerdown', handlePointerDown)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      remove?.()
     }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [onClose, pinned])
 
   // 应用来自分析页的筛选请求:只按该工具筛选,并清掉文字过滤避免叠加后空结果。
