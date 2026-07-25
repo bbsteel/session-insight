@@ -71,6 +71,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // Auto-open+pin only when settings "open on session" is not off.
   const [navPinned, setNavPinned] = useState(false)
   const [navPanelWidth, setNavPanelWidth] = useState(0)
+  // Analytics Tool Usage chip → tool panel filter; cleared on session switch /
+  // when Messages hides the tool panel so it does not stick to a later open.
+  const [toolFilterRequest, setToolFilterRequest] = useState<{ name: string; token: number } | null>(null)
   const [showAIPanel, setShowAIPanel] = useState(false)
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
@@ -448,6 +451,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // On session open: optionally expand nav (user/tool) and pin it when the
   // settings preference is enabled. Default is off — no auto-open, no auto-pin.
   useEffect(() => {
+    // Drop analytics-driven tool filters when leaving a session so they do not
+    // stick to a later manual open of the tool panel.
+    setToolFilterRequest(null)
     if (!sessionId) {
       setShowUserPanel(false)
       setShowToolPanel(false)
@@ -974,7 +980,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
   // 分析页 Tool Usage chip → 切回终端、打开工具面板并按该工具筛选。
   // token 递增让重复点击同一工具也能重新触发筛选。
-  const [toolFilterRequest, setToolFilterRequest] = useState<{ name: string; token: number } | null>(null)
   const handleJumpToTool = useCallback((name: string) => {
     setToolFilterRequest(prev => ({ name, token: (prev?.token ?? 0) + 1 }))
     setShowToolPanel(true)
@@ -1279,6 +1284,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               const next = !v
               if (next) {
                 setShowToolPanel(false)
+                setToolFilterRequest(null)
               } else {
                 setNavPinned(false)
               }
