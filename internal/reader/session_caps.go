@@ -2,6 +2,7 @@ package reader
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
@@ -174,11 +175,29 @@ func hasExactTurnTokenPresence(detail *model.SessionDetail) bool {
 }
 
 func resolveResume(decl capability.CapabilityDeclaration, detail *model.SessionDetail) capability.SessionCapabilityStatus {
-	if detail.ResumeID == "" {
-		// Do not invent a resume ID from the storage key / filename.
+	// Match frontend resumeCommands: resume_id || id for Agents whose CLI
+	// accepts the session UUID (Claude, Grok, OpenCode, Chrys, …). Only Codex
+	// forbids falling back to the storage/file id (rollout filename stem).
+	if resumeCLIIdentity(detail) == "" {
 		return capability.Missing(capability.ReasonResumeIDMissing)
 	}
 	return capability.SessionFromStatic(decl)
+}
+
+// resumeCLIIdentity is the argument a user would pass to the Agent CLI to
+// resume this session. Prefer an explicit ResumeID; otherwise use Session.ID
+// except for Codex, where the UI id is not a valid CLI resume id.
+func resumeCLIIdentity(detail *model.SessionDetail) string {
+	if detail == nil {
+		return ""
+	}
+	if detail.ResumeID != "" {
+		return detail.ResumeID
+	}
+	if strings.EqualFold(detail.AgentType, "codex") {
+		return ""
+	}
+	return detail.ID
 }
 
 // ResolveLiveness explains how IsLive was obtained without changing the
@@ -230,7 +249,7 @@ func resolveActions(
 	res := status[capability.CapabilityResume]
 	switch res.State {
 	case capability.CapabilityExact, capability.CapabilityEstimated:
-		if detail.ResumeID != "" {
+		if resumeCLIIdentity(detail) != "" {
 			actions[capability.CapabilityResume] = capability.ActionAvailableStatus()
 		} else {
 			actions[capability.CapabilityResume] = capability.ActionUnavailableStatus(capability.ReasonResumeIDMissing)

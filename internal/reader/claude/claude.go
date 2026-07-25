@@ -274,6 +274,10 @@ func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
 	return model.Session{
 		ID:           sessionID,
 		AgentType:    "claude",
+		// Claude Code resumes with the session UUID: `claude --resume <id>`.
+		// Surface it as ResumeID so index/API/capability resolve match the CLI
+		// (same pattern as Grok); empty ResumeID is not "unsupported resume".
+		ResumeID:     sessionID,
 		CWD:          cwd,
 		Branch:       gitBranch,
 		Project:      shared.ResolveProject(cwd, ""),

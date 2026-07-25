@@ -151,7 +151,7 @@ func TestResolveDoesNotMutateStaticMap(t *testing.T) {
 	// Snapshot a pointer to the original map entry by key after resolve.
 	before := static.Capabilities[capability.CapabilityResume]
 	d := detailBase("claude", "s1")
-	d.ResumeID = "" // will resolve resume to missing
+	d.ResumeID = "" // Claude still exact via session id; static map must not change
 	d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
 	src := &capsFakeReader{agentType: "claude", live: boolPtr(false), hasRev: true}
 
@@ -159,7 +159,7 @@ func TestResolveDoesNotMutateStaticMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status[capability.CapabilityResume].State != capability.CapabilityMissing {
+	if got.Status[capability.CapabilityResume].State != capability.CapabilityExact {
 		t.Fatalf("resolved resume=%s", got.Status[capability.CapabilityResume].State)
 	}
 	after := static.Capabilities[capability.CapabilityResume]
@@ -326,11 +326,12 @@ func TestResolveZeroToolsDiffSubtasksRemainExact(t *testing.T) {
 }
 
 func TestResolveResumeMissingID(t *testing.T) {
-	static := fullExactStatic("claude")
-	d := detailBase("claude", "s1")
+	// Codex cannot fall back to the storage/file id (rollout stem).
+	static := fullExactStatic("codex")
+	d := detailBase("codex", "rollout-stem")
 	d.ResumeID = ""
 	d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
-	src := &capsFakeReader{agentType: "claude", live: boolPtr(false), hasRev: true}
+	src := &capsFakeReader{agentType: "codex", live: boolPtr(false), hasRev: true}
 	got, err := ResolveSessionCapabilities(src, d, static)
 	if err != nil {
 		t.Fatal(err)
@@ -341,6 +342,25 @@ func TestResolveResumeMissingID(t *testing.T) {
 	}
 	if got.Actions[capability.CapabilityResume].Availability != capability.ActionUnavailable {
 		t.Fatal("resume action should be unavailable")
+	}
+}
+
+func TestResolveResumeClaudeUsesSessionIDWhenResumeIDEmpty(t *testing.T) {
+	// Claude CLI: `claude --resume <session-uuid>`; SI session id is that UUID.
+	static := fullExactStatic("claude")
+	d := detailBase("claude", "s1")
+	d.ResumeID = ""
+	d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
+	src := &capsFakeReader{agentType: "claude", live: boolPtr(false), hasRev: true}
+	got, err := ResolveSessionCapabilities(src, d, static)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status[capability.CapabilityResume].State != capability.CapabilityExact {
+		t.Fatalf("claude empty ResumeID should still be exact via session id: %+v", got.Status[capability.CapabilityResume])
+	}
+	if got.Actions[capability.CapabilityResume].Availability != capability.ActionAvailable {
+		t.Fatalf("resume action=%+v", got.Actions[capability.CapabilityResume])
 	}
 }
 
