@@ -1,16 +1,10 @@
 import { useEffect, useState } from 'react'
 import { fetchAgents } from '../api'
 import type { AgentInfo } from '../types'
-import {
-  orderedStaticCapabilities,
-  summarizeStaticAgent,
-  capabilityLabelKey,
-  capabilityDescriptionKey,
-  capabilityIdI18nVars,
-} from '../capabilityPresentation'
-import CapabilityStateIndicator from './CapabilityStateIndicator'
+import { summarizeStaticAgent } from '../capabilityPresentation'
 import AgentCapabilitySummary from './AgentCapabilitySummary'
 import AgentCapabilityCompareDialog from './AgentCapabilityCompareDialog'
+import AgentCapabilityDetailDialog from './AgentCapabilityDetailDialog'
 import AgentIcon from './AgentIcon'
 import { useI18n } from '../i18n'
 
@@ -33,7 +27,7 @@ export default function SettingsAgentsTab({
   const [agents, setAgents] = useState<AgentInfo[] | null>(null)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [detailType, setDetailType] = useState<string | null>(null)
   const [compareOpen, setCompareOpen] = useState(false)
 
   const load = () => {
@@ -42,7 +36,6 @@ export default function SettingsAgentsTab({
     fetchAgents()
       .then(list => {
         setAgents(list)
-        if (list.length && !selected) setSelected(list[0].type)
       })
       .catch(() => {
         setAgents(null)
@@ -53,10 +46,9 @@ export default function SettingsAgentsTab({
 
   useEffect(() => {
     load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   }, [])
 
-  const selectedAgent = agents?.find(a => a.type === selected) ?? null
+  const detailAgent = agents?.find(a => a.type === detailType) ?? null
 
   return (
     <div className="space-y-4" data-testid="settings-agents-tab">
@@ -93,18 +85,12 @@ export default function SettingsAgentsTab({
           <ul className="mt-3 space-y-1.5" data-testid="settings-agents-list">
             {agents.map(agent => {
               const summary = summarizeStaticAgent(agent.capabilities)
-              const isSel = agent.type === selected
               return (
                 <li key={agent.type}>
                   <button
                     type="button"
-                    onClick={() => setSelected(agent.type)}
-                    className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                      isSel
-                        ? 'border-[var(--accent-blue)] bg-[color-mix(in_srgb,var(--accent-blue)_8%,transparent)]'
-                        : 'border-[var(--border-muted)] hover:bg-[var(--bg-surface-hover)]'
-                    }`}
-                    aria-current={isSel ? 'true' : undefined}
+                    onClick={() => setDetailType(agent.type)}
+                    className="flex w-full items-center gap-3 rounded-lg border border-[var(--border-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                     data-testid={`settings-agent-${agent.type}`}
                   >
                     <AgentIcon agentType={agent.type} className="h-6 w-6 shrink-0" />
@@ -141,42 +127,11 @@ export default function SettingsAgentsTab({
         )}
       </div>
 
-      {selectedAgent && (
-        <div className={sectionBox} data-testid="settings-agent-detail">
-          <div className={sectionTitle}>
-            {t('capability.agents.detailTitle', { name: selectedAgent.display_name || selectedAgent.type })}
-          </div>
-          <p className={sectionDesc}>{t('capability.agents.detailHelp')}</p>
-          {!selectedAgent.capabilities ? (
-            <p className="mt-2 text-helper text-[var(--text-muted)]">{t('capability.unavailable')}</p>
-          ) : (
-            <ul className="mt-3 space-y-1.5">
-              {orderedStaticCapabilities(selectedAgent.capabilities).map(({ id, decl }) => (
-                <li
-                  key={id}
-                  className="flex items-start justify-between gap-2 rounded-md border border-[var(--border-muted)] px-2.5 py-2"
-                  data-testid={`settings-cap-${id}`}
-                >
-                  <div className="min-w-0">
-                    <div className="text-helper font-medium text-[var(--text-primary)]">
-                      {t(capabilityLabelKey(id), capabilityIdI18nVars(id))}
-                    </div>
-                    <div className="text-meta text-[var(--text-muted)]">
-                      {t(capabilityDescriptionKey(id), capabilityIdI18nVars(id))}
-                    </div>
-                  </div>
-                  {decl ? (
-                    <CapabilityStateIndicator state={decl.state} reasonCode={decl.reason_code} showLabel />
-                  ) : (
-                    <span className="text-meta text-[var(--text-muted)]">{t('capability.unavailable')}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
+      <AgentCapabilityDetailDialog
+        open={detailType != null}
+        agent={detailAgent}
+        onClose={() => setDetailType(null)}
+      />
       <AgentCapabilityCompareDialog
         open={compareOpen}
         agents={agents ?? []}

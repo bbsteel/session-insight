@@ -309,6 +309,7 @@ async function runLocale(browser, locale) {
     throw new Error('copilot should show not-detected copy: ' + copilotText)
   }
 
+  // Detail opens in a separate dialog (not an inline panel under the list).
   await page.locator('[data-testid="settings-agent-grok"]').click()
   await page.waitForSelector('[data-testid="settings-agent-detail"]', { timeout: 8000 })
   const termRow = page.locator('[data-testid="settings-cap-terminate"]')
@@ -322,6 +323,12 @@ async function runLocale(browser, locale) {
   const sub = await page.locator('[data-testid="settings-cap-subtasks"]').innerText()
   if (!/Unsupported|不支持|×/.test(sub)) {
     throw new Error('subtasks should present unsupported: ' + sub)
+  }
+  // Close detail dialog; list should remain without jumping for an inline panel.
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(150)
+  if (await page.locator('[data-testid="settings-agent-detail"]').count()) {
+    throw new Error('detail dialog should close on Escape')
   }
 
   await page.locator('[data-testid="settings-agents-compare"]').click()

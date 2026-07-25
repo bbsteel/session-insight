@@ -718,12 +718,23 @@ type AgentInfo struct {
 }
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
-	// Index discovered readers by AgentType for session counts and for the
-	// discovered flag. Catalog definitions remain the outer loop so Agents
-	// without local storage still appear.
+	// Index discovered readers by AgentType for the discovered flag. Catalog
+	// definitions remain the outer loop so Agents without local storage still
+	// appear. Session counts prefer the index DB (cheap GROUP BY) over per-
+	// Agent ListSessions disk scans, which can take tens of seconds.
 	byType := make(map[string]reader.BaseSessionReader, len(s.Readers))
 	for _, rd := range s.Readers {
 		byType[rd.AgentType()] = rd
+	}
+
+	var dbCounts map[string]int
+	if s.DB != nil {
+		counts, err := s.DB.CountRootSessionsByAgent()
+		if err != nil {
+			log.Printf("GET /api/agents: CountRootSessionsByAgent: %v", err)
+		} else {
+			dbCounts = counts
+		}
 	}
 
 	defs := reader.AgentDefinitions()
@@ -739,15 +750,21 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		if rd, ok := byType[def.AgentType]; ok {
 			info.Discovered = true
-			sessions, err := rd.ListSessions()
-			if err != nil {
-				// Keep the Agent in the catalog as discovered; do not invent a
-				// count. Surface the failure in logs so a stuck reader is visible.
-				log.Printf("GET /api/agents: ListSessions(%s): %v", def.AgentType, err)
+			if dbCounts != nil {
+				info.SessionCount = dbCounts[def.AgentType]
 			} else {
-				for _, sess := range sessions {
-					if !sess.IsSubagent {
-						info.SessionCount++
+				// No DB (or count query failed): fall back to reader ListSessions
+				// so tests without a database and degraded runtimes still work.
+				sessions, err := rd.ListSessions()
+				if err != nil {
+					// Keep the Agent in the catalog as discovered; do not invent a
+					// count. Surface the failure in logs so a stuck reader is visible.
+					log.Printf("GET /api/agents: ListSessions(%s): %v", def.AgentType, err)
+				} else {
+					for _, sess := range sessions {
+						if !sess.IsSubagent {
+							info.SessionCount++
+						}
 					}
 				}
 			}

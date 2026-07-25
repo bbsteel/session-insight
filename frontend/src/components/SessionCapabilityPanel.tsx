@@ -47,12 +47,14 @@ export default function SessionCapabilityPanel({
     closeRef.current?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault()
         e.stopPropagation()
+        e.stopImmediatePropagation()
         onClose()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [open, onClose])
 
   if (!open) return null
@@ -102,12 +104,21 @@ export default function SessionCapabilityPanel({
           ) : (
             <>
               <section>
-                <h3 className="mb-2 text-helper font-medium text-[var(--text-primary)]">
+                <h3 className="mb-1 text-helper font-medium text-[var(--text-primary)]">
                   {t('capability.session.currentStatus')}
                 </h3>
+                <p className="mb-2 text-meta text-[var(--text-muted)]">
+                  {t('capability.session.currentStatusHelp')}
+                </p>
                 <ul className="space-y-2">
                   {orderedSessionStatuses(caps.status).map(({ id, status }) => {
                     const staticDecl = agentInfo?.capabilities?.[id]
+                    const showsOverride =
+                      !!status &&
+                      !!staticDecl &&
+                      status.state !== staticDecl.state &&
+                      (status.state === 'missing' || status.state === 'estimated') &&
+                      (staticDecl.state === 'exact' || staticDecl.state === 'estimated')
                     return (
                       <li
                         key={id}
@@ -135,6 +146,9 @@ export default function SessionCapabilityPanel({
                         </div>
                         {status && staticDecl && status.state !== staticDecl.state && (
                           <div className="mt-1.5 space-y-0.5 border-t border-[var(--border-muted)] pt-1.5 text-meta text-[var(--text-secondary)]">
+                            {showsOverride && (
+                              <p className="text-[var(--text-muted)]">{t('capability.session.overrideNote')}</p>
+                            )}
                             <div>
                               <span className="text-[var(--text-muted)]">{t('capability.session.currentLabel')}: </span>
                               {t(capabilityStateLabelKey(status.state))}

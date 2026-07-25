@@ -1192,6 +1192,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             <AgentIcon agentType={session.agent_type} size={16} />
             <span className="truncate">{agentDisplayName}</span>
+            {capHint.kind === 'calm' && session.agent_capabilities && (
+              <span
+                className="shrink-0 text-meta font-medium text-[var(--accent-green)]"
+                title={t('capability.session.hintCalm')}
+                aria-label={t('capability.session.hintCalm')}
+                data-testid="session-cap-hint-calm"
+              >
+                ✓
+              </span>
+            )}
             {capHint.kind === 'missing' && (
               <span className="shrink-0 text-meta text-[var(--warning)]">
                 {t('capability.session.hintMissing', { n: capHint.count })}
