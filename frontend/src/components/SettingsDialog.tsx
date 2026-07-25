@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchSettings, fetchVersion, saveSettings, type VersionInfo } from '../api'
+import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
 import { AVATAR_MAX_BYTES, setUserAvatar } from '../userAvatar'
 import {
   DEFAULT_TERMINAL_FONT,
@@ -31,6 +32,7 @@ import {
   EditorIcon,
   FontIcon,
   InfoIcon,
+  NavigationIcon,
   SearchIcon,
   SparklesIcon,
   TerminalIcon,
@@ -47,7 +49,7 @@ interface Props {
   initialTab?: TabId
 }
 
-type TabId = 'appearance' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai' | 'about'
+type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai' | 'about'
 
 interface TabDef {
   id: TabId
@@ -57,6 +59,7 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: 'appearance', labelKey: 'settings.tab.appearance', icon: AppearanceIcon },
+  { id: 'navigation', labelKey: 'settings.tab.navigation', icon: NavigationIcon },
   { id: 'search', labelKey: 'settings.tab.search', icon: SearchIcon },
   { id: 'terminal', labelKey: 'settings.tab.terminal', icon: TerminalIcon },
   { id: 'fonts', labelKey: 'settings.tab.fonts', icon: FontIcon },
@@ -88,6 +91,7 @@ export default function SettingsDialog({
   const [fileExts, setFileExts] = useState('')
   const savedFileExtsRef = useRef('')
   const [tsKinds, setTsKinds] = useState<string[]>([])
+  const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
   const [uiFont, setUiFont] = useState(getUIFont)
   const [uiFontSize, setUiFontSize] = useState(getUIFontSize)
   const [terminalFont, setTerminalFont] = useState(getTerminalFont)
@@ -150,6 +154,7 @@ export default function SettingsDialog({
     setActiveTab(initialTab ?? 'appearance')
     setDrag({ x: 0, y: 0 })
     setLoading(true)
+    setNavOpenPrefState(getNavOpenPref())
     setBannerColor(getBannerColorOverride())
     setAvatarError('')
     setUiFont(getUIFont())
@@ -253,6 +258,11 @@ export default function SettingsDialog({
     } catch {
       setFileExts(savedFileExtsRef.current)
     }
+  }
+
+  const handleNavOpenPref = (next: NavOpenPref) => {
+    setNavOpenPref(next)
+    setNavOpenPrefState(next)
   }
 
   const handleHistoryLimit = (raw: number) => {
@@ -425,6 +435,27 @@ export default function SettingsDialog({
                   {avatarError && (
                     <div className="mt-2 text-helper text-[var(--accent-red)]" role="alert">{avatarError}</div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'navigation' && (
+              <div className={sectionBox}>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className={sectionTitle}>{t('settings.navOpen')}</div>
+                    <div className={sectionDesc}>{t('settings.navOpenHelp')}</div>
+                  </div>
+                  <select
+                    value={navOpenPref}
+                    onChange={e => handleNavOpenPref(e.target.value as NavOpenPref)}
+                    className={selectCls}
+                    aria-label={t('settings.navOpenLabel')}
+                  >
+                    <option value="off">{t('settings.navOff')}</option>
+                    <option value="user">{t('settings.navUser')}</option>
+                    <option value="tool">{t('settings.navTool')}</option>
+                  </select>
                 </div>
               </div>
             )}

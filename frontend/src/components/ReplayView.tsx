@@ -20,6 +20,7 @@ import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
+import { getNavOpenPref } from '../navPrefs'
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
@@ -66,7 +67,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [edits, setEdits] = useState<EditCall[]>([])
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [showUserPanel, setShowUserPanel] = useState(false)
-  // Pin and open are user-controlled only — never auto-open or auto-pin on session select.
+  // When pinned, click-outside does not close the nav overlay.
+  // Auto-open+pin only when settings "open on session" is not off.
   const [navPinned, setNavPinned] = useState(false)
   const [navPanelWidth, setNavPanelWidth] = useState(0)
   const [showAIPanel, setShowAIPanel] = useState(false)
@@ -443,11 +445,29 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     setFollowOutput(true)
   }, [session, sessionId])
 
-  // Switching sessions closes nav; open/pin only via toolbar or panel controls.
+  // On session open: optionally expand nav (user/tool) and pin it when the
+  // settings preference is enabled. Default is off — no auto-open, no auto-pin.
   useEffect(() => {
-    setShowUserPanel(false)
-    setShowToolPanel(false)
-    setNavPinned(false)
+    if (!sessionId) {
+      setShowUserPanel(false)
+      setShowToolPanel(false)
+      setNavPinned(false)
+      return
+    }
+    const pref = getNavOpenPref()
+    if (pref === 'user') {
+      setShowUserPanel(true)
+      setShowToolPanel(false)
+      setNavPinned(true)
+    } else if (pref === 'tool') {
+      setShowToolPanel(true)
+      setShowUserPanel(false)
+      setNavPinned(true)
+    } else {
+      setShowUserPanel(false)
+      setShowToolPanel(false)
+      setNavPinned(false)
+    }
   }, [sessionId])
 
   // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's

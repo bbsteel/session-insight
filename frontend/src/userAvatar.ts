@@ -1,5 +1,6 @@
 // 用户头像:交互消息面板中用户消息的图标。默认是内置人头 SVG;可在设置里
-// 上传自定义图像(≤200KB),以 data URL 存 localStorage(纯前端偏好,不入后端)。
+// 上传自定义图像(≤200KB),以 data URL 存 localStorage。模式和 navPrefs
+// 一致(纯前端偏好,不入后端)。
 
 const AVATAR_KEY = 'si-user-avatar'
 const CHANGED_EVENT = 'si-user-avatar-changed'
