@@ -4,6 +4,7 @@ import {
   actionAvailabilityLabelKey,
   actionRows,
   capabilityDescriptionKey,
+  capabilityIdI18nVars,
   capabilityLabelKey,
   capabilityStateLabelKey,
   livenessPresentation,
@@ -116,10 +117,10 @@ export default function SessionCapabilityPanel({
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <div className="text-helper font-medium text-[var(--text-primary)]">
-                              {t(capabilityLabelKey(id))}
+                              {t(capabilityLabelKey(id), capabilityIdI18nVars(id))}
                             </div>
                             <div className="text-meta text-[var(--text-muted)]">
-                              {t(capabilityDescriptionKey(id))}
+                              {t(capabilityDescriptionKey(id), capabilityIdI18nVars(id))}
                             </div>
                           </div>
                           {status ? (
@@ -188,7 +189,7 @@ export default function SessionCapabilityPanel({
                       className="flex items-center justify-between gap-2 rounded-md border border-[var(--border-muted)] px-2.5 py-2 text-helper"
                       data-testid={`session-action-${id}`}
                     >
-                      <span className="text-[var(--text-primary)]">{t(capabilityLabelKey(id))}</span>
+                      <span className="text-[var(--text-primary)]">{t(capabilityLabelKey(id), capabilityIdI18nVars(id))}</span>
                       <span className="text-right text-meta text-[var(--text-secondary)]">
                         {t(actionAvailabilityLabelKey(action.availability))}
                         {action.reason_code && reasonCodeLabelKey(action.reason_code) && (

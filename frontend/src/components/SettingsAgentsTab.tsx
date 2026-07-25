@@ -6,6 +6,7 @@ import {
   summarizeStaticAgent,
   capabilityLabelKey,
   capabilityDescriptionKey,
+  capabilityIdI18nVars,
 } from '../capabilityPresentation'
 import CapabilityStateIndicator from './CapabilityStateIndicator'
 import AgentCapabilitySummary from './AgentCapabilitySummary'
@@ -158,10 +159,10 @@ export default function SettingsAgentsTab({
                 >
                   <div className="min-w-0">
                     <div className="text-helper font-medium text-[var(--text-primary)]">
-                      {t(capabilityLabelKey(id))}
+                      {t(capabilityLabelKey(id), capabilityIdI18nVars(id))}
                     </div>
                     <div className="text-meta text-[var(--text-muted)]">
-                      {t(capabilityDescriptionKey(id))}
+                      {t(capabilityDescriptionKey(id), capabilityIdI18nVars(id))}
                     </div>
                   </div>
                   {decl ? (

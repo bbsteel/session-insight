@@ -611,6 +611,10 @@ export const messages: Record<Locale, Messages> = {
     'capability.session.hintMissing': '{n} missing',
     'capability.session.hintEstimated': 'Estimated data',
     'capability.session.hintUnsupported': '{n} unsupported',
+    'capability.session.tokensMissing': 'Tokens not recorded',
+    'capability.session.tokensUnsupported': 'Tokens unsupported',
+    'capability.session.tokensNA': 'Tokens n/a',
+    'capability.session.tokensUnknown': 'Tokens unavailable',
 
     'settings.themeHelp': 'Light by default; system mode follows the OS appearance.',
     'settings.avatar': 'User avatar',
@@ -1391,6 +1395,10 @@ export const messages: Record<Locale, Messages> = {
     'capability.session.hintMissing': '{n} 项缺失',
     'capability.session.hintEstimated': '含估算数据',
     'capability.session.hintUnsupported': '{n} 项不支持',
+    'capability.session.tokensMissing': '用量未记录',
+    'capability.session.tokensUnsupported': '用量不支持',
+    'capability.session.tokensNA': '用量不适用',
+    'capability.session.tokensUnknown': '用量不可用',
 
     'settings.themeHelp': '默认浅色；跟随系统时随 OS 深浅外观切换。',
     'settings.avatar': '用户头像',

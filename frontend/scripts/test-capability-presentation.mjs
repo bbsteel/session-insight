@@ -7,6 +7,7 @@ import {
   actionIsConfirmedAvailable,
   actionAvailabilityLabelKey,
   capabilityDescriptionKey,
+  capabilityIdI18nVars,
   capabilityLabelKey,
   capabilityStateIsWarning,
   capabilityStateSeverity,
@@ -16,6 +17,7 @@ import {
   orderedStaticCapabilities,
   reasonCodeLabelKey,
   sessionCapabilityHeaderHint,
+  sessionTokenHeaderDisplay,
   summarizeCapabilityStates,
   summarizeSessionCaps,
   summarizeStaticAgent,
@@ -123,6 +125,17 @@ assert.equal(reasonCodeLabelKey(''), null)
 assert.equal(capabilityLabelKey('tokens'), 'capability.id.tokens')
 assert.equal(capabilityLabelKey('future_cap_xyz'), 'capability.id.unknown')
 assert.equal(capabilityDescriptionKey('future_cap_xyz'), 'capability.desc.unknown')
+assert.deepEqual(capabilityIdI18nVars('future_cap_xyz'), { id: 'future_cap_xyz' })
+assert.equal(capabilityIdI18nVars('tokens'), undefined)
+
+// --- missing tokens must not present as trustworthy numeric header ---
+assert.equal(sessionTokenHeaderDisplay('missing', 0).kind, 'missing')
+assert.equal(sessionTokenHeaderDisplay('missing', 0).kind !== 'value', true)
+assert.equal(sessionTokenHeaderDisplay('exact', 0).kind, 'value')
+assert.equal(sessionTokenHeaderDisplay('exact', 0).total, 0)
+assert.equal(sessionTokenHeaderDisplay('estimated', 42).kind, 'value')
+assert.equal(sessionTokenHeaderDisplay('unsupported', 0).kind, 'unsupported')
+assert.equal(sessionTokenHeaderDisplay(undefined, 10).kind, 'value') // legacy path
 
 // --- no Agent-specific capability matrix in presentation module source ---
 const here = dirname(fileURLToPath(import.meta.url))

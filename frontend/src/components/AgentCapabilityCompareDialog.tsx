@@ -4,6 +4,7 @@ import {
   BASELINE_CAPABILITY_IDS,
   capabilityLabelKey,
   capabilityDescriptionKey,
+  capabilityIdI18nVars,
 } from '../capabilityPresentation'
 import CapabilityStateIndicator from './CapabilityStateIndicator'
 import AgentIcon from './AgentIcon'
@@ -103,11 +104,11 @@ export default function AgentCapabilityCompareDialog({ open, agents, onClose }: 
                   <th
                     scope="row"
                     className="sticky left-0 z-10 border-r border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2 text-left font-normal text-[var(--text-primary)]"
-                    title={t(capabilityDescriptionKey(id))}
+                    title={t(capabilityDescriptionKey(id), capabilityIdI18nVars(id))}
                   >
-                    <div className="font-medium">{t(capabilityLabelKey(id))}</div>
+                    <div className="font-medium">{t(capabilityLabelKey(id), capabilityIdI18nVars(id))}</div>
                     <div className="max-w-[12rem] text-meta text-[var(--text-muted)] line-clamp-2">
-                      {t(capabilityDescriptionKey(id))}
+                      {t(capabilityDescriptionKey(id), capabilityIdI18nVars(id))}
                     </div>
                   </th>
                   {sorted.map(agent => {
