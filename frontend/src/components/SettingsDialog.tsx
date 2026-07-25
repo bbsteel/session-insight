@@ -36,7 +36,9 @@ import {
   SearchIcon,
   SparklesIcon,
   TerminalIcon,
+  UserIcon,
 } from './icons'
+import SettingsAgentsTab from './SettingsAgentsTab'
 
 interface Props {
   open: boolean
@@ -49,7 +51,7 @@ interface Props {
   initialTab?: TabId
 }
 
-type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai' | 'about'
+type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai' | 'agents' | 'about'
 
 interface TabDef {
   id: TabId
@@ -65,6 +67,7 @@ const TABS: TabDef[] = [
   { id: 'fonts', labelKey: 'settings.tab.fonts', icon: FontIcon },
   { id: 'editor', labelKey: 'settings.tab.editor', icon: EditorIcon },
   { id: 'ai', labelKey: 'settings.tab.ai', icon: SparklesIcon },
+  { id: 'agents', labelKey: 'settings.tab.agents', icon: UserIcon },
   { id: 'about', labelKey: 'settings.tab.about', icon: InfoIcon },
 ]
 
@@ -699,6 +702,16 @@ export default function SettingsDialog({
                   </button>
                 </div>
               </div>
+            )}
+
+            {activeTab === 'agents' && (
+              <SettingsAgentsTab
+                sectionBox={sectionBox}
+                sectionTitle={sectionTitle}
+                sectionDesc={sectionDesc}
+                btnCls={btnCls}
+                primaryBtnCls={primaryBtnCls}
+              />
             )}
 
             {activeTab === 'about' && (
