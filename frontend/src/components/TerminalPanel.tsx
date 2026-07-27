@@ -3,7 +3,7 @@ import { Terminal, type IBuffer, type IDecoration, type IMarker } from '@xterm/x
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { fetchRenderANSI } from '../api'
+import { fetchRenderANSI, streamRenderANSI } from '../api'
 import { extractPathsAt } from '../filePathDetection'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
@@ -276,6 +276,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let disposed = false
     let currentCols = 0
     let resizeDebounce: ReturnType<typeof setTimeout> | null = null
+    let renderAbort: AbortController | null = null
+    let renderGeneration = 0
+    let initialLoadFrame: number | null = null
     // Safety-net timer for post-rewrite snapshot drop + force-repaint; cleared
     // on unmount so a disposed terminal is never stick/refreshed after switch.
     let finishPaintTimeout: ReturnType<typeof setTimeout> | null = null
@@ -1573,17 +1576,98 @@ const snapshotTerminal = () => {
       })
       const queueMetrics = () => metricsBatcher?.push(getMetrics())
 
-      const loadRender = (cols: number) => {
-        fetchRenderANSI(sessionId, cols, tsKinds)
-          .then(ansi => {
-            if (disposed) return
+      const writeChunk = (chunk: string) => new Promise<void>(resolve => term.write(chunk, resolve))
+
+      const finalizeInitialStream = () => {
+        hasWrittenOnce = true
+        scanBuffer()
+        injectFoldRows()
+        injectProgressRow()
+        injectUserHighlights()
+        updateStickyUserMsg()
+        queueMetrics()
+        if (pendingInitialScrollLine != null) {
+          openAtTop = false
+          term.scrollToLine(pendingInitialScrollLine)
+          pendingInitialScrollLine = null
+        }
+        stickOpenAtTop()
+        forceViewportRepaint('initial-stream-done', { soft: true })
+        openAtTopGraceUntil = performance.now() + 800
+        writingContent = false
+      }
+
+      const loadRender = async (cols: number) => {
+        renderAbort?.abort()
+        const controller = new AbortController()
+        renderAbort = controller
+        const generation = ++renderGeneration
+        const isCurrent = () => !disposed && !controller.signal.aborted && generation === renderGeneration
+
+        try {
+          if (!hasWrittenOnce) {
+            const streamStartedAt = performance.now()
+            let firstChunk = true
+            writingContent = true
+            rawAnsi = ''
+            foldView = null
+            term.reset()
+            await writeChunk('\x1b[3J')
+            const ansi = await streamRenderANSI(sessionId, cols, tsKinds, async chunk => {
+              if (!isCurrent()) return
+              await writeChunk(chunk)
+              if (firstChunk) {
+                firstChunk = false
+                dbg('initial-stream-first-chunk', {
+                  ms: Math.round(performance.now() - streamStartedAt),
+                  bytes: chunk.length,
+                  cols,
+                })
+              }
+              // xterm parks at the tail while large writes arrive. Keep the
+              // first screen visible so streaming improves perceived load.
+              if (openAtTop) term.scrollToLine(0)
+            }, controller.signal)
+            if (!isCurrent()) return
             rawAnsi = ansi
-            foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
-            writeComposed(() => {
-              if (foldView) onFoldChangeRef.current?.()
+            dbg('initial-stream-done', {
+              ms: Math.round(performance.now() - streamStartedAt),
+              bytes: ansi.length,
+              cols,
             })
+            if (collapsedKeys.size > 0) {
+              writingContent = false
+              foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines'))
+              writeComposed(() => onFoldChangeRef.current?.())
+            } else {
+              finalizeInitialStream()
+            }
+            return
+          }
+
+          const ansi = await fetchRenderANSI(sessionId, cols, tsKinds, controller.signal)
+          if (!isCurrent()) return
+          rawAnsi = ansi
+          foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
+          writeComposed(() => {
+            if (foldView) onFoldChangeRef.current?.()
           })
-          .catch(err => { term.write(`\x1b[31mError loading render: ${err.message}\x1b[0m`) })
+        } catch (err) {
+          if (!isCurrent()) return
+          writingContent = false
+          const message = err instanceof Error ? err.message : String(err)
+          term.write(`\x1b[31mError loading render: ${message}\x1b[0m`)
+        }
+      }
+
+      const scheduleRender = (cols: number, delay: number) => {
+        if (resizeDebounce) clearTimeout(resizeDebounce)
+        resizeDebounce = setTimeout(() => {
+          resizeDebounce = null
+          if (disposed || cols !== currentCols) return
+          onColsReadyRef.current?.(cols)
+          void loadRender(cols)
+        }, delay)
       }
 
       // Search: decorations are always enabled (they drive the n/m counter);
@@ -1831,12 +1915,12 @@ const snapshotTerminal = () => {
         if (er && (er.width === 0 || er.height === 0)) dbg('resize-zero-detected', { colsAfterFit: term.cols, rowsAfterFit: term.rows })
         if (newCols !== currentCols) {
           currentCols = newCols
-          if (resizeDebounce) clearTimeout(resizeDebounce)
-          resizeDebounce = setTimeout(() => {
-            if (disposed) return
-            loadRender(newCols)
-            onColsReadyRef.current?.(newCols)
-          }, 500)
+          // Invalidate immediately; waiting for the resize debounce can let a
+          // fast stale response finish downloading even though it will never
+          // be displayed. The debounce only delays starting the replacement.
+          renderAbort?.abort()
+          renderGeneration++
+          scheduleRender(newCols, 150)
         }
       })
       observer.observe(container)
@@ -1865,13 +1949,20 @@ const snapshotTerminal = () => {
         }
       }
 
-      loadRender(currentCols)
-      onColsReadyRef.current?.(currentCols)
+      // ResizeObserver runs before the next paint. Scheduling the initial
+      // request there gives it a chance to publish the final fitted cols; if
+      // layout changes later, scheduleRender aborts the stale request.
+      initialLoadFrame = requestAnimationFrame(() => {
+        initialLoadFrame = null
+        scheduleRender(currentCols, 0)
+      })
       if (foldsRef.current.length) applyFoldsRef.current?.(foldsRef.current)
     })
 
     return () => {
       disposed = true
+      renderAbort?.abort()
+      if (initialLoadFrame !== null) cancelAnimationFrame(initialLoadFrame)
       if (resizeDebounce) clearTimeout(resizeDebounce)
       if (finishPaintTimeout) clearTimeout(finishPaintTimeout)
       if (hardRepaintTimer) clearTimeout(hardRepaintTimer)
