@@ -34,3 +34,14 @@
 - If a MiniMap remains, treat it as a passive overview first and a precision drag control only if it can be made clearly smoother than native scrolling.
 
 Product note: the current MiniMap is visually distinctive, but its practical value is questionable. In long agent sessions, users likely need semantic waypoints more than a compressed visual encoding of every turn.
+
+## 搁置 / 待复现
+
+- [ ] Codex 会话最后一段助手消息未出现在交互消息导航窗格（2026-07-27 报告，现场已被破坏，未能复现）
+  - 会话：`rollout-2026-07-26T22-16-57-019f9ec9-434a-7f53-b2c0-0935eccf855f`（report 时仍在 live 写入）
+  - 已验证：完整重解析能识别全部 13+ 条 agent_message 并各生成一条 assistant position；positions API 与前端面板条数一致；live 追加后 API 约 1s 内同步；未见持续缺失
+  - 嫌疑方向（下次复现时优先排查）：
+    1. 前端 live 轮询在 `fetchLiveRevision` 任意一次失败时 `rev === null` 直接 `return`，不再调度下一 tick——一次性瞬时错误会让终端与导航窗格永久停更（ReplayView tick 循环）
+    2. 报告时刻可能处于 live 滞后窗口（3s 轮询 + positions 重建），消息数秒后自动出现，被误认为未识别
+    3. Codex 流式生成期间最后一段尚未写入 rollout 文件（agent_message 只在完成时落盘），属固有延迟而非缺失
+  - 复现要点：在 codex 会话 live 写入期间打开该会话并观察导航窗格末条是否与文件末尾 agent_message 同步；同时抓 `fetchLiveRevision` 是否出现过非 404 的失败
