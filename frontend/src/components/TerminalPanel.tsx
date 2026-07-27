@@ -1220,6 +1220,66 @@ const snapshotTerminal = () => {
       // it and openAtTop would stay stuck true.
       if (followOutputRef.current) followWakeRef.current(true)
 
+      const scheduleFinishPaint = (generation: number, reason: string) => {
+        // Two frames then a short debounce: open often chains content write
+        // + folds recompose (~70ms). Each used to hard-reattach → two flashes.
+        // Keep the snapshot up and run one hard paint for the latest generation.
+        let finishedInRaf = false
+        const finishPaint = (paintReason: string) => {
+          // Stale generation: pure no-op (do not clear the newer rewrite's
+          // timeout or call its removeSnapshot).
+          if (finishedInRaf || generation !== repaintGeneration) return
+          finishedInRaf = true
+          if (finishPaintTimeout) {
+            clearTimeout(finishPaintTimeout)
+            finishPaintTimeout = null
+          }
+          // Unmount / session switch can land between write and this rAF or
+          // the 250ms safety net; forceViewportRepaint already no-ops, but
+          // stickOpenAtTop would still call scrollToLine on a disposed term.
+          if (disposed) {
+            removeSnapshot?.()
+            return
+          }
+          stickOpenAtTop()
+          // Soft while cover is still up (or first paint with no snapshot).
+          forceViewportRepaint(`${paintReason}-pre-hard`, { soft: true })
+          // Coalesce hard reattach: newer content clears this timer.
+          if (hardRepaintTimer) clearTimeout(hardRepaintTimer)
+          const hardGeneration = generation
+          hardRepaintTimer = setTimeout(() => {
+            hardRepaintTimer = null
+            if (disposed || hardGeneration !== repaintGeneration) return
+            // Hard under snapshot cover, then one uncover (not blank→reattach).
+            forceViewportRepaint(paintReason, { reattachWebgl: TEMP_PLATFORM === 'win32' })
+            removeSnapshot?.()
+            requestAnimationFrame(() => {
+              if (disposed || hardGeneration !== repaintGeneration || term.rows <= 0) return
+              try {
+                term.refresh(0, term.rows - 1)
+              } catch {
+                // disposed mid-frame
+              }
+            })
+          }, HARD_REPAINT_DEBOUNCE_MS)
+        }
+        requestAnimationFrame(() => {
+          if (disposed || generation !== repaintGeneration) return
+          stickOpenAtTop()
+          requestAnimationFrame(() => finishPaint(reason))
+        })
+        // Safety net: if the double-RAF never fires (tab backgrounded,
+        // rAF throttled by 0Hz display), drop the snapshot by the next
+        // macrotask so it can't permanently mask the terminal.
+        finishPaintTimeout = setTimeout(() => {
+          finishPaintTimeout = null
+          if (!finishedInRaf) {
+            if (removeSnapshot) dbg('snapshot-timeout-remove')
+            finishPaint(`${reason}-timeout`)
+          }
+        }, 250)
+      }
+
       const writeComposed = (afterWrite?: () => void) => {
         const generation = ++repaintGeneration
         // Supersede any pending finishPaint / coalesced hard from a prior
@@ -1277,63 +1337,7 @@ const snapshotTerminal = () => {
           forceViewportRepaint('rewrite-sync', { soft: true })
           openAtTopGraceUntil = performance.now() + 800
           writingContent = false
-          // Two frames then a short debounce: open often chains content write
-          // + folds recompose (~70ms). Each used to hard-reattach → two flashes.
-          // Keep the snapshot up and run one hard paint for the latest generation.
-          let finishedInRaf = false
-          const finishPaint = (reason: string) => {
-            // Stale generation: pure no-op (do not clear the newer rewrite's
-            // timeout or call its removeSnapshot).
-            if (finishedInRaf || generation !== repaintGeneration) return
-            finishedInRaf = true
-            if (finishPaintTimeout) {
-              clearTimeout(finishPaintTimeout)
-              finishPaintTimeout = null
-            }
-            // Unmount / session switch can land between write and this rAF or
-            // the 250ms safety net; forceViewportRepaint already no-ops, but
-            // stickOpenAtTop would still call scrollToLine on a disposed term.
-            if (disposed) {
-              removeSnapshot?.()
-              return
-            }
-            stickOpenAtTop()
-            // Soft while cover is still up (or first paint with no snapshot).
-            forceViewportRepaint(`${reason}-pre-hard`, { soft: true })
-            // Coalesce hard reattach: a newer writeComposed clears this timer.
-            if (hardRepaintTimer) clearTimeout(hardRepaintTimer)
-            const hardGeneration = generation
-            hardRepaintTimer = setTimeout(() => {
-              hardRepaintTimer = null
-              if (disposed || hardGeneration !== repaintGeneration) return
-              // Hard under snapshot cover, then one uncover (not blank→reattach).
-              forceViewportRepaint(reason, { reattachWebgl: TEMP_PLATFORM === 'win32' })
-              removeSnapshot?.()
-              requestAnimationFrame(() => {
-                if (disposed || hardGeneration !== repaintGeneration || term.rows <= 0) return
-                try {
-                  term.refresh(0, term.rows - 1)
-                } catch {
-                  // disposed mid-frame
-                }
-              })
-            }, HARD_REPAINT_DEBOUNCE_MS)
-          }
-          requestAnimationFrame(() => {
-            if (disposed || generation !== repaintGeneration) return
-            stickOpenAtTop()
-            requestAnimationFrame(() => finishPaint('post-rewrite'))
-          })
-          // Safety net: if the double-RAF never fires (tab backgrounded,
-          // rAF throttled by 0Hz display), drop the snapshot by the next
-          // macrotask so it can't permanently mask the terminal.
-          finishPaintTimeout = setTimeout(() => {
-            finishPaintTimeout = null
-            if (!finishedInRaf) {
-              if (removeSnapshot) dbg('snapshot-timeout-remove')
-              finishPaint('post-rewrite-timeout')
-            }
-          }, 250)
+          scheduleFinishPaint(generation, 'post-rewrite')
           dbg('rewrite-done', { ms: Math.round(performance.now() - rewriteStart), bytes: wroteBytes, bufLen: term.buffer.active.length })
         })
       }
@@ -1578,7 +1582,7 @@ const snapshotTerminal = () => {
 
       const writeChunk = (chunk: string) => new Promise<void>(resolve => term.write(chunk, resolve))
 
-      const finalizeInitialStream = () => {
+      const finalizeInitialStream = (generation: number) => {
         hasWrittenOnce = true
         scanBuffer()
         injectFoldRows()
@@ -1595,6 +1599,7 @@ const snapshotTerminal = () => {
         forceViewportRepaint('initial-stream-done', { soft: true })
         openAtTopGraceUntil = performance.now() + 800
         writingContent = false
+        scheduleFinishPaint(generation, 'post-initial-stream')
       }
 
       const loadRender = async (cols: number) => {
@@ -1607,6 +1612,15 @@ const snapshotTerminal = () => {
         try {
           if (!hasWrittenOnce) {
             const streamStartedAt = performance.now()
+            const streamRepaintGeneration = ++repaintGeneration
+            if (finishPaintTimeout) {
+              clearTimeout(finishPaintTimeout)
+              finishPaintTimeout = null
+            }
+            if (hardRepaintTimer) {
+              clearTimeout(hardRepaintTimer)
+              hardRepaintTimer = null
+            }
             let firstChunk = true
             writingContent = true
             rawAnsi = ''
@@ -1616,6 +1630,7 @@ const snapshotTerminal = () => {
             const ansi = await streamRenderANSI(sessionId, cols, tsKinds, async chunk => {
               if (!isCurrent()) return
               await writeChunk(chunk)
+              queueMetrics()
               if (firstChunk) {
                 firstChunk = false
                 dbg('initial-stream-first-chunk', {
@@ -1640,7 +1655,7 @@ const snapshotTerminal = () => {
               foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines'))
               writeComposed(() => onFoldChangeRef.current?.())
             } else {
-              finalizeInitialStream()
+              finalizeInitialStream(streamRepaintGeneration)
             }
             return
           }
