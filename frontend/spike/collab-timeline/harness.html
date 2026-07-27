@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <title>Collaboration Timeline Renderer Spike</title>
+    <style>
+      /* Design-system token subset (session-insight-docs/superpowers/specs/design-system.md) */
+      :root,
+      :root[data-theme='dark'] {
+        --bg-primary: #0d0d12;
+        --bg-surface: #16161e;
+        --bg-surface-hover: #1f1f2a;
+        --bg-inset: #111116;
+        --border-default: #2b2b38;
+        --border-muted: #232330;
+        --text-primary: #e4e6eb;
+        --text-secondary: #9ea5b4;
+        --text-muted: #6c7385;
+        --accent-blue: #2563eb;
+        --success: #059669;
+        --warning: #d97706;
+        --error: #dc2626;
+        --running: #2563eb;
+        --stale: #d97706;
+      }
+      :root[data-theme='light'] {
+        --bg-primary: #f5f6f8;
+        --bg-surface: #ffffff;
+        --bg-surface-hover: #f0f1f4;
+        --bg-inset: #ecedf2;
+        --border-default: #d8dae2;
+        --border-muted: #e4e6ec;
+        --text-primary: #181b24;
+        --text-secondary: #555b6e;
+        --text-muted: #878ea0;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        font: 13px/1.5 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--border-default);
+        font-size: 12px;
+        color: var(--text-secondary);
+        flex: 0 0 auto;
+      }
+      #controls .spike-tag {
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+      }
+
+      /* Dock: flex sibling above the terminal stub, never an overlay. */
+      #dock {
+        flex: 0 0 auto;
+        border-bottom: 1px solid var(--border-default);
+        background: var(--bg-surface);
+        display: flex;
+        flex-direction: column;
+      }
+      #dock.expanded { height: min(40vh, 420px); }
+      #dock.collapsed { height: 34px; }
+      #dock-summary {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        height: 34px;
+        padding: 0 12px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        cursor: pointer;
+      }
+      #dock.collapsed #dock-summary { display: flex; }
+      #dock.collapsed #scroll { display: none; }
+
+      .tl-scroll {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        overflow-x: hidden;
+        position: relative;
+        min-height: 0;
+      }
+      .tl-grid {
+        position: relative;
+        display: flex;
+        flex-direction: row;
+        width: 100%;
+      }
+      .tl-labels {
+        position: sticky;
+        left: 0;
+        flex: 0 0 220px;
+        width: 220px;
+        background: var(--bg-surface);
+        border-right: 1px solid var(--border-muted);
+        z-index: 1;
+        align-self: flex-start;
+        height: 100%;
+      }
+      .tl-graph {
+        position: relative;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .tl-label {
+        position: absolute;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-right: 6px;
+        font-size: 11px;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        cursor: default;
+        outline: none;
+      }
+      .tl-label:focus-visible {
+        outline: 2px solid var(--accent-blue);
+        outline-offset: -2px;
+      }
+      .tl-label[aria-selected='true'] {
+        background: var(--bg-surface-hover);
+        box-shadow: inset 2px 0 0 var(--accent-blue);
+      }
+      .tl-label-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1 1 auto;
+      }
+      .tl-collapse {
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 10px;
+        cursor: pointer;
+        padding: 2px 4px;
+      }
+      .tl-status { font-size: 10px; flex: 0 0 auto; width: 12px; text-align: center; }
+      .st-running { color: var(--success); animation: tl-pulse 2.4s ease-in-out infinite; }
+      .st-waiting { color: #0891b2; }
+      .st-failed { color: var(--error); }
+      .st-orphaned { color: var(--warning); }
+      .st-unknown, .st-pending { color: var(--text-muted); }
+      .st-completed { color: var(--text-secondary); }
+      .st-cancelled { color: var(--text-muted); }
+      @keyframes tl-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.35; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .st-running { animation: none; }
+        * { transition: none !important; }
+      }
+
+      .tl-svg { position: absolute; top: 0; left: 0; display: block; }
+      .tl-canvas { position: sticky; top: 0; display: block; }
+
+      /* Interval fills via variables so state rules win deterministically. */
+      :root[data-theme='dark'] { --interval-activity: #5b8def; --interval-aggregate: #3d4b66; --edge-launch: #6c7385; }
+      :root[data-theme='light'] { --interval-activity: #2563eb; --interval-aggregate: #9aa7c7; --edge-launch: #878ea0; }
+      .interval-activity { fill: var(--interval-activity); }
+      .interval-aggregate { fill: var(--interval-aggregate); }
+      .interval-activity.interval-estimated { fill: #b48a2f; }
+      .interval-activity[data-on-path='true'] { fill: #d97706; }
+      .edge { fill: none; stroke-width: 1; }
+      .edge-launch { stroke: var(--edge-launch); }
+      .edge-result { stroke: #0d9488; }
+      .edge-estimated { stroke-dasharray: 4 3; }
+      .edge.edge-selected { stroke: #d97706; stroke-width: 1.5; }
+      .marker { fill: none; stroke-width: 1.5; }
+      .mk-start, .mk-end { stroke: var(--text-secondary); }
+      .mk-failed { stroke: var(--error); }
+      .mk-orphaned { stroke: var(--warning); }
+      .mk-unknown, .mk-open { stroke: var(--text-muted); }
+      .mk-missing { stroke: var(--text-muted); stroke-dasharray: 2 2; }
+      .mk-running { fill: var(--success); stroke: none; }
+      .mk-waiting { fill: #0891b2; stroke: none; }
+      .hit-region { fill: transparent; }
+      .hit-region[data-hover='true'] { fill: rgba(128, 128, 160, 0.12); }
+      .hit-region[data-selected='true'] { fill: rgba(217, 119, 6, 0.10); }
+
+      .tl-tooltip {
+        position: fixed;
+        z-index: 600;
+        max-width: 320px;
+        background: var(--bg-surface);
+        color: var(--text-primary);
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 11px;
+        white-space: pre-line;
+        pointer-events: none;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+
+      #term-stub {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+        background: var(--bg-inset);
+        color: var(--text-muted);
+        font: 11px/1.6 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', 'Consolas', monospace;
+        padding: 8px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header id="controls">
+      <span class="spike-tag">Renderer spike harness — non-authoritative</span>
+      <span>SVG and Canvas candidates share one layout engine, label column, tooltip, and keyboard model.</span>
+    </header>
+    <div id="dock" class="expanded">
+      <div id="dock-summary"></div>
+      <div id="scroll" class="tl-scroll">
+        <div id="grid" class="tl-grid">
+          <div id="labels" class="tl-labels" role="listbox" aria-label="Agent lanes"></div>
+          <div id="graph" class="tl-graph"></div>
+        </div>
+      </div>
+    </div>
+    <div id="term-stub"></div>
+    <div id="tooltip" class="tl-tooltip" hidden></div>
+    <script type="module" src="./dist/harness.js"></script>
+    <script>
+      document.getElementById('term-stub').textContent = [
+        '$ session-insight replay — xterm stub (not part of this spike)',
+        'The terminal stays mounted below the dock; only its container height changes.',
+        '',
+        'turn 7  · tool: read_file  · ok',
+        'turn 8  · assistant reply …',
+      ].join('\n')
+    </script>
+  </body>
+</html>
