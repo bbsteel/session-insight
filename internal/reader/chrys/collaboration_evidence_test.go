@@ -1,7 +1,10 @@
 package chrys
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/bbsteel/session-insight/internal/model"
@@ -69,6 +72,25 @@ func TestCollaborationEmbeddedChildExactJoin(t *testing.T) {
 	if !foundCall {
 		t.Error("parent has no function_call matching the child's parent_provider_call_id")
 	}
+
+	// The sidecar's parent_session_id must name the parent session record.
+	// sessionMeta does not parse this field, so read it from the raw JSON.
+	var raw struct {
+		Meta struct {
+			ParentSessionID string `json:"parent_session_id"`
+		} `json:"meta"`
+	}
+	body, err := os.ReadFile(childPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw.Meta.ParentSessionID != main.Meta.SessionID {
+		t.Errorf("child parent_session_id = %q, want parent session_id %q",
+			raw.Meta.ParentSessionID, main.Meta.SessionID)
+	}
 }
 
 // The embedded child is spliced into the parent's render stream at Depth+1
@@ -90,10 +112,8 @@ func TestCollaborationEmbeddedChildStableAcrossParses(t *testing.T) {
 		t.Fatalf("event count differs across parses: %d vs %d", len(first), len(second))
 	}
 	for i := range first {
-		a, b := first[i], second[i]
-		if a.EventID != b.EventID || a.Type != b.Type || a.Subtype != b.Subtype ||
-			a.Depth != b.Depth || a.ParentEventID != b.ParentEventID || a.ToolCallID != b.ToolCallID {
-			t.Errorf("event %d differs across parses: %+v vs %+v", i, a, b)
+		if !reflect.DeepEqual(first[i], second[i]) {
+			t.Errorf("event %d differs across parses: %+v vs %+v", i, first[i], second[i])
 		}
 	}
 
@@ -128,7 +148,7 @@ func TestCollaborationEmbeddedChildStableAcrossParses(t *testing.T) {
 		t.Fatalf("missing anchors: launch=%d sub_start=%d sub_summary=%d result=%d",
 			launchIdx, subStartIdx, subSummaryIdx, resultIdx)
 	}
-	if !(launchIdx < subStartIdx && subStartIdx < subSummaryIdx && subSummaryIdx < resultIdx) {
+	if launchIdx >= subStartIdx || subStartIdx >= subSummaryIdx || subSummaryIdx >= resultIdx {
 		t.Errorf("splice order wrong: launch=%d sub_start=%d sub_summary=%d result=%d",
 			launchIdx, subStartIdx, subSummaryIdx, resultIdx)
 	}

@@ -6,8 +6,8 @@
     "agent_display_name": "Code Agent",
     "model_provider": "example-provider",
     "model_id": "example-model",
-    "created_at": "2026-07-06T04:22:06.342847+00:00",
-    "updated_at": "2026-07-06T04:22:06.342847+00:00",
+    "created_at": "2026-07-06T04:18:34.064555+00:00",
+    "updated_at": "2026-07-06T04:22:10.000000+00:00",
     "message_count": 4,
     "primary_cwd": "/tmp/proj",
     "title": "Adjust the set list layout",
@@ -29,7 +29,7 @@
           {"type": "function_call", "call_id": "call_sub_1", "name": "explore_agent",
            "arguments": "{\"prompt\": \"find the filter component\"}", "additional_properties": {}}
         ],
-        "additional_properties": {"_chrys_created_at": "2026-07-06T04:22:06.293096+00:00"}
+        "additional_properties": {"_chrys_created_at": "2026-07-06T04:18:40.000000+00:00"}
       },
       {
         "type": "message", "role": "tool",
