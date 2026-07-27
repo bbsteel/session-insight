@@ -15,6 +15,8 @@ assert.equal(translate('en', 'panel.filterTools'), 'Filter: tool name / argument
 assert.equal(translate('en', 'bookmark.noteTitle'), 'Bookmark note')
 assert.equal(translate('en', 'bookmark.noteWithValue', { note: 'Useful context' }), 'Bookmark note: Useful context')
 assert.equal(translate('zh-CN', 'bookmark.noteTitle'), '收藏备注')
+assert.equal(translate('en', 'sidebar.bookmarksOnly', { count: 2 }), 'Show bookmarked sessions only (2)')
+assert.equal(translate('zh-CN', 'sidebar.bookmarksOnly', { count: 2 }), '只看收藏（2）')
 assert.equal(formatNumber('en', 12345), '12,345')
 const releaseEnglish = registerRuntimeTranslator((key, vars) => translate('en', key, vars))
 assert.equal(localize('settings.language'), 'Language')

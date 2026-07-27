@@ -155,6 +155,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [agentFilter, setAgentFilter] = useState<string>('')
   const [projectFilter, setProjectFilter] = useState<string>('')
   const [modelFilter, setModelFilter] = useState<string>('')
+  const [bookmarksOnly, setBookmarksOnly] = useState(false)
 
   const searchRef = useRef<HTMLInputElement>(null)
   const asideRef = useRef<HTMLElement>(null)
@@ -436,6 +437,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   }, [onBookmarkChange, showToast, t])
 
   const filtered = useMemo(() => sessions.filter(s => {
+    if (bookmarksOnly && !s.bookmarked) return false
     if (agentFilter && s.agent_type !== agentFilter) return false
     if (projectFilter && s.project !== projectFilter) return false
     if (modelFilter && !sessionMatchesModelFilter(s, modelFilter)) return false
@@ -450,9 +452,14 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       if (!name.includes(q) && !repo.includes(q) && !branch.includes(q) && !agent.includes(q) && !sid.includes(q) && !contentHit) return false
     }
     return true
-  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, modelFilter, contentHits])
+  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [sessions, query, agentFilter, projectFilter, modelFilter, bookmarksOnly, contentHits])
 
-  const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter)
+  const bookmarkCount = useMemo(
+    () => sessions.reduce((count, session) => count + Number(session.bookmarked), 0),
+    [sessions],
+  )
+
+  const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter || bookmarksOnly)
 
   // A global-search result can be hidden by the sidebar's current filters and
   // by virtual scrolling. Reveal it, then move keyboard focus to its row.
@@ -461,6 +468,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     setAgentFilter(focusTarget.agentType)
     setProjectFilter('')
     setModelFilter('')
+    setBookmarksOnly(false)
     setQuery('')
   }, [focusTarget])
 
@@ -776,7 +784,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       </div>
 
       {/* Filter Bar */}
-      <div className="px-4 pb-2 flex-shrink-0">
+      <div className="px-4 pb-2 flex flex-shrink-0 items-center gap-1.5">
         <div className="relative min-w-0 flex-1">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8" />
@@ -800,6 +808,25 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </button>
           )}
         </div>
+        <InstantTooltip
+          text={bookmarksOnly ? t('sidebar.showAllSessions') : t('sidebar.bookmarksOnly', { count: bookmarkCount })}
+          placement="bottom"
+        >
+          <button
+            type="button"
+            role="switch"
+            aria-checked={bookmarksOnly}
+            aria-label={bookmarksOnly ? t('sidebar.showAllSessions') : t('sidebar.bookmarksOnly', { count: bookmarkCount })}
+            onClick={() => setBookmarksOnly(value => !value)}
+            className={`inline-flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-md border transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+              bookmarksOnly
+                ? 'border-[var(--accent-blue)]/40 bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:border-[var(--border-muted)] hover:text-[var(--warning)]'
+            }`}
+          >
+            <StarIcon size={16} filled={bookmarksOnly} />
+          </button>
+        </InstantTooltip>
       </div>
 
       {/* Agent Filter */}
@@ -842,6 +869,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   setAgentFilter('')
                   setProjectFilter('')
                   setModelFilter('')
+                  setBookmarksOnly(false)
                 }}
                 className="mt-3 h-7 px-3 rounded-md border border-[var(--border-default)] text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
