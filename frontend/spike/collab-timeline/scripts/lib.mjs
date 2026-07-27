@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { dirname, extname, join, normalize } from 'node:path'
+import { dirname, extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const SPIKE_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -42,7 +42,7 @@ export function serveSpike() {
     const raw = (req.url ?? '/').split('?')[0]
     const path = normalize(raw === '/' ? '/harness.html' : raw)
     const file = join(SPIKE_DIR, path)
-    if (!file.startsWith(SPIKE_DIR) || !existsSync(file)) {
+    if (!file.startsWith(SPIKE_DIR + sep) || !existsSync(file)) {
       res.writeHead(404)
       res.end('not found')
       return

@@ -13,6 +13,7 @@
 import { chromium } from 'playwright'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { buildHarness, envInfo, fmt, median, p95, serveSpike } from './lib.mjs'
 
 const QUICK = process.argv.includes('--quick')
@@ -138,6 +139,11 @@ async function measureCombo(browser, baseUrl, renderer, dataset) {
     under20ms: frames.filter((f) => f < 20).length / Math.max(1, frames.length),
   })
 
+  // Percentiles are not additive: derive the combined statistic from
+  // pairwise sums of the underlying samples.
+  const pairCount = Math.min(layout.length, firstVisible.length)
+  const layoutPlusFirstSamples = Array.from({ length: pairCount }, (_, i) => layout[i] + firstVisible[i])
+
   return {
     renderer,
     dataset,
@@ -150,8 +156,8 @@ async function measureCombo(browser, baseUrl, renderer, dataset) {
     firstMount: { median: median(firstMount), p95: p95(firstMount) },
     firstVisible: { median: median(firstVisible), p95: p95(firstVisible) },
     layoutPlusFirst: {
-      median: median(layout) + median(firstVisible),
-      p95: p95(layout) + p95(firstVisible),
+      median: median(layoutPlusFirstSamples),
+      p95: p95(layoutPlusFirstSamples),
     },
     scroll: frameStats(scrollFrames),
     pan: frameStats(panFrames),
@@ -225,7 +231,7 @@ async function main() {
   }
 
   const env = { ...envInfo(), chromium: browserVersion }
-  const outDir = join(dirname(new URL(import.meta.url).pathname), '..', 'report')
+  const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'report')
   mkdirSync(outDir, { recursive: true })
   const payload = {
     generatedAt: new Date().toISOString(),

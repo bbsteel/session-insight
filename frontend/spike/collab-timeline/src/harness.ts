@@ -30,7 +30,10 @@ const STR = {
     precision: 'Precision',
     status: 'Status',
     started: 'Started',
-    terminalStub: 'xterm stub — the terminal stays mounted below the dock (not part of this spike)',
+    terminalStub:
+      '$ session-insight replay — xterm stub (not part of this spike)\n' +
+      'The terminal stays mounted below the dock; only its container height changes.\n\n' +
+      'turn 7  · tool: read_file  · ok\nturn 8  · assistant reply …',
     statuses: {
       pending: 'pending', running: 'running', waiting: 'waiting', completed: 'completed',
       failed: 'failed', cancelled: 'cancelled', orphaned: 'orphaned', unknown: 'unknown',
@@ -46,7 +49,10 @@ const STR = {
     precision: '精度',
     status: '状态',
     started: '开始于',
-    terminalStub: 'xterm 占位 —— 终态保持在 dock 下方挂载（不属于本 spike）',
+    terminalStub:
+      '$ session-insight replay —— xterm 占位（不属于本 spike）\n' +
+      '终端保持在 dock 下方挂载，只有容器高度会变化。\n\n' +
+      'turn 7  · tool: read_file  · ok\nturn 8  · assistant reply …',
     statuses: {
       pending: '等待中', running: '运行中', waiting: '等待结果', completed: '已完成',
       failed: '失败', cancelled: '已取消', orphaned: '孤儿', unknown: '未知',
@@ -89,6 +95,8 @@ interface HarnessState {
   updateScheduled: boolean
   /** Roving tabindex anchor for keyboard navigation. */
   activeRowIndex: number
+  /** Monotonic render counter, exposed for repaint assertions. */
+  renderCount: number
 }
 
 const afterFrame = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => r()))
@@ -100,6 +108,7 @@ const graphEl = document.getElementById('graph') as HTMLDivElement
 const tooltipEl = document.getElementById('tooltip') as HTMLDivElement
 const summaryEl = document.getElementById('dock-summary') as HTMLDivElement
 const dockEl = document.getElementById('dock') as HTMLDivElement
+const termStubEl = document.getElementById('term-stub') as HTMLDivElement
 
 function createCandidate(name: 'svg' | 'canvas'): TimelineCandidate {
   return name === 'svg' ? createSvgCandidate(ROW_H) : createCanvasCandidate(ROW_H)
@@ -120,6 +129,7 @@ const state: HarnessState = {
   lastAppliedScroll: -1,
   updateScheduled: false,
   activeRowIndex: 0,
+  renderCount: 0,
 }
 state.domainStartMs = state.dataset.domainStartMs
 state.domainEndMs = state.dataset.domainEndMs
@@ -166,7 +176,9 @@ function renderLabels(prims: RenderPrimitives): void {
     row.style.top = `${lane.y}px`
     row.style.height = `${ROW_H}px`
     row.style.paddingLeft = `${8 + lane.depth * 14}px`
-    row.setAttribute('role', 'option')
+    row.setAttribute('role', 'treeitem')
+    row.setAttribute('aria-level', String(lane.depth + 1))
+    if (lane.hasChildren) row.setAttribute('aria-expanded', lane.collapsed ? 'false' : 'true')
     row.setAttribute('aria-selected', state.selectedId === lane.invocationId ? 'true' : 'false')
     row.setAttribute('tabindex', lane.rowIndex === state.activeRowIndex ? '0' : '-1')
     row.dataset.invocation = lane.invocationId
@@ -187,10 +199,13 @@ function renderLabels(prims: RenderPrimitives): void {
     row.appendChild(text)
 
     if (lane.hasChildren) {
-      const toggle = document.createElement('button')
+      // Non-interactive affordance: branch collapse is driven by the row's
+      // click target and ArrowLeft/ArrowRight, so no focusable control is
+      // nested inside the treeitem.
+      const toggle = document.createElement('span')
       toggle.className = 'tl-collapse'
       toggle.textContent = lane.collapsed ? '▸' : '▾'
-      toggle.setAttribute('aria-label', lane.collapsed ? 'expand branch' : 'collapse branch')
+      toggle.setAttribute('aria-hidden', 'true')
       toggle.dataset.toggle = lane.invocationId
       row.appendChild(toggle)
     }
@@ -198,7 +213,7 @@ function renderLabels(prims: RenderPrimitives): void {
   }
   labelsEl.appendChild(frag)
   if (focusedInv) {
-    const el = labelsEl.querySelector(`[data-invocation="${focusedInv}"]`) as HTMLElement | null
+    const el = labelsEl.querySelector(`[data-invocation="${CSS.escape(focusedInv)}"]`) as HTMLElement | null
     el?.focus()
   }
 }
@@ -223,6 +238,7 @@ function applyViewport(): void {
   if (applying) return // re-entrant call from focus/scroll events during re-render
   applying = true
   try {
+    state.renderCount += 1
     state.lastAppliedScroll = scrollEl.scrollTop
     const prims = layoutTimeline(state.dataset, state.collapsedIds, layoutParams())
     state.lastPrims = prims
@@ -247,7 +263,9 @@ function scheduleUpdate(): void {
   state.updateScheduled = true
   requestAnimationFrame(() => {
     state.updateScheduled = false
-    if (scrollEl.scrollTop !== state.lastAppliedScroll) applyViewport()
+    // Pan and zoom mutate the time domain without touching scrollTop, so the
+    // frame must always re-render, not only on scroll changes.
+    applyViewport()
   })
 }
 
@@ -308,6 +326,8 @@ graphEl.addEventListener('click', (e) => {
 // Horizontal pan by dragging the graph background.
 let panState: { pointerId: number; lastX: number } | null = null
 graphEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return
+  graphEl.setPointerCapture(e.pointerId)
   panState = { pointerId: e.pointerId, lastX: e.clientX }
 })
 graphEl.addEventListener('pointermove', (e) => {
@@ -319,7 +339,13 @@ graphEl.addEventListener('pointermove', (e) => {
   shiftDomain(dxMs)
   scheduleUpdate()
 })
-graphEl.addEventListener('pointerup', () => (panState = null))
+const endPan = (e: PointerEvent) => {
+  if (panState?.pointerId !== e.pointerId) return
+  if (graphEl.hasPointerCapture(e.pointerId)) graphEl.releasePointerCapture(e.pointerId)
+  panState = null
+}
+graphEl.addEventListener('pointerup', endPan)
+graphEl.addEventListener('pointercancel', endPan)
 
 function shiftDomain(dxMs: number): void {
   const span = state.domainEndMs - state.domainStartMs
@@ -360,15 +386,31 @@ labelsEl.addEventListener('click', (e) => {
   const target = e.target as HTMLElement
   const toggle = target.closest('[data-toggle]') as HTMLElement | null
   if (toggle) {
-    const id = toggle.dataset.toggle ?? ''
-    if (state.collapsedIds.has(id)) state.collapsedIds.delete(id)
-    else state.collapsedIds.add(id)
-    applyViewport()
+    toggleBranch(toggle.dataset.toggle ?? '')
     return
   }
   const row = target.closest('[data-invocation]') as HTMLElement | null
   if (row) setSelected(row.dataset.invocation ?? null)
 })
+
+function focusRow(rowIndex: number): void {
+  const total = state.lastPrims?.stats.totalRows ?? 0
+  const next = Math.max(0, Math.min(total - 1, rowIndex))
+  state.activeRowIndex = next
+  const first = state.lastPrims?.stats.firstVisibleRow ?? 0
+  const last = state.lastPrims?.stats.lastVisibleRow ?? 0
+  if (next <= first) scrollEl.scrollTop = Math.max(0, (next - 1) * ROW_H)
+  else if (next >= last) scrollEl.scrollTop = (next + 2) * ROW_H - scrollEl.clientHeight
+  applyViewport()
+  const el = labelsEl.querySelector(`[data-row="${next}"]`) as HTMLElement | null
+  el?.focus()
+}
+
+function toggleBranch(id: string): void {
+  if (state.collapsedIds.has(id)) state.collapsedIds.delete(id)
+  else state.collapsedIds.add(id)
+  applyViewport()
+}
 
 labelsEl.addEventListener('keydown', (e) => {
   const row = (e.target as HTMLElement).closest('[data-row]') as HTMLElement | null
@@ -376,16 +418,25 @@ labelsEl.addEventListener('keydown', (e) => {
   const rowIndex = Number(row.dataset.row)
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
-    const total = state.lastPrims?.stats.totalRows ?? 0
-    const next = Math.max(0, Math.min(total - 1, rowIndex + (e.key === 'ArrowDown' ? 1 : -1)))
-    state.activeRowIndex = next
-    const first = state.lastPrims?.stats.firstVisibleRow ?? 0
-    const last = state.lastPrims?.stats.lastVisibleRow ?? 0
-    if (next <= first) scrollEl.scrollTop = Math.max(0, (next - 1) * ROW_H)
-    else if (next >= last) scrollEl.scrollTop = (next + 2) * ROW_H - scrollEl.clientHeight
-    applyViewport()
-    const el = labelsEl.querySelector(`[data-row="${next}"]`) as HTMLElement | null
-    el?.focus()
+    focusRow(rowIndex + (e.key === 'ArrowDown' ? 1 : -1))
+  } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    const lane = state.lastPrims?.lanes.find((l) => l.rowIndex === rowIndex)
+    if (!lane) return
+    e.preventDefault()
+    if (e.key === 'ArrowRight') {
+      // Expand a collapsed branch, otherwise move to the first child row.
+      if (lane.hasChildren && lane.collapsed) toggleBranch(lane.invocationId)
+      else if (lane.hasChildren) focusRow(rowIndex + 1)
+    } else {
+      // Collapse an expanded branch, otherwise move focus to the parent row.
+      if (lane.hasChildren && !lane.collapsed) {
+        toggleBranch(lane.invocationId)
+      } else {
+        const parentId = state.dataset.invocations.find((i) => i.id === lane.invocationId)?.parentId
+        const parentLane = state.lastPrims?.lanes.find((l) => l.invocationId === parentId)
+        if (parentLane) focusRow(parentLane.rowIndex)
+      }
+    }
   } else if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
     setSelected(row.dataset.invocation ?? null)
@@ -439,6 +490,7 @@ function setLang(lang: Lang): void {
   state.params.lang = lang
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
   renderSummary()
+  termStubEl.textContent = t().terminalStub
   applyViewport()
 }
 
@@ -446,7 +498,8 @@ function setLang(lang: Lang): void {
 
 function liveUpdate(): void {
   const running = state.dataset.invocations.find((i) => i.status === 'running')
-  const target = running ?? state.dataset.invocations[1]
+  const target = running ?? state.dataset.invocations[1] ?? state.dataset.invocations[0]
+  if (!target) return
   const now = state.dataset.nowMs
   target.segments.push({ startMs: now - 30_000, endMs: now })
   if (!running) target.status = 'running'
@@ -466,6 +519,7 @@ const spike = {
   hash: () => datasetHash(state.dataset),
   rowHeight: ROW_H,
   overscan: OVERSCAN,
+  renderCount: () => state.renderCount,
 
   counts() {
     return {
@@ -656,6 +710,7 @@ const spike = {
 
 graphEl.appendChild(state.candidate.element)
 renderSummary()
+termStubEl.textContent = t().terminalStub
 setDock(params.dock)
 applyViewport()
 spike.ready = true

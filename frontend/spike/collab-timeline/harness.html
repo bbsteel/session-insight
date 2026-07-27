@@ -170,29 +170,53 @@
       .tl-svg { position: absolute; top: 0; left: 0; display: block; }
       .tl-canvas { position: sticky; top: 0; display: block; }
 
-      /* Interval fills via variables so state rules win deterministically. */
-      :root[data-theme='dark'] { --interval-activity: #5b8def; --interval-aggregate: #3d4b66; --edge-launch: #6c7385; }
-      :root[data-theme='light'] { --interval-activity: #2563eb; --interval-aggregate: #9aa7c7; --edge-launch: #878ea0; }
+      /* Single token set read by both the CSS (SVG) and the Canvas palette. */
+      :root {
+        --interval-estimated: #b48a2f;
+        --path: #d97706;
+        --edge-result: #0d9488;
+        --mk-failed: #dc2626;
+        --mk-orphaned: #d97706;
+        --mk-waiting: #0891b2;
+      }
+      :root[data-theme='dark'] {
+        --interval-activity: #5b8def;
+        --interval-aggregate: #3d4b66;
+        --edge-launch: #6c7385;
+        --marker: #9ea5b4;
+        --mk-unknown: #6c7385;
+        --hover-fill: rgba(128, 128, 160, 0.12);
+        --selected-fill: rgba(217, 119, 6, 0.10);
+      }
+      :root[data-theme='light'] {
+        --interval-activity: #2563eb;
+        --interval-aggregate: #9aa7c7;
+        --edge-launch: #878ea0;
+        --marker: #555b6e;
+        --mk-unknown: #878ea0;
+        --hover-fill: rgba(24, 27, 36, 0.06);
+        --selected-fill: rgba(180, 83, 9, 0.10);
+      }
       .interval-activity { fill: var(--interval-activity); }
       .interval-aggregate { fill: var(--interval-aggregate); }
-      .interval-activity.interval-estimated { fill: #b48a2f; }
-      .interval-activity[data-on-path='true'] { fill: #d97706; }
+      .interval-activity.interval-estimated { fill: var(--interval-estimated); }
+      .interval-activity[data-on-path='true'] { fill: var(--path); }
       .edge { fill: none; stroke-width: 1; }
       .edge-launch { stroke: var(--edge-launch); }
-      .edge-result { stroke: #0d9488; }
+      .edge-result { stroke: var(--edge-result); }
       .edge-estimated { stroke-dasharray: 4 3; }
-      .edge.edge-selected { stroke: #d97706; stroke-width: 1.5; }
+      .edge.edge-selected { stroke: var(--path); stroke-width: 1.5; }
       .marker { fill: none; stroke-width: 1.5; }
-      .mk-start, .mk-end { stroke: var(--text-secondary); }
-      .mk-failed { stroke: var(--error); }
-      .mk-orphaned { stroke: var(--warning); }
-      .mk-unknown, .mk-open { stroke: var(--text-muted); }
-      .mk-missing { stroke: var(--text-muted); stroke-dasharray: 2 2; }
+      .mk-start, .mk-end { stroke: var(--marker); }
+      .mk-failed { stroke: var(--mk-failed); }
+      .mk-orphaned { stroke: var(--mk-orphaned); }
+      .mk-unknown, .mk-open { stroke: var(--mk-unknown); }
+      .mk-missing { stroke: var(--mk-unknown); stroke-dasharray: 2 2; }
       .mk-running { fill: var(--success); stroke: none; }
-      .mk-waiting { fill: #0891b2; stroke: none; }
+      .mk-waiting { fill: var(--mk-waiting); stroke: none; }
       .hit-region { fill: transparent; }
-      .hit-region[data-hover='true'] { fill: rgba(128, 128, 160, 0.12); }
-      .hit-region[data-selected='true'] { fill: rgba(217, 119, 6, 0.10); }
+      .hit-region[data-hover='true'] { fill: var(--hover-fill); }
+      .hit-region[data-selected='true'] { fill: var(--selected-fill); }
 
       .tl-tooltip {
         position: fixed;
@@ -217,6 +241,7 @@
         color: var(--text-muted);
         font: 11px/1.6 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', 'Consolas', monospace;
         padding: 8px 12px;
+        white-space: pre-line;
       }
     </style>
   </head>
@@ -229,7 +254,7 @@
       <div id="dock-summary"></div>
       <div id="scroll" class="tl-scroll">
         <div id="grid" class="tl-grid">
-          <div id="labels" class="tl-labels" role="listbox" aria-label="Agent lanes"></div>
+          <div id="labels" class="tl-labels" role="tree" aria-label="Agent lanes"></div>
           <div id="graph" class="tl-graph"></div>
         </div>
       </div>
@@ -237,14 +262,5 @@
     <div id="term-stub"></div>
     <div id="tooltip" class="tl-tooltip" hidden></div>
     <script type="module" src="./dist/harness.js"></script>
-    <script>
-      document.getElementById('term-stub').textContent = [
-        '$ session-insight replay — xterm stub (not part of this spike)',
-        'The terminal stays mounted below the dock; only its container height changes.',
-        '',
-        'turn 7  · tool: read_file  · ok',
-        'turn 8  · assistant reply …',
-      ].join('\n')
-    </script>
   </body>
 </html>

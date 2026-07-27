@@ -74,9 +74,12 @@ switches (Chromium `--enable-precise-memory-info` + `--expose-gc`).
 
 Equivalence rules: both candidates consume identical `RenderPrimitives` from
 the same layout call, share the DOM label column, tooltip portal, roving-
-tabindex keyboard model, and theme tokens. "Mounted primitives" counts the
-same primitive set on both sides (intervals + edges + markers + hit regions):
-DOM nodes for SVG, consumed/drawn primitives for Canvas.
+tabindex keyboard model, and one CSS custom-property token set (the Canvas
+palette reads the same variables via `getComputedStyle`). "Mounted" counts are
+reported honestly per technology: mounted DOM nodes for SVG (including
+hit-region rects), real draw calls per frame for Canvas (row feedback, edges,
+intervals, markers — Canvas hit regions feed only its spatial index and cost
+nothing to "mount").
 
 ## Known simplifications (documented, not hidden)
 

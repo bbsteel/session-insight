@@ -27,24 +27,29 @@ interface ThemeColors {
   muted: string
 }
 
-function colors(theme: 'light' | 'dark'): ThemeColors {
-  const dark = theme === 'dark'
+/**
+ * The Canvas palette reads the same CSS custom properties that style the SVG
+ * candidate (see harness.html), so the two renderers cannot drift apart.
+ */
+function colors(): ThemeColors {
+  const cs = getComputedStyle(document.documentElement)
+  const v = (name: string): string => cs.getPropertyValue(name).trim()
   return {
-    interval: dark ? '#5b8def' : '#2563eb',
-    aggregate: dark ? '#3d4b66' : '#9aa7c7',
-    estimated: dark ? '#8a7a4a' : '#b48a2f',
-    launch: dark ? '#6c7385' : '#878ea0',
-    result: dark ? '#0d9488' : '#0d9488',
-    selected: dark ? '#e4b343' : '#b45309',
-    hoverFill: dark ? 'rgba(228, 230, 235, 0.08)' : 'rgba(24, 27, 36, 0.06)',
-    selectedFill: dark ? 'rgba(228, 179, 67, 0.14)' : 'rgba(180, 83, 9, 0.10)',
-    marker: dark ? '#9ea5b4' : '#555b6e',
-    failed: '#dc2626',
-    orphaned: '#d97706',
-    unknown: dark ? '#6c7385' : '#878ea0',
-    running: dark ? '#34d399' : '#059669',
-    waiting: '#0891b2',
-    muted: dark ? '#6c7385' : '#878ea0',
+    interval: v('--interval-activity'),
+    aggregate: v('--interval-aggregate'),
+    estimated: v('--interval-estimated'),
+    launch: v('--edge-launch'),
+    result: v('--edge-result'),
+    selected: v('--path'),
+    hoverFill: v('--hover-fill'),
+    selectedFill: v('--selected-fill'),
+    marker: v('--marker'),
+    failed: v('--mk-failed'),
+    orphaned: v('--mk-orphaned'),
+    unknown: v('--mk-unknown'),
+    running: v('--success'),
+    waiting: v('--mk-waiting'),
+    muted: v('--mk-unknown'),
   }
 }
 
@@ -63,6 +68,7 @@ export function createCanvasCandidate(rowHeightPx: number): TimelineCandidate {
     const y = m.rowIndex * rowHeightPx + rowHeightPx / 2 - lastOffsetY
     const x = m.x
     const r = 4
+    ctx.lineWidth = 1.5 // matches the SVG marker stroke-width
     ctx.beginPath()
     switch (m.type) {
       case 'start':
@@ -123,6 +129,7 @@ export function createCanvasCandidate(rowHeightPx: number): TimelineCandidate {
     if (m.type === 'running' || m.type === 'waiting') ctx.fill()
     else ctx.stroke()
     ctx.setLineDash([])
+    ctx.lineWidth = 1
     drawnCount++
   }
 
@@ -157,7 +164,7 @@ export function createCanvasCandidate(rowHeightPx: number): TimelineCandidate {
       ctx.clearRect(0, 0, widthPx, heightPx)
       ctx.lineWidth = 1
 
-      const c = colors(ui.theme)
+      const c = colors()
 
       // Row hover/selection feedback.
       for (const h of prims.hitRegions) {
@@ -165,9 +172,11 @@ export function createCanvasCandidate(rowHeightPx: number): TimelineCandidate {
         if (ui.selectedId === h.invocationId) {
           ctx.fillStyle = c.selectedFill
           ctx.fillRect(0, y, widthPx, rowHeightPx)
+          drawnCount++
         } else if (ui.hoverId === h.invocationId) {
           ctx.fillStyle = c.hoverFill
           ctx.fillRect(0, y, widthPx, rowHeightPx)
+          drawnCount++
         }
       }
 
@@ -177,6 +186,7 @@ export function createCanvasCandidate(rowHeightPx: number): TimelineCandidate {
         const y2 = e.y2 - lastOffsetY
         ctx.beginPath()
         ctx.strokeStyle = e.onSelectedPath ? c.selected : e.kind === 'launch' ? c.launch : c.result
+        ctx.lineWidth = e.onSelectedPath ? 1.5 : 1
         ctx.setLineDash(e.estimated ? [4, 3] : [])
         const midX = e.kind === 'launch' ? e.x1 : e.x2
         ctx.moveTo(e.x1, y1)
@@ -186,6 +196,7 @@ export function createCanvasCandidate(rowHeightPx: number): TimelineCandidate {
         drawnCount++
       }
       ctx.setLineDash([])
+      ctx.lineWidth = 1
 
       // Intervals.
       for (const it of prims.intervals) {
@@ -207,10 +218,12 @@ export function createCanvasCandidate(rowHeightPx: number): TimelineCandidate {
 
       // Markers (shape + color, never color alone).
       for (const m of prims.markers) drawMarker(ctx, m, c)
-      drawnCount += prims.hitRegions.length
     },
 
     mountedPrimitiveCount(): number {
+      // Real draw calls issued this frame (row feedback + edges + intervals +
+      // markers). Unlike SVG, hit regions cost nothing on Canvas — they feed
+      // only the spatial index — so they are not counted as primitives.
       return drawnCount
     },
 

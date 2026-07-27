@@ -92,10 +92,12 @@ async function runForCombo(browser, baseUrl, renderer, dataset, theme) {
   assert(selected !== null, `click selects a lane (${selected})`)
 
   // Keyboard: roving tabindex, ArrowDown moves focus, Enter selects.
-  await page.evaluate(() => {
+  const focusable = await page.evaluate(() => {
     const first = document.querySelector('.tl-label[tabindex="0"]')
-    first.focus()
+    first?.focus()
+    return Boolean(first)
   })
+  assert(focusable, 'a roving-tabindex label is focusable')
   await page.keyboard.press('ArrowDown')
   const focusMoved = await page.evaluate(() => {
     const active = document.activeElement
@@ -128,6 +130,29 @@ async function runForCombo(browser, baseUrl, renderer, dataset, theme) {
     mountedCount < 5000,
     `mounted primitives bounded (${mountedCount} < 5000) — viewport culling + LOD active`,
   )
+
+  // Regression: drag-pan and ctrl+wheel zoom must repaint even though they
+  // mutate the time domain without changing scrollTop.
+  const graphBox = await page.evaluate(() => {
+    const r = document.getElementById('graph').getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + 60 }
+  })
+  const beforePan = await page.evaluate(() => window.__spike.renderCount())
+  await page.mouse.move(graphBox.x, graphBox.y)
+  await page.mouse.down()
+  await page.mouse.move(graphBox.x + 60, graphBox.y, { steps: 3 })
+  await page.mouse.up()
+  await page.waitForTimeout(60)
+  const afterPan = await page.evaluate(() => window.__spike.renderCount())
+  assert(afterPan > beforePan, `drag-pan repaints (renders ${beforePan} -> ${afterPan})`)
+
+  const beforeZoom = await page.evaluate(() => window.__spike.renderCount())
+  await page.keyboard.down('Control')
+  await page.mouse.wheel(0, -240)
+  await page.keyboard.up('Control')
+  await page.waitForTimeout(60)
+  const afterZoom = await page.evaluate(() => window.__spike.renderCount())
+  assert(afterZoom > beforeZoom, `ctrl+wheel zoom repaints (renders ${beforeZoom} -> ${afterZoom})`)
 
   // Reduced motion: the running pulse must be disabled.
   await page.emulateMedia({ reducedMotion: 'reduce' })
