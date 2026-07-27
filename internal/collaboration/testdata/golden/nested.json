@@ -1,0 +1,144 @@
+{
+  "root_agent_type": "copilot",
+  "root_session_id": "collab-copilot-1",
+  "revision": 21,
+  "completeness": {
+    "state": "exact"
+  },
+  "invocations": [
+    {
+      "id": "copilot:collab-copilot-1:root",
+      "display_name": "copilot main agent",
+      "agent_type": "copilot",
+      "status": "completed",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "root_session",
+        "native_id": "collab-copilot-1"
+      }
+    },
+    {
+      "id": "copilot:collab-copilot-1:child:call-nest-a",
+      "display_name": "Coordinator Agent",
+      "agent_type": "copilot",
+      "status": "completed",
+      "started_at": "2026-01-01T00:00:30Z",
+      "ended_at": "2026-01-01T00:05:00Z",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "estimated",
+        "reason_code": "aggregate_window"
+      },
+      "source_identity": {
+        "kind": "tool_call_id",
+        "native_id": "call-nest-a"
+      }
+    },
+    {
+      "id": "copilot:collab-copilot-1:child:call-nest-b",
+      "display_name": "Module Agent",
+      "agent_type": "copilot",
+      "status": "completed",
+      "started_at": "2026-01-01T00:01:00Z",
+      "ended_at": "2026-01-01T00:03:00Z",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "estimated",
+        "reason_code": "aggregate_window"
+      },
+      "source_identity": {
+        "kind": "tool_call_id",
+        "native_id": "call-nest-b"
+      }
+    }
+  ],
+  "delegations": [
+    {
+      "id": "copilot:collab-copilot-1:child:call-nest-a-\u003ecopilot:collab-copilot-1:child:call-nest-b",
+      "parent_invocation_id": "copilot:collab-copilot-1:child:call-nest-a",
+      "child_invocation_id": "copilot:collab-copilot-1:child:call-nest-b",
+      "trigger": {
+        "agent_type": "copilot",
+        "session_id": "collab-copilot-1",
+        "tool_call_id": "call-nest-b",
+        "timestamp": "2026-01-01T00:01:00Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "result": {
+        "agent_type": "copilot",
+        "session_id": "collab-copilot-1",
+        "tool_call_id": "call-nest-b",
+        "timestamp": "2026-01-01T00:03:00Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "task_summary": "Migrate one module",
+      "execution_mode": "blocking",
+      "evidence": {
+        "trigger": {
+          "state": "exact"
+        },
+        "timing": {
+          "state": "exact"
+        },
+        "task": {
+          "state": "exact"
+        },
+        "result": {
+          "state": "exact"
+        }
+      }
+    },
+    {
+      "id": "copilot:collab-copilot-1:root-\u003ecopilot:collab-copilot-1:child:call-nest-a",
+      "parent_invocation_id": "copilot:collab-copilot-1:root",
+      "child_invocation_id": "copilot:collab-copilot-1:child:call-nest-a",
+      "trigger": {
+        "agent_type": "copilot",
+        "session_id": "collab-copilot-1",
+        "tool_call_id": "call-nest-a",
+        "timestamp": "2026-01-01T00:00:01Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "result": {
+        "agent_type": "copilot",
+        "session_id": "collab-copilot-1",
+        "tool_call_id": "call-nest-a",
+        "timestamp": "2026-01-01T00:05:00Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "task_summary": "Coordinate the migration",
+      "execution_mode": "blocking",
+      "evidence": {
+        "trigger": {
+          "state": "exact"
+        },
+        "timing": {
+          "state": "exact"
+        },
+        "task": {
+          "state": "exact"
+        },
+        "result": {
+          "state": "exact"
+        }
+      }
+    }
+  ]
+}

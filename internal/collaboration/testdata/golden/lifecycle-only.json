@@ -1,0 +1,87 @@
+{
+  "root_agent_type": "copilot",
+  "root_session_id": "collab-copilot-1",
+  "revision": 11,
+  "completeness": {
+    "state": "exact"
+  },
+  "invocations": [
+    {
+      "id": "copilot:collab-copilot-1:root",
+      "display_name": "copilot main agent",
+      "agent_type": "copilot",
+      "status": "completed",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "root_session",
+        "native_id": "collab-copilot-1"
+      }
+    },
+    {
+      "id": "copilot:collab-copilot-1:child:call-task-A",
+      "display_name": "Impl Agent",
+      "agent_type": "copilot",
+      "role_label": "impl",
+      "status": "completed",
+      "started_at": "2026-01-01T00:01:00Z",
+      "ended_at": "2026-01-01T00:01:10Z",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "estimated",
+        "reason_code": "aggregate_window"
+      },
+      "source_identity": {
+        "kind": "tool_call_id",
+        "native_id": "call-task-A"
+      }
+    }
+  ],
+  "delegations": [
+    {
+      "id": "copilot:collab-copilot-1:root-\u003ecopilot:collab-copilot-1:child:call-task-A",
+      "parent_invocation_id": "copilot:collab-copilot-1:root",
+      "child_invocation_id": "copilot:collab-copilot-1:child:call-task-A",
+      "trigger": {
+        "agent_type": "copilot",
+        "session_id": "collab-copilot-1",
+        "tool_call_id": "call-task-A",
+        "timestamp": "2026-01-01T00:00:01Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "result": {
+        "agent_type": "copilot",
+        "session_id": "collab-copilot-1",
+        "tool_call_id": "call-task-A",
+        "timestamp": "2026-01-01T00:01:10Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "task_summary": "Implement parser change",
+      "execution_mode": "blocking",
+      "evidence": {
+        "trigger": {
+          "state": "exact"
+        },
+        "timing": {
+          "state": "exact"
+        },
+        "task": {
+          "state": "exact"
+        },
+        "result": {
+          "state": "exact"
+        }
+      }
+    }
+  ]
+}

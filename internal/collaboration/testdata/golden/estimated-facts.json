@@ -1,0 +1,90 @@
+{
+  "root_agent_type": "claude",
+  "root_session_id": "claude-root-0001",
+  "revision": 5,
+  "completeness": {
+    "state": "estimated",
+    "reason_code": "fifo_join_heuristic"
+  },
+  "invocations": [
+    {
+      "id": "claude:claude-root-0001:root",
+      "display_name": "claude main agent",
+      "agent_type": "claude",
+      "status": "completed",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "root_session",
+        "native_id": "claude-root-0001"
+      }
+    },
+    {
+      "id": "claude:claude-root-0001:child:agent-a1b2c3",
+      "display_name": "reviewer",
+      "agent_type": "claude",
+      "role_label": "reviewer",
+      "status": "unknown",
+      "started_at": "2026-01-03T00:00:04Z",
+      "time_precision": {
+        "state": "estimated",
+        "reason_code": "completion_not_recorded"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "agent_id",
+        "native_id": "agent-a1b2c3"
+      }
+    }
+  ],
+  "delegations": [
+    {
+      "id": "claude:claude-root-0001:root-\u003eclaude:claude-root-0001:child:agent-a1b2c3",
+      "parent_invocation_id": "claude:claude-root-0001:root",
+      "child_invocation_id": "claude:claude-root-0001:child:agent-a1b2c3",
+      "trigger": {
+        "agent_type": "claude",
+        "session_id": "claude-root-0001",
+        "event_id": "toolu_01launch",
+        "timestamp": "2026-01-03T00:00:04Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "result": {
+        "agent_type": "claude",
+        "session_id": "claude-root-0001",
+        "event_id": "toolu_01result",
+        "timestamp": "2026-01-03T00:00:20Z",
+        "precision": {
+          "state": "estimated",
+          "reason_code": "fifo_join_heuristic"
+        }
+      },
+      "task_summary": "Review the filter changes",
+      "execution_mode": "unknown",
+      "evidence": {
+        "trigger": {
+          "state": "exact"
+        },
+        "timing": {
+          "state": "estimated",
+          "reason_code": "completion_not_recorded"
+        },
+        "task": {
+          "state": "exact"
+        },
+        "result": {
+          "state": "estimated",
+          "reason_code": "fifo_join_heuristic"
+        }
+      }
+    }
+  ]
+}

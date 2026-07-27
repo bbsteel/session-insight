@@ -1,0 +1,79 @@
+{
+  "root_agent_type": "codex",
+  "root_session_id": "rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa",
+  "revision": 7,
+  "completeness": {
+    "state": "estimated",
+    "reason_code": "source_not_recorded"
+  },
+  "invocations": [
+    {
+      "id": "codex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:root",
+      "display_name": "codex main agent",
+      "agent_type": "codex",
+      "status": "completed",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "root_session",
+        "native_id": "rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa"
+      }
+    },
+    {
+      "id": "codex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:child:019f0000-0000-7000-8000-0000000000bb",
+      "display_name": "audit",
+      "agent_type": "codex",
+      "role_label": "audit",
+      "status": "unknown",
+      "started_at": "2026-01-02T00:00:01Z",
+      "time_precision": {
+        "state": "estimated",
+        "reason_code": "completion_not_recorded"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "backing_session": {
+        "agent_type": "codex",
+        "session_id": "rollout-2026-01-02T00-00-01-019f0000-0000-7000-8000-0000000000bb"
+      },
+      "source_identity": {
+        "kind": "payload_id",
+        "native_id": "019f0000-0000-7000-8000-0000000000bb",
+        "attributes": {
+          "rollout_stem": "rollout-2026-01-02T00-00-01-019f0000-0000-7000-8000-0000000000bb"
+        }
+      }
+    }
+  ],
+  "delegations": [
+    {
+      "id": "codex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:root-\u003ecodex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:child:019f0000-0000-7000-8000-0000000000bb",
+      "parent_invocation_id": "codex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:root",
+      "child_invocation_id": "codex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:child:019f0000-0000-7000-8000-0000000000bb",
+      "execution_mode": "unknown",
+      "evidence": {
+        "trigger": {
+          "state": "missing",
+          "reason_code": "source_not_recorded"
+        },
+        "timing": {
+          "state": "estimated",
+          "reason_code": "completion_not_recorded"
+        },
+        "task": {
+          "state": "missing",
+          "reason_code": "source_not_recorded"
+        },
+        "result": {
+          "state": "missing",
+          "reason_code": "source_not_recorded"
+        }
+      }
+    }
+  ]
+}

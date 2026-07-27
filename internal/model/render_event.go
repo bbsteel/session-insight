@@ -42,6 +42,14 @@ type RenderEvent struct {
 	Model     string         `json:"model,omitempty"`
 	AgentType string         `json:"agent_type,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+
+	// InvocationID associates the event with one AgentInvocation of the
+	// collaboration contract (internal/collaboration). Absent means the
+	// root invocation. Embedded child events carry the child invocation ID;
+	// standalone child content is loaded through its BackingSessionRef and
+	// normalized with that invocation ID. Collaboration metadata associates
+	// events with invocations; it never creates a second transcript model.
+	InvocationID string `json:"invocation_id,omitempty"`
 }
 
 type RenderTokenUsage struct {
