@@ -1,0 +1,5 @@
+{"timestamp":"2026-01-02T00:00:00.000Z","type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-0000000000aa","cwd":"/tmp/proj","model_provider":"openai"}}
+{"timestamp":"2026-01-02T00:00:00.500Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"2026-01-02T00:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"audit the parser package"}}
+{"timestamp":"2026-01-02T00:00:02.000Z","type":"event_msg","payload":{"type":"agent_message","message":"delegating the audit to a child agent"}}
+{"timestamp":"2026-01-02T00:00:05.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}

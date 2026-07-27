@@ -1,0 +1,5 @@
+{"timestamp":"2026-01-02T00:00:01.500Z","type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-0000000000bb","session_id":"019f0000-0000-7000-8000-0000000000aa","parent_thread_id":"019f0000-0000-7000-8000-0000000000aa","thread_source":"subagent","agent_path":"/root/audit","cwd":"/tmp/proj"}}
+{"timestamp":"2026-01-02T00:00:02.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"2026-01-02T00:00:02.500Z","type":"event_msg","payload":{"type":"user_message","message":"audit the token parser"}}
+{"timestamp":"2026-01-02T00:00:03.500Z","type":"event_msg","payload":{"type":"agent_message","message":"child audit result: parser is sound"}}
+{"timestamp":"2026-01-02T00:00:04.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}
