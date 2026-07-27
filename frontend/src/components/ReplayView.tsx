@@ -14,7 +14,6 @@ import GlobalSearch from './GlobalSearch'
 import AIPanel from './AIPanel'
 import BookmarkNoteEditor from './BookmarkNoteEditor'
 import DiffModal from './DiffModal'
-import InstantTooltip from './InstantTooltip'
 import OutputModal from './OutputModal'
 import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
@@ -1218,43 +1217,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               </span>
             )}
           </button>
-          <span className="text-[var(--border-default)]">|</span>
-          <InstantTooltip
-            text={
-              session.bookmarked
-                ? (session.bookmark_note?.trim()
-                  ? t('replay.bookmarkedWithNote', { note: session.bookmark_note.trim() })
-                  : t('replay.bookmarkedWithoutNote'))
-                : t('replay.bookmarkSession')
-            }
-            placement="bottom"
-          >
-            <button
-              onClick={toggleBookmark}
-              disabled={bookmarkBusy}
-              className={`h-7 rounded-md px-2 inline-flex items-center justify-center text-nav ${
-                session.bookmarked ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'
-              } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-              aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
-            >
-              {session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
-            </button>
-          </InstantTooltip>
-          {session.bookmarked && (
-            <InstantTooltip
-              text={session.bookmark_note?.trim() || t('replay.noBookmarkReason')}
-              placement="bottom"
-            >
-              <button
-                onClick={() => setNoteEditorOpen(true)}
-                disabled={bookmarkBusy}
-                className="h-7 rounded-md px-2 inline-flex items-center justify-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                aria-label={session.bookmark_note?.trim() ? t('replay.editBookmarkNote') : t('replay.addBookmarkNote')}
-              >
-                {session.bookmark_note?.trim() ? t('replay.note') : t('replay.addBookmarkNote')}
-              </button>
-            </InstantTooltip>
-          )}
           {bookmarkError && (
             <span className="text-meta text-[var(--error)]" role="status">
               {t(bookmarkError)}
