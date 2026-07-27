@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "session_id": "28491d6d-491e-4c83-80b2-4fdd57e6fb7f",
+    "agent_profile": "Code",
+    "agent_display_name": "Code Agent",
+    "model_provider": "example-provider",
+    "model_id": "example-model",
+    "created_at": "2026-07-06T04:22:06.342847+00:00",
+    "updated_at": "2026-07-06T04:22:06.342847+00:00",
+    "message_count": 4,
+    "primary_cwd": "/tmp/proj",
+    "title": "Adjust the set list layout",
+    "custom_title": "",
+    "generated_title": ""
+  },
+  "state": {
+    "messages": [
+      {
+        "type": "message", "role": "user",
+        "contents": [
+          {"type": "text", "text": "Adjust the set list layout", "additional_properties": {}}
+        ],
+        "additional_properties": {"_chrys_created_at": "2026-07-06T04:18:34.064555+00:00"}
+      },
+      {
+        "type": "message", "role": "assistant",
+        "contents": [
+          {"type": "function_call", "call_id": "call_sub_1", "name": "explore_agent",
+           "arguments": "{\"prompt\": \"find the filter component\"}", "additional_properties": {}}
+        ],
+        "additional_properties": {"_chrys_created_at": "2026-07-06T04:22:06.293096+00:00"}
+      },
+      {
+        "type": "message", "role": "tool",
+        "contents": [
+          {"type": "function_result", "call_id": "call_sub_1", "result": "The component is in SetsList.vue", "additional_properties": {}}
+        ],
+        "additional_properties": {}
+      },
+      {
+        "type": "message", "role": "assistant",
+        "contents": [{"type": "text", "text": "", "additional_properties": {}}],
+        "additional_properties": {"_chrys_kind": "turn", "_turn_id": "turn_1", "_turn": 1}
+      }
+    ],
+    "compressed_msgs": [],
+    "turn_counter": 1,
+    "total_session_input_tokens": 1200,
+    "total_session_output_tokens": 300,
+    "total_session_cache_hit_tokens": 0
+  }
+}
