@@ -31,8 +31,8 @@ session-insight.url
 .env
 .env.local
 
-# Local Claude Code settings (personal permissions, not project config)
-.claude/settings.local.json
+# Local Claude Code state and worktrees (personal, not project config)
+.claude/
 
 .superpowers/
 opencode.json
