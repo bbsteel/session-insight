@@ -157,14 +157,59 @@ export async function fetchAgents(): Promise<AgentInfo[]> {
   return readJson<AgentInfo[]>(res, 'agents')
 }
 
-export async function fetchRenderANSI(id: string, cols?: number, ts?: string): Promise<string> {
+function renderURL(id: string, cols?: number, ts?: string): string {
   const params = new URLSearchParams()
   if (cols) params.set('cols', String(cols))
   if (ts) params.set('ts', ts)
   const q = params.toString()
-  const res = await fetch(q ? `/api/sessions/${id}/render?${q}` : `/api/sessions/${id}/render`)
+  return q ? `/api/sessions/${id}/render?${q}` : `/api/sessions/${id}/render`
+}
+
+export async function fetchRenderANSI(id: string, cols?: number, ts?: string, signal?: AbortSignal): Promise<string> {
+  const res = await fetch(renderURL(id, cols, ts), { signal })
   if (!res.ok) throw await responseError(res, 'render_load_failed')
   return res.text()
+}
+
+// Streams an initial terminal render so xterm can paint progressively instead
+// of waiting for the entire transcript to be buffered as one large string.
+// onChunk is awaited to provide backpressure to xterm's async write queue.
+export async function streamRenderANSI(
+  id: string,
+  cols: number | undefined,
+  ts: string | undefined,
+  onChunk: (chunk: string) => void | Promise<void>,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await fetch(renderURL(id, cols, ts), { signal })
+  if (!res.ok) throw await responseError(res, 'render_load_failed')
+  if (!res.body) {
+    const ansi = await res.text()
+    if (ansi) await onChunk(ansi)
+    return ansi
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let ansi = ''
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      const chunk = decoder.decode(value, { stream: true })
+      if (!chunk) continue
+      ansi += chunk
+      await onChunk(chunk)
+    }
+    const tail = decoder.decode()
+    if (tail) {
+      ansi += tail
+      await onChunk(tail)
+    }
+    return ansi
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 export async function fetchSessionEdits(id: string): Promise<EditCall[]> {
