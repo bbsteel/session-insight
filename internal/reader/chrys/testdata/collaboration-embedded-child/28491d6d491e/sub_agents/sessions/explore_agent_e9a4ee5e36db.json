@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "record_type": "sub_agent_session",
+    "parent_session_id": "28491d6d-491e-4c83-80b2-4fdd57e6fb7f",
+    "parent_provider_call_id": "call_sub_1",
+    "invocation_id": "e9a4ee5e36db",
+    "tool_name": "explore_agent",
+    "agent_profile": "Explore",
+    "agent_display_name": "Explore Agent",
+    "status": "completed",
+    "created_at": "2026-07-06T04:18:43.191495+00:00",
+    "updated_at": "2026-07-06T04:19:33.948229+00:00"
+  },
+  "state": {
+    "messages": [
+      {
+        "type": "message", "role": "user",
+        "contents": [{"type": "text", "text": "find the filter component", "additional_properties": {}}],
+        "additional_properties": {}
+      },
+      {
+        "type": "message", "role": "assistant",
+        "contents": [
+          {"type": "function_call", "call_id": "call_glob_1", "name": "glob",
+           "arguments": "{\"pattern\": \"**/*set*\"}", "additional_properties": {}}
+        ],
+        "additional_properties": {}
+      },
+      {
+        "type": "message", "role": "tool",
+        "contents": [
+          {"type": "function_result", "call_id": "call_glob_1", "result": "SetsList.vue", "additional_properties": {}}
+        ],
+        "additional_properties": {}
+      }
+    ],
+    "compressed_msgs": [],
+    "turn_counter": 1
+  }
+}

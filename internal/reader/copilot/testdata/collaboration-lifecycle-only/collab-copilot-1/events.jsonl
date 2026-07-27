@@ -1,0 +1,12 @@
+{"type":"user.message","timestamp":"2026-01-01T00:00:00Z","data":{"content":"implement and review the parser change"}}
+{"type":"assistant.message","timestamp":"2026-01-01T00:00:00.500Z","data":{"content":"delegating implementation and review"}}
+{"type":"tool.execution_start","timestamp":"2026-01-01T00:00:01Z","data":{"toolName":"task","toolCallId":"call-task-A","arguments":{"description":"Implement parser change","name":"impl","model":"m1","mode":"sync","prompt":"Implement the parser change in reader.go"}}}
+{"type":"subagent.started","timestamp":"2026-01-01T00:01:00Z","data":{"toolCallId":"call-task-A","agentDisplayName":"Impl Agent"}}
+{"type":"assistant.message","timestamp":"2026-01-01T00:01:01Z","data":{"outputTokens":10}}
+{"type":"assistant.message","timestamp":"2026-01-01T00:01:02Z","data":{"outputTokens":20}}
+{"type":"subagent.completed","timestamp":"2026-01-01T00:01:10Z","data":{"toolCallId":"call-task-A"}}
+{"type":"tool.execution_complete","timestamp":"2026-01-01T00:01:10Z","data":{"toolCallId":"call-task-A","toolTelemetry":{"metrics":{"numberOfToolCallsMadeByAgent":22}}}}
+{"type":"tool.execution_start","timestamp":"2026-01-01T00:02:00Z","data":{"toolName":"task","toolCallId":"call-task-B","arguments":{"description":"Review the diff","mode":"async","prompt":"Review the diff for regressions"}}}
+{"type":"subagent.started","timestamp":"2026-01-01T00:03:00Z","data":{"toolCallId":"call-task-B","agentDisplayName":"Review Agent"}}
+{"type":"assistant.message","timestamp":"2026-01-01T00:03:01Z","data":{"outputTokens":5}}
+{"type":"assistant.message","timestamp":"2026-01-01T00:05:00Z","data":{"outputTokens":100}}
