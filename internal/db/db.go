@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 27
+const currentSchemaVersion = 28
 
 type DB struct {
 	conn *sql.DB
@@ -648,6 +648,99 @@ func migrate(conn *sql.DB) error {
 	if maxVersion < 27 {
 		if _, err := conn.Exec(`DELETE FROM index_watermarks`); err != nil {
 			return fmt.Errorf("v27 clear index_watermarks: %w", err)
+		}
+	}
+
+	// Version 28: collaboration metadata tables (normalized
+	// internal/collaboration graphs, one root row per indexed root Session).
+	// Queryable fields stay relational; sparse source identity, anchors, and
+	// per-fact evidence are deterministic JSON. Invocations and delegations
+	// cascade from the root row so a transactional replace starts clean.
+	// Delegation endpoints deliberately have NO foreign key into invocations:
+	// the contract preserves quarantined edges (missing parent, unknown
+	// child) on the graph, and those endpoints may not resolve.
+	// Watermarks are cleared once so existing sessions get one collaboration
+	// parse on the next index cycle.
+	if maxVersion < 28 {
+		tx, err := conn.Begin()
+		if err != nil {
+			return fmt.Errorf("v28 begin: %w", err)
+		}
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS collaboration_roots (
+			    root_agent_type     TEXT    NOT NULL,
+			    root_session_id     TEXT    NOT NULL,
+			    revision            INTEGER NOT NULL DEFAULT 0,
+			    completeness_state  TEXT    NOT NULL DEFAULT 'missing',
+			    completeness_reason TEXT    NOT NULL DEFAULT '',
+			    graph_status        TEXT    NOT NULL DEFAULT 'ok' CHECK (graph_status IN ('ok', 'stale')),
+			    status_detail       TEXT    NOT NULL DEFAULT '',
+			    issues_json         TEXT    NOT NULL DEFAULT '[]',
+			    -- Transactionally maintained list aggregate (design §8.4
+			    -- "or an equivalent transactionally maintained summary"):
+			    -- recomputed inside every ReplaceCollaborationGraph
+			    -- transaction so the Session list reads one small table.
+			    child_count         INTEGER NOT NULL DEFAULT 0,
+			    active_count        INTEGER NOT NULL DEFAULT 0,
+			    problem_count       INTEGER NOT NULL DEFAULT 0,
+			    indexed_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+			    PRIMARY KEY (root_agent_type, root_session_id)
+			)`,
+			`CREATE TABLE IF NOT EXISTS collaboration_invocations (
+			    root_agent_type         TEXT    NOT NULL,
+			    root_session_id         TEXT    NOT NULL,
+			    invocation_id           TEXT    NOT NULL,
+			    ordinal                 INTEGER NOT NULL DEFAULT 0,
+			    is_root                 INTEGER NOT NULL DEFAULT 0,
+			    display_name            TEXT    NOT NULL DEFAULT '',
+			    agent_type              TEXT    NOT NULL DEFAULT '',
+			    role_label              TEXT    NOT NULL DEFAULT '',
+			    status                  TEXT    NOT NULL DEFAULT 'unknown',
+			    started_at              TEXT,
+			    ended_at                TEXT,
+			    time_precision_state    TEXT    NOT NULL DEFAULT 'missing',
+			    time_precision_reason   TEXT    NOT NULL DEFAULT '',
+			    content_precision_state TEXT    NOT NULL DEFAULT 'missing',
+			    content_precision_reason TEXT   NOT NULL DEFAULT '',
+			    backing_agent_type      TEXT    NOT NULL DEFAULT '',
+			    backing_session_id      TEXT    NOT NULL DEFAULT '',
+			    source_identity_json    TEXT    NOT NULL DEFAULT '{}',
+			    PRIMARY KEY (root_agent_type, root_session_id, invocation_id),
+			    FOREIGN KEY (root_agent_type, root_session_id)
+			        REFERENCES collaboration_roots(root_agent_type, root_session_id)
+			        ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_collaboration_invocations_root_status
+			    ON collaboration_invocations(root_agent_type, root_session_id, status)`,
+			`CREATE TABLE IF NOT EXISTS collaboration_delegations (
+			    root_agent_type       TEXT    NOT NULL,
+			    root_session_id       TEXT    NOT NULL,
+			    delegation_id         TEXT    NOT NULL,
+			    ordinal               INTEGER NOT NULL DEFAULT 0,
+			    parent_invocation_id  TEXT    NOT NULL,
+			    child_invocation_id   TEXT    NOT NULL,
+			    task_summary          TEXT    NOT NULL DEFAULT '',
+			    execution_mode        TEXT    NOT NULL DEFAULT 'unknown',
+			    trigger_json          TEXT,
+			    result_json           TEXT,
+			    evidence_json         TEXT    NOT NULL DEFAULT '{}',
+			    PRIMARY KEY (root_agent_type, root_session_id, delegation_id),
+			    FOREIGN KEY (root_agent_type, root_session_id)
+			        REFERENCES collaboration_roots(root_agent_type, root_session_id)
+			        ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_collaboration_delegations_parent
+			    ON collaboration_delegations(root_agent_type, root_session_id, parent_invocation_id)`,
+			`DELETE FROM index_watermarks`,
+		}
+		for _, stmt := range stmts {
+			if _, err := tx.Exec(stmt); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("v28 collaboration schema: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("v28 commit: %w", err)
 		}
 	}
 

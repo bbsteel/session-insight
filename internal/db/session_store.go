@@ -87,6 +87,14 @@ func (db *DB) UpdateSessionResumeID(agentType, sessionID, resumeID string) (bool
 	return rows > 0, nil
 }
 
+// rootSessionPredicate is the single canonical root-list filter (frozen
+// collaboration contract decision): adapters report child lineage faithfully
+// and never pre-filter children, and every root-only surface — list queries,
+// count queries, collaboration summary joins — shares this one predicate.
+// Backing child Sessions stay indexed and searchable; they are simply not
+// roots.
+const rootSessionPredicate = `is_subagent = 0`
+
 // CountRootSessionsByAgent returns the number of non-subagent sessions per
 // agent type from the index DB. Used by GET /api/agents so the catalog does
 // not re-scan every Agent's session files on disk (ListSessions can take tens
@@ -95,7 +103,7 @@ func (db *DB) CountRootSessionsByAgent() (map[string]int, error) {
 	rows, err := db.conn.Query(`
 		SELECT agent_type, COUNT(*)
 		FROM sessions
-		WHERE is_subagent = 0
+		WHERE ` + rootSessionPredicate + `
 		GROUP BY agent_type`)
 	if err != nil {
 		return nil, fmt.Errorf("count root sessions by agent: %w", err)
@@ -118,11 +126,28 @@ func (db *DB) CountRootSessionsByAgent() (map[string]int, error) {
 // agent type) ordered by updated_at descending — the sidebar list is served
 // straight from this query instead of re-scanning session files on disk.
 func (db *DB) ListSessionSummaries(agentType string) ([]model.Session, error) {
+	return db.listSessionSummaries(agentType, false)
+}
+
+// ListRootSessionSummaries is ListSessionSummaries restricted to root
+// Sessions through the shared rootSessionPredicate. This is the query behind
+// GET /api/sessions; the handler must not re-apply lineage filtering.
+func (db *DB) ListRootSessionSummaries(agentType string) ([]model.Session, error) {
+	return db.listSessionSummaries(agentType, true)
+}
+
+func (db *DB) listSessionSummaries(agentType string, rootsOnly bool) ([]model.Session, error) {
 	query := `SELECT agent_type, id, cwd, repository, branch, project, name, model_name, model_provider, resume_id, parent_session_id, agent_path, is_subagent,
 		                 turn_count, historical_turn_count, rolled_back_turn_count, message_count, created_at, updated_at
 	          FROM sessions`
 	var args []any
-	if agentType != "" {
+	switch {
+	case rootsOnly && agentType != "":
+		query += ` WHERE agent_type = ? AND ` + rootSessionPredicate
+		args = append(args, agentType)
+	case rootsOnly:
+		query += ` WHERE ` + rootSessionPredicate
+	case agentType != "":
 		query += ` WHERE agent_type = ?`
 		args = append(args, agentType)
 	}
@@ -173,6 +198,8 @@ func (db *DB) DeleteSessionData(agentType, sessionID string) error {
 		`DELETE FROM bookmarked_sessions WHERE agent_type = ? AND session_id = ?`,
 		`DELETE FROM ai_generations WHERE agent_type = ? AND session_id = ?`,
 		`DELETE FROM session_title_overrides WHERE agent_type = ? AND session_id = ?`,
+		// Cascades to the root's collaboration invocations and delegations.
+		`DELETE FROM collaboration_roots WHERE root_agent_type = ? AND root_session_id = ?`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt, agentType, sessionID); err != nil {

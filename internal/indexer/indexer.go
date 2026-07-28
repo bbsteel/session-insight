@@ -219,7 +219,7 @@ func (ix *Indexer) indexReaderSessions(
 			return changed, ctx.Err()
 		}
 		knownIDs = append(knownIDs, sess.ID)
-		did, err := ix.indexSession(r, sess)
+		did, err := ix.indexSession(ctx, r, sess)
 		if err != nil {
 			log.Printf("[indexer] %s/%s: index error: %v", r.AgentType(), sess.ID, err)
 			sessionErrs = append(sessionErrs, fmt.Sprintf("%s: %v", sess.ID, err))
@@ -246,7 +246,7 @@ func (ix *Indexer) indexReaderSessions(
 }
 
 // indexSession 返回是否发生了实际写入（watermark 未变时跳过并返回 false）。
-func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) (bool, error) {
+func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader, sess model.Session) (bool, error) {
 	agentType := r.AgentType()
 	revision := sess.UpdatedAt.UnixNano()
 
@@ -255,9 +255,17 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 		return false, fmt.Errorf("get watermark: %w", err)
 	}
 	if exists && storedRev == revision {
-		// Turn content is unchanged, but lightweight metadata may need a
-		// migration backfill (notably Codex resume_id).
-		return ix.db.UpdateSessionResumeID(agentType, sess.ID, sess.ResumeID)
+		// The turn index is current, but a missing/older collaboration
+		// revision (for example right after the v28 backfill or a manual
+		// cleanup) must still fall through to a full pass — otherwise the
+		// collaboration index could stay permanently "unchanged".
+		if collabCurrent, err := ix.collaborationCurrent(r, agentType, sess, revision); err != nil {
+			return false, err
+		} else if collabCurrent {
+			// Turn content is unchanged, but lightweight metadata may need a
+			// migration backfill (notably Codex resume_id).
+			return ix.db.UpdateSessionResumeID(agentType, sess.ID, sess.ResumeID)
+		}
 	}
 
 	detail, err := r.GetSession(sess.ID)
@@ -292,11 +300,93 @@ func (ix *Indexer) indexSession(r reader.BaseSessionReader, sess model.Session) 
 		return false, fmt.Errorf("get render events: %w", err)
 	}
 
+	// Collaboration runs before UpsertTurns commits the shared revision: a
+	// collaboration failure aborts the session (watermark not advanced) so the
+	// next cycle retries instead of locking in a turn-only index. The previous
+	// complete graph is preserved inside the collaboration store either way.
+	if err := ix.indexCollaboration(ctx, r, persisted, revision); err != nil {
+		return false, err
+	}
+
 	turns := buildTurnTexts(persisted, detail, renderEvents)
 	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
 		return false, fmt.Errorf("upsert turns: %w", err)
 	}
 	return true, nil
+}
+
+// collaborationCurrent reports whether the stored collaboration graph already
+// matches the session revision. Readers without the optional
+// reader.CollaborationReader interface and non-root (backing child) sessions
+// are always "current": no graph is fabricated or indexed for them.
+func (ix *Indexer) collaborationCurrent(r reader.BaseSessionReader, agentType string, sess model.Session, revision int64) (bool, error) {
+	if _, ok := r.(reader.CollaborationReader); !ok || sess.IsSubagent {
+		return true, nil
+	}
+	collabRev, _, err := ix.db.CollaborationRevision(agentType, sess.ID)
+	if err != nil {
+		return false, fmt.Errorf("collaboration revision: %w", err)
+	}
+	return collabRev == revision, nil
+}
+
+// indexCollaboration parses and persists the normalized collaboration graph
+// for one root Session revision. It returns nil without any write when the
+// reader lacks the optional interface, the session is a backing child (never
+// a second collaboration root), or the stored revision is already current
+// (explicit unchanged-revision skip). Any parse, validation, or persistence
+// failure preserves the previous complete graph, marks it stale (contract
+// stale_graph_retained semantics), and surfaces an error so the shared turn
+// watermark is not advanced.
+func (ix *Indexer) indexCollaboration(ctx context.Context, r reader.BaseSessionReader, sess model.Session, revision int64) error {
+	cr, ok := r.(reader.CollaborationReader)
+	if !ok || sess.IsSubagent {
+		return nil
+	}
+	agentType := r.AgentType()
+
+	collabRev, _, err := ix.db.CollaborationRevision(agentType, sess.ID)
+	if err != nil {
+		return fmt.Errorf("collaboration revision: %w", err)
+	}
+	if collabRev == revision {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	graph, err := cr.ReadCollaboration(ctx, sess)
+	if err != nil {
+		ix.markCollaborationStale(agentType, sess.ID, err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("read collaboration: %w", err)
+	}
+	if graph.RootAgentType != agentType || graph.RootSessionID != sess.ID {
+		err := fmt.Errorf("collaboration graph root %s/%s does not match requested session %s/%s",
+			graph.RootAgentType, graph.RootSessionID, agentType, sess.ID)
+		ix.markCollaborationStale(agentType, sess.ID, err)
+		return err
+	}
+	// Collaboration and turn indexing share the session revision; the store
+	// advances it only when the replacement transaction commits.
+	graph.Revision = revision
+	if err := ix.db.ReplaceCollaborationGraph(graph); err != nil {
+		ix.markCollaborationStale(agentType, sess.ID, err)
+		return fmt.Errorf("replace collaboration graph: %w", err)
+	}
+	return nil
+}
+
+// markCollaborationStale flags the retained graph as the last complete
+// revision. Best-effort: a marking failure is logged but never masks the
+// original indexing error.
+func (ix *Indexer) markCollaborationStale(agentType, sessionID string, cause error) {
+	if err := ix.db.MarkCollaborationStale(agentType, sessionID, cause.Error()); err != nil {
+		log.Printf("[indexer] %s/%s: mark collaboration stale: %v", agentType, sessionID, err)
+	}
 }
 
 func applyDetailMetadata(base *model.Session, detail model.Session) {
