@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Collaboration Timeline Production Harness</title>
+    <link rel="stylesheet" href="./dist/harness.css" />
+    <style>
+      /* Harness chrome only; component styles come from src/app.css. */
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        font: 13px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #harness-tag {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--border-default);
+        font-size: 12px;
+        color: var(--text-secondary);
+        flex: 0 0 auto;
+      }
+      #harness-tag .tag {
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+      }
+      #mount {
+        flex: 0 0 auto;
+        border-bottom: 1px solid var(--border-default);
+      }
+      #term-stub {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+        background: var(--bg-inset);
+        color: var(--text-muted);
+        font: 11px/1.6 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', 'Consolas', monospace;
+        padding: 8px 12px;
+        white-space: pre-line;
+      }
+    </style>
+  </head>
+  <body>
+    <header id="harness-tag">
+      <span class="tag">Production timeline harness</span>
+      <span>Standalone CollaborationTimeline core; terminal integration is out of scope.</span>
+    </header>
+    <div id="mount"></div>
+    <div id="term-stub"></div>
+    <script type="module" src="./dist/harness.js"></script>
+  </body>
+</html>
