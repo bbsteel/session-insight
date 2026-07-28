@@ -21,6 +21,7 @@ type mockReader struct {
 	listErr         error
 	getSessionErr   error
 	getSessionCalls *int32
+	listCalls       *int32
 }
 
 func (m *mockReader) AgentType() string { return m.agentType }
@@ -28,12 +29,46 @@ func (m *mockReader) AgentType() string { return m.agentType }
 func (m *mockReader) DisplayName() string { return m.agentType }
 
 func (m *mockReader) ListSessions() ([]model.Session, error) {
+	if m.listCalls != nil {
+		atomic.AddInt32(m.listCalls, 1)
+	}
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
 	result := make([]model.Session, len(m.sessions))
 	copy(result, m.sessions)
 	return result, nil
+}
+
+func TestIndexer_AgentFilteredCycleSkipsOtherReaders(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	var selectedCalls, skippedCalls int32
+	selected := &mockReader{
+		agentType: "selected",
+		listCalls: &selectedCalls,
+		details:   map[string]*model.SessionDetail{},
+	}
+	skipped := &mockReader{
+		agentType: "skipped",
+		listCalls: &skippedCalls,
+		details:   map[string]*model.SessionDetail{},
+	}
+	ix := New(database, []reader.BaseSessionReader{selected, skipped})
+
+	if err := ix.indexOnce(context.Background(), map[string]struct{}{"selected": {}}); err != nil {
+		t.Fatalf("filtered indexOnce: %v", err)
+	}
+	if got := atomic.LoadInt32(&selectedCalls); got != 1 {
+		t.Fatalf("selected ListSessions calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&skippedCalls); got != 0 {
+		t.Fatalf("skipped ListSessions calls = %d, want 0", got)
+	}
 }
 
 func (m *mockReader) GetSession(id string) (*model.SessionDetail, error) {

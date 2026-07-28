@@ -57,6 +57,22 @@ func TestCodexToRenderEventsCustomToolInputAndSingleResult(t *testing.T) {
 	}
 }
 
+func TestIndexDetailFromEvents(t *testing.T) {
+	detail := indexDetailFromEvents(model.Session{ID: "s1"}, []model.RenderEvent{
+		{Type: "UserPrompt", TurnIndex: 0, Text: "question"},
+		{Type: "TextChunk", TurnIndex: 0, Text: "answer"},
+		{Type: "ToolInvocation", TurnIndex: 0, ToolName: "exec"},
+		{Type: "ToolResult", TurnIndex: 0, ExitCode: 1, Stderr: "failed"},
+	})
+	if len(detail.Turns) != 1 {
+		t.Fatalf("turns=%d, want 1", len(detail.Turns))
+	}
+	turn := detail.Turns[0]
+	if turn.UserMessage != "question" || turn.AssistantMessage != "answer" || turn.ToolCallCount != 1 || turn.ErrorCount != 1 {
+		t.Fatalf("unexpected index turn: %#v", turn)
+	}
+}
+
 func TestCodexToRenderEventsUnwrapsExecApplyPatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	lines := []string{
