@@ -1278,7 +1278,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.aiPanel')}
           >
-            ✨ AI
+            {t('replay.sessionAnalysis')}
           </button>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
