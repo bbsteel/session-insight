@@ -18,7 +18,7 @@ function terminalUrls(lineText: string): UrlMatch[] {
     let parenDepth = 0
     for (; end < lineText.length; end++) {
       const ch = lineText[end]
-      if (/\s|[<>{}\[\]"']/.test(ch)) break
+      if (/\s|[<>{}"']/.test(ch) || ch === '[' || ch === ']') break
       if (ch === '(') parenDepth++
       if (ch === ')') {
         if (parenDepth === 0) break
