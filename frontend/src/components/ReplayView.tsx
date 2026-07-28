@@ -1282,14 +1282,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           <span className="text-[var(--border-default)]">|</span>
           <button
             onClick={() => setShowAIPanel(true)}
-            className={`h-7 rounded-md border px-2 text-nav font-medium ${
+            className={`h-7 rounded-md px-2 text-nav ${
               showAIPanel
-                ? 'border-[var(--accent-blue)] bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] text-[var(--accent-blue)]'
-                : 'border-[color-mix(in_srgb,var(--accent-blue)_45%,transparent)] text-[var(--accent-blue)]'
+                ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'text-[var(--text-secondary)]'
             } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.aiPanel')}
+            aria-expanded={showAIPanel}
+            aria-controls="session-assistant-panel"
           >
-            {t('replay.sessionAnalysis')}
+            {t('replay.sessionAssistant')}
           </button>
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
