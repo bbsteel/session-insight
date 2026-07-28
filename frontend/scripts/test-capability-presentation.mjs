@@ -120,6 +120,7 @@ assert.equal(actionAvailabilityLabelKey('runtime_check_required'), 'capability.a
 
 // --- unknown reason / capability fallbacks ---
 assert.equal(reasonCodeLabelKey('session_not_finalized'), 'capability.reason.session_not_finalized')
+assert.equal(reasonCodeLabelKey('name_heuristic'), 'capability.reason.name_heuristic')
 assert.equal(reasonCodeLabelKey('totally_unknown_code_xyz'), 'capability.reason.unknown')
 assert.equal(reasonCodeLabelKey(''), null)
 assert.equal(capabilityLabelKey('tokens'), 'capability.id.tokens')

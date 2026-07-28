@@ -1,0 +1,71 @@
+{
+  "root_agent_type": "chrys",
+  "root_session_id": "28491d6d491e",
+  "revision": 4,
+  "completeness": {
+    "state": "estimated",
+    "reason_code": "source_not_recorded"
+  },
+  "invocations": [
+    {
+      "id": "chrys:28491d6d491e:root",
+      "display_name": "chrys main agent",
+      "agent_type": "chrys",
+      "status": "completed",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "root_session",
+        "native_id": "28491d6d491e"
+      }
+    },
+    {
+      "id": "chrys:28491d6d491e:child:call_orphan_1",
+      "display_name": "explore_agent",
+      "agent_type": "chrys",
+      "role_label": "explore_agent",
+      "status": "completed",
+      "started_at": "2026-01-02T00:00:05Z",
+      "ended_at": "2026-01-02T00:00:09Z",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "provider_call_id",
+        "native_id": "call_orphan_1"
+      }
+    }
+  ],
+  "delegations": [
+    {
+      "id": "chrys:28491d6d491e:child:call_gone->chrys:28491d6d491e:child:call_orphan_1",
+      "parent_invocation_id": "chrys:28491d6d491e:child:call_gone",
+      "child_invocation_id": "chrys:28491d6d491e:child:call_orphan_1",
+      "execution_mode": "unknown",
+      "evidence": {
+        "trigger": {
+          "state": "missing",
+          "reason_code": "source_not_recorded"
+        },
+        "timing": {
+          "state": "exact"
+        },
+        "task": {
+          "state": "missing",
+          "reason_code": "source_not_recorded"
+        },
+        "result": {
+          "state": "missing",
+          "reason_code": "source_not_recorded"
+        }
+      }
+    }
+  ]
+}

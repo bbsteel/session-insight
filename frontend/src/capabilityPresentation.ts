@@ -161,6 +161,7 @@ export function reasonCodeLabelKey(code: string | undefined | null): string | nu
     'session_not_finalized',
     'resume_id_missing',
     'timestamp_heuristic',
+    'name_heuristic',
     'revision_unavailable',
     'session_running',
     'session_not_live',

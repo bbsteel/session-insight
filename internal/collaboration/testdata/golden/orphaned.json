@@ -1,0 +1,79 @@
+{
+  "root_agent_type": "copilot",
+  "root_session_id": "collab-copilot-1",
+  "revision": 12,
+  "completeness": {
+    "state": "exact"
+  },
+  "invocations": [
+    {
+      "id": "copilot:collab-copilot-1:root",
+      "display_name": "copilot main agent",
+      "agent_type": "copilot",
+      "status": "completed",
+      "time_precision": {
+        "state": "exact"
+      },
+      "content_precision": {
+        "state": "exact"
+      },
+      "source_identity": {
+        "kind": "root_session",
+        "native_id": "collab-copilot-1"
+      }
+    },
+    {
+      "id": "copilot:collab-copilot-1:child:call-task-B",
+      "display_name": "Review Agent",
+      "agent_type": "copilot",
+      "status": "orphaned",
+      "started_at": "2026-01-01T00:03:00Z",
+      "time_precision": {
+        "state": "estimated",
+        "reason_code": "completion_not_recorded"
+      },
+      "content_precision": {
+        "state": "estimated",
+        "reason_code": "aggregate_window"
+      },
+      "source_identity": {
+        "kind": "tool_call_id",
+        "native_id": "call-task-B"
+      }
+    }
+  ],
+  "delegations": [
+    {
+      "id": "copilot:collab-copilot-1:root->copilot:collab-copilot-1:child:call-task-B",
+      "parent_invocation_id": "copilot:collab-copilot-1:root",
+      "child_invocation_id": "copilot:collab-copilot-1:child:call-task-B",
+      "trigger": {
+        "agent_type": "copilot",
+        "session_id": "collab-copilot-1",
+        "tool_call_id": "call-task-B",
+        "timestamp": "2026-01-01T00:02:00Z",
+        "precision": {
+          "state": "exact"
+        }
+      },
+      "task_summary": "Review the diff",
+      "execution_mode": "background",
+      "evidence": {
+        "trigger": {
+          "state": "exact"
+        },
+        "timing": {
+          "state": "estimated",
+          "reason_code": "completion_not_recorded"
+        },
+        "task": {
+          "state": "exact"
+        },
+        "result": {
+          "state": "missing",
+          "reason_code": "completion_not_recorded"
+        }
+      }
+    }
+  ]
+}
