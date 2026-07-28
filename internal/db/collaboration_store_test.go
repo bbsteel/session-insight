@@ -412,21 +412,21 @@ func TestCollaborationSummariesStatusGrouping(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("summaries = %d, want 3: %v", len(all), all)
 	}
-	busy := all["codex\x00busy"]
+	busy := all[CollaborationKey("codex", "busy")]
 	if busy.ChildCount != 8 || busy.ActiveCount != 3 || busy.ProblemCount != 2 {
 		t.Fatalf("busy summary = %+v, want 8 children / 3 active / 2 problem", busy)
 	}
 	if busy.Precision != string(collaboration.EvidenceExact) {
 		t.Fatalf("busy precision = %q, want exact", busy.Precision)
 	}
-	solo, ok := all["codex\x00solo"]
+	solo, ok := all[CollaborationKey("codex", "solo")]
 	if !ok {
 		t.Fatal("zero-child root must still produce an (exact zero) summary")
 	}
-	if solo.ChildCount != 0 || solo.ActiveCount != 0 || solo.ProblemCount != 0 || solo.Precision != "exact" {
+	if solo.ChildCount != 0 || solo.ActiveCount != 0 || solo.ProblemCount != 0 || solo.Precision != string(collaboration.EvidenceExact) {
 		t.Fatalf("solo summary = %+v, want exact zero", solo)
 	}
-	claudeBusy := all["claude\x00busy"]
+	claudeBusy := all[CollaborationKey("claude", "busy")]
 	if claudeBusy.ChildCount != 1 {
 		t.Fatalf("composite identity leak: claude/busy = %+v", claudeBusy)
 	}
@@ -445,7 +445,7 @@ func TestCollaborationSummariesStatusGrouping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	busy = all["codex\x00busy"]
+	busy = all[CollaborationKey("codex", "busy")]
 	if busy.Precision != string(collaboration.EvidenceEstimated) || busy.ReasonCode != string(collaboration.ReasonStaleGraphRetained) {
 		t.Fatalf("stale summary = %+v, want estimated/stale_graph_retained", busy)
 	}
@@ -480,7 +480,7 @@ func TestCollaborationSummariesMaintainedConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	summary := summaries["codex\x00busy"]
+	summary := summaries[CollaborationKey("codex", "busy")]
 	if summary.ChildCount != child || summary.ActiveCount != active || summary.ProblemCount != problem {
 		t.Fatalf("maintained counts %+v diverge from grouped recomputation %d/%d/%d",
 			summary, child, active, problem)
