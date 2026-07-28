@@ -25,7 +25,9 @@ function terminalUrls(lineText: string): UrlMatch[] {
         parenDepth--
       }
     }
-    const value = lineText.slice(start, end).replace(/[.,;:!?]+$/, '')
+    // Sentence delimiters are commonly attached to a URL in prose. Keep ! and
+    // ? intact: both are meaningful URL characters in paths and query values.
+    const value = lineText.slice(start, end).replace(/[.,;:]+$/, '')
     if (value) urls.push({ value, start, end: start + value.length })
     HTTP_URL_START.lastIndex = Math.max(end, start + 1)
   }
@@ -33,7 +35,7 @@ function terminalUrls(lineText: string): UrlMatch[] {
   return urls
 }
 
-/** Returns the first http(s) URL on a terminal row, excluding trailing prose punctuation. */
+/** Returns the preferred http(s) URL, favoring Markdown destinations over labels. */
 export function extractTerminalUrl(lineText: string): string | null {
   const urls = terminalUrls(lineText)
   // Markdown links render as `label (destination)`. Prefer their destination

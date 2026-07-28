@@ -14,6 +14,8 @@ assert.equal(
   extractTerminalUrl('Read (https://example.test/a_(b)).'),
   'https://example.test/a_(b)',
 )
+assert.equal(extractTerminalUrl('See https://example.test/?q=!'), 'https://example.test/?q=!')
+assert.equal(extractTerminalUrl('See https://example.test/path!'), 'https://example.test/path!')
 assert.equal(extractTerminalUrl('no external link'), null)
 assert.equal(extractTerminalUrl('javascript:alert(1)'), null)
 console.log('terminal URL detection tests passed')
