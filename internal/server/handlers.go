@@ -42,7 +42,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	list, err := s.DB.ListSessionSummaries(agentFilter)
+	// Root filtering lives in exactly one place — the session-store predicate
+	// (frozen collaboration contract); the handler must not re-filter lineage.
+	// Backing child Sessions remain indexed and searchable but are not roots.
+	list, err := s.DB.ListRootSessionSummaries(agentFilter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -53,18 +56,22 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One grouped query for every root's collaboration aggregate — never a
+	// per-row query or filesystem read. A failure degrades to omitted
+	// summaries (the same shape as unsupported/not-indexed), never a list
+	// outage.
+	collabSummaries, err := s.DB.CollaborationSummaries(agentFilter)
+	if err != nil {
+		log.Printf("GET /api/sessions: CollaborationSummaries: %v", err)
+		collabSummaries = nil
+	}
+
 	overrides := s.titleOverrides()
 	sessions := make([]SessionSummary, 0, len(list))
 	for _, sess := range list {
 		// AI generations drive local agent CLIs from a scratch temp dir;
 		// those CLIs log their own sessions, which are noise in this list.
 		if llm.IsScratchCWD(sess.CWD) {
-			continue
-		}
-		// Collaborative Codex children inherit the parent's conversation and
-		// therefore look like same-title duplicates. They remain indexed for
-		// global search and future parent/child navigation, but are not roots.
-		if sess.IsSubagent {
 			continue
 		}
 		key := db.BookmarkKey(sess.AgentType, sess.ID)
@@ -76,6 +83,15 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		summary := s.sessionToSummary(sess)
 		if bookmarked {
 			summary.BookmarkNote = bookmarkNote
+		}
+		if agg, ok := collabSummaries[db.CollaborationKey(sess.AgentType, sess.ID)]; ok {
+			summary.Collaboration = &CollaborationSummary{
+				ChildCount:   agg.ChildCount,
+				ActiveCount:  agg.ActiveCount,
+				ProblemCount: agg.ProblemCount,
+				Precision:    agg.Precision,
+				ReasonCode:   agg.ReasonCode,
+			}
 		}
 		sessions = append(sessions, summary)
 	}
@@ -439,6 +455,15 @@ func (s *Server) handleRenderSession(w http.ResponseWriter, r *http.Request) {
 
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	opts := render.ParseTimestampKinds(r.URL.Query().Get("ts"))
+
+	// Optional invocation dimension (collaboration contract): embedded and
+	// backed invocations route through the stored graph; the root invocation
+	// and legacy no-invocation requests keep the current behavior.
+	if invocationID := r.URL.Query().Get("invocation"); invocationID != "" {
+		if s.routeInvocationRender(w, r, id, invocationID, cols, opts) {
+			return
+		}
+	}
 
 	var lastErr error
 	for _, rd := range s.Readers {

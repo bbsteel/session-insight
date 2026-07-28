@@ -102,8 +102,10 @@ func (db *DB) DeleteOrphansByAgent(agentType string, knownSessionIDs []string) (
 		 UNION
 		 SELECT DISTINCT session_id FROM index_watermarks WHERE agent_type = ?
 		 UNION
-		 SELECT DISTINCT id FROM sessions WHERE agent_type = ?`,
-		agentType, agentType, agentType,
+		 SELECT DISTINCT id FROM sessions WHERE agent_type = ?
+		 UNION
+		 SELECT DISTINCT root_session_id FROM collaboration_roots WHERE root_agent_type = ?`,
+		agentType, agentType, agentType, agentType,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("query existing sessions: %w", err)
@@ -175,6 +177,13 @@ func (db *DB) DeleteOrphansByAgent(agentType string, knownSessionIDs []string) (
 			args...,
 		); err != nil {
 			return 0, fmt.Errorf("delete orphan sessions batch: %w", err)
+		}
+		// Cascades to collaboration invocations/delegations of orphan roots.
+		if _, err := tx.Exec(
+			`DELETE FROM collaboration_roots WHERE root_agent_type = ? AND root_session_id IN (`+inClause+`)`,
+			args...,
+		); err != nil {
+			return 0, fmt.Errorf("delete orphan collaboration roots batch: %w", err)
 		}
 	}
 

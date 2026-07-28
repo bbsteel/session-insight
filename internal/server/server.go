@@ -75,6 +75,9 @@ type SessionSummary struct {
 	BookmarkNote        string `json:"bookmark_note,omitempty"`
 	CreatedAt           string `json:"created_at"`
 	UpdatedAt           string `json:"updated_at"`
+	// Collaboration is the optional compact aggregate for root Sessions with
+	// an indexed collaboration graph (three counts + precision only).
+	Collaboration *CollaborationSummary `json:"collaboration_summary,omitempty"`
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
@@ -94,6 +97,7 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/collaboration", s.handleGetCollaboration)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	s.Mux.HandleFunc("POST /api/sessions/{id}/stop", s.handleStopSession)
 	s.Mux.HandleFunc("PUT /api/sessions/{id}/bookmark", s.handleAddBookmark)
