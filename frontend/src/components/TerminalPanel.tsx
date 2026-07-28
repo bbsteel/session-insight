@@ -534,20 +534,37 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // DOM children under container. Clicking it jumps back to that message.
     let stickyBarEl: HTMLDivElement | null = null
     let stickyLabelEl: HTMLSpanElement | null = null
+    let stickyNextBarEl: HTMLDivElement | null = null
+    let stickyNextLabelEl: HTMLSpanElement | null = null
     let stickyTextEl: HTMLSpanElement | null = null
     let currentStickyRange: UserHighlightRange | null = null
+    let currentStickyNextKey: string | null = null
+    const nextUserMessage = (range: UserHighlightRange): UserHighlightRange | null => {
+      const ranges = userPositionsRef.current
+      const index = ranges.findIndex(candidate => candidate.key === range.key)
+      return index >= 0 ? ranges[index + 1] ?? null : null
+    }
     const updateStickyUserMsg = () => {
       if (disposed || !stickyBarEl) return
       const next = computeStickyUserMsg()
-      if ((next?.key ?? null) === (currentStickyRange?.key ?? null)) return
+      const nextUser = next && nextUserMessage(next)
+      if ((next?.key ?? null) === (currentStickyRange?.key ?? null) && (nextUser?.key ?? null) === currentStickyNextKey) return
       currentStickyRange = next
+      currentStickyNextKey = nextUser?.key ?? null
       if (!next) {
         stickyBarEl.style.display = 'none'
+        if (stickyNextBarEl) stickyNextBarEl.style.display = 'none'
         return
       }
       stickyBarEl.style.display = 'flex'
       if (stickyLabelEl) {
         stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
+      }
+      if (stickyNextBarEl) {
+        stickyNextBarEl.style.display = nextUser ? 'flex' : 'none'
+      }
+      if (stickyNextLabelEl && nextUser) {
+        stickyNextLabelEl.textContent = `↓ ${translatorRef.current('terminal.userMessage')}${typeof nextUser.seq === 'number' ? ` #${nextUser.seq}` : ''}`
       }
       if (stickyTextEl) {
         const text = next.text || ''
@@ -560,7 +577,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       if (!r) return
       onJumpToUserMessageRef.current?.(r.lineStart, r.logicalStart)
     }
+    const onStickyNextClick = () => {
+      const r = currentStickyRange && nextUserMessage(currentStickyRange)
+      if (r) onJumpToUserMessageRef.current?.(r.lineStart, r.logicalStart)
+    }
     let onStickyKeyDown: (e: KeyboardEvent) => void = () => {}
+    let onStickyNextKeyDown: (e: KeyboardEvent) => void = () => {}
 
     let onMouseMove: ((e: MouseEvent) => void) | null = null
     let onMouseLeave: (() => void) | null = null
@@ -702,14 +724,43 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         'flex-shrink:0', 'font-weight:600',
         'color:var(--accent-blue)',
       ].join(';')
+      stickyNextBarEl = document.createElement('div')
+      stickyNextBarEl.className = 'si-sticky-user-msg si-sticky-next-user-msg'
+      stickyNextBarEl.style.cssText = [
+        'position:absolute', 'bottom:0', 'left:0', 'right:0',
+        'display:none', 'align-items:center', 'justify-content:center',
+        'padding:4px 12px', 'z-index:10', 'cursor:pointer',
+        `font-family:${terminalFontFamily}`,
+        `font-size:${terminalFontSize}px`, 'line-height:1.4',
+        'white-space:nowrap', 'overflow:hidden',
+        'border-top:1px solid var(--border-default)',
+      ].join(';')
+      stickyNextBarEl.title = translatorRef.current('terminal.nextUserMessage')
+      stickyNextBarEl.setAttribute('role', 'button')
+      stickyNextBarEl.setAttribute('tabindex', '0')
+      stickyNextBarEl.setAttribute('aria-label', translatorRef.current('terminal.nextUserMessageLabel'))
+      onStickyNextKeyDown = (e: KeyboardEvent) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault()
+          onStickyNextClick()
+        }
+      }
+      stickyNextBarEl.addEventListener('click', onStickyNextClick)
+      stickyNextBarEl.addEventListener('keydown', onStickyNextKeyDown)
+      stickyNextLabelEl = document.createElement('span')
+      stickyNextLabelEl.style.cssText = [
+        'font-weight:600', 'color:var(--accent-blue)',
+      ].join(';')
+      stickyNextBarEl.appendChild(stickyNextLabelEl)
       stickyTextEl = document.createElement('span')
       stickyTextEl.style.cssText = [
-        'min-width:0', 'flex:1', 'overflow:hidden',
+        'min-width:0', 'flex:1', 'margin-left:10px', 'overflow:hidden',
         'text-overflow:ellipsis', 'white-space:nowrap',
       ].join(';')
       stickyBarEl.appendChild(stickyLabelEl)
       stickyBarEl.appendChild(stickyTextEl)
       container.appendChild(stickyBarEl)
+      container.appendChild(stickyNextBarEl)
 
       const xtermScreen = container.querySelector<HTMLElement>('.xterm-screen')
       const eventTarget = xtermScreen ?? container
@@ -1381,6 +1432,16 @@ const snapshotTerminal = () => {
           stickyBarEl.title = translatorRef.current('terminal.returnUserMessage')
           stickyBarEl.setAttribute('aria-label', translatorRef.current('terminal.returnUserMessageLabel'))
         }
+        if (stickyNextBarEl) {
+          stickyNextBarEl.title = translatorRef.current('terminal.nextUserMessage')
+          stickyNextBarEl.setAttribute('aria-label', translatorRef.current('terminal.nextUserMessageLabel'))
+        }
+        if (stickyNextLabelEl) {
+          const next = currentStickyRange && nextUserMessage(currentStickyRange)
+          stickyNextLabelEl.textContent = next
+            ? `↓ ${translatorRef.current('terminal.userMessage')}${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
+            : ''
+        }
         if (stickyLabelEl) {
           const seq = currentStickyRange?.seq
           stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof seq === 'number' ? ` #${seq}` : ''}`
@@ -2026,9 +2087,14 @@ const snapshotTerminal = () => {
       if (stickyBarEl) {
         stickyBarEl.removeEventListener('click', onStickyClick)
         stickyBarEl.removeEventListener('keydown', onStickyKeyDown)
+        stickyNextBarEl?.removeEventListener('click', onStickyNextClick)
+        stickyNextBarEl?.removeEventListener('keydown', onStickyNextKeyDown)
+        stickyNextBarEl?.remove()
         stickyBarEl.remove()
         stickyBarEl = null
         stickyLabelEl = null
+        stickyNextBarEl = null
+        stickyNextLabelEl = null
         stickyTextEl = null
       }
       if (controlRef) controlRef.current = null
