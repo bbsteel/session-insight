@@ -1,0 +1,365 @@
+{
+  "generatedAt": "2026-07-28T03:48:41.173Z",
+  "quick": false,
+  "runs": {
+    "layout": 25,
+    "layoutWarmup": 5,
+    "firstRender": 12,
+    "firstRenderWarmup": 2,
+    "scroll": 120,
+    "pan": 60,
+    "zoom": 30,
+    "hover": 40,
+    "select": 30,
+    "live": 50,
+    "switches": 20
+  },
+  "budgets": {
+    "typical": {
+      "layoutPlusFirstMs": 100,
+      "hoverMs": 50
+    },
+    "stress": {
+      "layoutMs": 50,
+      "visibleMs": 250,
+      "frameMs": 20
+    }
+  },
+  "environment": {
+    "machine": "x64",
+    "os": "Linux 6.16.12-valve24.4-1-neptune-616-gfe145653a794 x86_64",
+    "cpu": "AMD Custom APU 0405",
+    "node": "v22.23.1",
+    "npm": "10.9.8",
+    "chromium": "149.0.7827.55"
+  },
+  "results": [
+    {
+      "dataset": "typical",
+      "hash": "1d668f43",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "counts": {
+        "mounted": 83,
+        "labelRows": 16,
+        "stats": {
+          "totalRows": 30,
+          "visibleRows": 16,
+          "firstVisibleRow": 0,
+          "lastVisibleRow": 15,
+          "inputSegments": 222,
+          "mountedIntervals": 100,
+          "mountedEdges": 15,
+          "mountedMarkers": 32,
+          "mountedHitRegions": 16,
+          "mountedTotal": 163,
+          "culledEdges": 40
+        }
+      },
+      "range": {
+        "first": 0,
+        "last": 15,
+        "total": 30
+      },
+      "layout": {
+        "median": 0.09999999403953552,
+        "p95": 0.20000000298023224
+      },
+      "firstMount": {
+        "median": 5.350000001490116,
+        "p95": 6.299999997019768
+      },
+      "firstVisible": {
+        "median": 32.54999999701977,
+        "p95": 32.900000005960464
+      },
+      "layoutPlusFirst": {
+        "median": 32.75,
+        "p95": 33.1000000089407
+      },
+      "scroll": {
+        "median": 11.649999998509884,
+        "p95": 12.700000002980232,
+        "under20ms": 1
+      },
+      "pan": {
+        "median": 14.599999994039536,
+        "p95": 14.900000005960464,
+        "under20ms": 1
+      },
+      "zoom": {
+        "median": 14.799999997019768,
+        "p95": 15.100000008940697,
+        "under20ms": 1
+      },
+      "hover": {
+        "median": 13.299999997019768,
+        "p95": 18.799999997019768,
+        "under20ms": 0.95,
+        "hits": 40,
+        "samples": 40
+      },
+      "select": {
+        "median": 14.350000001490116,
+        "p95": 15,
+        "under20ms": 1
+      },
+      "live": {
+        "median": 14.799999997019768,
+        "p95": 15.600000008940697,
+        "under20ms": 1
+      },
+      "memoryMB": [
+        5.2807817459106445,
+        5.475351333618164,
+        5.310522079467773,
+        5.324854850769043,
+        5.319758415222168,
+        5.321924209594727,
+        5.339101791381836,
+        5.333518981933594,
+        5.3452653884887695,
+        5.356380462646484,
+        5.356265068054199,
+        5.359113693237305,
+        5.361196517944336,
+        5.362234115600586,
+        5.361554145812988,
+        5.3776750564575195,
+        5.377896308898926,
+        5.399968147277832,
+        5.397714614868164,
+        5.398847579956055,
+        5.460114479064941
+      ],
+      "budgetChecks": [
+        {
+          "name": "typical layout+first render < 100 ms",
+          "pass": true,
+          "value": "32.75 ms (median)"
+        },
+        {
+          "name": "typical hover/select < 50 ms",
+          "pass": true,
+          "value": "hover 13.30 / select 14.35 ms (median)"
+        }
+      ]
+    },
+    {
+      "dataset": "large",
+      "hash": "3d28f7ad",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "counts": {
+        "mounted": 80,
+        "labelRows": 16,
+        "stats": {
+          "totalRows": 100,
+          "visibleRows": 16,
+          "firstVisibleRow": 0,
+          "lastVisibleRow": 15,
+          "inputSegments": 291,
+          "mountedIntervals": 122,
+          "mountedEdges": 15,
+          "mountedMarkers": 31,
+          "mountedHitRegions": 16,
+          "mountedTotal": 184,
+          "culledEdges": 169
+        }
+      },
+      "range": {
+        "first": 0,
+        "last": 15,
+        "total": 100
+      },
+      "layout": {
+        "median": 0.20000000298023224,
+        "p95": 0.4000000059604645
+      },
+      "firstMount": {
+        "median": 6.550000004470348,
+        "p95": 7.200000002980232
+      },
+      "firstVisible": {
+        "median": 32.75,
+        "p95": 33.20000000298023
+      },
+      "layoutPlusFirst": {
+        "median": 32.99999999254942,
+        "p95": 36.79999999701977
+      },
+      "scroll": {
+        "median": 12.5,
+        "p95": 13.299999997019768,
+        "under20ms": 1
+      },
+      "pan": {
+        "median": 14.600000008940697,
+        "p95": 15,
+        "under20ms": 1
+      },
+      "zoom": {
+        "median": 14.699999988079071,
+        "p95": 14.899999991059303,
+        "under20ms": 1
+      },
+      "hover": {
+        "median": 14.5,
+        "p95": 14.799999997019768,
+        "under20ms": 0.975,
+        "hits": 40,
+        "samples": 40
+      },
+      "select": {
+        "median": 14.549999997019768,
+        "p95": 14.900000005960464,
+        "under20ms": 1
+      },
+      "live": {
+        "median": 14.649999998509884,
+        "p95": 14.900000005960464,
+        "under20ms": 1
+      },
+      "memoryMB": [
+        5.400028228759766,
+        5.516399383544922,
+        5.624050140380859,
+        5.615566253662109,
+        5.619281768798828,
+        5.671344757080078,
+        5.669277191162109,
+        5.669101715087891,
+        5.679584503173828,
+        5.69122314453125,
+        5.735240936279297,
+        5.695400238037109,
+        5.695931434631348,
+        5.698929786682129,
+        5.698395729064941,
+        5.703488349914551,
+        5.6983842849731445,
+        5.721432685852051,
+        5.717202186584473,
+        5.721711158752441,
+        5.735627174377441
+      ],
+      "budgetChecks": []
+    },
+    {
+      "dataset": "stress",
+      "hash": "331791a6",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "counts": {
+        "mounted": 83,
+        "labelRows": 16,
+        "stats": {
+          "totalRows": 200,
+          "visibleRows": 16,
+          "firstVisibleRow": 0,
+          "lastVisibleRow": 15,
+          "inputSegments": 558,
+          "mountedIntervals": 137,
+          "mountedEdges": 15,
+          "mountedMarkers": 32,
+          "mountedHitRegions": 16,
+          "mountedTotal": 200,
+          "culledEdges": 352
+        }
+      },
+      "range": {
+        "first": 0,
+        "last": 15,
+        "total": 200
+      },
+      "layout": {
+        "median": 0.30000000447034836,
+        "p95": 0.5999999940395355
+      },
+      "firstMount": {
+        "median": 9.049999997019768,
+        "p95": 11.100000008940697
+      },
+      "firstVisible": {
+        "median": 32.599999994039536,
+        "p95": 32.900000005960464
+      },
+      "layoutPlusFirst": {
+        "median": 33,
+        "p95": 33.69999998807907
+      },
+      "scroll": {
+        "median": 11.799999997019768,
+        "p95": 12.600000008940697,
+        "under20ms": 1
+      },
+      "pan": {
+        "median": 14.5,
+        "p95": 14.900000005960464,
+        "under20ms": 1
+      },
+      "zoom": {
+        "median": 14.599999994039536,
+        "p95": 14.900000005960464,
+        "under20ms": 1
+      },
+      "hover": {
+        "median": 14.5,
+        "p95": 15,
+        "under20ms": 1,
+        "hits": 40,
+        "samples": 40
+      },
+      "select": {
+        "median": 14.5,
+        "p95": 14.799999997019768,
+        "under20ms": 1
+      },
+      "live": {
+        "median": 14.549999997019768,
+        "p95": 15,
+        "under20ms": 1
+      },
+      "memoryMB": [
+        5.609607696533203,
+        5.813285827636719,
+        6.03665828704834,
+        6.039376258850098,
+        6.040595054626465,
+        6.051613807678223,
+        6.0366315841674805,
+        5.993946075439453,
+        6.003767013549805,
+        6.053842544555664,
+        6.050942420959473,
+        6.063000679016113,
+        6.0726728439331055,
+        6.107114791870117,
+        6.117448806762695,
+        6.123329162597656,
+        6.057596206665039,
+        6.062314987182617,
+        6.07988166809082,
+        6.084781646728516,
+        6.089790344238281
+      ],
+      "budgetChecks": [
+        {
+          "name": "stress pure layout < 50 ms",
+          "pass": true,
+          "value": "0.30 ms (median)"
+        },
+        {
+          "name": "stress visible result < 250 ms",
+          "pass": true,
+          "value": "32.60 ms (median)"
+        },
+        {
+          "name": "stress most direct-manipulation frames < 20 ms",
+          "pass": true,
+          "value": "scroll 100% / pan 100% under 20 ms"
+        }
+      ]
+    }
+  ]
+}

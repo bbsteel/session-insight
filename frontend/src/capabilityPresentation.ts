@@ -170,6 +170,11 @@ export function reasonCodeLabelKey(code: string | undefined | null): string | nu
     'adapter_not_implemented',
     'concept_absent',
     'platform_not_supported',
+    // Frozen collaboration contract reason codes (internal/collaboration).
+    'fifo_join_heuristic',
+    'aggregate_window',
+    'completion_not_recorded',
+    'stale_graph_retained',
   ])
   if (known.has(code)) return `capability.reason.${code}`
   return 'capability.reason.unknown'
