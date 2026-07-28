@@ -996,7 +996,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
             onFoldPathActivateRef.current(bufLine, {
               clientX: meta.clientX,
               clientY: meta.clientY,
-              column: meta.column,
+              // Keep the popover in the same joined-header coordinate space
+              // used to identify the path. Fall back to xterm's raw column
+              // when the normalized position is unavailable.
+              column: col ?? meta.column,
               lineText: joined,
               foldKey: fold.key,
             })
