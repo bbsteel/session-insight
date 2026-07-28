@@ -171,6 +171,17 @@ func TestReplaceCollaborationGraphGoldenRoundTrip(t *testing.T) {
 		if stored.GraphStatus != CollaborationGraphOK {
 			t.Fatalf("%s graph status = %q, want ok", name, stored.GraphStatus)
 		}
+		wantValidation, err := json.Marshal(collaboration.Validate(&graph))
+		if err != nil {
+			t.Fatalf("marshal expected validation for %s: %v", name, err)
+		}
+		gotValidation, err := json.Marshal(stored.Validation)
+		if err != nil {
+			t.Fatalf("marshal stored validation for %s: %v", name, err)
+		}
+		if string(gotValidation) != string(wantValidation) {
+			t.Fatalf("%s stored validation drift:\nwant: %s\ngot:  %s", name, wantValidation, gotValidation)
+		}
 	}
 }
 

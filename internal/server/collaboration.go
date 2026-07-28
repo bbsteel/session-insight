@@ -156,7 +156,7 @@ func (s *Server) handleGetCollaboration(w http.ResponseWriter, r *http.Request) 
 		TimeRange:     timeRange,
 		Invocations:   stored.Graph.Invocations,
 		Delegations:   stored.Graph.Delegations,
-		Validation:    collaboration.Validate(&stored.Graph),
+		Validation:    stored.Validation,
 	})
 }
 

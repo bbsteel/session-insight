@@ -307,9 +307,12 @@ func TestIndexerCollaborationFailurePreservesGraphAndWatermark(t *testing.T) {
 		t.Fatalf("turn watermark advanced past a failed collaboration write: rev=%d err=%v", rev, err)
 	}
 
-	// Recovery: the next successful cycle replaces the graph and clears stale.
+	// Recovery at the original session revision must still replace the stale
+	// graph: a source can revert UpdatedAt after a failed newer revision.
 	mr.collabErr = nil
 	mr.graphs["root"] = collabGraph("codex", "root", "c3")
+	mr.sessions[0].UpdatedAt = time.Unix(0, 100)
+	mr.details["root"] = collabSessionDetail("root", 100)
 	if err := ix.RunOnce(context.Background()); err != nil {
 		t.Fatalf("recovery RunOnce: %v", err)
 	}
@@ -317,7 +320,7 @@ func TestIndexerCollaborationFailurePreservesGraphAndWatermark(t *testing.T) {
 	if err != nil || stored == nil {
 		t.Fatalf("GetCollaboration after recovery: %v", err)
 	}
-	if stored.GraphStatus != db.CollaborationGraphOK || stored.Graph.Revision != 200 || len(stored.Graph.Invocations) != 2 {
+	if stored.GraphStatus != db.CollaborationGraphOK || stored.Graph.Revision != 100 || len(stored.Graph.Invocations) != 2 {
 		t.Fatalf("recovery state: status=%q rev=%d invocations=%d",
 			stored.GraphStatus, stored.Graph.Revision, len(stored.Graph.Invocations))
 	}

@@ -50,6 +50,7 @@ type StoredCollaboration struct {
 	GraphStatus  string // CollaborationGraphOK | CollaborationGraphStale
 	StatusDetail string
 	IndexedAt    string
+	Validation   collaboration.Validation
 }
 
 // fatalCollaborationIssue reports whether a validation finding is a reader
@@ -84,14 +85,11 @@ func (db *DB) ReplaceCollaborationGraph(g collaboration.CollaborationGraph) erro
 		}
 	}
 
-	issuesJSON := "[]"
-	if len(v.Issues) > 0 {
-		raw, err := json.Marshal(v.Issues)
-		if err != nil {
-			return fmt.Errorf("marshal collaboration issues: %w", err)
-		}
-		issuesJSON = string(raw)
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal collaboration validation: %w", err)
 	}
+	issuesJSON := string(raw)
 
 	// Transactionally maintained list aggregate: counts are derived from the
 	// validated graph and committed in the same transaction as the rows they
@@ -243,17 +241,25 @@ func collabAnchorJSON(a *collaboration.SourceAnchor) (any, error) {
 // exists is false when the root was never collaboration-indexed (or its
 // reader does not support collaboration).
 func (db *DB) CollaborationRevision(agentType, sessionID string) (revision int64, exists bool, err error) {
+	revision, _, exists, err = db.CollaborationIndexState(agentType, sessionID)
+	return revision, exists, err
+}
+
+// CollaborationIndexState returns the stored graph revision and lifecycle
+// state for one root. A stale graph must be rebuilt even when its retained
+// revision matches the source session's revision.
+func (db *DB) CollaborationIndexState(agentType, sessionID string) (revision int64, graphStatus string, exists bool, err error) {
 	err = db.conn.QueryRow(
-		`SELECT revision FROM collaboration_roots WHERE root_agent_type = ? AND root_session_id = ?`,
+		`SELECT revision, graph_status FROM collaboration_roots WHERE root_agent_type = ? AND root_session_id = ?`,
 		agentType, sessionID,
-	).Scan(&revision)
+	).Scan(&revision, &graphStatus)
 	if err == sql.ErrNoRows {
-		return 0, false, nil
+		return 0, "", false, nil
 	}
 	if err != nil {
-		return 0, false, fmt.Errorf("collaboration revision: %w", err)
+		return 0, "", false, fmt.Errorf("collaboration index state: %w", err)
 	}
-	return revision, true, nil
+	return revision, graphStatus, true, nil
 }
 
 // MarkCollaborationStale flags the stored graph as the last complete indexed
@@ -282,15 +288,15 @@ func (db *DB) MarkCollaborationStale(agentType, sessionID, detail string) error 
 // collaboration-indexed.
 func (db *DB) GetCollaboration(agentType, sessionID string) (*StoredCollaboration, error) {
 	var stored StoredCollaboration
-	var completenessState, completenessReason string
+	var completenessState, completenessReason, validationJSON string
 	err := db.conn.QueryRow(
 		`SELECT revision, completeness_state, completeness_reason,
-		        graph_status, status_detail, indexed_at
+		        graph_status, status_detail, indexed_at, issues_json
 		 FROM collaboration_roots
 		 WHERE root_agent_type = ? AND root_session_id = ?`,
 		agentType, sessionID,
 	).Scan(&stored.Graph.Revision, &completenessState, &completenessReason,
-		&stored.GraphStatus, &stored.StatusDetail, &stored.IndexedAt)
+		&stored.GraphStatus, &stored.StatusDetail, &stored.IndexedAt, &validationJSON)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -302,6 +308,14 @@ func (db *DB) GetCollaboration(agentType, sessionID string) (*StoredCollaboratio
 	stored.Graph.Completeness = collaboration.FactEvidence{
 		State:      collaboration.EvidenceState(completenessState),
 		ReasonCode: collaboration.ReasonCode(completenessReason),
+	}
+	if err := json.Unmarshal([]byte(validationJSON), &stored.Validation); err != nil {
+		// v28 initially stored the issues array alone. Preserve compatibility
+		// with already-indexed graphs while new writes retain the full
+		// validation projection.
+		if err := json.Unmarshal([]byte(validationJSON), &stored.Validation.Issues); err != nil {
+			return nil, fmt.Errorf("decode collaboration validation: %w", err)
+		}
 	}
 
 	invRows, err := db.conn.Query(
@@ -462,9 +476,14 @@ func (db *DB) CollaborationSummaries(agentType string) (map[string]Collaboration
 			summary.Precision = string(collaboration.EvidenceEstimated)
 			summary.ReasonCode = string(collaboration.ReasonStaleGraphRetained)
 		}
-		out[agent+"\x00"+sessionID] = summary
+		out[CollaborationKey(agent, sessionID)] = summary
 	}
 	return out, rows.Err()
+}
+
+// CollaborationKey is the composite key used by CollaborationSummaries.
+func CollaborationKey(agentType, sessionID string) string {
+	return agentType + "\x00" + sessionID
 }
 
 // SessionIndexed reports whether the composite (agent type, session ID)

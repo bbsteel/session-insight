@@ -75,7 +75,7 @@ func seedCollaborationBench(tb testing.TB) *DB {
 		sid := fmt.Sprintf("sess-%05d", s)
 		// 10% backing children: present in the sessions table, never roots.
 		isSub := 0
-		if s%10 == 9 {
+		if s >= collabBenchSessions-collabBenchSessions/10 {
 			isSub = 1
 		}
 		ts := base.Add(time.Duration(s) * time.Minute).UTC().Format(time.RFC3339)
@@ -83,7 +83,7 @@ func seedCollaborationBench(tb testing.TB) *DB {
 			tb.Fatal(err)
 		}
 
-		if s >= collabBenchRoots || isSub == 1 {
+		if s >= collabBenchRoots {
 			continue
 		}
 		active, problem := 0, 0
@@ -116,6 +116,23 @@ func seedCollaborationBench(tb testing.TB) *DB {
 	if err := tx.Commit(); err != nil {
 		tb.Fatal(err)
 	}
+	for _, count := range []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"collaboration_roots", "SELECT COUNT(*) FROM collaboration_roots", collabBenchRoots},
+		{"collaboration_invocations", "SELECT COUNT(*) FROM collaboration_invocations", collabBenchRoots * (collabBenchChildren + 1)},
+		{"collaboration_delegations", "SELECT COUNT(*) FROM collaboration_delegations", collabBenchRoots * collabBenchChildren},
+	} {
+		var got int
+		if err := database.Conn().QueryRow(count.query).Scan(&got); err != nil {
+			tb.Fatalf("count %s: %v", count.name, err)
+		}
+		if got != count.want {
+			tb.Fatalf("%s = %d, want %d", count.name, got, count.want)
+		}
+	}
 	return database
 }
 
@@ -143,8 +160,8 @@ func BenchmarkCollaborationSummaries10k(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if len(summaries) == 0 {
-			b.Fatal("no summaries")
+		if len(summaries) != collabBenchRoots {
+			b.Fatalf("summaries = %d, want %d", len(summaries), collabBenchRoots)
 		}
 	}
 }
@@ -164,12 +181,12 @@ func BenchmarkCollaborationListPath10k(b *testing.B) {
 		}
 		attached := 0
 		for _, sess := range sessions {
-			if _, ok := summaries[sess.AgentType+"\x00"+sess.ID]; ok {
+			if _, ok := summaries[CollaborationKey(sess.AgentType, sess.ID)]; ok {
 				attached++
 			}
 		}
-		if attached == 0 {
-			b.Fatal("no summaries attached")
+		if attached != collabBenchRoots {
+			b.Fatalf("attached summaries = %d, want %d", attached, collabBenchRoots)
 		}
 	}
 }

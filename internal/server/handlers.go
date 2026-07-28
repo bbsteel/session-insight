@@ -84,7 +84,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if bookmarked {
 			summary.BookmarkNote = bookmarkNote
 		}
-		if agg, ok := collabSummaries[sess.AgentType+"\x00"+sess.ID]; ok {
+		if agg, ok := collabSummaries[db.CollaborationKey(sess.AgentType, sess.ID)]; ok {
 			summary.Collaboration = &CollaborationSummary{
 				ChildCount:   agg.ChildCount,
 				ActiveCount:  agg.ActiveCount,
