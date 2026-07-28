@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
 import { addBookmark, fetchAgents, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
+import { extractTerminalUrl } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
 import { sessionCapabilityHeaderHint, sessionTokenHeaderDisplay } from '../capabilityPresentation'
 import AgentIcon from './AgentIcon'
@@ -230,6 +231,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             ? (pos.payload.output_index as number)
             : matchIndex
           setOutputModalIdx(idx)
+        },
+      },
+      {
+        // Rendered Markdown links retain their destination in parentheses;
+        // open only http(s) URLs in a new tab. URL matching comes before the
+        // file matcher because URL path fragments are not local files.
+        match: (text: string) => extractTerminalUrl(text),
+        tooltip: t('replay.openLink'),
+        onActivate: (_bufLine: number, url: unknown) => {
+          if (typeof url === 'string') window.open(url, '_blank', 'noopener,noreferrer')
         },
       },
       {

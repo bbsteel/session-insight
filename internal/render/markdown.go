@@ -549,6 +549,12 @@ func (c *mdCtx) renderInline(n ast.Node, st inlineStyle) {
 		st2 := st
 		st2.fg = ColTool
 		c.renderInlineChildren(v, st2)
+		// A terminal cannot attach an href to the rendered label. Keep the
+		// destination visible so the frontend's URL matcher can open it and
+		// users can still copy it from a plain terminal transcript.
+		if destination := string(v.Destination); destination != "" {
+			c.emit(" ("+destination+")", st2)
+		}
 	case *ast.Image:
 		c.emit(collectText(v, c.source), inlineStyle{fg: ColTool})
 	case *ast.AutoLink:
