@@ -45,7 +45,7 @@
   ],
   "delegations": [
     {
-      "id": "claude:claude-root-0001:root-\u003eclaude:claude-root-0001:child:agent-a1b2c3",
+      "id": "claude:claude-root-0001:root->claude:claude-root-0001:child:agent-a1b2c3",
       "parent_invocation_id": "claude:claude-root-0001:root",
       "child_invocation_id": "claude:claude-root-0001:child:agent-a1b2c3",
       "trigger": {

@@ -44,7 +44,7 @@
   ],
   "delegations": [
     {
-      "id": "chrys:28491d6d491e:root-\u003echrys:28491d6d491e:child:call_sub_1",
+      "id": "chrys:28491d6d491e:root->chrys:28491d6d491e:child:call_sub_1",
       "parent_invocation_id": "chrys:28491d6d491e:root",
       "child_invocation_id": "chrys:28491d6d491e:child:call_sub_1",
       "trigger": {

@@ -63,7 +63,7 @@
   ],
   "delegations": [
     {
-      "id": "copilot:collab-copilot-1:child:call-nest-a-\u003ecopilot:collab-copilot-1:child:call-nest-b",
+      "id": "copilot:collab-copilot-1:child:call-nest-a->copilot:collab-copilot-1:child:call-nest-b",
       "parent_invocation_id": "copilot:collab-copilot-1:child:call-nest-a",
       "child_invocation_id": "copilot:collab-copilot-1:child:call-nest-b",
       "trigger": {
@@ -102,7 +102,7 @@
       }
     },
     {
-      "id": "copilot:collab-copilot-1:root-\u003ecopilot:collab-copilot-1:child:call-nest-a",
+      "id": "copilot:collab-copilot-1:root->copilot:collab-copilot-1:child:call-nest-a",
       "parent_invocation_id": "copilot:collab-copilot-1:root",
       "child_invocation_id": "copilot:collab-copilot-1:child:call-nest-a",
       "trigger": {

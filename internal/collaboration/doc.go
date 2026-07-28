@@ -56,4 +56,8 @@
 // Renderer note: this package must stay free of renderer-specific types.
 // The frontend layout contract (pure RenderPrimitives, SVG renderer) is
 // frozen separately and never enters the Go model.
+//
+// Validate changes to this package and its conformance skeleton with:
+//
+//	go test -count=1 -tags sqlite_fts5 ./internal/collaboration/ ./internal/reader/adaptertest/
 package collaboration

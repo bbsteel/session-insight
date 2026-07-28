@@ -732,12 +732,18 @@ func goldenPath(name string) string {
 	return filepath.Join("testdata", "golden", name+".json")
 }
 
+// marshalGolden is the canonical contract serialization: indented JSON
+// with HTML escaping disabled, so bytes are portable across writers
+// regardless of their default escaping (delegation IDs contain "->").
 func marshalGolden(g *CollaborationGraph) []byte {
-	b, err := json.MarshalIndent(g, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(g); err != nil {
 		panic(err)
 	}
-	return append(b, '\n')
+	return buf.Bytes()
 }
 
 // TestGoldenSerialization locks the stable JSON shape: each fixture
@@ -814,7 +820,7 @@ func TestGoldenValidation(t *testing.T) {
 }
 
 // TestGoldenDeterministicValidation proves validation is a pure function of
-// the graph: repeated runs and shuffled input order yield identical
+// the graph: repeated runs and reversed input order yield identical
 // findings and projections.
 func TestGoldenDeterministicValidation(t *testing.T) {
 	for _, tc := range goldenCases() {
@@ -824,6 +830,16 @@ func TestGoldenDeterministicValidation(t *testing.T) {
 			second := Validate(&g)
 			if !reflect.DeepEqual(first, second) {
 				t.Fatal("validation is not deterministic across repeated runs")
+			}
+			reversed := tc.graph()
+			for i, j := 0, len(reversed.Invocations)-1; i < j; i, j = i+1, j-1 {
+				reversed.Invocations[i], reversed.Invocations[j] = reversed.Invocations[j], reversed.Invocations[i]
+			}
+			for i, j := 0, len(reversed.Delegations)-1; i < j; i, j = i+1, j-1 {
+				reversed.Delegations[i], reversed.Delegations[j] = reversed.Delegations[j], reversed.Delegations[i]
+			}
+			if got := Validate(&reversed); !reflect.DeepEqual(got, first) {
+				t.Fatalf("validation depends on input order:\n ordered: %+v\nreversed: %+v", first, got)
 			}
 		})
 	}

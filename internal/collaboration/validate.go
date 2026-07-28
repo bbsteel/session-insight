@@ -108,40 +108,64 @@ func (v Validation) Has(code IssueCode) bool {
 // always produces the same Validation.
 func Validate(g *CollaborationGraph) Validation {
 	v := Validation{CanonicalParent: map[string]string{}}
+	if g == nil {
+		v.Issues = append(v.Issues, Issue{Code: IssueMissingField, Field: "graph",
+			Detail: "graph: a collaboration graph is required"})
+		return v
+	}
 
 	// --- Field-level checks -------------------------------------------------
-	checkFact := func(f FactEvidence, owner, field string) {
+	checkFact := func(f FactEvidence, owner, field, invID, delID string) {
 		if !isKnownEvidenceState(f.State) {
 			v.Issues = append(v.Issues, Issue{
-				Code:   IssueInvalidEvidence,
-				Field:  field,
-				Detail: fmt.Sprintf("%s: unknown evidence state %q", owner, f.State),
+				Code:         IssueInvalidEvidence,
+				InvocationID: invID,
+				DelegationID: delID,
+				Field:        field,
+				Detail:       fmt.Sprintf("%s: unknown evidence state %q", owner, f.State),
 			})
 			return
 		}
-		if f.State != EvidenceExact && strings.TrimSpace(f.ReasonCode) == "" {
+		if f.State == EvidenceExact {
+			return
+		}
+		if strings.TrimSpace(string(f.ReasonCode)) == "" {
 			v.Issues = append(v.Issues, Issue{
-				Code:   IssueInvalidEvidence,
-				Field:  field,
-				Detail: fmt.Sprintf("%s: non-exact fact %q requires a reason code", owner, f.State),
+				Code:         IssueInvalidEvidence,
+				InvocationID: invID,
+				DelegationID: delID,
+				Field:        field,
+				Detail:       fmt.Sprintf("%s: non-exact fact %q requires a reason code", owner, f.State),
+			})
+			return
+		}
+		if !IsKnownReasonCode(f.ReasonCode) {
+			v.Issues = append(v.Issues, Issue{
+				Code:         IssueInvalidEvidence,
+				InvocationID: invID,
+				DelegationID: delID,
+				Field:        field,
+				Detail: fmt.Sprintf("%s: reason code %q is not declared by the contract "+
+					"(extend the ReasonCode constants with matching frontend copy instead of emitting ad-hoc codes)", owner, f.ReasonCode),
 			})
 		}
 	}
-	checkAnchor := func(a *SourceAnchor, owner, field string) {
+	checkAnchor := func(a *SourceAnchor, owner, field, delID string) {
 		if a == nil {
 			return
 		}
 		if !validIDComponent(a.AgentType) || !validIDComponent(a.SessionID) {
 			v.Issues = append(v.Issues, Issue{
-				Code:   IssueMissingField,
-				Field:  field,
-				Detail: owner + ": anchor requires agent_type and session_id",
+				Code:         IssueMissingField,
+				DelegationID: delID,
+				Field:        field,
+				Detail:       owner + ": anchor requires agent_type and session_id",
 			})
 		}
-		checkFact(a.Precision, owner, field+".precision")
+		checkFact(a.Precision, owner, field+".precision", "", delID)
 	}
 
-	checkFact(g.Completeness, "graph", "completeness")
+	checkFact(g.Completeness, "graph", "completeness", "", "")
 
 	invByID := map[string]int{}
 	for i, inv := range g.Invocations {
@@ -162,8 +186,8 @@ func Validate(g *CollaborationGraph) Validation {
 			v.Issues = append(v.Issues, Issue{Code: IssueInvalidStatus, InvocationID: inv.ID, Field: "status",
 				Detail: fmt.Sprintf("%s: unknown status %q (unknown is first-class; never omit status)", owner, inv.Status)})
 		}
-		checkFact(inv.TimePrecision, owner, "time_precision")
-		checkFact(inv.ContentPrecision, owner, "content_precision")
+		checkFact(inv.TimePrecision, owner, "time_precision", inv.ID, "")
+		checkFact(inv.ContentPrecision, owner, "content_precision", inv.ID, "")
 		if inv.BackingSession != nil &&
 			(!validIDComponent(inv.BackingSession.AgentType) || !validIDComponent(inv.BackingSession.SessionID)) {
 			v.Issues = append(v.Issues, Issue{Code: IssueMissingField, InvocationID: inv.ID, Field: "backing_session",
@@ -219,12 +243,12 @@ func Validate(g *CollaborationGraph) Validation {
 			v.Issues = append(v.Issues, Issue{Code: IssueInvalidExecutionMode, DelegationID: d.ID, Field: "execution_mode",
 				Detail: fmt.Sprintf("%s: unknown execution_mode %q", owner, d.ExecutionMode)})
 		}
-		checkFact(d.Evidence.Trigger, owner, "evidence.trigger")
-		checkFact(d.Evidence.Timing, owner, "evidence.timing")
-		checkFact(d.Evidence.Task, owner, "evidence.task")
-		checkFact(d.Evidence.Result, owner, "evidence.result")
-		checkAnchor(d.Trigger, owner, "trigger")
-		checkAnchor(d.Result, owner, "result")
+		checkFact(d.Evidence.Trigger, owner, "evidence.trigger", "", d.ID)
+		checkFact(d.Evidence.Timing, owner, "evidence.timing", "", d.ID)
+		checkFact(d.Evidence.Task, owner, "evidence.task", "", d.ID)
+		checkFact(d.Evidence.Result, owner, "evidence.result", "", d.ID)
+		checkAnchor(d.Trigger, owner, "trigger", d.ID)
+		checkAnchor(d.Result, owner, "result", d.ID)
 
 		if seenDelegationIDs[d.ID] {
 			v.Issues = append(v.Issues, Issue{Code: IssueDuplicateDelegation, DelegationID: d.ID,

@@ -20,31 +20,49 @@ const (
 	EvidenceUnsupported   = capability.CapabilityUnsupported
 )
 
+// ReasonCode is a stable, non-localized machine key explaining why a fact
+// is not exact. The set is closed at the contract level: frontend i18n maps
+// each code to display copy, so validation rejects codes not declared here.
+// Extend the constant block (with matching frontend copy) rather than
+// emitting ad-hoc strings.
+type ReasonCode string
+
 // Machine-readable, stable, non-localized reason codes for collaboration
 // facts that are not exact. Frontend i18n maps them to display copy.
 const (
 	// ReasonSourceNotRecorded: the source never persisted this fact.
-	ReasonSourceNotRecorded = "source_not_recorded"
+	ReasonSourceNotRecorded ReasonCode = "source_not_recorded"
 	// ReasonFIFOJoinHeuristic: the fact was inferred by a first-in-first-out
 	// join heuristic (Claude ToolResult → invocation link) rather than a
 	// stable ID join.
-	ReasonFIFOJoinHeuristic = "fifo_join_heuristic"
+	ReasonFIFOJoinHeuristic ReasonCode = "fifo_join_heuristic"
 	// ReasonAggregateWindow: content attribution is an estimated aggregate
 	// time window, never exact child content (Copilot lifecycle-only shape).
-	ReasonAggregateWindow = "aggregate_window"
+	ReasonAggregateWindow ReasonCode = "aggregate_window"
 	// ReasonCompletionNotRecorded: a start was observed but no completion
 	// was persisted before the Session stopped being live.
-	ReasonCompletionNotRecorded = "completion_not_recorded"
+	ReasonCompletionNotRecorded ReasonCode = "completion_not_recorded"
 	// ReasonStaleGraphRetained: indexing was interrupted; the graph is the
 	// last complete indexed revision, not a fresh parse.
-	ReasonStaleGraphRetained = "stale_graph_retained"
+	ReasonStaleGraphRetained ReasonCode = "stale_graph_retained"
 )
 
+// IsKnownReasonCode reports whether c is a declared contract reason code.
+func IsKnownReasonCode(c ReasonCode) bool {
+	switch c {
+	case ReasonSourceNotRecorded, ReasonFIFOJoinHeuristic, ReasonAggregateWindow,
+		ReasonCompletionNotRecorded, ReasonStaleGraphRetained:
+		return true
+	default:
+		return false
+	}
+}
+
 // FactEvidence is the precision state of one collaboration fact. Every
-// non-exact state requires a ReasonCode.
+// non-exact state requires a declared ReasonCode.
 type FactEvidence struct {
 	State      EvidenceState `json:"state"`
-	ReasonCode string        `json:"reason_code,omitempty"`
+	ReasonCode ReasonCode    `json:"reason_code,omitempty"`
 }
 
 // ExactFact returns a FactEvidence with state exact and no reason code.

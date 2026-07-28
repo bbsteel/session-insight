@@ -45,7 +45,7 @@
   ],
   "delegations": [
     {
-      "id": "copilot:collab-copilot-1:root-\u003ecopilot:collab-copilot-1:child:call-task-A",
+      "id": "copilot:collab-copilot-1:root->copilot:collab-copilot-1:child:call-task-A",
       "parent_invocation_id": "copilot:collab-copilot-1:root",
       "child_invocation_id": "copilot:collab-copilot-1:child:call-task-A",
       "trigger": {

@@ -43,7 +43,7 @@ func RequireCollaborationReader(t *testing.T, r Reader) CollaborationReader {
 	cr, ok := r.(CollaborationReader)
 	if !ok {
 		t.Fatalf("reader %T does not implement ReadCollaboration; the collaboration contract "+
-			"requires adapters declaring subtasks=exact to expose the normalized graph", r)
+			"requires adapters declaring subtasks support (exact or estimated) to expose the normalized graph", r)
 	}
 	return cr
 }
@@ -161,18 +161,17 @@ func AssertCollaborationTwoParseStability(t *testing.T, cr CollaborationReader, 
 			"identity material changed between parses\nfirst:  %s\nsecond: %s",
 			identitySignature(first), identitySignature(second))
 	}
-	if !reflect.DeepEqual(first.Invocations, second.Invocations) ||
-		!reflect.DeepEqual(first.Delegations, second.Delegations) {
-		t.Fatal("collaboration two-parse stability violated: invocations or delegations differ " +
-			"between parses beyond identity material (ordering and content must be deterministic)")
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal("collaboration two-parse stability violated: graph content differs between parses " +
+			"(root coordinates, revision, completeness, invocations, and delegations must all be deterministic)")
 	}
 }
 
 // RunCollaboration is the shared collaboration conformance entry point: two
-// parses for identity stability, full contract validation on the resulting
-// graph, and the caller-declared expectations. Call it from the adapter's
-// conformance test with a sanitized fixture that covers its subtasks
-// declaration.
+// parses for identity stability, a root-session ownership check, full
+// contract validation on the resulting graph, and the caller-declared
+// expectations. Call it from the adapter's conformance test with a
+// sanitized fixture that covers its subtasks declaration.
 func RunCollaboration(t *testing.T, r Reader, exp CollaborationExpect) {
 	t.Helper()
 	cr := RequireCollaborationReader(t, r)
@@ -180,6 +179,10 @@ func RunCollaboration(t *testing.T, r Reader, exp CollaborationExpect) {
 	g, err := cr.ReadCollaboration(context.Background(), exp.RootSession)
 	if err != nil {
 		t.Fatalf("ReadCollaboration: %v", err)
+	}
+	if g.RootSessionID != exp.RootSession.ID {
+		t.Fatalf("collaboration graph belongs to root session %q, not the requested %q: "+
+			"the reader must normalize the session it was given", g.RootSessionID, exp.RootSession.ID)
 	}
 	AssertCollaborationGraph(t, g)
 	for _, p := range CheckCollaborationExpect(g, exp) {

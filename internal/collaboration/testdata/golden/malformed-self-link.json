@@ -41,7 +41,7 @@
   ],
   "delegations": [
     {
-      "id": "chrys:28491d6d491e:child:call_sub_1-\u003echrys:28491d6d491e:child:call_sub_1",
+      "id": "chrys:28491d6d491e:child:call_sub_1->chrys:28491d6d491e:child:call_sub_1",
       "parent_invocation_id": "chrys:28491d6d491e:child:call_sub_1",
       "child_invocation_id": "chrys:28491d6d491e:child:call_sub_1",
       "execution_mode": "unknown",

@@ -250,6 +250,31 @@ func TestValidateMultipleParentsPreservesExtraEvidence(t *testing.T) {
 	}
 }
 
+func TestValidateNilGraph(t *testing.T) {
+	v := Validate(nil)
+	if !v.Has(IssueMissingField) {
+		t.Fatalf("nil graph must be a finding, not a panic: %+v", v.Issues)
+	}
+	if v.OK() {
+		t.Fatal("nil graph must not validate clean")
+	}
+}
+
+func TestValidateUnknownReasonCode(t *testing.T) {
+	g := validGraph()
+	g.Invocations[1].TimePrecision = FactEvidence{State: EvidenceEstimated, ReasonCode: ReasonCode("made_up_code")}
+	v := Validate(g)
+	if !v.Has(IssueInvalidEvidence) {
+		t.Fatalf("undeclared reason codes must be rejected: %+v", v.Issues)
+	}
+	for _, i := range v.Issues {
+		if i.Code == IssueInvalidEvidence && i.InvocationID == g.Invocations[1].ID {
+			return
+		}
+	}
+	t.Fatal("evidence finding must carry the owning invocation ID")
+}
+
 func TestValidateAnchorMissingReason(t *testing.T) {
 	g := validGraph()
 	g.Delegations[0].Trigger = &SourceAnchor{

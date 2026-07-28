@@ -20,9 +20,13 @@ covering a required frozen-contract case:
 
 Provenance: all IDs, timestamps, and labels are synthetic (aligned with the
 sanitized archetype evidence fixtures merged at session-insight commit
-`dc584ae`). No real session content is used. The files are generated from
-the builders in `golden_test.go`; regenerate after a deliberate contract
-change with:
+`dc584ae`). No real session content is used.
+
+Canonical serialization: indented JSON with HTML escaping **disabled**
+(`json.Encoder` with `SetEscapeHTML(false)`), so the bytes are portable
+across writers regardless of their default escaping — delegation IDs
+contain a literal `->` separator. The files are generated from the builders
+in `golden_test.go`; regenerate after a deliberate contract change with:
 
 ```bash
 go test ./internal/collaboration/ -run TestGolden -update
