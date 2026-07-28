@@ -235,6 +235,18 @@ func TestMarkdownImageRendersAlt(t *testing.T) {
 	}
 }
 
+func TestMarkdownLinkPreservesDestination(t *testing.T) {
+	const url = "https://github.com/bbsteel/session-insight/pull/87"
+	out := mdString("- PR：[Fix session analysis provider return](" + url + ")")
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "• PR：Fix session analysis provider return ("+url+")") {
+		t.Errorf("markdown link label or destination missing:\n%q", plain)
+	}
+	if !hasFg(out, ColTool) {
+		t.Errorf("expected markdown link on the tool/link slot:\n%q", out)
+	}
+}
+
 func TestMarkdownHeadingOnSkillSlot(t *testing.T) {
 	out := mdString("# Title\n\nbody")
 	if strings.Contains(out, "# Title") {
