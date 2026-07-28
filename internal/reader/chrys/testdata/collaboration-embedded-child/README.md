@@ -14,8 +14,9 @@ Structure mirrors `~/.chrys/sessions/<session-dir>/`:
 - `28491d6d491e/sub_agents/sessions/explore_agent_e9a4ee5e36db.json` — embedded
   child transcript (`record_type: "sub_agent_session"`). Its
   `meta.parent_provider_call_id: "call_sub_1"` is the exact join key to the
-  parent's `function_call`. `meta.status` and `meta.invocation_id` exist in
-  the source but are currently unused by the adapter.
+  parent's `function_call`. `meta.status` and `meta.invocation_id` are
+  consumed by the collaboration reader; the render/TurnVM paths leave them
+  unused.
 
 Facts this fixture evidences:
 
@@ -29,6 +30,9 @@ Facts this fixture evidences:
 - child records are structurally excluded from `ListSessions` (they live one
   level below the scanned session directories), so no child can appear as a
   root row;
-- current gaps (recorded, not fixed here): child `status`, `created_at`, and
-  `invocation_id` are parsed-or-present but unused, so running vs orphaned
-  children cannot be distinguished from adapter output today.
+- `meta.status` and `meta.invocation_id` are consumed by the collaboration
+  reader (`collaboration.go`): status is normalized onto the invocation, and
+  `invocation_id` is the contract-accepted identity fallback when
+  `parent_provider_call_id` is absent. The render/TurnVM paths still leave
+  them unused, so running vs orphaned children remain indistinguishable in
+  replay output.

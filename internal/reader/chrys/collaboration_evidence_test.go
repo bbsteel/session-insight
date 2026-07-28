@@ -49,8 +49,8 @@ func TestCollaborationEmbeddedChildExactJoin(t *testing.T) {
 		t.Errorf("parent_provider_call_id = %q, want call_sub_1", child.Meta.ParentProviderCallID)
 	}
 	// Source records an explicit terminal status and child timestamps; the
-	// adapter parses but never consumes them (running vs orphaned children
-	// are indistinguishable in adapter output today).
+	// collaboration reader (collaboration.go) consumes them, while the
+	// render/TurnVM paths still leave them unused.
 	if child.Meta.Status != "completed" {
 		t.Errorf("source status = %q, want completed", child.Meta.Status)
 	}
