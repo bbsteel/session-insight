@@ -252,6 +252,53 @@ func TestChrysReadCollaborationInvocationIDFallback(t *testing.T) {
 	}
 }
 
+// Two sidecars claiming one native ID are malformed source; the first in
+// deterministic path order wins and the read still succeeds.
+func TestChrysReadCollaborationDuplicateSidecar(t *testing.T) {
+	sessionsDir := t.TempDir()
+	dir := filepath.Join(sessionsDir, "rootdup")
+	writeChrysCollabSession(t, dir, `{
+  "meta": {"schema_version": 1, "session_id": "rootdup-full", "created_at": "2026-01-01T00:00:00+00:00",
+    "updated_at": "2026-01-01T00:01:00+00:00", "message_count": 2, "primary_cwd": "/tmp/proj", "title": "dup"},
+  "state": {"messages": [
+    {"type": "message", "role": "user",
+     "contents": [{"type": "text", "text": "dup case", "additional_properties": {}}],
+     "additional_properties": {"_chrys_created_at": "2026-01-01T00:00:00+00:00"}},
+    {"type": "message", "role": "assistant",
+     "contents": [{"type": "function_call", "call_id": "call_dup", "name": "explore_agent",
+       "arguments": "{\"prompt\": \"dup\"}", "additional_properties": {}}],
+     "additional_properties": {"_chrys_created_at": "2026-01-01T00:00:05+00:00"}}
+  ], "compressed_msgs": [], "turn_counter": 1}
+}`)
+	sidecar := func(name string) {
+		t.Helper()
+		writeChrysCollabSidecar(t, dir, name, `{
+  "meta": {"schema_version": 1, "record_type": "sub_agent_session", "parent_provider_call_id": "call_dup",
+    "tool_name": "explore_agent", "status": "completed",
+    "created_at": "2026-01-01T00:00:06+00:00", "updated_at": "2026-01-01T00:00:30+00:00"},
+  "state": {"messages": [], "compressed_msgs": [], "turn_counter": 0}
+}`)
+	}
+	sidecar("explore_agent_aaaaaaaa.json")
+	sidecar("explore_agent_bbbbbbbb.json")
+
+	r := New(sessionsDir)
+	list, err := r.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	g, err := r.ReadCollaboration(context.Background(), list[0])
+	if err != nil {
+		t.Fatalf("duplicate sidecars must not fail the whole read: %v", err)
+	}
+	if len(g.Invocations) != 2 || len(g.Delegations) != 1 {
+		t.Errorf("want root + one deduplicated child, got %+v", g)
+	}
+	if v := collaboration.Validate(&g); !v.OK() {
+		t.Errorf("graph must validate clean after dedupe, got %+v", v.Issues)
+	}
+}
+
 // A malformed sidecar is skipped; the remaining graph still validates.
 func TestChrysReadCollaborationMalformedSidecar(t *testing.T) {
 	sessionsDir := t.TempDir()

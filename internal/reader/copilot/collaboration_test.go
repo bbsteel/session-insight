@@ -317,6 +317,46 @@ func TestCopilotReadCollaborationPartialSource(t *testing.T) {
 	}
 }
 
+// A task event with an unparseable timestamp still yields an exact
+// toolCallId anchor, but never a zero-time timestamp presented as exact.
+func TestCopilotTriggerAnchorUnparseableTimestamp(t *testing.T) {
+	stateDir := t.TempDir()
+	dir := filepath.Join(stateDir, "badts-1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	events := `{"type":"user.message","timestamp":"2026-01-01T00:00:00Z","data":{"content":"bad ts"}}
+{"type":"tool.execution_start","timestamp":"not-a-time","data":{"toolName":"task","toolCallId":"call-badts","arguments":{"description":"Bad timestamp child"}}}
+{"type":"subagent.started","timestamp":"2026-01-01T00:00:02Z","data":{"toolCallId":"call-badts","agentDisplayName":"Bad TS Agent"}}
+`
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(events), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New(stateDir)
+	g, err := r.ReadCollaboration(context.Background(), model.Session{
+		ID:        "badts-1",
+		AgentType: "copilot",
+		UpdatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ReadCollaboration: %v", err)
+	}
+	if len(g.Delegations) != 1 {
+		t.Fatalf("want 1 delegation, got %+v", g.Delegations)
+	}
+	trigger := g.Delegations[0].Trigger
+	if trigger == nil || trigger.ToolCallID != "call-badts" ||
+		trigger.Precision.State != collaboration.EvidenceExact {
+		t.Fatalf("trigger = %+v, want exact toolCallId anchor", trigger)
+	}
+	if trigger.Timestamp != nil {
+		t.Errorf("unparseable task timestamp must stay absent, got %v", trigger.Timestamp)
+	}
+	if v := collaboration.Validate(&g); !v.OK() {
+		t.Errorf("graph must validate clean, got %+v", v.Issues)
+	}
+}
+
 // Cancellation is honored during the stream scan.
 func TestCopilotReadCollaborationCancelled(t *testing.T) {
 	r := New(collabCopilotFixtureStateDir(t))

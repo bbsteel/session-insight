@@ -277,19 +277,23 @@ func copilotChildCollaboration(rootSessionID, rootInvID string, child *copilotLi
 	}
 
 	// Trigger: the task tool.execution_start when present (it carries the
-	// delegation arguments), else the subagent.started lifecycle event.
+	// delegation arguments), else the subagent.started lifecycle event. The
+	// anchor is exact via the stable toolCallId; the timestamp is attached
+	// only when the source line carried a parseable one.
 	triggerTS := child.taskTS
 	if !child.hasTask {
 		triggerTS = child.started
 	}
 	if child.hasTask || child.hasStart {
-		ts := triggerTS
 		del.Trigger = &collaboration.SourceAnchor{
 			AgentType:  "copilot",
 			SessionID:  rootSessionID,
 			ToolCallID: child.toolCallID,
-			Timestamp:  &ts,
 			Precision:  collaboration.ExactFact(),
+		}
+		if !triggerTS.IsZero() {
+			ts := triggerTS
+			del.Trigger.Timestamp = &ts
 		}
 		del.Evidence.Trigger = collaboration.ExactFact()
 	} else {

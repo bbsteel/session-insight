@@ -284,6 +284,21 @@ func TestCodexCollaborationRenderAssociation(t *testing.T) {
 	}
 }
 
+// A trailing slash in agent_path must not leak into the role label.
+func TestCodexChildRoleLabelTrailingSlash(t *testing.T) {
+	inv, _ := codexChildCollaboration("root-1", collaboration.RootInvocationID("codex", "root-1"), model.Session{
+		ID:         "rollout-child-1",
+		AgentType:  "codex",
+		ResumeID:   "child-native-1",
+		AgentPath:  "/root/audit/",
+		IsSubagent: true,
+	})
+	if inv.RoleLabel != "audit" || inv.DisplayName != "audit" {
+		t.Errorf("role/display = %q/%q, want audit/audit (trailing slash stripped)",
+			inv.RoleLabel, inv.DisplayName)
+	}
+}
+
 // writeRollout writes one rollout JSONL under sessions/YYYY/MM/DD/.
 func writeRollout(t *testing.T, sessionsDir, stem, content string) {
 	t.Helper()

@@ -174,6 +174,7 @@ func (r *ChrysReader) discoverEmbeddedChildren(ctx context.Context, sessionDir s
 	sort.Strings(ordered)
 
 	var children []chrysEmbeddedChild
+	seenNative := map[string]bool{}
 	for _, path := range ordered {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -192,6 +193,14 @@ func (r *ChrysReader) discoverEmbeddedChildren(ctx context.Context, sessionDir s
 		if nativeID == "" {
 			continue
 		}
+		// Two sidecars claiming one native ID are malformed source; keeping
+		// both would collide on one invocation ID and fail the whole read.
+		// The first in deterministic (sorted path) order wins, matching
+		// Validate's first-occurrence-kept semantics.
+		if seenNative[nativeID] {
+			continue
+		}
+		seenNative[nativeID] = true
 		r, ok := rank[sf.Meta.ParentProviderCallID]
 		if !ok {
 			r = len(callOrder)

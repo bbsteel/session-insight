@@ -14,8 +14,9 @@ Structure mirrors `~/.chrys/sessions/<session-dir>/`:
 - `28491d6d491e/sub_agents/sessions/explore_agent_e9a4ee5e36db.json` — embedded
   child transcript (`record_type: "sub_agent_session"`). Its
   `meta.parent_provider_call_id: "call_sub_1"` is the exact join key to the
-  parent's `function_call`. `meta.status` and `meta.invocation_id` exist in
-  the source but are currently unused by the adapter.
+  parent's `function_call`. `meta.status` and `meta.invocation_id` are
+  consumed by the collaboration reader; the render/TurnVM paths leave them
+  unused.
 
 Facts this fixture evidences:
 

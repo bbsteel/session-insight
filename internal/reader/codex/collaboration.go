@@ -175,8 +175,8 @@ func codexChildCollaboration(rootSessionID, rootInvocationID string, child model
 	childInvID := collaboration.ChildInvocationID("codex", rootSessionID, child.ResumeID)
 
 	role := ""
-	if child.AgentPath != "" {
-		role = child.AgentPath[strings.LastIndex(strings.TrimSuffix(child.AgentPath, "/"), "/")+1:]
+	if trimmed := strings.TrimSuffix(child.AgentPath, "/"); trimmed != "" {
+		role = trimmed[strings.LastIndex(trimmed, "/")+1:]
 	}
 	displayName := role
 	if displayName == "" {
