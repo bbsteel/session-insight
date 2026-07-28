@@ -14,6 +14,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/yaml.v3"
 
+	"github.com/bbsteel/session-insight/internal/collaboration"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
@@ -56,7 +57,7 @@ func (r *CopilotReader) copilotEvents(id string) ([]model.RenderEvent, error) {
 	if _, err := os.Stat(eventsPath); err != nil {
 		return nil, fmt.Errorf("copilot session not found %q: %w", id, err)
 	}
-	return parseCopilotRenderEvents(eventsPath)
+	return parseCopilotRenderEventsForSession(eventsPath, id)
 }
 
 func (r *CopilotReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
@@ -558,6 +559,14 @@ func readTodos(sessionDir, sessionID string) []model.Todo {
 // parseCopilotRenderEvents parses a Copilot events.jsonl file into a flat
 // []model.RenderEvent stream suitable for render.FormatEvents.
 func parseCopilotRenderEvents(path string) ([]model.RenderEvent, error) {
+	return parseCopilotRenderEventsForSession(path, "")
+}
+
+// parseCopilotRenderEventsForSession additionally associates subagent
+// lifecycle events with their collaboration invocation when the session ID
+// is known. Parent-stream content stays root-associated: a reconstructed
+// time window is never exposed as exact child content.
+func parseCopilotRenderEventsForSession(path, sessionID string) ([]model.RenderEvent, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -717,13 +726,20 @@ func parseCopilotRenderEvents(path string) ([]model.RenderEvent, error) {
 				name, _ = extractString(jev.Data, "subagent_id")
 			}
 			if name != "" {
-				emit(model.RenderEvent{
+				evt := model.RenderEvent{
 					Type:      "AgentSpecific",
 					Subtype:   "subagent_started",
 					Timestamp: ts,
 					TurnIndex: currentTurnIndex(),
 					Text:      name,
-				})
+				}
+				// The lifecycle marker belongs to the child invocation keyed
+				// by toolCallId; everything else in the parent stream keeps
+				// the root default (empty InvocationID).
+				if tc, _ := extractString(jev.Data, "toolCallId"); tc != "" && sessionID != "" {
+					evt.InvocationID = collaboration.ChildInvocationID("copilot", sessionID, tc)
+				}
+				emit(evt)
 			}
 
 		case "session.model_change":

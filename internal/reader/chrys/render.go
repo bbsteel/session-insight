@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bbsteel/session-insight/internal/collaboration"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
@@ -56,6 +57,11 @@ type renderState struct {
 	events   []model.RenderEvent
 	eventCtr int
 	subIndex map[string]string
+	// rootSessionID namespaces child invocation IDs; invocationID is the
+	// child invocation currently being spliced (empty while emitting root
+	// events — absent InvocationID means the root invocation).
+	rootSessionID string
+	invocationID  string
 }
 
 func (rs *renderState) emit(e model.RenderEvent) string {
@@ -65,6 +71,9 @@ func (rs *renderState) emit(e model.RenderEvent) string {
 	}
 	if e.AgentType == "" {
 		e.AgentType = "chrys"
+	}
+	if e.InvocationID == "" {
+		e.InvocationID = rs.invocationID
 	}
 	rs.events = append(rs.events, e)
 	return e.EventID
@@ -80,7 +89,7 @@ func (r *ChrysReader) toRenderEvents(id string) ([]model.RenderEvent, error) {
 		return nil, fmt.Errorf("chrys session not found %q: %w", id, err)
 	}
 
-	rs := &renderState{subIndex: buildSubagentIndex(sessionDir)}
+	rs := &renderState{subIndex: buildSubagentIndex(sessionDir), rootSessionID: id}
 
 	if len(sf.State.CompressedMsgs) > 0 {
 		rs.emit(model.RenderEvent{Type: "CompactionBoundary", TurnIndex: 0})
@@ -297,6 +306,17 @@ func (rs *renderState) spliceSubagent(path string, turnIdx, depth int) {
 			Payload:   map[string]any{"reason": err.Error()},
 		})
 		return
+	}
+
+	// Every event of the embedded transcript is associated with the child
+	// invocation; parent events keep the root default (empty InvocationID).
+	nativeID := sf.Meta.ParentProviderCallID
+	if nativeID == "" {
+		nativeID = sf.Meta.InvocationID
+	}
+	if nativeID != "" && rs.rootSessionID != "" {
+		rs.invocationID = collaboration.ChildInvocationID("chrys", rs.rootSessionID, nativeID)
+		defer func() { rs.invocationID = "" }()
 	}
 
 	label := sf.Meta.AgentDisplayName

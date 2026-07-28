@@ -55,6 +55,7 @@ type sessionMeta struct {
 	// Sub-agent sidecar fields (record_type == "sub_agent_session").
 	RecordType           string `json:"record_type"`
 	ParentProviderCallID string `json:"parent_provider_call_id"`
+	InvocationID         string `json:"invocation_id"`
 	ToolName             string `json:"tool_name"`
 	Status               string `json:"status"`
 }

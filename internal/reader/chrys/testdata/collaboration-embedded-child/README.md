@@ -29,6 +29,9 @@ Facts this fixture evidences:
 - child records are structurally excluded from `ListSessions` (they live one
   level below the scanned session directories), so no child can appear as a
   root row;
-- current gaps (recorded, not fixed here): child `status`, `created_at`, and
-  `invocation_id` are parsed-or-present but unused, so running vs orphaned
-  children cannot be distinguished from adapter output today.
+- `meta.status` and `meta.invocation_id` are consumed by the collaboration
+  reader (`collaboration.go`): status is normalized onto the invocation, and
+  `invocation_id` is the contract-accepted identity fallback when
+  `parent_provider_call_id` is absent. The render/TurnVM paths still leave
+  them unused, so running vs orphaned children remain indistinguishable in
+  replay output.

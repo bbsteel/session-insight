@@ -35,7 +35,11 @@ Facts this fixture evidences:
   yielding aggregate counts only (request count, output tokens) — there is no
   independent child transcript, resume, or delete;
 - parsed evidence is identical across two independent parses;
-- current gaps (recorded, not fixed here): the render and TurnVM paths consume
-  only `subagent.started`, so an orphaned child looks identical to a finished
-  one in replay; only `started`/`completed` exist, with no explicit
-  failed/cancelled vocabulary.
+- the collaboration reader (`collaboration.go`) normalizes both lifecycle
+  events: completed vs orphaned (started-without-completed, root no longer
+  live) children are distinguished in the normalized graph, and
+  `subagent_started` render markers carry the child invocation ID;
+- remaining gap (recorded, not fixed here): the render and TurnVM paths
+  consume only `subagent.started`, so an orphaned child still looks identical
+  to a finished one in replay; only `started`/`completed` exist, with no
+  explicit failed/cancelled vocabulary.
