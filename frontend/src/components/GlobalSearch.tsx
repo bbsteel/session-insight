@@ -148,6 +148,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const [historyLimit, setHistoryLimit] = useState(readHistoryLimit)
   const [showSettings, setShowSettings] = useState(false)
   const [showAISettings, setShowAISettings] = useState(false)
+  const [returnToSettingsAfterAISettings, setReturnToSettingsAfterAISettings] = useState(false)
   // 侧边栏版本号点击 ⓘ 时经 si-open-settings 事件要求定位到「关于」Tab；
   // 关闭后复位，避免下次从齿轮按钮打开还停在「关于」。
   const [settingsInitialTab, setSettingsInitialTab] = useState<'about' | undefined>(undefined)
@@ -155,11 +156,14 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
   const containerRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
-  // Other views (e.g. the AI panel's "去配置模型源" guidance) open the AI
-  // provider modal through this window event — GlobalSearch is the one
-  // component mounted in every layout state.
+  // Other views (e.g. the session analysis panel's provider guidance) open
+  // the AI provider modal through this event. Closing it must return to the
+  // view that launched it, not to the general settings dialog.
   useEffect(() => {
-    const open = () => setShowAISettings(true)
+    const open = () => {
+      setReturnToSettingsAfterAISettings(false)
+      setShowAISettings(true)
+    }
     window.addEventListener('si-open-ai-settings', open)
     return () => window.removeEventListener('si-open-ai-settings', open)
   }, [])
@@ -492,11 +496,20 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
         historyLimit={historyLimit}
         onHistoryLimitChange={updateLimit}
         onClearHistory={clearHistory}
-        onOpenAISettings={() => setShowAISettings(true)}
+        onOpenAISettings={() => {
+          setReturnToSettingsAfterAISettings(true)
+          setShowAISettings(true)
+        }}
         initialTab={settingsInitialTab}
       />
     )}
-    {showAISettings && <AISettingsModal onClose={() => { setShowAISettings(false); setShowSettings(true) }} />}
+    {showAISettings && (
+      <AISettingsModal onClose={() => {
+        setShowAISettings(false)
+        if (returnToSettingsAfterAISettings) setShowSettings(true)
+        setReturnToSettingsAfterAISettings(false)
+      }} />
+    )}
     </>
   )
 }
