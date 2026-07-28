@@ -1277,6 +1277,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 : 'text-[var(--text-secondary)]'
             } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.aiPanel')}
+            aria-expanded={showAIPanel}
+            aria-controls="session-assistant-panel"
           >
             {t('replay.sessionAssistant')}
           </button>
