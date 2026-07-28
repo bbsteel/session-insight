@@ -14,10 +14,9 @@ type TurnText struct {
 	Content   string
 }
 
-// UpsertTurns 在一个事务内完成：
-//  1. 删除旧 turn_texts（触发 FTS5 delete 触发器）
-//  2. 批量插入新 turn_texts（触发 FTS5 insert 触发器）
-//  3. 更新 index_watermarks
+// UpsertTurns synchronizes a session's turn rows in one transaction, changing
+// only rows that actually differ. This avoids rebuilding the entire trigram
+// FTS document set when an active transcript merely appends to its last turn.
 //
 // turns 为空时仍然执行删除 + watermark 更新（会话内容清空的情况）。
 // revision 传入 session.UpdatedAt.UnixNano()。
@@ -28,37 +27,75 @@ func (db *DB) UpsertTurns(agentType, sessionID string, turns []TurnText, revisio
 	}
 	defer tx.Rollback()
 
-	// 1. 删除旧数据（触发器维护 FTS 同步）
-	if _, err := tx.Exec(
-		`DELETE FROM turn_texts WHERE agent_type = ? AND session_id = ?`,
+	type rowKey struct {
+		turnIndex int
+		role      string
+	}
+	existing := make(map[rowKey]string)
+	rows, err := tx.Query(
+		`SELECT turn_index, role, content FROM turn_texts WHERE agent_type = ? AND session_id = ?`,
 		agentType, sessionID,
-	); err != nil {
-		return fmt.Errorf("delete old turns: %w", err)
+	)
+	if err != nil {
+		return fmt.Errorf("query existing turns: %w", err)
+	}
+	for rows.Next() {
+		var key rowKey
+		var content string
+		if err := rows.Scan(&key.turnIndex, &key.role, &content); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan existing turns: %w", err)
+		}
+		existing[key] = content
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close existing turns: %w", err)
 	}
 
-	// 2. 批量插入（每批 100 条）
-	const batchSize = 100
-	for i := 0; i < len(turns); i += batchSize {
-		end := i + batchSize
-		if end > len(turns) {
-			end = len(turns)
-		}
-		batch := turns[i:end]
+	desired := make(map[rowKey]string, len(turns))
+	for _, turn := range turns {
+		desired[rowKey{turn.TurnIndex, turn.Role}] = turn.Content
+	}
 
-		placeholders := make([]string, len(batch))
-		args := make([]any, 0, len(batch)*5)
-		for j, t := range batch {
-			placeholders[j] = "(?, ?, ?, ?, ?)"
-			args = append(args, agentType, sessionID, t.TurnIndex, t.Role, t.Content)
+	deleteStmt, err := tx.Prepare(`DELETE FROM turn_texts WHERE agent_type = ? AND session_id = ? AND turn_index = ? AND role = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare delete turn: %w", err)
+	}
+	defer deleteStmt.Close()
+	updateStmt, err := tx.Prepare(`UPDATE turn_texts SET content = ? WHERE agent_type = ? AND session_id = ? AND turn_index = ? AND role = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare update turn: %w", err)
+	}
+	defer updateStmt.Close()
+	insertStmt, err := tx.Prepare(`INSERT INTO turn_texts(agent_type, session_id, turn_index, role, content) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare insert turn: %w", err)
+	}
+	defer insertStmt.Close()
+
+	for key := range existing {
+		if _, ok := desired[key]; !ok {
+			if _, err := deleteStmt.Exec(agentType, sessionID, key.turnIndex, key.role); err != nil {
+				return fmt.Errorf("delete removed turn: %w", err)
+			}
 		}
-		q := `INSERT OR REPLACE INTO turn_texts(agent_type, session_id, turn_index, role, content)
-		      VALUES ` + strings.Join(placeholders, ",")
-		if _, err := tx.Exec(q, args...); err != nil {
-			return fmt.Errorf("insert turns batch: %w", err)
+	}
+	for key, content := range desired {
+		if old, exists := existing[key]; exists {
+			if old == content {
+				continue
+			}
+			if _, err := updateStmt.Exec(content, agentType, sessionID, key.turnIndex, key.role); err != nil {
+				return fmt.Errorf("update changed turn: %w", err)
+			}
+			continue
+		}
+		if _, err := insertStmt.Exec(agentType, sessionID, key.turnIndex, key.role, content); err != nil {
+			return fmt.Errorf("insert new turn: %w", err)
 		}
 	}
 
-	// 3. 更新 watermark
+	// Advance the watermark only after every content mutation has succeeded.
 	if _, err := tx.Exec(
 		`INSERT INTO index_watermarks(agent_type, session_id, revision, indexed_at)
 		 VALUES (?, ?, ?, datetime('now'))

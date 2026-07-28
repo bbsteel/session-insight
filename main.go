@@ -72,6 +72,14 @@ func main() {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer database.Close()
+	if len(os.Args) == 2 && os.Args[1] == "--maintain-index" {
+		log.Printf("maintaining SQLite index at %s; this may take a while", dataDir)
+		if err := database.Maintain(); err != nil {
+			log.Fatalf("index maintenance failed: %v", err)
+		}
+		log.Printf("index maintenance complete")
+		return
+	}
 
 	readers := reader.Discover()
 	log.Printf("Discovered %d agent reader(s)", len(readers))
@@ -99,24 +107,27 @@ func main() {
 	// 代价只是侧栏计数/搜索晚几秒；新会话 Create 走 500ms 快窗口，秒级出现。
 	// 打开中的会话走 revision 轮询直读文件，不经过这条索引管道，不受影响。
 	// 监听器起不来只降级为"手动刷新页面"，不影响其他功能。
-	watcher, err := watch.New(500*time.Millisecond, 5*time.Second, func() {
-		idx.Kick()
-	})
-	if err != nil {
-		log.Printf("file watcher unavailable, sidebar live refresh disabled: %v", err)
-	} else {
-		roots := 0
-		for _, r := range readers {
-			if p, ok := r.(reader.WatchRootProvider); ok {
-				for _, root := range p.WatchRoots() {
-					watcher.Add(root)
-					roots++
-				}
-			}
+	roots := 0
+	for _, r := range readers {
+		p, ok := r.(reader.WatchRootProvider)
+		if !ok {
+			continue
+		}
+		agentType := r.AgentType()
+		watcher, err := watch.New(500*time.Millisecond, 5*time.Second, func() {
+			idx.KickAgent(agentType)
+		})
+		if err != nil {
+			log.Printf("%s watcher unavailable, live sidebar refresh disabled for this agent: %v", agentType, err)
+			continue
+		}
+		for _, root := range p.WatchRoots() {
+			watcher.Add(root)
+			roots++
 		}
 		go watcher.Run()
-		log.Printf("Watching %d session root(s) for live sidebar refresh", roots)
 	}
+	log.Printf("Watching %d session root(s) for live sidebar refresh", roots)
 
 	fileServer := http.FileServer(http.FS(frontendFS))
 	srv.Mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,10 +20,12 @@ import (
 
 type CodexReader struct {
 	sessionsDir string
+	pathsMu     sync.RWMutex
+	paths       map[string]string
 }
 
 func New(sessionsDir string) *CodexReader {
-	return &CodexReader{sessionsDir: sessionsDir}
+	return &CodexReader{sessionsDir: sessionsDir, paths: make(map[string]string)}
 }
 
 func (r *CodexReader) WatchRoots() []string { return []string{r.sessionsDir} }
@@ -49,6 +52,68 @@ func (r *CodexReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
 		}
 	}
 	return events, nil
+}
+
+// ReadIndexSnapshot builds the index-facing detail and render stream from one
+// transcript parse. Rollback transcripts retain the established detail parser
+// because their historical branch representation needs its richer state.
+func (r *CodexReader) ReadIndexSnapshot(ctx context.Context, session model.Session) (*model.SessionDetail, []model.RenderEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	path := r.findSessionFile(session.ID)
+	if path == "" {
+		return nil, nil, fmt.Errorf("codex session not found: %s", session.ID)
+	}
+	events, err := codexToRenderEvents(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, event := range events {
+		if event.Type == "RollbackStart" || event.Type == "RollbackEnd" || event.TurnIndex < 0 {
+			detail, err := r.GetSession(session.ID)
+			return detail, events, err
+		}
+	}
+	detail := indexDetailFromEvents(session, events)
+	return detail, events, nil
+}
+
+func indexDetailFromEvents(session model.Session, events []model.RenderEvent) *model.SessionDetail {
+	turns := make([]model.TurnVM, 0)
+	ensureTurn := func(index int) *model.TurnVM {
+		for len(turns) <= index {
+			turns = append(turns, model.TurnVM{TurnIndex: len(turns)})
+		}
+		return &turns[index]
+	}
+	for _, event := range events {
+		if event.TurnIndex < 0 {
+			continue
+		}
+		turn := ensureTurn(event.TurnIndex)
+		switch event.Type {
+		case "UserPrompt":
+			if event.Text != "" {
+				turn.UserMessage = event.Text
+			}
+		case "TextChunk":
+			turn.AssistantMessage += event.Text
+		case "ToolInvocation":
+			turn.ToolCallCount++
+			if event.ToolName != "" {
+				turn.ToolNames = append(turn.ToolNames, event.ToolName)
+			}
+		case "ToolResult":
+			if event.ExitCode != 0 || event.Stderr != "" || event.ErrorKind != "" || event.Rejected {
+				turn.ErrorCount++
+			}
+		}
+	}
+	session.TurnCount = len(turns)
+	detail := &model.SessionDetail{Session: session, Turns: turns}
+	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	return detail
 }
 
 func (r *CodexReader) RenderANSI(id string, cols int) (string, error) {
@@ -291,9 +356,16 @@ func (r *CodexReader) ListSessions() ([]model.Session, error) {
 	close(results)
 
 	var sessions []model.Session
+	paths := make(map[string]string, len(files))
 	for r := range results {
 		sessions = append(sessions, r.session)
 	}
+	for _, path := range files {
+		paths[strings.TrimSuffix(filepath.Base(path), ".jsonl")] = path
+	}
+	r.pathsMu.Lock()
+	r.paths = paths
+	r.pathsMu.Unlock()
 
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
@@ -523,6 +595,14 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 }
 
 func (r *CodexReader) findSessionFile(sessionID string) string {
+	r.pathsMu.RLock()
+	cached := r.paths[sessionID]
+	r.pathsMu.RUnlock()
+	if cached != "" {
+		if _, err := os.Stat(cached); err == nil {
+			return cached
+		}
+	}
 	var found string
 	filepath.WalkDir(r.sessionsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || found != "" {
@@ -533,6 +613,11 @@ func (r *CodexReader) findSessionFile(sessionID string) string {
 		}
 		return nil
 	})
+	if found != "" {
+		r.pathsMu.Lock()
+		r.paths[sessionID] = found
+		r.pathsMu.Unlock()
+	}
 	return found
 }
 

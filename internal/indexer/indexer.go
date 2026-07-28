@@ -33,6 +33,10 @@ type Indexer struct {
 	readers []reader.BaseSessionReader
 	kick    chan struct{}
 
+	requestMu      sync.Mutex
+	fullRequested  bool
+	agentRequested map[string]struct{}
+
 	// OnChanged（可选）在一轮索引产生实际变更（会话新增/更新/删除）后调用。
 	// SSE 通知挂在这里而不是文件监听回调上：等数据落库后再让侧栏重拉，
 	// 既不会读到旧数据，也不会跟正在跑的索引轮抢 CPU。
@@ -47,9 +51,10 @@ type Indexer struct {
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Indexer {
 	return &Indexer{
-		db:      database,
-		readers: readers,
-		kick:    make(chan struct{}, 1),
+		db:             database,
+		readers:        readers,
+		kick:           make(chan struct{}, 1),
+		agentRequested: make(map[string]struct{}),
 		progress: Progress{
 			State:   "idle",
 			Percent: 0,
@@ -86,16 +91,48 @@ func (ix *Indexer) setProgress(p Progress) {
 // 调用，让新会话秒级可搜，而不是等下一个 3 分钟周期）。非阻塞：索引正在
 // 跑时多次 Kick 合并为一次补跑。
 func (ix *Indexer) Kick() {
+	ix.requestMu.Lock()
+	ix.fullRequested = true
+	ix.requestMu.Unlock()
+	ix.notify()
+}
+
+// KickAgent requests an incremental pass for one agent only. File watchers
+// use this path so an active transcript does not force every unrelated agent
+// store to be re-listed. The periodic full pass remains the reconciliation
+// path for missed creates, deletes, and renames.
+func (ix *Indexer) KickAgent(agentType string) {
+	if agentType == "" {
+		ix.Kick()
+		return
+	}
+	ix.requestMu.Lock()
+	ix.agentRequested[agentType] = struct{}{}
+	ix.requestMu.Unlock()
+	ix.notify()
+}
+
+func (ix *Indexer) notify() {
 	select {
 	case ix.kick <- struct{}{}:
 	default:
 	}
 }
 
+func (ix *Indexer) takeRequests() (full bool, agents map[string]struct{}) {
+	ix.requestMu.Lock()
+	defer ix.requestMu.Unlock()
+	full = ix.fullRequested
+	ix.fullRequested = false
+	agents = ix.agentRequested
+	ix.agentRequested = make(map[string]struct{})
+	return full, agents
+}
+
 // RunOnce 执行一次完整的增量索引。
 // 返回聚合错误：第一个错误，或 nil（全部成功）。
 func (ix *Indexer) RunOnce(ctx context.Context) error {
-	return ix.indexOnce(ctx)
+	return ix.indexOnce(ctx, nil)
 }
 
 // RunBackground 在后台循环运行，每 IndexInterval 增量更新一次。
@@ -103,19 +140,26 @@ func (ix *Indexer) RunBackground(ctx context.Context) {
 	ticker := time.NewTicker(IndexInterval)
 	defer ticker.Stop()
 	for {
+		var agents map[string]struct{}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// A periodic full cycle reconciles missed watcher events and orphans.
 		case <-ix.kick:
+			full, requested := ix.takeRequests()
+			if !full {
+				agents = requested
+			}
 		}
-		if err := ix.indexOnce(ctx); err != nil {
+		if err := ix.indexOnce(ctx, agents); err != nil {
 			log.Printf("[indexer] background cycle error: %v", err)
 		}
 	}
 }
 
-func (ix *Indexer) indexOnce(ctx context.Context) error {
+func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{}) error {
+	cycleStarted := time.Now()
 	// Pre-count sessions so the UI can show a stable percentage.
 	type agentSessions struct {
 		reader   reader.BaseSessionReader
@@ -125,16 +169,24 @@ func (ix *Indexer) indexOnce(ctx context.Context) error {
 	planned := make([]agentSessions, 0, len(ix.readers))
 	total := 0
 	for _, r := range ix.readers {
+		if len(agentFilter) > 0 {
+			if _, ok := agentFilter[r.AgentType()]; !ok {
+				continue
+			}
+		}
 		if ctx.Err() != nil {
 			ix.setProgress(Progress{State: "idle", Message: "cancelled"})
 			return ctx.Err()
 		}
+		listStarted := time.Now()
 		sessions, err := r.ListSessions()
+		listElapsed := time.Since(listStarted)
 		if err != nil {
-			log.Printf("[indexer] %s: ListSessions error: %v", r.AgentType(), err)
+			log.Printf("[indexer] %s: ListSessions failed after %s: %v", r.AgentType(), listElapsed.Round(time.Millisecond), err)
 			planned = append(planned, agentSessions{reader: r, listErr: err})
 			continue
 		}
+		log.Printf("[indexer] %s: listed %d session(s) in %s", r.AgentType(), len(sessions), listElapsed.Round(time.Millisecond))
 		planned = append(planned, agentSessions{reader: r, sessions: sessions})
 		total += len(sessions)
 	}
@@ -192,6 +244,7 @@ func (ix *Indexer) indexOnce(ctx context.Context) error {
 	if changed > 0 && ix.OnChanged != nil {
 		ix.OnChanged()
 	}
+	log.Printf("[indexer] cycle complete: agents=%d sessions=%d changed=%d elapsed=%s", len(planned), total, changed, time.Since(cycleStarted).Round(time.Millisecond))
 	if len(errs) > 0 {
 		return fmt.Errorf("index once errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -247,6 +300,7 @@ func (ix *Indexer) indexReaderSessions(
 
 // indexSession 返回是否发生了实际写入（watermark 未变时跳过并返回 false）。
 func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader, sess model.Session) (bool, error) {
+	started := time.Now()
 	agentType := r.AgentType()
 	revision := sess.UpdatedAt.UnixNano()
 
@@ -274,9 +328,35 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		}
 	}
 
-	detail, err := r.GetSession(sess.ID)
-	if err != nil {
-		return false, fmt.Errorf("get session: %w", err)
+	var (
+		detail        *model.SessionDetail
+		renderEvents  []model.RenderEvent
+		detailElapsed time.Duration
+		renderElapsed time.Duration
+	)
+	if snapshotReader, ok := r.(reader.IndexSnapshotReader); ok {
+		snapshotStarted := time.Now()
+		var err error
+		detail, renderEvents, err = snapshotReader.ReadIndexSnapshot(ctx, sess)
+		detailElapsed = time.Since(snapshotStarted)
+		renderElapsed = 0
+		if err != nil {
+			return false, fmt.Errorf("read index snapshot: %w", err)
+		}
+	} else {
+		detailStarted := time.Now()
+		var err error
+		detail, err = r.GetSession(sess.ID)
+		detailElapsed = time.Since(detailStarted)
+		if err != nil {
+			return false, fmt.Errorf("get session: %w", err)
+		}
+		renderStarted := time.Now()
+		renderEvents, err = r.GetRenderEvents(sess.ID)
+		renderElapsed = time.Since(renderStarted)
+		if err != nil {
+			return false, fmt.Errorf("get render events: %w", err)
+		}
 	}
 	if detail == nil {
 		return false, fmt.Errorf("get session %s: reader returned nil detail", sess.ID)
@@ -298,26 +378,24 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		return false, err
 	}
 
-	// Render events carry tool inputs (command/path/query) that TurnVM often
-	// omits. Fail the session (do not advance the watermark) so a transient
-	// error is retried on the next cycle instead of locking in a partial index.
-	renderEvents, err := r.GetRenderEvents(sess.ID)
-	if err != nil {
-		return false, fmt.Errorf("get render events: %w", err)
-	}
-
 	// Collaboration runs before UpsertTurns commits the shared revision: a
 	// collaboration failure aborts the session (watermark not advanced) so the
 	// next cycle retries instead of locking in a turn-only index. The previous
 	// complete graph is preserved inside the collaboration store either way.
+	collabStarted := time.Now()
 	if err := ix.indexCollaboration(ctx, r, persisted, revision, collabCurrentKnown, collabCurrent); err != nil {
 		return false, err
 	}
+	collabElapsed := time.Since(collabStarted)
 
 	turns := buildTurnTexts(persisted, detail, renderEvents)
+	writeStarted := time.Now()
 	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
 		return false, fmt.Errorf("upsert turns: %w", err)
 	}
+	log.Printf("[indexer] %s/%s: indexed %d row(s) in %s (detail=%s render=%s collaboration=%s write=%s)",
+		agentType, sess.ID, len(turns), time.Since(started).Round(time.Millisecond), detailElapsed.Round(time.Millisecond),
+		renderElapsed.Round(time.Millisecond), collabElapsed.Round(time.Millisecond), time.Since(writeStarted).Round(time.Millisecond))
 	return true, nil
 }
 
