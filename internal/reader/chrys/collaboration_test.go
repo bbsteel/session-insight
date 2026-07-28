@@ -270,17 +270,17 @@ func TestChrysReadCollaborationDuplicateSidecar(t *testing.T) {
      "additional_properties": {"_chrys_created_at": "2026-01-01T00:00:05+00:00"}}
   ], "compressed_msgs": [], "turn_counter": 1}
 }`)
-	sidecar := func(name string) {
+	sidecar := func(name, status, createdAt string) {
 		t.Helper()
 		writeChrysCollabSidecar(t, dir, name, `{
   "meta": {"schema_version": 1, "record_type": "sub_agent_session", "parent_provider_call_id": "call_dup",
-    "tool_name": "explore_agent", "status": "completed",
-    "created_at": "2026-01-01T00:00:06+00:00", "updated_at": "2026-01-01T00:00:30+00:00"},
+    "tool_name": "explore_agent", "status": "`+status+`",
+    "created_at": "`+createdAt+`", "updated_at": "2026-01-01T00:00:30+00:00"},
   "state": {"messages": [], "compressed_msgs": [], "turn_counter": 0}
 }`)
 	}
-	sidecar("explore_agent_aaaaaaaa.json")
-	sidecar("explore_agent_bbbbbbbb.json")
+	sidecar("explore_agent_aaaaaaaa.json", "completed", "2026-01-01T00:00:06+00:00")
+	sidecar("explore_agent_bbbbbbbb.json", "running", "2026-01-01T00:00:07+00:00")
 
 	r := New(sessionsDir)
 	list, err := r.ListSessions()
@@ -292,7 +292,18 @@ func TestChrysReadCollaborationDuplicateSidecar(t *testing.T) {
 		t.Fatalf("duplicate sidecars must not fail the whole read: %v", err)
 	}
 	if len(g.Invocations) != 2 || len(g.Delegations) != 1 {
-		t.Errorf("want root + one deduplicated child, got %+v", g)
+		t.Fatalf("want root + one deduplicated child, got %+v", g)
+	}
+	// The lexicographically first sidecar wins deterministically: the child
+	// reflects explore_agent_aaaaaaaa.json (completed, 00:00:06), not
+	// explore_agent_bbbbbbbb.json (running, 00:00:07).
+	child := g.Invocations[1]
+	if child.Status != collaboration.StatusCompleted {
+		t.Errorf("deduped child status = %q, want completed from the first sidecar", child.Status)
+	}
+	wantStart := time.Date(2026, 1, 1, 0, 0, 6, 0, time.UTC)
+	if child.StartedAt == nil || !child.StartedAt.Equal(wantStart) {
+		t.Errorf("deduped child StartedAt = %v, want %v from the first sidecar", child.StartedAt, wantStart)
 	}
 	if v := collaboration.Validate(&g); !v.OK() {
 		t.Errorf("graph must validate clean after dedupe, got %+v", v.Issues)
