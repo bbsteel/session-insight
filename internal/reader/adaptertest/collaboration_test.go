@@ -13,10 +13,9 @@ import (
 // fakeCollabReader implements Reader plus CollaborationReader for skeleton
 // tests.
 type fakeCollabReader struct {
-	graph      collaboration.CollaborationGraph
-	alternate  *collaboration.CollaborationGraph // returned on the second read when set
-	reads      int
-	noCollabIF bool // unused marker for documentation
+	graph     collaboration.CollaborationGraph
+	alternate *collaboration.CollaborationGraph // returned on the second read when set
+	reads     int
 }
 
 func (f *fakeCollabReader) AgentType() string   { return "fake" }
