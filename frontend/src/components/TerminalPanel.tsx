@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { fetchRenderANSI, streamRenderANSI } from '../api'
-import { extractPathsAt } from '../filePathDetection'
+import { extractPathsAt, pathAtColumn } from '../filePathDetection'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
@@ -941,8 +941,13 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // Injected after every scanBuffer so a rewrite can't leave stale rows.
       //
       // Path-bearing headers (`◆ write (N 行) /path/file.md`) open the file
-      // menu instead of only toggling the fold. Soft-wrapped rows are joined
-      // so a long path split across display lines still counts.
+      // menu only when the click lands on the path token itself; every other
+      // spot on the header — the ▶/▼ triangle, tool name, counts — toggles
+      // the fold directly. Group headers like "▶ Tools (1/2)" carry slash
+      // tokens ("1/2") that are not files, so routing the whole row to the
+      // menu would make the triangle depend on opening the menu first.
+      // Soft-wrapped rows are joined so a long path split across display
+      // lines still counts.
       const joinWrappedLineText = (startRow: number): string => {
         const buf = term.buffer.active
         let text = buf.getLine(startRow)?.translateToString(true) ?? ''
@@ -970,14 +975,31 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         onActivate: (bufLine, fold, _matchIndex, meta) => {
           const groupStart = wrapGroupStart(bufLine)
           const joined = joinWrappedLineText(groupStart)
-          // Any path-like token on the (joined) header → file menu with fold
-          // toggle, not silent expand-only. Matches write/read/edit summaries.
-          const hasPath = extractPathsAt(joined, null, null).length > 0
-          if (hasPath && meta && onFoldPathActivateRef.current) {
+          // Map the click to an index in the joined header text. meta.column
+          // is an xterm cell column on the clicked row; a click on a
+          // soft-wrapped continuation row is offset by the preceding rows'
+          // text (±wide-char drift, absorbed by pathAtColumn's slack).
+          let col = meta?.column ?? null
+          if (col !== null && bufLine > groupStart) {
+            const buf = term.buffer.active
+            for (let r = groupStart; r < bufLine; r++) {
+              col += buf.getLine(r)?.translateToString(true).length ?? 0
+            }
+          }
+          // Only a hit on the path token itself opens the file menu (with
+          // fold toggle); the rest of the row toggles the fold directly.
+          // Column unknown → fall back to the old any-path-on-row routing.
+          const hitPath = col !== null
+            ? pathAtColumn(joined, col) !== null
+            : extractPathsAt(joined, null, null).length > 0
+          if (hitPath && meta && onFoldPathActivateRef.current) {
             onFoldPathActivateRef.current(bufLine, {
               clientX: meta.clientX,
               clientY: meta.clientY,
-              column: meta.column,
+              // Keep the popover in the same joined-header coordinate space
+              // used to identify the path. Fall back to xterm's raw column
+              // when the normalized position is unavailable.
+              column: col ?? meta.column,
               lineText: joined,
               foldKey: fold.key,
             })
