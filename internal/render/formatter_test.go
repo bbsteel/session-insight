@@ -34,7 +34,7 @@ func TestSeparator(t *testing.T) {
 		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: time.Now(), Depth: 0},
 	}
 	result := FormatEvents(events, 0)
-	if !strings.Contains(result, " Turn 0 ") || !strings.Contains(result, "━") {
+	if !strings.Contains(result, " Turn 1 ") || !strings.Contains(result, "━") {
 		t.Errorf("expected turn banner, got:\n%s", result)
 	}
 	// The badge must carry the banner accent as background (slot 12, resolved

@@ -344,7 +344,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 				emit("turn", fmt.Sprintf("已回滚 · 原 Turn %d", original+1), "", evt.TurnIndex, map[string]any{"rolled_back": true, "original_turn_index": original})
 				writeRollbackSeparator(p, tb, original, cols)
 			} else {
-				emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex), "", evt.TurnIndex, nil)
+				emit("turn", fmt.Sprintf("Turn %d", evt.TurnIndex+1), "", evt.TurnIndex, nil)
 				writeSeparator(p, tb, evt.TurnIndex, cols)
 			}
 			prevTurnIndex = evt.TurnIndex
@@ -940,7 +940,7 @@ func writeSeparator(p *Profile, sb *trackingBuilder, turnIdx int, termWidth int)
 	// A turn start must be findable at a glance when scrolling or after a
 	// jump: solid inverse-video badge followed by a heavy rule, instead of
 	// the earlier single muted line that blended into the transcript.
-	label := fmt.Sprintf(" Turn %d ", turnIdx)
+	label := fmt.Sprintf(" Turn %d ", turnIdx+1)
 	rest := termWidth - len(label)
 	if rest < 1 {
 		rest = 1

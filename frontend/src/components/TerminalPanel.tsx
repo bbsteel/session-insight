@@ -534,33 +534,85 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // DOM children under container. Clicking it jumps back to that message.
     let stickyBarEl: HTMLDivElement | null = null
     let stickyLabelEl: HTMLSpanElement | null = null
+    let stickyNextBarEl: HTMLDivElement | null = null
+    let stickyNextLabelEl: HTMLSpanElement | null = null
+    let stickyNextTextEl: HTMLSpanElement | null = null
     let stickyTextEl: HTMLSpanElement | null = null
     let currentStickyRange: UserHighlightRange | null = null
-    const updateStickyUserMsg = () => {
-      if (disposed || !stickyBarEl) return
-      const next = computeStickyUserMsg()
-      if ((next?.key ?? null) === (currentStickyRange?.key ?? null)) return
-      currentStickyRange = next
-      if (!next) {
+    let currentStickyNextKey: string | null = null
+    const nextUserMessage = (range: UserHighlightRange): UserHighlightRange | null => {
+      const ranges = userPositionsRef.current
+      const index = ranges.findIndex(candidate => candidate.key === range.key)
+      return index >= 0 ? ranges[index + 1] ?? null : null
+    }
+    const previousUserMessage = (range: UserHighlightRange): UserHighlightRange | null => {
+      const ranges = userPositionsRef.current
+      const index = ranges.findIndex(candidate => candidate.key === range.key)
+      return index > 0 ? ranges[index - 1] : null
+    }
+    const showStickyUserMsg = (range: UserHighlightRange | null) => {
+      if (!stickyBarEl) return
+      const nextUser = range && nextUserMessage(range)
+      currentStickyRange = range
+      currentStickyNextKey = nextUser?.key ?? null
+      if (!range) {
         stickyBarEl.style.display = 'none'
+        if (stickyNextBarEl) stickyNextBarEl.style.display = 'none'
         return
       }
+      const previousUser = previousUserMessage(range)
+      const topUser = previousUser ?? range
       stickyBarEl.style.display = 'flex'
       if (stickyLabelEl) {
-        stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
+        stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof topUser.seq === 'number' ? ` #${topUser.seq}` : ''}`
+      }
+      if (stickyNextBarEl) {
+        stickyNextBarEl.style.display = nextUser ? 'flex' : 'none'
+      }
+      if (stickyNextLabelEl && nextUser) {
+        stickyNextLabelEl.textContent = `↓ ${translatorRef.current('terminal.userMessage')}${typeof nextUser.seq === 'number' ? ` #${nextUser.seq}` : ''}`
+      }
+      if (stickyNextTextEl && nextUser) {
+        const text = nextUser.text || ''
+        stickyNextTextEl.textContent = text
+        stickyNextTextEl.title = text
       }
       if (stickyTextEl) {
-        const text = next.text || ''
+        const text = topUser.text || ''
         stickyTextEl.textContent = text
         stickyTextEl.title = text
       }
     }
+    const updateStickyUserMsg = () => {
+      if (disposed || !stickyBarEl) return
+      const visibleSticky = computeStickyUserMsg()
+      // jumpToPosition centers the selected prompt, leaving its predecessor
+      // just above the viewport. Keep the selected prompt as the navigation
+      // anchor in that specific layout so another bottom-bar click advances
+      // to the following message instead of reverting to the old one.
+      const next = currentStickyRange && visibleSticky && nextUserMessage(visibleSticky)?.key === currentStickyRange.key
+        ? currentStickyRange
+        : visibleSticky
+      const nextUser = next && nextUserMessage(next)
+      if ((next?.key ?? null) === (currentStickyRange?.key ?? null) && (nextUser?.key ?? null) === currentStickyNextKey) return
+      showStickyUserMsg(next)
+    }
     const onStickyClick = () => {
-      const r = currentStickyRange
+      const r = currentStickyRange && (previousUserMessage(currentStickyRange) ?? currentStickyRange)
       if (!r) return
+      showStickyUserMsg(r)
+      onJumpToUserMessageRef.current?.(r.lineStart, r.logicalStart)
+    }
+    const onStickyNextClick = () => {
+      const r = currentStickyRange && nextUserMessage(currentStickyRange)
+      if (!r) return
+      // Update both bars before xterm emits its asynchronous scroll event, so
+      // repeated clicks keep advancing even while the viewport is settling.
+      showStickyUserMsg(r)
       onJumpToUserMessageRef.current?.(r.lineStart, r.logicalStart)
     }
     let onStickyKeyDown: (e: KeyboardEvent) => void = () => {}
+    let onStickyNextKeyDown: (e: KeyboardEvent) => void = () => {}
 
     let onMouseMove: ((e: MouseEvent) => void) | null = null
     let onMouseLeave: (() => void) | null = null
@@ -702,14 +754,49 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         'flex-shrink:0', 'font-weight:600',
         'color:var(--accent-blue)',
       ].join(';')
+      stickyNextBarEl = document.createElement('div')
+      stickyNextBarEl.className = 'si-sticky-user-msg si-sticky-next-user-msg'
+      stickyNextBarEl.style.cssText = [
+        'position:absolute', 'bottom:0', 'left:0', 'right:0',
+        'display:none', 'align-items:center', 'gap:10px',
+        'padding:4px 12px', 'z-index:10', 'cursor:pointer',
+        `font-family:${terminalFontFamily}`,
+        `font-size:${terminalFontSize}px`, 'line-height:1.4',
+        'white-space:nowrap', 'overflow:hidden',
+        'border-top:1px solid var(--border-default)',
+      ].join(';')
+      stickyNextBarEl.title = translatorRef.current('terminal.nextUserMessage')
+      stickyNextBarEl.setAttribute('role', 'button')
+      stickyNextBarEl.setAttribute('tabindex', '0')
+      stickyNextBarEl.setAttribute('aria-label', translatorRef.current('terminal.nextUserMessageLabel'))
+      onStickyNextKeyDown = (e: KeyboardEvent) => {
+        if (e.key === ' ' || e.key === 'Enter') {
+          e.preventDefault()
+          onStickyNextClick()
+        }
+      }
+      stickyNextBarEl.addEventListener('click', onStickyNextClick)
+      stickyNextBarEl.addEventListener('keydown', onStickyNextKeyDown)
+      stickyNextLabelEl = document.createElement('span')
+      stickyNextLabelEl.style.cssText = [
+        'flex-shrink:0', 'font-weight:600', 'color:var(--accent-blue)',
+      ].join(';')
+      stickyNextBarEl.appendChild(stickyNextLabelEl)
+      stickyNextTextEl = document.createElement('span')
+      stickyNextTextEl.style.cssText = [
+        'min-width:0', 'max-width:70%', 'overflow:hidden',
+        'text-overflow:ellipsis', 'white-space:nowrap',
+      ].join(';')
+      stickyNextBarEl.appendChild(stickyNextTextEl)
       stickyTextEl = document.createElement('span')
       stickyTextEl.style.cssText = [
-        'min-width:0', 'flex:1', 'overflow:hidden',
+        'min-width:0', 'flex:1', 'margin-left:10px', 'overflow:hidden',
         'text-overflow:ellipsis', 'white-space:nowrap',
       ].join(';')
       stickyBarEl.appendChild(stickyLabelEl)
       stickyBarEl.appendChild(stickyTextEl)
       container.appendChild(stickyBarEl)
+      container.appendChild(stickyNextBarEl)
 
       const xtermScreen = container.querySelector<HTMLElement>('.xterm-screen')
       const eventTarget = xtermScreen ?? container
@@ -1381,9 +1468,27 @@ const snapshotTerminal = () => {
           stickyBarEl.title = translatorRef.current('terminal.returnUserMessage')
           stickyBarEl.setAttribute('aria-label', translatorRef.current('terminal.returnUserMessageLabel'))
         }
+        if (stickyNextBarEl) {
+          stickyNextBarEl.title = translatorRef.current('terminal.nextUserMessage')
+          stickyNextBarEl.setAttribute('aria-label', translatorRef.current('terminal.nextUserMessageLabel'))
+        }
+        if (stickyNextLabelEl) {
+          const next = currentStickyRange && nextUserMessage(currentStickyRange)
+          stickyNextLabelEl.textContent = next
+            ? `↓ ${translatorRef.current('terminal.userMessage')}${typeof next.seq === 'number' ? ` #${next.seq}` : ''}`
+            : ''
+        }
+        if (stickyNextTextEl) {
+          const next = currentStickyRange && nextUserMessage(currentStickyRange)
+          const text = next?.text || ''
+          stickyNextTextEl.textContent = text
+          stickyNextTextEl.title = text
+        }
         if (stickyLabelEl) {
-          const seq = currentStickyRange?.seq
-          stickyLabelEl.textContent = `↑ ${translatorRef.current('terminal.userMessage')}${typeof seq === 'number' ? ` #${seq}` : ''}`
+          const topUser = currentStickyRange && (previousUserMessage(currentStickyRange) ?? currentStickyRange)
+          stickyLabelEl.textContent = topUser
+            ? `↑ ${translatorRef.current('terminal.userMessage')}${typeof topUser.seq === 'number' ? ` #${topUser.seq}` : ''}`
+            : ''
         }
         if (foldView) {
           const anchorOriginal = toOriginalLine(term.buffer.active.viewportY)
@@ -2026,9 +2131,15 @@ const snapshotTerminal = () => {
       if (stickyBarEl) {
         stickyBarEl.removeEventListener('click', onStickyClick)
         stickyBarEl.removeEventListener('keydown', onStickyKeyDown)
+        stickyNextBarEl?.removeEventListener('click', onStickyNextClick)
+        stickyNextBarEl?.removeEventListener('keydown', onStickyNextKeyDown)
+        stickyNextBarEl?.remove()
         stickyBarEl.remove()
         stickyBarEl = null
         stickyLabelEl = null
+        stickyNextBarEl = null
+        stickyNextLabelEl = null
+        stickyNextTextEl = null
         stickyTextEl = null
       }
       if (controlRef) controlRef.current = null
