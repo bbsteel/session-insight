@@ -40,6 +40,9 @@ interface Props {
   onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
+  /** Collaboration dock (App-shell right panel) visibility + toggle. */
+  collaborationOpen?: boolean
+  onToggleCollaboration?: () => void
 }
 
 function fmtTokens(n: number, locale: Locale): string {
@@ -55,7 +58,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange }: Props) {
+export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange, collaborationOpen = false, onToggleCollaboration }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
@@ -82,6 +85,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // when Messages hides the tool panel so it does not stick to a later open.
   const [toolFilterRequest, setToolFilterRequest] = useState<{ name: string; token: number } | null>(null)
   const [showAIPanel, setShowAIPanel] = useState(false)
+  // Collaboration dock entry button: focus returns here when the dock closes.
+  const collaborationButtonRef = useRef<HTMLButtonElement | null>(null)
+  const wasCollaborationOpenRef = useRef(false)
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
   const [followOutput, setFollowOutput] = useState(false)
@@ -409,6 +415,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
     return () => window.clearInterval(timer)
   }, [session?.is_live, session?.id])
+
+  // Return focus to the Collaboration entry button when the dock closes.
+  useEffect(() => {
+    if (!collaborationOpen && wasCollaborationOpenRef.current) {
+      collaborationButtonRef.current?.focus()
+    }
+    wasCollaborationOpenRef.current = collaborationOpen
+  }, [collaborationOpen])
 
   // Session switch: save the outgoing session's view (follow choice + scroll
   // position) and restore the incoming one's. A memory saved while the
@@ -1293,6 +1307,24 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             {t('replay.sessionAssistant')}
           </button>
+          {onToggleCollaboration && (
+            <button
+              type="button"
+              ref={collaborationButtonRef}
+              onClick={onToggleCollaboration}
+              className={`h-7 rounded-md px-2 text-nav ${
+                collaborationOpen
+                  ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                  : 'text-[var(--text-secondary)]'
+              } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+              title={t('collaboration.dock.open')}
+              aria-expanded={collaborationOpen}
+              aria-controls="collaboration-dock"
+              data-testid="collaboration-entry-button"
+            >
+              {t('collaboration.dock.open')}
+            </button>
+          )}
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {isSessionLive(session, now) && (

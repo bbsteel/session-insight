@@ -548,3 +548,19 @@ body {
   white-space: nowrap;
   color: var(--text-secondary);
 }
+
+/* Dock-hosted timeline: the 400px panel is narrower than the standalone
+ * default, so the toolbar wraps instead of clipping its action buttons. */
+.collab-dock .ct-toolbar {
+  height: auto;
+  min-height: 32px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.collab-dock .ct-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
