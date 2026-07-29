@@ -17,10 +17,12 @@ import (
 
 type ClaudeReader struct {
 	projectsDir string
+	pathsMu     sync.RWMutex
+	paths       map[string]string
 }
 
 func New(projectsDir string) *ClaudeReader {
-	return &ClaudeReader{projectsDir: projectsDir}
+	return &ClaudeReader{projectsDir: projectsDir, paths: make(map[string]string)}
 }
 
 func (r *ClaudeReader) WatchRoots() []string { return []string{r.projectsDir} }
@@ -201,6 +203,13 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 	for s := range results {
 		sessions = append(sessions, s)
 	}
+	paths := make(map[string]string, len(jobs))
+	for _, job := range jobs {
+		paths[job.id] = job.path
+	}
+	r.pathsMu.Lock()
+	r.paths = paths
+	r.pathsMu.Unlock()
 
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
@@ -411,6 +420,14 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 }
 
 func (r *ClaudeReader) findSessionFile(sessionID string) string {
+	r.pathsMu.RLock()
+	cached := r.paths[sessionID]
+	r.pathsMu.RUnlock()
+	if cached != "" {
+		if _, err := os.Stat(cached); err == nil {
+			return cached
+		}
+	}
 	entries, err := os.ReadDir(r.projectsDir)
 	if err != nil {
 		return ""
@@ -421,6 +438,9 @@ func (r *ClaudeReader) findSessionFile(sessionID string) string {
 		}
 		candidate := filepath.Join(r.projectsDir, entry.Name(), sessionID+".jsonl")
 		if _, err := os.Stat(candidate); err == nil {
+			r.pathsMu.Lock()
+			r.paths[sessionID] = candidate
+			r.pathsMu.Unlock()
 			return candidate
 		}
 	}

@@ -223,6 +223,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
+        id="session-assistant-panel"
         className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(900px,94vw)] h-[min(720px,88vh)] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
@@ -241,7 +242,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
             </div>
           </div>
           <div className="mt-1.5 flex items-center gap-3">
-            <span className="text-sm font-medium text-[var(--text-primary)]">{t('replay.sessionAnalysis')}</span>
+            <span className="text-sm font-medium text-[var(--text-primary)]">{t('replay.sessionAssistant')}</span>
             <div className="flex items-center gap-1">
               {TABS.map(tabDef => (
                 <button

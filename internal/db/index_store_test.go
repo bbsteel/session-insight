@@ -47,6 +47,48 @@ func TestTurnTexts_InsertDeleteSync(t *testing.T) {
 	}
 }
 
+func TestTurnTexts_DifferentialSyncPreservesUnchangedRows(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	initial := []TurnText{
+		{TurnIndex: 0, Role: "user", Content: "stable prompt"},
+		{TurnIndex: 0, Role: "assistant", Content: "old reply"},
+	}
+	if err := database.UpsertTurns("test", "diff-session", initial, 100); err != nil {
+		t.Fatalf("initial UpsertTurns: %v", err)
+	}
+	var stableID int64
+	if err := database.conn.QueryRow(`SELECT id FROM turn_texts WHERE agent_type = 'test' AND session_id = 'diff-session' AND role = 'user'`).Scan(&stableID); err != nil {
+		t.Fatalf("read stable row id: %v", err)
+	}
+
+	updated := []TurnText{
+		{TurnIndex: 0, Role: "user", Content: "stable prompt"},
+		{TurnIndex: 0, Role: "assistant", Content: "new reply"},
+		{TurnIndex: 1, Role: "user", Content: "new turn"},
+	}
+	if err := database.UpsertTurns("test", "diff-session", updated, 200); err != nil {
+		t.Fatalf("differential UpsertTurns: %v", err)
+	}
+	var gotStableID int64
+	if err := database.conn.QueryRow(`SELECT id FROM turn_texts WHERE agent_type = 'test' AND session_id = 'diff-session' AND role = 'user' AND turn_index = 0`).Scan(&gotStableID); err != nil {
+		t.Fatalf("read unchanged row id: %v", err)
+	}
+	if gotStableID != stableID {
+		t.Fatalf("unchanged row id = %d, want %d", gotStableID, stableID)
+	}
+	if hits, err := database.SearchTurns("new reply", 10); err != nil || len(hits) != 1 {
+		t.Fatalf("updated FTS content hits=%d err=%v", len(hits), err)
+	}
+	if hits, err := database.SearchTurns("old reply", 10); err != nil || len(hits) != 0 {
+		t.Fatalf("removed FTS content hits=%d err=%v", len(hits), err)
+	}
+}
+
 func TestTurnTexts_RebuildConsistency(t *testing.T) {
 	dir := t.TempDir()
 	database, err := Open(dir)
@@ -84,6 +126,23 @@ func TestTurnTexts_RebuildConsistency(t *testing.T) {
 
 	if ttCount != ftsCount {
 		t.Fatalf("count mismatch: turn_texts=%d turn_texts_fts=%d", ttCount, ftsCount)
+	}
+}
+
+func TestMaintainKeepsFTSSearchable(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+	if err := database.UpsertTurns("test", "maintenance", []TurnText{{TurnIndex: 0, Role: "user", Content: "maintenance search content"}}, 1); err != nil {
+		t.Fatalf("UpsertTurns: %v", err)
+	}
+	if err := database.Maintain(); err != nil {
+		t.Fatalf("Maintain: %v", err)
+	}
+	if hits, err := database.SearchTurns("maintenance", 10); err != nil || len(hits) != 1 {
+		t.Fatalf("SearchTurns after maintenance hits=%d err=%v", len(hits), err)
 	}
 }
 

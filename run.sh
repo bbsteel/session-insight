@@ -114,6 +114,7 @@ Commands:
   status      Show this worktree status and list all instances (# / PID / port / start time)
   kill <n…>   Stop instances by their status list numbers (numbers are recalculated each run; run status before kill; e.g. kill 1 3)
   all         Build + run
+  maintain    Stop-free index maintenance: checkpoint WAL, optimize FTS, vacuum
   log         View background log
 
 Linked worktrees automatically use an OS-assigned random loopback port on the
@@ -932,6 +933,18 @@ do_log() {
   fi
 }
 
+do_maintain() {
+  local pid
+  pid=$(tr -d '[:space:]' <"$PID_FILE" 2>/dev/null || true)
+  if [[ -n "$pid" ]] && pid_is_owned "$pid"; then
+    echo "ERROR: stop this worktree's SessionInsight instance before maintenance."
+    return 1
+  fi
+  do_build
+  echo "Maintaining index database at ${SI_DATA_DIR:-$HOME/.session-insight}..."
+  SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" --maintain-index
+}
+
 CMD="${1:-}"
 case "$CMD" in
   build)
@@ -956,6 +969,9 @@ case "$CMD" in
     ;;
   log)
     do_log
+    ;;
+  maintain)
+    do_maintain
     ;;
   "")
     usage

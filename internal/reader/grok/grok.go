@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
@@ -35,6 +36,8 @@ import (
 type GrokReader struct {
 	sessionsDir string // ~/.grok/sessions
 	grokHome    string // ~/.grok
+	locMu       sync.RWMutex
+	locs        map[string]sessionLoc
 }
 
 // New constructs a reader rooted at sessionsDir (~/.grok/sessions).
@@ -42,6 +45,7 @@ func New(sessionsDir string) *GrokReader {
 	return &GrokReader{
 		sessionsDir: sessionsDir,
 		grokHome:    filepath.Dir(sessionsDir),
+		locs:        make(map[string]sessionLoc),
 	}
 }
 
@@ -84,6 +88,14 @@ func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 	if !validSessionID(id) {
 		return sessionLoc{}, fmt.Errorf("invalid grok session id: %q", id)
 	}
+	r.locMu.RLock()
+	cached, ok := r.locs[id]
+	r.locMu.RUnlock()
+	if ok {
+		if _, err := os.Stat(cached.SummaryPath); err == nil {
+			return cached, nil
+		}
+	}
 	entries, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
 		return sessionLoc{}, fmt.Errorf("grok session not found %q: %w", id, err)
@@ -95,12 +107,16 @@ func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 		dir := filepath.Join(r.sessionsDir, ent.Name(), id)
 		sumPath := filepath.Join(dir, "summary.json")
 		if _, err := os.Stat(sumPath); err == nil {
-			return sessionLoc{
+			loc := sessionLoc{
 				ID:          id,
 				Dir:         dir,
 				ProjectDir:  filepath.Join(r.sessionsDir, ent.Name()),
 				SummaryPath: sumPath,
-			}, nil
+			}
+			r.locMu.Lock()
+			r.locs[id] = loc
+			r.locMu.Unlock()
+			return loc, nil
 		}
 	}
 	return sessionLoc{}, fmt.Errorf("grok session not found %q", id)
@@ -142,6 +158,7 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 	}
 
 	var sessions []model.Session
+	locs := make(map[string]sessionLoc)
 	for _, proj := range entries {
 		if !proj.IsDir() {
 			continue
@@ -170,6 +187,7 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 				ProjectDir:  projPath,
 				SummaryPath: sumPath,
 			}
+			locs[id] = loc
 			sessions = append(sessions, r.buildSession(loc, sum))
 		}
 	}
@@ -177,6 +195,9 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
+	r.locMu.Lock()
+	r.locs = locs
+	r.locMu.Unlock()
 	return sessions, nil
 }
 

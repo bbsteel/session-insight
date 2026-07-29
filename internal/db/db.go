@@ -69,6 +69,22 @@ func (db *DB) RebuildFTS() error {
 	return err
 }
 
+// Maintain compacts the database after callers have stopped every application
+// process using it. It checkpoints WAL state, merges FTS segments, then runs
+// VACUUM; callers must not invoke it on the normal request path.
+func (db *DB) Maintain() error {
+	if _, err := db.conn.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return fmt.Errorf("checkpoint WAL: %w", err)
+	}
+	if _, err := db.conn.Exec(`INSERT INTO turn_texts_fts(turn_texts_fts) VALUES ('optimize')`); err != nil {
+		return fmt.Errorf("optimize FTS: %w", err)
+	}
+	if _, err := db.conn.Exec(`VACUUM`); err != nil {
+		return fmt.Errorf("vacuum database: %w", err)
+	}
+	return nil
+}
+
 func migrate(conn *sql.DB) error {
 	query := `
 	CREATE TABLE IF NOT EXISTS sessions (

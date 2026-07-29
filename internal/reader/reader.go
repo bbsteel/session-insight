@@ -1,6 +1,10 @@
 package reader
 
-import "github.com/bbsteel/session-insight/internal/model"
+import (
+	"context"
+
+	"github.com/bbsteel/session-insight/internal/model"
+)
 
 type BaseSessionReader interface {
 	AgentType() string
@@ -21,6 +25,14 @@ type BaseSessionReader interface {
 	// GetRenderEvents returns the raw render event stream for a session.
 	// Used by the server to extract structured data (e.g. Edit calls).
 	GetRenderEvents(id string) ([]model.RenderEvent, error)
+}
+
+// IndexSnapshotReader is an optional fast path for background indexing. It
+// returns the detail and render stream from one source read so the indexer
+// does not independently parse the same transcript twice. Public detail and
+// replay APIs continue to use BaseSessionReader unchanged.
+type IndexSnapshotReader interface {
+	ReadIndexSnapshot(ctx context.Context, session model.Session) (*model.SessionDetail, []model.RenderEvent, error)
 }
 
 // WatchRootProvider is an optional reader capability: the on-disk paths whose
