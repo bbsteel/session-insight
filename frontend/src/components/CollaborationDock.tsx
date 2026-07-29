@@ -1,27 +1,19 @@
 /**
- * Collaboration dock: the right-side panel that surfaces the frozen
- * collaboration contract for the selected root session.
+ * Collaboration dock: the collapsible horizontal strip below the replay
+ * header and above the terminal (design §10.4).
  *
- * Owns the dock-level state machine (loading / ready / empty / unsupported /
- * not-indexed / session-missing / error) and selection; the timeline itself is
- * the production CollaborationTimeline component, fed the detail payload
- * directly (normalizeTimelineModel tolerates the state/time_range/validation
- * extras). Backing-session affordances are gated strictly on the contract
+ * ReplayView owns the detail fetch, the open/collapsed mode, and the height;
+ * this component renders the strip and owns lane selection. The terminal is
+ * a sibling below the strip — it stays mounted across every mode change, and
+ * because the strip only changes container height (never width), xterm cols
+ * are untouched and no replacement /render?cols= request is triggered.
+ *
+ * Backing-session affordances are gated strictly on the contract
  * backing_session reference — never on agent_type branching.
- *
- * The dock is a sibling of the replay view in the App shell; closing it never
- * unmounts the replay or terminal. App remounts the dock per session
- * (key={agent:session}), so a session switch never flashes the previous
- * session's graph.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  APIError,
-  fetchCollaborationDetail,
-  watchSessionsChanged,
-  type CollaborationDetailResponse,
-} from '../api'
+import type { CollaborationDetailResponse } from '../api'
 import { formatDate, useI18n, type Locale } from '../i18n'
 import { reasonCodeLabelKey } from '../capabilityPresentation'
 import {
@@ -34,89 +26,79 @@ import {
   classifyCollaborationError,
   hasInvocation,
   isGraphEmpty,
+  summarizeTimeline,
 } from '../collaboration/dockState'
-import type { FactEvidenceDTO } from '../collaboration/types'
+import type { FactEvidenceDTO, SourceAnchorDTO } from '../collaboration/types'
 import CollaborationTimeline, { type ChildContentActionState } from './CollaborationTimeline'
 
-const TIMELINE_HEIGHT_PX = 280
-
-type DockData =
+export type CollaborationDockStatus =
   | { kind: 'loading' }
   | { kind: 'error'; code: string }
   | { kind: 'ready'; detail: CollaborationDetailResponse }
 
+export type CollaborationDockMode = 'collapsed' | 'expanded'
+
+const HEADER_PX = 32
+const HANDLE_PX = 6
+const BANNER_PX = 26
+export const MIN_DOCK_HEIGHT_PX = 120
+export const DEFAULT_DOCK_HEIGHT_PX = 180
+export const COLLAPSED_DOCK_HEIGHT_PX = 34
+
 interface Props {
-  sessionId: string
-  agentType: string
+  status: CollaborationDockStatus
+  mode: CollaborationDockMode
+  /** Expanded strip height (header + body + drag handle). */
+  heightPx: number
+  maxHeightPx: number
+  onExpand: () => void
+  onCollapse: () => void
   onClose: () => void
-  /** Opens a backing session in the main view (session switch). */
+  /** Live drag updates; the parent persists on onResizeEnd. */
+  onResize: (px: number) => void
+  onResizeEnd: () => void
   onOpenSession: (id: string, agentType: string) => void
+  onJumpToLaunch: (invocationId: string, anchor: SourceAnchorDTO | null) => void
+  onJumpToResult: (invocationId: string, anchor: SourceAnchorDTO) => void
 }
 
-export default function CollaborationDock({ sessionId, agentType, onClose, onOpenSession }: Props) {
-  const { t, locale } = useI18n()
-  const [data, setData] = useState<DockData>({ kind: 'loading' })
-  const [reloadToken, setReloadToken] = useState(0)
+export default function CollaborationDock({
+  status,
+  mode,
+  heightPx,
+  maxHeightPx,
+  onExpand,
+  onCollapse,
+  onClose,
+  onResize,
+  onResizeEnd,
+  onOpenSession,
+  onJumpToLaunch,
+  onJumpToResult,
+}: Props) {
+  const { t } = useI18n()
+  const detail = status.kind === 'ready' ? status.detail : null
+  const model = useMemo(() => (detail ? normalizeTimelineModel(detail) : null), [detail])
+  const summary = useMemo(() => (model ? summarizeTimeline(model) : null), [model])
+
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [invocationMissing, setInvocationMissing] = useState(false)
-  const etagRef = useRef<string | null>(null)
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
-
-  // Initial load and manual retry. A remount per session (App key) means this
-  // always starts from the loading state — no cross-session flash.
-  useEffect(() => {
-    const ctrl = new AbortController()
-    setData({ kind: 'loading' })
-    fetchCollaborationDetail(sessionId, agentType, { signal: ctrl.signal })
-      .then((res) => {
-        if (res === 'not-modified') return
-        etagRef.current = res.etag
-        setData({ kind: 'ready', detail: res.detail })
-      })
-      .catch((err: unknown) => {
-        if (ctrl.signal.aborted) return
-        setData({ kind: 'error', code: err instanceof APIError ? err.code : 'request_failed' })
-      })
-    return () => ctrl.abort()
-  }, [sessionId, agentType, reloadToken])
-
-  // Conditional live refetch on the backend session-change ping. A 304 keeps
-  // the mounted graph untouched (no timeline reset); a failure keeps the
-  // current state — the next ping retries.
-  useEffect(() => {
-    return watchSessionsChanged(() => {
-      fetchCollaborationDetail(sessionId, agentType, { etag: etagRef.current })
-        .then((res) => {
-          if (res === 'not-modified') return
-          etagRef.current = res.etag
-          setData({ kind: 'ready', detail: res.detail })
-        })
-        .catch(() => {})
-    })
-  }, [sessionId, agentType])
 
   // A live re-index can drop the selected invocation: clear the selection and
   // say so instead of showing details for a node that no longer exists.
   useEffect(() => {
-    if (data.kind !== 'ready' || !selectedId || selectedId === UNLINKED_GROUP_ID) return
-    if (!hasInvocation(data.detail, selectedId)) {
+    if (!detail || !selectedId || selectedId === UNLINKED_GROUP_ID) return
+    if (!hasInvocation(detail, selectedId)) {
       setSelectedId(null)
       setInvocationMissing(true)
     }
-  }, [data, selectedId])
-
-  // Move focus into the dock when it opens so Escape/keyboard use is immediate.
-  useEffect(() => {
-    closeButtonRef.current?.focus()
-  }, [])
+  }, [detail, selectedId])
 
   const handleSelect = useCallback((id: string | null) => {
     setSelectedId(id)
     setInvocationMissing(false)
   }, [])
 
-  const detail = data.kind === 'ready' ? data.detail : null
-  const model = useMemo(() => (detail ? normalizeTimelineModel(detail) : null), [detail])
   const selectedInv = useMemo(() => {
     if (!model || !selectedId) return null
     return model.invocations.find((inv) => inv.id === selectedId) ?? null
@@ -141,19 +123,69 @@ export default function CollaborationDock({ sessionId, agentType, onClose, onOpe
     [],
   )
 
+  const summaryText = summary
+    ? [
+        t('collaboration.dock.childCount', { count: summary.childCount }),
+        summary.activeCount > 0 ? t('collaboration.dock.activeCount', { count: summary.activeCount }) : null,
+        summary.problemCount > 0 ? t('collaboration.dock.problemCount', { count: summary.problemCount }) : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : ''
+
+  // ---- Collapsed bar ---------------------------------------------------------
+
+  if (mode === 'collapsed') {
+    return (
+      <div
+        className="collab-dock flex flex-shrink-0 items-center gap-2 border-b border-[var(--border-default)] bg-[var(--bg-surface)] px-2"
+        style={{ height: COLLAPSED_DOCK_HEIGHT_PX }}
+        data-testid="collaboration-dock"
+        data-state="collapsed"
+      >
+        <button
+          type="button"
+          onClick={onExpand}
+          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          aria-label={t('collaboration.dock.expand')}
+          title={t('collaboration.dock.expand')}
+          data-testid="collaboration-dock-expand"
+        >
+          <span aria-hidden="true">▸</span>
+          <span className="font-medium text-[var(--text-primary)]">{t('collaboration.dock.title')}</span>
+          <span className="truncate">{summaryText}</span>
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          aria-label={t('collaboration.dock.close')}
+          data-testid="collaboration-dock-close"
+        >
+          ✕
+        </button>
+      </div>
+    )
+  }
+
+  // ---- Expanded strip --------------------------------------------------------
+
+  const showBanner = detail?.state === 'stale' || invocationMissing
+  const timelinePx = Math.max(60, heightPx - HEADER_PX - HANDLE_PX - (showBanner ? BANNER_PX : 0))
   const stateAttr =
-    data.kind === 'loading'
+    status.kind === 'loading'
       ? 'loading'
-      : data.kind === 'error'
-        ? classifyCollaborationError(data.code)
+      : status.kind === 'error'
+        ? classifyCollaborationError(status.code)
         : detail && isGraphEmpty(detail)
           ? 'empty'
           : 'ready'
 
   return (
-    <aside
-      className="collab-dock flex h-full w-[400px] flex-shrink-0 flex-col border-l border-[var(--border-default)] bg-[var(--bg-primary)]"
-      role="complementary"
+    <section
+      className="collab-dock flex flex-shrink-0 flex-col border-b border-[var(--border-default)] bg-[var(--bg-primary)]"
+      style={{ height: heightPx }}
+      role="region"
       aria-label={t('collaboration.dock.title')}
       id="collaboration-dock"
       data-testid="collaboration-dock"
@@ -165,11 +197,25 @@ export default function CollaborationDock({ sessionId, agentType, onClose, onOpe
         }
       }}
     >
-      <header className="flex h-10 flex-shrink-0 items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-surface)] px-3">
+      <header
+        className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] bg-[var(--bg-surface)] px-2"
+        style={{ height: HEADER_PX }}
+      >
         <h2 className="text-nav font-medium text-[var(--text-primary)]">{t('collaboration.dock.title')}</h2>
+        {summaryText && <span className="truncate text-meta text-[var(--text-muted)]">{summaryText}</span>}
+        <span className="flex-1" />
         <button
           type="button"
-          ref={closeButtonRef}
+          onClick={onCollapse}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          aria-label={t('collaboration.dock.collapsePanel')}
+          title={t('collaboration.dock.collapsePanel')}
+          data-testid="collaboration-dock-collapse"
+        >
+          ▾
+        </button>
+        <button
+          type="button"
           onClick={onClose}
           className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           aria-label={t('collaboration.dock.close')}
@@ -179,89 +225,139 @@ export default function CollaborationDock({ sessionId, agentType, onClose, onOpe
         </button>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        {detail?.state === 'stale' && (
-          <p
-            className="flex-shrink-0 border-b border-[var(--border-muted)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-3 py-1.5 text-meta text-[var(--warning)]"
-            role="status"
-            data-testid="collaboration-stale-banner"
-          >
-            {t('capability.reason.stale_graph_retained')}
-          </p>
-        )}
-        {invocationMissing && (
-          <p
-            className="flex-shrink-0 border-b border-[var(--border-muted)] px-3 py-1.5 text-meta text-[var(--text-secondary)]"
-            role="status"
-            data-testid="collaboration-invocation-missing"
-          >
-            {t('collaboration.dock.invocationMissing')}
-          </p>
-        )}
+      {detail?.state === 'stale' && (
+        <p
+          className="flex-shrink-0 border-b border-[var(--border-muted)] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] px-3 py-1 text-meta text-[var(--warning)]"
+          role="status"
+          data-testid="collaboration-stale-banner"
+        >
+          {t('capability.reason.stale_graph_retained')}
+        </p>
+      )}
+      {invocationMissing && (
+        <p
+          className="flex-shrink-0 border-b border-[var(--border-muted)] px-3 py-1 text-meta text-[var(--text-secondary)]"
+          role="status"
+          data-testid="collaboration-invocation-missing"
+        >
+          {t('collaboration.dock.invocationMissing')}
+        </p>
+      )}
 
-        {data.kind === 'loading' && (
-          <p className="px-3 py-4 text-nav text-[var(--text-secondary)]" role="status">
-            {t('collaboration.dock.loading')}
-          </p>
-        )}
+      {status.kind === 'loading' && (
+        <p className="px-3 py-4 text-nav text-[var(--text-secondary)]" role="status">
+          {t('collaboration.dock.loading')}
+        </p>
+      )}
 
-        {data.kind === 'error' && <ErrorState code={data.code} onRetry={() => setReloadToken((n) => n + 1)} />}
+      {status.kind === 'error' && <ErrorState code={status.code} />}
 
-        {detail && isGraphEmpty(detail) && (
-          <p className="px-3 py-4 text-nav text-[var(--text-secondary)]" data-testid="collaboration-empty">
-            {t('collaboration.dock.empty')}
-          </p>
-        )}
+      {detail && isGraphEmpty(detail) && (
+        <p className="px-3 py-4 text-nav text-[var(--text-secondary)]" role="status" data-testid="collaboration-empty">
+          {t('collaboration.dock.empty')}
+        </p>
+      )}
 
-        {detail && !isGraphEmpty(detail) && (
-          <>
-            <div className="flex-shrink-0 border-b border-[var(--border-default)]">
-              <CollaborationTimeline
-                graph={detail}
-                heightPx={TIMELINE_HEIGHT_PX}
-                labelWidthPx={160}
-                selectedId={selectedId}
-                onSelect={handleSelect}
-                onOpenChildContent={openBacking}
-                isChildContentAvailable={childContentState}
-              />
-            </div>
-            {selectedInv ? (
-              <InvocationDetail
-                inv={selectedInv}
-                detail={detail}
-                locale={locale}
-                onOpenBacking={() => openBacking(selectedInv.id)}
-              />
-            ) : (
-              <p className="px-3 py-3 text-meta text-[var(--text-muted)]">
-                {t('collaboration.dock.selectHint')}
-              </p>
-            )}
-          </>
-        )}
-      </div>
-    </aside>
+      {detail && !isGraphEmpty(detail) && (
+        <div className="flex min-h-0 flex-1">
+          <div className="min-w-0 flex-1">
+            <CollaborationTimeline
+              graph={detail}
+              heightPx={timelinePx}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              onOpenChildContent={openBacking}
+              onJumpToLaunch={onJumpToLaunch}
+              onJumpToResult={onJumpToResult}
+              isChildContentAvailable={childContentState}
+            />
+          </div>
+          {selectedInv && (
+            <InvocationDetail
+              inv={selectedInv}
+              detail={detail}
+              onOpenBacking={() => openBacking(selectedInv.id)}
+            />
+          )}
+        </div>
+      )}
+
+      <ResizeHandle
+        heightPx={heightPx}
+        maxHeightPx={maxHeightPx}
+        onResize={onResize}
+        onResizeEnd={onResizeEnd}
+      />
+    </section>
   )
 }
 
-function ErrorState({ code, onRetry }: { code: string; onRetry: () => void }) {
+function ResizeHandle({
+  heightPx,
+  maxHeightPx,
+  onResize,
+  onResizeEnd,
+}: {
+  heightPx: number
+  maxHeightPx: number
+  onResize: (px: number) => void
+  onResizeEnd: () => void
+}) {
+  const { t } = useI18n()
+  const dragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null)
+
+  const clamp = (px: number) => Math.max(MIN_DOCK_HEIGHT_PX, Math.min(maxHeightPx, px))
+
+  return (
+    <div
+      className="collab-dock-handle flex flex-shrink-0 cursor-row-resize items-center justify-center hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+      style={{ height: HANDLE_PX }}
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label={t('collaboration.dock.dragHandle')}
+      title={t('collaboration.dock.dragHandle')}
+      tabIndex={0}
+      data-testid="collaboration-dock-handle"
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        dragRef.current = { pointerId: e.pointerId, startY: e.clientY, startHeight: heightPx }
+        e.currentTarget.setPointerCapture(e.pointerId)
+      }}
+      onPointerMove={(e) => {
+        const drag = dragRef.current
+        if (!drag || drag.pointerId !== e.pointerId) return
+        onResize(clamp(drag.startHeight + (e.clientY - drag.startY)))
+      }}
+      onPointerUp={(e) => {
+        if (dragRef.current?.pointerId !== e.pointerId) return
+        dragRef.current = null
+        e.currentTarget.releasePointerCapture(e.pointerId)
+        onResizeEnd()
+      }}
+      onPointerCancel={() => {
+        dragRef.current = null
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          onResize(clamp(heightPx + (e.key === 'ArrowDown' ? 16 : -16)))
+          onResizeEnd()
+        }
+      }}
+    >
+      <span className="h-0.5 w-10 rounded-full bg-[var(--border-default)]" aria-hidden="true" />
+    </div>
+  )
+}
+
+function ErrorState({ code }: { code: string }) {
   const { t } = useI18n()
   const kind = classifyCollaborationError(code)
   if (kind === 'generic') {
     return (
-      <div className="flex items-center gap-2 px-3 py-4" data-testid="collaboration-error">
-        <p className="text-nav text-[var(--error)]" role="alert">
-          {t('collaboration.dock.error')}
-        </p>
-        <button
-          type="button"
-          onClick={onRetry}
-          className="h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-        >
-          {t('common.retry')}
-        </button>
-      </div>
+      <p className="px-3 py-4 text-nav text-[var(--error)]" role="alert" data-testid="collaboration-error">
+        {t('collaboration.dock.error')}
+      </p>
     )
   }
   const copyKey =
@@ -271,7 +367,7 @@ function ErrorState({ code, onRetry }: { code: string; onRetry: () => void }) {
         ? 'collaboration.dock.notIndexed'
         : 'collaboration.dock.sessionMissing'
   return (
-    <p className="px-3 py-4 text-nav text-[var(--text-secondary)]" data-testid={`collaboration-${kind}`}>
+    <p className="px-3 py-4 text-nav text-[var(--text-secondary)]" role="status" data-testid={`collaboration-${kind}`}>
       {t(copyKey)}
     </p>
   )
@@ -280,70 +376,76 @@ function ErrorState({ code, onRetry }: { code: string; onRetry: () => void }) {
 function InvocationDetail({
   inv,
   detail,
-  locale,
   onOpenBacking,
 }: {
   inv: TimelineInvocation
   detail: CollaborationDetailResponse
-  locale: Locale
   onOpenBacking: () => void
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   if (inv.isGroup) {
     return (
-      <section className="px-3 py-3" data-testid="collaboration-invocation-detail" aria-label={t('collaboration.detail.heading')}>
+      <aside
+        className="w-[280px] flex-shrink-0 overflow-y-auto border-l border-[var(--border-muted)] px-3 py-2"
+        data-testid="collaboration-invocation-detail"
+        aria-label={t('collaboration.detail.heading')}
+      >
         <h3 className="text-nav font-medium text-[var(--text-primary)]">{t('collaboration.unlinkedGroup')}</h3>
-      </section>
+      </aside>
     )
   }
 
   const backing = backingSessionOf(detail, inv.id)
-  const timeLabel = (ms: number | null) =>
-    ms === null ? t('collaboration.duration.unknown') : formatDate(locale, ms, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
   return (
-    <section className="px-3 py-3" data-testid="collaboration-invocation-detail" aria-label={t('collaboration.detail.heading')}>
+    <aside
+      className="w-[280px] flex-shrink-0 overflow-y-auto border-l border-[var(--border-muted)] px-3 py-2"
+      data-testid="collaboration-invocation-detail"
+      aria-label={t('collaboration.detail.heading')}
+    >
       <h3 className="truncate text-nav font-medium text-[var(--text-primary)]" title={inv.label}>
         {inv.label}
       </h3>
-      <dl className="mt-2 space-y-1 text-meta">
+      <dl className="mt-1.5 space-y-0.5 text-meta">
         <Row label={t('collaboration.tooltip.status')} value={t(`collaboration.status.${inv.status}`)} />
         <Row label={t('collaboration.detail.agent')} value={inv.agentType} />
         {inv.roleLabel && <Row label={t('collaboration.detail.role')} value={inv.roleLabel} />}
-        <Row label={t('collaboration.tooltip.started')} value={timeLabel(inv.startedAtMs)} />
-        <Row label={t('collaboration.detail.ended')} value={timeLabel(inv.endedAtMs)} />
+        <Row label={t('collaboration.tooltip.started')} value={timeLabel(locale, inv.startedAtMs, t)} />
+        <Row label={t('collaboration.detail.ended')} value={timeLabel(locale, inv.endedAtMs, t)} />
         <Row label={t('collaboration.detail.timePrecision')} value={precisionText(t, inv.timePrecision)} />
         <Row label={t('collaboration.detail.contentPrecision')} value={precisionText(t, inv.contentPrecision)} />
         {inv.executionMode && <Row label={t('collaboration.detail.executionMode')} value={t(`collaboration.mode.${inv.executionMode}`)} />}
         {inv.taskSummary && <Row label={t('collaboration.tooltip.task')} value={inv.taskSummary} title={inv.taskSummary} />}
       </dl>
       {backing && (
-        <div className="mt-3 border-t border-[var(--border-muted)] pt-3">
-          <h4 className="text-meta font-medium text-[var(--text-secondary)]">{t('collaboration.backing.heading')}</h4>
-          <p className="mt-1 text-meta text-[var(--text-muted)]">{t('collaboration.backing.hint')}</p>
+        <div className="mt-2 border-t border-[var(--border-muted)] pt-2">
           <button
             type="button"
             onClick={onOpenBacking}
-            className="mt-2 h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             data-testid="collaboration-open-backing"
           >
             {t('collaboration.backing.open')}
           </button>
         </div>
       )}
-    </section>
+    </aside>
   )
 }
 
 function Row({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div className="flex items-baseline gap-2">
-      <dt className="w-28 flex-shrink-0 text-[var(--text-muted)]">{label}</dt>
+      <dt className="w-24 flex-shrink-0 text-[var(--text-muted)]">{label}</dt>
       <dd className="min-w-0 flex-1 truncate text-[var(--text-primary)]" title={title ?? value}>
         {value}
       </dd>
     </div>
   )
+}
+
+function timeLabel(locale: Locale, ms: number | null, t: (key: string) => string): string {
+  return ms === null ? t('collaboration.duration.unknown') : formatDate(locale, ms, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 /** "Exact"/"Estimated" plus the contract reason code when one was recorded. */

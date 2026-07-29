@@ -19,8 +19,9 @@ const {
   isGraphEmpty,
   backingSessionOf,
   hasInvocation,
+  summarizeTimeline,
 } = await import(pathToFileURL(`${core}/dockState.js`).href)
-const { rootInvocationID } = await import(pathToFileURL(`${core}/normalizeTimelineModel.js`).href)
+const { rootInvocationID, normalizeTimelineModel } = await import(pathToFileURL(`${core}/normalizeTimelineModel.js`).href)
 
 // --- Error classification -----------------------------------------------------
 
@@ -88,5 +89,28 @@ assert.equal(backingSessionOf(withChildren, 'codex:root-session:child:missing'),
 
 assert.equal(hasInvocation(withChildren, childEmbedded), true)
 assert.equal(hasInvocation(withChildren, 'codex:root-session:child:gone'), false)
+
+// --- Collapsed-bar summary (mirrors list-summary semantics) ---------------------
+
+{
+  const statuses = ['running', 'waiting', 'failed', 'orphaned', 'completed', 'unknown', 'pending']
+  const g = graph([
+    { ...baseInvocation, id: rootId, status: 'running' }, // root never counted
+    ...statuses.map((status, i) => ({ ...baseInvocation, id: `codex:root-session:child:${i}`, status })),
+  ])
+  const summary = summarizeTimeline(normalizeTimelineModel(g))
+  assert.deepEqual(summary, { childCount: 7, activeCount: 3, problemCount: 2 })
+}
+{
+  // Unlinked children still count (the synthetic group lane itself does not).
+  const g = graph([
+    { ...baseInvocation, id: rootId },
+    { ...baseInvocation, id: childBacked },
+    { ...baseInvocation, id: childEmbedded, status: 'failed' },
+  ])
+  const summary = summarizeTimeline(normalizeTimelineModel(g))
+  assert.deepEqual(summary, { childCount: 2, activeCount: 0, problemCount: 1 })
+  assert.deepEqual(summarizeTimeline(normalizeTimelineModel(rootOnly)), { childCount: 0, activeCount: 0, problemCount: 0 })
+}
 
 console.log('collaboration dock state tests passed')

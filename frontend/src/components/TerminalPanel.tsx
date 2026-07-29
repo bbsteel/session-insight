@@ -1860,6 +1860,7 @@ const snapshotTerminal = () => {
             term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2)))
           },
           getMetrics,
+          getViewportTopLine: () => term.buffer.active.viewportY,
           setLineMatchers: (matchers) => {
             lineMatchers = matchers
             if (term.buffer.active.length > 1) {

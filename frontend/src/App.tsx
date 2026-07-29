@@ -2,7 +2,6 @@ import { useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
-import CollaborationDock from './components/CollaborationDock'
 import type { BookmarkChange } from './bookmarkState'
 import { useI18n } from './i18n'
 
@@ -27,7 +26,6 @@ export default function App() {
   const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
   const [sidebarFocusTarget, setSidebarFocusTarget] = useState<{ id: string; agentType: string } | null>(null)
   const [searchTarget, setSearchTarget] = useState<{ sessionId: string; agentType: string; query: string } | null>(null)
-  const [collaborationOpen, setCollaborationOpen] = useState(false)
 
   const selectSession = (id: string, agentType?: string, focusSidebar = false, searchQuery?: string) => {
     setSelectedId(id)
@@ -81,19 +79,7 @@ export default function App() {
           onSelect={selectSession}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
-          collaborationOpen={collaborationOpen}
-          onToggleCollaboration={() => setCollaborationOpen((open) => !open)}
         />
-        {collaborationOpen && selectedId && selectedAgentType && (
-          <CollaborationDock
-            // Remount per session so the previous session's graph never flashes.
-            key={`${selectedAgentType}:${selectedId}`}
-            sessionId={selectedId}
-            agentType={selectedAgentType}
-            onClose={() => setCollaborationOpen(false)}
-            onOpenSession={(id, agentType) => selectSession(id, agentType)}
-          />
-        )}
       </div>
     </div>
   )

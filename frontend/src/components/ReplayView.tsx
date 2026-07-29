@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, fetchAgents, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote } from '../api'
+import { addBookmark, APIError, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
 import { extractTerminalUrl } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
@@ -7,6 +7,14 @@ import { sessionCapabilityHeaderHint, sessionTokenHeaderDisplay } from '../capab
 import AgentIcon from './AgentIcon'
 import SessionCapabilityPanel from './SessionCapabilityPanel'
 import AgentCapabilityCompareDialog from './AgentCapabilityCompareDialog'
+import CollaborationDock, {
+  DEFAULT_DOCK_HEIGHT_PX,
+  MIN_DOCK_HEIGHT_PX,
+  type CollaborationDockStatus,
+} from './CollaborationDock'
+import { isGraphEmpty } from '../collaboration/dockState'
+import { resolveAnchorJump } from '../collaboration/jumpTargets'
+import type { SourceAnchorDTO } from '../collaboration/types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange } from '../terminalControl'
@@ -34,15 +42,50 @@ type ReplayScrollBehavior = 'auto' | 'smooth'
 type JumpTarget = 'turn' | 'user'
 type ViewMode = 'terminal' | 'analytics'
 
+// The terminal keeps at least this much height below the expanded dock
+// (design §10.4 / §16: usable at 1280×720).
+const MIN_TERMINAL_HEIGHT_PX = 240
+
+const COLLAB_DOCK_PREFS_KEY = 'si-collab-dock'
+
+type CollabDockMode = 'closed' | 'collapsed' | 'expanded'
+
+function readCollabDockPrefs(): { mode: CollabDockMode; height: number } {
+  const fallback = { mode: 'collapsed' as CollabDockMode, height: DEFAULT_DOCK_HEIGHT_PX }
+  try {
+    const raw = window.localStorage.getItem(COLLAB_DOCK_PREFS_KEY)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as { mode?: unknown; height?: unknown }
+    const mode: CollabDockMode =
+      parsed.mode === 'closed' || parsed.mode === 'collapsed' || parsed.mode === 'expanded' ? parsed.mode : fallback.mode
+    const height =
+      typeof parsed.height === 'number' && Number.isFinite(parsed.height)
+        ? Math.max(MIN_DOCK_HEIGHT_PX, Math.min(600, parsed.height))
+        : fallback.height
+    return { mode, height }
+  } catch {
+    return fallback
+  }
+}
+
+function writeCollabDockPrefs(mode: CollabDockMode, height: number) {
+  try {
+    window.localStorage.setItem(COLLAB_DOCK_PREFS_KEY, JSON.stringify({ mode, height }))
+  } catch {
+    // localStorage unavailable — prefs are best-effort.
+  }
+}
+
+// Typed contract failures that will fail identically on every retry; a live
+// ping surfacing one replaces the graph instead of showing it forever.
+const COLLAB_TERMINAL_CODES = new Set(['session_not_found', 'collaboration_not_indexed', 'collaboration_unsupported'])
+
 interface Props {
   sessionId: string | null
   searchTarget?: { sessionId: string; agentType: string; query: string } | null
   onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
-  /** Collaboration dock (App-shell right panel) visibility + toggle. */
-  collaborationOpen?: boolean
-  onToggleCollaboration?: () => void
 }
 
 function fmtTokens(n: number, locale: Locale): string {
@@ -58,7 +101,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange, collaborationOpen = false, onToggleCollaboration }: Props) {
+export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
@@ -85,9 +128,47 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // when Messages hides the tool panel so it does not stick to a later open.
   const [toolFilterRequest, setToolFilterRequest] = useState<{ name: string; token: number } | null>(null)
   const [showAIPanel, setShowAIPanel] = useState(false)
-  // Collaboration dock entry button: focus returns here when the dock closes.
-  const collaborationButtonRef = useRef<HTMLButtonElement | null>(null)
-  const wasCollaborationOpenRef = useRef(false)
+
+  // ---- Collaboration dock (horizontal strip above the terminal) ----
+  // ReplayView owns the detail fetch (the entry button is gated on confirmed
+  // non-empty data), the persisted open/collapsed mode and height, and the
+  // parent-session context for backing-child navigation. The dock itself only
+  // changes the terminal container's height, so xterm cols never change and
+  // no replacement /render?cols= request is triggered by toggling it.
+  const [collabStatus, setCollabStatus] = useState<CollaborationDockStatus>({ kind: 'loading' })
+  const collabEtagRef = useRef<string | null>(null)
+  // Generation counter: the last-started request always wins, so an
+  // out-of-order live ping can never clobber newer data.
+  const collabGenRef = useRef(0)
+  const [collabMode, setCollabMode] = useState<'closed' | 'collapsed' | 'expanded'>(readCollabDockPrefs().mode)
+  const [collabHeight, setCollabHeight] = useState<number>(readCollabDockPrefs().height)
+  const collabEntryRef = useRef<HTMLButtonElement | null>(null)
+  const wasCollabDockOpenRef = useRef(false)
+  const terminalColumnRef = useRef<HTMLDivElement | null>(null)
+  const [terminalColumnHeight, setTerminalColumnHeight] = useState(0)
+  // Set when a backing child session was opened from the dock; drives the
+  // breadcrumb chip and Escape-back until the user leaves the child session.
+  const [childContext, setChildContext] = useState<{
+    childId: string
+    childAgentType: string
+    parentId: string
+    parentAgentType: string
+    parentLabel: string
+  } | null>(null)
+  const collabDockOpen = collabMode !== 'closed'
+  const collabAvailable = collabStatus.kind === 'ready' && !isGraphEmpty(collabStatus.detail)
+  // True once the current session has shown confirmed collaboration data: a
+  // later live transition (delete → session_not_found, re-index → zero-child)
+  // then surfaces the typed state inside the open dock instead of silently
+  // dropping it, while sessions that never had data keep the dock hidden.
+  const collabHadDataRef = useRef(false)
+  // Expanded height clamp: min 120px, max min(40vh, column height minus the
+  // 240px the terminal must keep).
+  const collabMaxHeight = Math.max(
+    MIN_DOCK_HEIGHT_PX,
+    Math.min(Math.floor(window.innerHeight * 0.4), terminalColumnHeight - MIN_TERMINAL_HEIGHT_PX),
+  )
+  const collabEffectiveHeight = Math.max(MIN_DOCK_HEIGHT_PX, Math.min(collabMaxHeight, collabHeight))
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
   const [followOutput, setFollowOutput] = useState(false)
@@ -418,11 +499,153 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
   // Return focus to the Collaboration entry button when the dock closes.
   useEffect(() => {
-    if (!collaborationOpen && wasCollaborationOpenRef.current) {
-      collaborationButtonRef.current?.focus()
+    if (!collabDockOpen && wasCollabDockOpenRef.current) {
+      collabEntryRef.current?.focus()
     }
-    wasCollaborationOpenRef.current = collaborationOpen
-  }, [collaborationOpen])
+    wasCollabDockOpenRef.current = collabDockOpen
+  }, [collabDockOpen])
+
+  // Collaboration detail per session. The entry button and the dock are both
+  // gated on this: unsupported agents and exact zero-child graphs never show
+  // a dead entry (design §10.4 — hidden without confirmed data).
+  const collabAgentType = session?.agent_type ?? null
+  useEffect(() => {
+    const gen = ++collabGenRef.current
+    collabEtagRef.current = null
+    if (!sessionId || !collabAgentType) {
+      setCollabStatus({ kind: 'loading' })
+      return
+    }
+    const ctrl = new AbortController()
+    setCollabStatus({ kind: 'loading' })
+    fetchCollaborationDetail(sessionId, collabAgentType, { signal: ctrl.signal })
+      .then((res) => {
+        if (gen !== collabGenRef.current || res === 'not-modified') return
+        collabEtagRef.current = res.etag
+        setCollabStatus({ kind: 'ready', detail: res.detail })
+      })
+      .catch((err: unknown) => {
+        if (gen !== collabGenRef.current || ctrl.signal.aborted) return
+        setCollabStatus({ kind: 'error', code: err instanceof APIError ? err.code : 'request_failed' })
+      })
+    return () => ctrl.abort()
+  }, [sessionId, collabAgentType])
+
+  // Conditional live refetch on the backend session-change ping. A 304 keeps
+  // the mounted graph untouched; a terminal typed failure replaces it (the
+  // user learns the graph is gone) while a transient failure keeps the
+  // current state for the next ping.
+  useEffect(() => {
+    if (!sessionId || !collabAgentType) return
+    return watchSessionsChanged(() => {
+      const gen = ++collabGenRef.current
+      fetchCollaborationDetail(sessionId, collabAgentType, { etag: collabEtagRef.current })
+        .then((res) => {
+          if (gen !== collabGenRef.current || res === 'not-modified') return
+          collabEtagRef.current = res.etag
+          setCollabStatus({ kind: 'ready', detail: res.detail })
+        })
+        .catch((err: unknown) => {
+          if (gen !== collabGenRef.current) return
+          if (err instanceof APIError && COLLAB_TERMINAL_CODES.has(err.code)) {
+            setCollabStatus({ kind: 'error', code: err.code })
+          }
+        })
+    })
+  }, [sessionId, collabAgentType])
+
+  // Track the terminal column height for the dock's max-height clamp. Runs
+  // again when the session detail arrives: the column only mounts after the
+  // early-return branches, so keying on sessionId alone would observe null.
+  useEffect(() => {
+    const column = terminalColumnRef.current
+    if (!column) return
+    const measure = () => setTerminalColumnHeight(column.clientHeight)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(column)
+    return () => ro.disconnect()
+  }, [sessionId, session?.id])
+
+  useEffect(() => {
+    collabHadDataRef.current = false
+  }, [sessionId])
+  useEffect(() => {
+    if (collabAvailable) collabHadDataRef.current = true
+  }, [collabAvailable])
+
+  // Dock mode/height changes alter only the terminal container's height, so
+  // the buffer never reflows; preserve the logical top line across the
+  // resulting fit anyway (xterm clamps scroll when rows shrink).
+  const preserveTerminalPosition = useCallback((mutate: () => void) => {
+    const ctrl = termControlRef.current
+    const topLine = ctrl?.getViewportTopLine()
+    mutate()
+    if (topLine == null || !ctrl) return
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!followOutputRef.current) ctrl.scrollToLine(topLine)
+      })
+    })
+  }, [])
+
+  const setCollabModePersist = useCallback(
+    (mode: CollabDockMode) => {
+      preserveTerminalPosition(() => setCollabMode(mode))
+    },
+    [preserveTerminalPosition],
+  )
+
+  // Persist open/collapsed mode immediately; the drag height is persisted on
+  // drag end (pointermove updates would otherwise write per frame).
+  const collabHeightRef = useRef(collabHeight)
+  useEffect(() => {
+    collabHeightRef.current = collabHeight
+  }, [collabHeight])
+  useEffect(() => {
+    writeCollabDockPrefs(collabMode, collabHeightRef.current)
+  }, [collabMode])
+  const persistCollabHeight = useCallback(() => {
+    writeCollabDockPrefs(collabMode, collabHeightRef.current)
+  }, [collabMode])
+
+  const openBackingSession = useCallback(
+    (id: string, agentType: string) => {
+      const parent = sessionDetailRef.current
+      if (parent) {
+        setChildContext({
+          childId: id,
+          childAgentType: agentType,
+          parentId: parent.id,
+          parentAgentType: parent.agent_type,
+          parentLabel: parent.name || parent.id,
+        })
+      }
+      onSelect?.(id, agentType)
+    },
+    [onSelect],
+  )
+
+  const returnToParentSession = useCallback(() => {
+    setChildContext((ctx) => {
+      if (ctx) onSelect?.(ctx.parentId, ctx.parentAgentType)
+      return null
+    })
+  }, [onSelect])
+
+  // Jump actions resolve the frozen source anchors against the existing
+  // replay positions (exact tool_call_id → turn → nearest timestamp); when
+  // nothing reliable matches the action stays a no-op rather than jumping to
+  // a guessed row.
+  const jumpToCollabAnchor = useCallback(
+    (anchor: SourceAnchorDTO | null) => {
+      const positions = positionsData?.positions
+      if (!positions) return
+      const target = resolveAnchorJump(anchor, positions)
+      if (target) termControlRef.current?.jumpToPosition(target.lineStart, target.logicalStart)
+    },
+    [positionsData],
+  )
 
   // Session switch: save the outgoing session's view (follow choice + scroll
   // position) and restore the incoming one's. A memory saved while the
@@ -1031,11 +1254,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       ) return
       if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); jump(1, 'turn') }
       else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); jump(-1, 'turn') }
+      else if (e.key === 'Escape' && childContext && sessionId === childContext.childId) { e.preventDefault(); returnToParentSession() }
       else if (e.key === '?' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setShowHelp(h => !h) }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [jump, session?.turns?.length, sessionId])
+  }, [jump, session?.turns?.length, sessionId, childContext, returnToParentSession])
 
   useEffect(() => {
     if (!sessionId) { setSession(null); setEdits([]); return }
@@ -1307,18 +1531,18 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           >
             {t('replay.sessionAssistant')}
           </button>
-          {onToggleCollaboration && (
+          {collabAvailable && (
             <button
               type="button"
-              ref={collaborationButtonRef}
-              onClick={onToggleCollaboration}
+              ref={collabEntryRef}
+              onClick={() => setCollabModePersist(collabMode === 'closed' ? 'expanded' : 'closed')}
               className={`h-7 rounded-md px-2 text-nav ${
-                collaborationOpen
+                collabDockOpen
                   ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                   : 'text-[var(--text-secondary)]'
               } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
               title={t('collaboration.dock.open')}
-              aria-expanded={collaborationOpen}
+              aria-expanded={collabDockOpen}
               aria-controls="collaboration-dock"
               data-testid="collaboration-entry-button"
             >
@@ -1459,7 +1683,45 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       )}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="relative flex min-w-0 flex-1 overflow-hidden">
+        <div ref={terminalColumnRef} className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {childContext && sessionId === childContext.childId && (
+            <div
+              className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-1"
+              data-testid="collaboration-child-context"
+            >
+              <span className="min-w-0 flex-1 truncate text-meta text-[var(--text-muted)]">
+                {t('collaboration.backing.childContext', { label: childContext.parentLabel })}
+              </span>
+              <button
+                type="button"
+                onClick={returnToParentSession}
+                className="h-6 flex-shrink-0 rounded-md px-2 text-meta text-[var(--accent-blue)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                data-testid="collaboration-return-parent"
+              >
+                ← {t('collaboration.backing.back')}
+              </button>
+            </div>
+          )}
+          {collabDockOpen && (collabAvailable || collabHadDataRef.current) && (
+            <CollaborationDock
+              // Remount per session so the previous session's lanes and
+              // selection never flash into the next session.
+              key={sessionId}
+              status={collabStatus}
+              mode={collabMode === 'collapsed' ? 'collapsed' : 'expanded'}
+              heightPx={collabEffectiveHeight}
+              maxHeightPx={collabMaxHeight}
+              onExpand={() => setCollabModePersist('expanded')}
+              onCollapse={() => setCollabModePersist('collapsed')}
+              onClose={() => setCollabModePersist('closed')}
+              onResize={setCollabHeight}
+              onResizeEnd={persistCollabHeight}
+              onOpenSession={openBackingSession}
+              onJumpToLaunch={(_id, anchor) => jumpToCollabAnchor(anchor)}
+              onJumpToResult={(_id, anchor) => jumpToCollabAnchor(anchor)}
+            />
+          )}
+          <div className="relative flex min-w-0 flex-1 overflow-hidden">
           {viewMode === 'terminal' && searchOpen && (
             <TerminalSearchBar
               controlRef={termControlRef}
@@ -1529,6 +1791,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               }}
             />
           )}
+        </div>
         </div>
         <MiniMap
           turns={turns}

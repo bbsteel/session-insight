@@ -11,6 +11,7 @@
 import {
   rootInvocationID,
   UNLINKED_GROUP_ID,
+  type TimelineModel,
 } from './normalizeTimelineModel.js'
 import type {
   AgentInvocationDTO,
@@ -68,4 +69,26 @@ export function backingSessionOf(
 /** True when the invocation exists in this revision of the graph. */
 export function hasInvocation(graph: CollaborationGraphDTO, invocationId: string): boolean {
   return graph.invocations.some((inv) => inv.id === invocationId)
+}
+
+/** Counts for the collapsed dock bar, mirroring the list-summary semantics:
+ * children excludes the root and the synthetic group lane; active is
+ * pending+running+waiting; problem is failed+orphaned. */
+export interface DockSummary {
+  childCount: number
+  activeCount: number
+  problemCount: number
+}
+
+export function summarizeTimeline(model: TimelineModel): DockSummary {
+  let childCount = 0
+  let activeCount = 0
+  let problemCount = 0
+  for (const inv of model.invocations) {
+    if (inv.isGroup || inv.id === model.rootId) continue
+    childCount++
+    if (inv.status === 'pending' || inv.status === 'running' || inv.status === 'waiting') activeCount++
+    else if (inv.status === 'failed' || inv.status === 'orphaned') problemCount++
+  }
+  return { childCount, activeCount, problemCount }
 }
