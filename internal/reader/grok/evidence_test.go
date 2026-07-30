@@ -148,7 +148,48 @@ func grokEvidenceCases() []adaptertest.EvidenceCase {
 				adaptertest.AssertTerminatePID(t, r, "term-aaaaaaaa-bbbb-cccc-dddd-eeeeeeee", os.Getpid(), 1)
 			},
 		},
-		// subtasks unsupported — no evidence case
+		{
+			Scenario: "subtasks-standalone-child", Synthetic: true, Sanitized: true,
+			Covers: []capability.CapabilityID{capability.CapabilitySubtasks},
+			NewReader: func(t *testing.T) adaptertest.Reader {
+				return New(fixtureStandaloneChild(t))
+			},
+			Assert: func(t *testing.T, r adaptertest.Reader) {
+				adaptertest.RunCollaboration(t, r, adaptertest.CollaborationExpect{
+					RootSession: model.Session{
+						ID: gRootID, AgentType: "grok",
+					},
+					MinChildren:           1,
+					RequireBackingSession: true,
+				})
+				// Lineage must mark the known child; root must not be a second collab root.
+				list, err := r.ListSessions()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var child, root model.Session
+				var foundChild, foundRoot bool
+				for _, s := range list {
+					switch s.ID {
+					case gChildID:
+						child = s
+						foundChild = true
+					case gRootID:
+						root = s
+						foundRoot = true
+					}
+				}
+				if !foundChild || !foundRoot {
+					t.Fatalf("expected child and root in ListSessions: child=%v root=%v", foundChild, foundRoot)
+				}
+				if !child.IsSubagent || child.ParentSessionID != gRootID {
+					t.Fatalf("child lineage: IsSubagent=%v Parent=%q", child.IsSubagent, child.ParentSessionID)
+				}
+				if root.IsSubagent || root.ParentSessionID != "" {
+					t.Fatalf("root must not carry child lineage: %+v", root)
+				}
+			},
+		},
 	}
 }
 

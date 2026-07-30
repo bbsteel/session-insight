@@ -40,9 +40,9 @@ func RootInvocationID(agentType, rootSessionID string) string {
 
 // ChildInvocationID namespaces a native stable child ID under the root
 // Session. nativeID must be a native stable source ID (Codex payload.id,
-// Chrys parent_provider_call_id, Copilot toolCallId, Claude agentId), never
-// a positional synthesis, array index, turn index, display name, file
-// modification time, or absolute path.
+// Chrys parent_provider_call_id, Copilot toolCallId, Claude agentId,
+// Grok subagent_id), never a positional synthesis, array index, turn
+// index, display name, file modification time, or absolute path.
 func ChildInvocationID(agentType, rootSessionID, nativeID string) string {
 	return escapeIDComponent(agentType) + ":" + escapeIDComponent(rootSessionID) + ":child:" + escapeIDComponent(nativeID)
 }

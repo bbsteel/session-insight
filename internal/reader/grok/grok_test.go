@@ -157,7 +157,7 @@ func TestBuildSessionIgnoresBackgroundRecapActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readSummary: %v", err)
 	}
-	session := New(root).buildSession(loc, sum)
+	session := New(root).buildSession(loc, sum, map[string]string{})
 	if !session.UpdatedAt.Equal(lastActive) {
 		t.Fatalf("updated_at=%s, want interactive activity %s", session.UpdatedAt, lastActive)
 	}

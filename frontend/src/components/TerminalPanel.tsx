@@ -18,7 +18,7 @@ import {
 } from '../fontPrefs'
 import { useI18n } from '../i18n'
 
-// Text the backend renders for a chrys turn still in progress; the frontend
+// Text the backend renders for any agent turn still in progress; the frontend
 // finds this row and overlays a spinning hourglass. Keep in sync with the
 // formatter's "in_progress" case.
 const PROGRESS_ROW_TEXT = '推理中…'
@@ -344,8 +344,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       flashMarkers = []
     }
 
-    // Spinning hourglass over a "turn in progress" row (chrys in-flight
-    // checkpoint). One decoration, re-applied after every rewrite so it tracks
+    // Spinning hourglass over a shared "turn in progress" row. One decoration,
+    // re-applied after every rewrite so it tracks
     // the row as the buffer changes; disposed when the marker text is gone.
     // A second decoration to its right carries the follow-pause button.
     // NOTE: term.reset() (every writeComposed) discards the buffer WITHOUT
@@ -1132,7 +1132,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         }
       }
 
-      // Overlay a spinning hourglass on chrys's "推理中…" in-progress row. The
+      // Overlay a spinning hourglass on the shared "推理中…" in-progress row. The
       // marker rides xterm's own viewport math (AGENTS.md: no hand-rolled DOM
       // row coordinates); the row sits near the tail, so scan from the bottom.
       const injectProgressRow = () => {
