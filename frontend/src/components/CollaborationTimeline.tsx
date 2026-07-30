@@ -31,6 +31,7 @@ import {
   type MarkerPrim,
   type RenderPrimitives,
 } from '../collaboration/layoutTimeline.js'
+import { axisStepMs, axisTicks } from '../collaboration/timeAxis.js'
 import type { CollaborationGraphDTO, InvocationStatus, SourceAnchorDTO } from '../collaboration/types.js'
 
 const DEFAULT_ROW_HEIGHT = 28
@@ -445,6 +446,66 @@ export default function CollaborationTimeline({
 
   const selectedInv = selectedId ? byId.get(selectedId) : undefined
 
+  // ---- Time axis -------------------------------------------------------------
+
+  // Ticks follow the visible domain, so pan/zoom/reset update them implicitly.
+  const ticks = useMemo(() => axisTicks(domain.startMs, domain.endMs, 5), [domain])
+  const tickStep = useMemo(() => axisStepMs(domain.endMs - domain.startMs, 5), [domain])
+  // Same linear mapping the layout engine uses (layoutTimeline.ts x()).
+  const axisX = useCallback(
+    (tMs: number) => ((tMs - domain.startMs) / Math.max(1, domain.endMs - domain.startMs)) * viewportSize.width,
+    [domain, viewportSize.width],
+  )
+  const formatTick = useCallback(
+    (ms: number) =>
+      tickStep < 60_000
+        ? formatDate(locale, ms, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        : tickStep < 86_400_000
+          ? formatDate(locale, ms, { hour: '2-digit', minute: '2-digit' })
+          : formatDate(locale, ms, { month: '2-digit', day: '2-digit' }),
+    [locale, tickStep],
+  )
+  // ---- Targeted zoom ---------------------------------------------------------
+
+  // Keep button enablement and zoom action on the same source of time truth.
+  // Spans normally derive from complete invocation boundaries, but using them
+  // directly also keeps this interaction sound for future span-only models.
+  const selectedExtent = useMemo(() => {
+    if (!selectedInv || selectedInv.isGroup) return null
+    if (selectedInv.spans.length > 0) {
+      const s = selectedInv.spans[0]
+      return { startMs: s.startMs, endMs: s.endMs }
+    }
+    const startMs = selectedInv.startedAtMs ?? selectedInv.fallbackAnchorMs
+    return startMs === null ? null : { startMs, endMs: selectedInv.endedAtMs ?? startMs }
+  }, [selectedInv])
+  const selectedCenterMs = selectedExtent ? (selectedExtent.startMs + selectedExtent.endMs) / 2 : null
+
+  const zoomToSelection = useCallback(() => {
+    if (!selectedExtent) return
+    const { startMs: start, endMs: end } = selectedExtent
+    const pad = Math.max((end - start) * 0.25, 5_000)
+    let ns = start - pad
+    let ne = end + pad
+    if (ne - ns < MIN_ZOOM_SPAN_MS) {
+      const center = (ns + ne) / 2
+      ns = center - MIN_ZOOM_SPAN_MS / 2
+      ne = center + MIN_ZOOM_SPAN_MS / 2
+    }
+    const fullSpan = model.domainEndMs - model.domainStartMs
+    const span = ne - ns
+    ns = Math.max(model.domainStartMs - fullSpan * 0.1, Math.min(model.domainEndMs + fullSpan * 0.1 - span, ns))
+    setDomain({ startMs: ns, endMs: ns + span })
+  }, [selectedExtent, model.domainStartMs, model.domainEndMs])
+
+  // A selected invocation has a persistent detail surface in the dock. Do
+  // not leave a second hover/focus tooltip competing with it.
+  useEffect(() => {
+    if (selectedId === null) return
+    setTooltip(null)
+    setHoverId(null)
+  }, [selectedId])
+
   const childContentState: ChildContentActionState = selectedInv
     ? (isChildContentAvailable ?? defaultChildContentState)(selectedInv)
     : { available: false }
@@ -487,14 +548,25 @@ export default function CollaborationTimeline({
     <div className="collab-timeline" style={{ height: heightPx }} role="region" aria-label={regionLabel} data-testid="collab-timeline">
       <div className="ct-toolbar">
         <div className="ct-toolbar-group">
-          <button type="button" className="ct-btn" title={t('collaboration.zoomOut')} aria-label={t('collaboration.zoomOut')} onClick={() => zoomDomain(1.25)}>
+          <button type="button" className="ct-btn" title={t('collaboration.zoomOut')} aria-label={t('collaboration.zoomOut')} onClick={() => zoomDomain(1.25, selectedCenterMs ?? undefined)}>
             −
           </button>
-          <button type="button" className="ct-btn" title={t('collaboration.zoomIn')} aria-label={t('collaboration.zoomIn')} onClick={() => zoomDomain(0.8)}>
+          <button type="button" className="ct-btn" title={t('collaboration.zoomIn')} aria-label={t('collaboration.zoomIn')} onClick={() => zoomDomain(0.8, selectedCenterMs ?? undefined)}>
             +
           </button>
           <button type="button" className="ct-btn" title={t('collaboration.zoomReset')} aria-label={t('collaboration.zoomReset')} onClick={() => setDomain({ startMs: model.domainStartMs, endMs: model.domainEndMs })}>
             ⤾
+          </button>
+          <button
+            type="button"
+            className="ct-btn"
+            title={t('collaboration.zoomToSelection')}
+            aria-label={t('collaboration.zoomToSelection')}
+            disabled={selectedCenterMs === null}
+            data-testid="ct-zoom-selection"
+            onClick={zoomToSelection}
+          >
+            ⌖
           </button>
         </div>
         <div className="ct-toolbar-group ct-actions" data-testid="ct-actions">
@@ -528,6 +600,16 @@ export default function CollaborationTimeline({
           >
             {t('collaboration.action.jumpResult')}
           </button>
+        </div>
+      </div>
+      <div className="ct-axis" data-testid="ct-axis">
+        <div className="ct-axis-spacer" style={{ width: labelWidthPx, flexBasis: labelWidthPx }} />
+        <div className="ct-axis-track">
+          {ticks.map((ms) => (
+            <span key={ms} className="ct-axis-tick" style={{ left: axisX(ms) }} data-testid="ct-axis-tick">
+              {formatTick(ms)}
+            </span>
+          ))}
         </div>
       </div>
       <div className="ct-scroll" ref={scrollRef} onScroll={onScroll}>
@@ -619,6 +701,12 @@ export default function CollaborationTimeline({
                 panRef.current = null
               }}
             >
+              <g aria-hidden="true">
+                {ticks.map((ms) => {
+                  const gx = axisX(ms)
+                  return <line key={ms} x1={gx} x2={gx} y1={0} y2={prims.totalHeightPx} className="ct-grid-line" />
+                })}
+              </g>
               <g>
                 {prims.edges.map((e) => (
                   <path
@@ -678,7 +766,7 @@ export default function CollaborationTimeline({
           </div>
         </div>
       </div>
-      {tooltip && tooltipInv && (
+      {tooltip && tooltipInv && selectedId === null && (
         <div
           className="ct-tooltip"
           role="tooltip"

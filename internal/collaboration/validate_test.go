@@ -3,6 +3,7 @@ package collaboration
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // validGraph returns a minimal contract-valid graph for mutation in tests.
@@ -285,5 +286,73 @@ func TestValidateAnchorMissingReason(t *testing.T) {
 	v := Validate(g)
 	if !v.Has(IssueInvalidEvidence) {
 		t.Fatalf("want invalid_evidence for reason-less estimated anchor: %+v", v.Issues)
+	}
+}
+
+func TestValidateCausalityViolation(t *testing.T) {
+	start := time.Date(2026, 7, 17, 13, 15, 36, 0, time.UTC)
+	end := time.Date(2026, 7, 17, 13, 17, 20, 0, time.UTC)
+	after := time.Date(2026, 7, 17, 13, 53, 34, 0, time.UTC)
+	before := time.Date(2026, 7, 17, 13, 15, 30, 0, time.UTC)
+
+	triggerAt := func(ts time.Time) *SourceAnchor {
+		return &SourceAnchor{
+			AgentType:  "codex",
+			SessionID:  "s-1",
+			EventID:    "call-1",
+			ToolCallID: "call-1",
+			Timestamp:  &ts,
+			Precision:  ExactFact(),
+		}
+	}
+
+	// A launch anchor after the child's recorded start (and end) is
+	// causally impossible: reported, but the delegation stays canonical.
+	g := validGraph()
+	g.Invocations[1].StartedAt = &start
+	g.Invocations[1].EndedAt = &end
+	g.Invocations[1].TimePrecision = ExactFact()
+	g.Delegations[0].Trigger = triggerAt(after)
+	v := Validate(g)
+	if !v.Has(IssueCausalityViolation) {
+		t.Fatalf("want causality_violation for trigger after child start: %+v", v.Issues)
+	}
+	if len(v.Quarantined) != 0 {
+		t.Errorf("causality findings must not quarantine the delegation: %v", v.Quarantined)
+	}
+	for _, i := range v.Issues {
+		if i.Code == IssueCausalityViolation {
+			if i.InvocationID != g.Invocations[1].ID || i.DelegationID != g.Delegations[0].ID {
+				t.Errorf("causality finding endpoints = %q/%q", i.InvocationID, i.DelegationID)
+			}
+			if !strings.Contains(i.Detail, "started_at") {
+				t.Errorf("detail must name the contradicted boundary, got %q", i.Detail)
+			}
+		}
+	}
+
+	// Without a recorded start, the recorded end is the boundary.
+	g = validGraph()
+	g.Invocations[1].EndedAt = &end
+	g.Delegations[0].Trigger = triggerAt(after)
+	if v := Validate(g); !v.Has(IssueCausalityViolation) {
+		t.Fatalf("want causality_violation for trigger after child end: %+v", v.Issues)
+	}
+
+	// A trigger at or before the child's start is causally sound.
+	g = validGraph()
+	g.Invocations[1].StartedAt = &start
+	g.Invocations[1].EndedAt = &end
+	g.Invocations[1].TimePrecision = ExactFact()
+	g.Delegations[0].Trigger = triggerAt(before)
+	if v := Validate(g); v.Has(IssueCausalityViolation) {
+		t.Fatalf("trigger before child start must not be flagged: %+v", v.Issues)
+	}
+
+	// No child timing evidence: nothing to contradict.
+	g = validGraph()
+	g.Delegations[0].Trigger = triggerAt(after)
+	if v := Validate(g); v.Has(IssueCausalityViolation) {
+		t.Fatalf("no child boundaries must not be flagged: %+v", v.Issues)
 	}
 }

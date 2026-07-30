@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -391,5 +392,72 @@ func writeChrysCollabSidecar(t *testing.T, sessionDir, name, body string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A parent function_call timestamp that post-dates the child it launched is
+// causally impossible (observed in the wild when Chrys's checkpoint rewrite
+// collapses a message's _chrys_created_at to the rewrite time). The join
+// identity stays exact, but the timestamp must be withheld and the anchor
+// precision downgraded — never emitted as an exact fact that stretches
+// downstream time domains.
+func TestChrysReadCollaborationContradictedTriggerTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS(collabChrysFixtureRoot(t))); err != nil {
+		t.Fatalf("copy fixture: %v", err)
+	}
+	sessionPath := filepath.Join(dir, collabChrysRoot, "session.json")
+	raw, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatalf("read session: %v", err)
+	}
+	// The child runs 04:18:43 -> 04:19:33; move the parent's recorded launch
+	// message to 04:53:34, after the child's recorded end.
+	corrupted := strings.Replace(string(raw),
+		`"_chrys_created_at": "2026-07-06T04:18:40.000000+00:00"`,
+		`"_chrys_created_at": "2026-07-06T04:53:34.000000+00:00"`, 1)
+	if corrupted == string(raw) {
+		t.Fatal("fixture no longer carries the expected launch timestamp")
+	}
+	if err := os.WriteFile(sessionPath, []byte(corrupted), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	r := New(dir)
+	root := collabChrysRootSession(t, r)
+	g, err := r.ReadCollaboration(context.Background(), root)
+	if err != nil {
+		t.Fatalf("ReadCollaboration: %v", err)
+	}
+	if len(g.Delegations) != 1 {
+		t.Fatalf("want 1 delegation, got %d", len(g.Delegations))
+	}
+	d := g.Delegations[0]
+	if d.Trigger == nil {
+		t.Fatal("trigger anchor must survive the downgrade")
+	}
+	if d.Trigger.Timestamp != nil {
+		t.Errorf("contradicted trigger timestamp must be withheld, got %v", d.Trigger.Timestamp)
+	}
+	if d.Trigger.Precision.State != collaboration.EvidenceMissing ||
+		d.Trigger.Precision.ReasonCode != collaboration.ReasonTimestampContradiction {
+		t.Errorf("trigger precision = %+v, want missing/timestamp_contradiction", d.Trigger.Precision)
+	}
+	// The exact two-sided join identity is untouched: jump-to-launch still
+	// resolves by event/tool-call ID.
+	if d.Trigger.EventID != "call-call_sub_1" || d.Trigger.ToolCallID != "call_sub_1" {
+		t.Errorf("join identity = %+v, want exact call_id anchor", d.Trigger)
+	}
+	if d.Evidence.Trigger.State != collaboration.EvidenceExact {
+		t.Errorf("evidence.trigger = %+v, want exact (the join fact is exact)", d.Evidence.Trigger)
+	}
+	// Child timing is source-recorded and unaffected.
+	child := g.Invocations[1]
+	if child.StartedAt == nil || child.EndedAt == nil {
+		t.Errorf("child boundaries must stay recorded: %+v", child)
+	}
+	// The withheld timestamp leaves nothing for the causality check to flag.
+	if v := collaboration.Validate(&g); !v.OK() {
+		t.Errorf("graph must validate clean, got %+v", v.Issues)
 	}
 }

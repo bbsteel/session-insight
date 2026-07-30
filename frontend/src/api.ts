@@ -1,4 +1,5 @@
 import type { AgentInfo, EditCall, PositionsResponse, SearchResult, SessionDetail, SessionSummary } from './types'
+import type { CollaborationGraphDTO, FactEvidenceDTO } from './collaboration/types.js'
 import { localize } from './i18nRuntime.js'
 
 export class APIError extends Error {
@@ -96,6 +97,52 @@ export async function fetchSession(id: string): Promise<SessionDetail> {
   const res = await fetch(`/api/sessions/${id}`)
   if (!res.ok) throw await responseError(res, 'session_load_failed')
   return readJson<SessionDetail>(res, 'session')
+}
+
+// ---- Collaboration detail (frozen Wave 2 contract) ----
+
+/**
+ * GET /api/sessions/{id}/collaboration response: the stored graph (the
+ * CollaborationGraphDTO fields feed normalizeTimelineModel directly) plus the
+ * index-state extras the dock needs for its stale/empty distinctions.
+ */
+export interface CollaborationDetailResponse extends CollaborationGraphDTO {
+  state: 'ok' | 'stale' | string
+  state_evidence?: FactEvidenceDTO
+  time_range?: { start?: string | null; end?: string | null }
+  validation?: unknown
+}
+
+export interface CollaborationDetailResult {
+  detail: CollaborationDetailResponse
+  /** ETag quoted string for conditional refetches; null when absent. */
+  etag: string | null
+}
+
+/**
+ * Fetches the collaboration graph for one root session. Error distinctions
+ * surface as APIError.code: collaboration_unsupported / collaboration_not_indexed
+ * / session_not_found (404) and missing_agent (400). When options.etag is
+ * provided and the graph is unchanged, resolves to 'not-modified' (304).
+ */
+export async function fetchCollaborationDetail(
+  id: string,
+  agent: string,
+  options?: { etag?: string | null; signal?: AbortSignal },
+): Promise<CollaborationDetailResult | 'not-modified'> {
+  const params = new URLSearchParams({ agent })
+  const headers: Record<string, string> = {}
+  if (options?.etag) headers['If-None-Match'] = options.etag
+  const res = await fetch(`/api/sessions/${id}/collaboration?${params}`, {
+    headers,
+    signal: options?.signal,
+  })
+  if (res.status === 304) return 'not-modified'
+  if (!res.ok) throw await responseError(res)
+  return {
+    detail: await readJson<CollaborationDetailResponse>(res, 'collaboration'),
+    etag: res.headers.get('ETag'),
+  }
 }
 
 export async function fetchBookmarks(): Promise<SessionSummary[]> {

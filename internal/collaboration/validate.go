@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // IssueCode identifies one contract violation or quarantine decision.
@@ -52,6 +53,13 @@ const (
 	// IssueCycle: a delegation would close a causal cycle; it is
 	// quarantined.
 	IssueCycle IssueCode = "cycle"
+	// IssueCausalityViolation: a delegation's trigger timestamp post-dates
+	// the child invocation's recorded start (or, without a start, its
+	// recorded end) — a launch cannot happen after the child it launched.
+	// Reported only; the delegation is not quarantined, because the
+	// relation identity may still be an exact source join and only the
+	// timestamp is untrustworthy.
+	IssueCausalityViolation IssueCode = "causality_violation"
 )
 
 // Issue is one validation finding. InvocationID and DelegationID identify
@@ -249,6 +257,37 @@ func Validate(g *CollaborationGraph) Validation {
 		checkFact(d.Evidence.Result, owner, "evidence.result", "", d.ID)
 		checkAnchor(d.Trigger, owner, "trigger", d.ID)
 		checkAnchor(d.Result, owner, "result", d.ID)
+
+		// Causality: a launch cannot post-date the child it launched. The
+		// child's recorded start is the strongest boundary; its recorded
+		// end is the fallback when no start exists. Reported only — the
+		// adapter is expected to withhold or downgrade the contradicted
+		// timestamp, not the relation.
+		if d.Trigger != nil && d.Trigger.Timestamp != nil {
+			if childIdx, ok := invByID[d.ChildInvocationID]; ok {
+				child := g.Invocations[childIdx]
+				var boundary *time.Time
+				boundaryField := ""
+				switch {
+				case child.StartedAt != nil:
+					boundary, boundaryField = child.StartedAt, "started_at"
+				case child.EndedAt != nil:
+					boundary, boundaryField = child.EndedAt, "ended_at"
+				}
+				if boundary != nil && d.Trigger.Timestamp.After(*boundary) {
+					v.Issues = append(v.Issues, Issue{
+						Code:         IssueCausalityViolation,
+						DelegationID: d.ID,
+						InvocationID: child.ID,
+						Field:        "trigger.timestamp",
+						Detail: fmt.Sprintf("%s: trigger timestamp %s is after child %s %s; "+
+							"a launch cannot post-date the child it launched (withhold or downgrade the anchor)",
+							owner, d.Trigger.Timestamp.UTC().Format(time.RFC3339),
+							boundaryField, boundary.UTC().Format(time.RFC3339)),
+					})
+				}
+			}
+		}
 
 		if seenDelegationIDs[d.ID] {
 			v.Issues = append(v.Issues, Issue{Code: IssueDuplicateDelegation, DelegationID: d.ID,

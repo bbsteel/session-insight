@@ -175,6 +175,7 @@ export function reasonCodeLabelKey(code: string | undefined | null): string | nu
     'aggregate_window',
     'completion_not_recorded',
     'stale_graph_retained',
+    'timestamp_contradiction',
   ])
   if (known.has(code)) return `capability.reason.${code}`
   return 'capability.reason.unknown'

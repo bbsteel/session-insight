@@ -501,6 +501,42 @@ body {
 }
 
 .ct-svg { position: absolute; top: 0; left: 0; display: block; touch-action: pan-y; }
+
+/* Time axis: mirrors the graph's linear domain mapping (label spacer keeps
+ * the tick track aligned with the graph column). */
+.ct-axis {
+  display: flex;
+  flex: 0 0 20px;
+  height: 20px;
+  border-bottom: 1px solid var(--border-muted);
+  background: var(--bg-surface);
+  font-size: var(--text-meta-size);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+.ct-axis-spacer {
+  flex: 0 0 220px;
+  border-right: 1px solid var(--border-muted);
+}
+.ct-axis-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ct-axis-tick {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  user-select: none;
+}
+.ct-grid-line {
+  stroke: var(--border-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.6;
+}
+
 .ct-interval-activity { fill: var(--ct-interval-activity); }
 .ct-interval-aggregate { fill: var(--ct-interval-aggregate); }
 .ct-interval-activity.ct-interval-estimated { fill: var(--ct-interval-estimated); }
@@ -547,4 +583,20 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-secondary);
+}
+
+/* Dock-hosted timeline: the 400px panel is narrower than the standalone
+ * default, so the toolbar wraps instead of clipping its action buttons. */
+.collab-dock .ct-toolbar {
+  height: auto;
+  min-height: 32px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.collab-dock .ct-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }

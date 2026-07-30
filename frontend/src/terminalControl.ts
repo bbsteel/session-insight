@@ -29,6 +29,10 @@ export interface TerminalControl {
   // viewport (top-anchored scrollToLine leaves it easy to miss).
   scrollToLineCentered: (line: number) => void
   getMetrics: () => ScrollMetrics
+  // Top visible buffer line via xterm's own buffer state (exact regardless of
+  // line-height variants); used to preserve the logical visible position
+  // across layout changes that only alter the container height.
+  getViewportTopLine: () => number
   setLineMatchers: (matchers: TerminalLineMatcher<unknown>[]) => void
   // Briefly highlight buffer lines after a programmatic jump so the user can
   // see where they landed. Rendered via xterm marker/decoration (AGENTS.md:
