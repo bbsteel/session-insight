@@ -45,13 +45,18 @@ const (
 	// ReasonStaleGraphRetained: indexing was interrupted; the graph is the
 	// last complete indexed revision, not a fresh parse.
 	ReasonStaleGraphRetained ReasonCode = "stale_graph_retained"
+	// ReasonTimestampContradiction: the source recorded a timestamp that
+	// contradicts a stronger causal boundary (for example a launch anchor
+	// dated after the child's recorded end), so the timestamp is withheld
+	// rather than emitted as fact.
+	ReasonTimestampContradiction ReasonCode = "timestamp_contradiction"
 )
 
 // IsKnownReasonCode reports whether c is a declared contract reason code.
 func IsKnownReasonCode(c ReasonCode) bool {
 	switch c {
 	case ReasonSourceNotRecorded, ReasonFIFOJoinHeuristic, ReasonAggregateWindow,
-		ReasonCompletionNotRecorded, ReasonStaleGraphRetained:
+		ReasonCompletionNotRecorded, ReasonStaleGraphRetained, ReasonTimestampContradiction:
 		return true
 	default:
 		return false

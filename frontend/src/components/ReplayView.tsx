@@ -508,7 +508,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // Collaboration detail per session. The entry button and the dock are both
   // gated on this: unsupported agents and exact zero-child graphs never show
   // a dead entry (design §10.4 — hidden without confirmed data).
-  const collabAgentType = session?.agent_type ?? null
+  // Guard against the outgoing session's stale detail surviving into the
+  // render for a new sessionId (fetchSession hasn't resolved yet) — the same
+  // staleness pattern sessionIsLive already guards below.
+  const collabAgentType = session && session.id === sessionId ? session.agent_type : null
   useEffect(() => {
     const gen = ++collabGenRef.current
     collabEtagRef.current = null
@@ -1719,6 +1722,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               onOpenSession={openBackingSession}
               onJumpToLaunch={(_id, anchor) => jumpToCollabAnchor(anchor)}
               onJumpToResult={(_id, anchor) => jumpToCollabAnchor(anchor)}
+              returnToParentActive={Boolean(childContext && sessionId === childContext.childId)}
             />
           )}
           <div className="relative flex min-w-0 flex-1 overflow-hidden">

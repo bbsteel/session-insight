@@ -23,6 +23,10 @@ import (
 //     call join key is absent;
 //   - anchors: trigger uses the parent's ToolInvocation render event
 //     (call-<call_id>) and result the matching function_result, both exact;
+//     a recorded trigger timestamp that post-dates the child it launched
+//     (checkpoint-rewrite corruption) is withheld and the anchor precision
+//     downgraded to missing/timestamp_contradiction — the join identity
+//     stays exact;
 //   - status/timing: meta.status, meta.created_at, and meta.updated_at are
 //     parsed and normalized (the render path leaves them unused, but the
 //     collaboration contract consumes them);
@@ -277,8 +281,21 @@ func chrysChildCollaboration(rootSessionID, rootInvID string, child chrysEmbedde
 		Precision:  collaboration.ExactFact(),
 	}
 	if !call.ts.IsZero() {
-		ts := call.ts
-		trigger.Timestamp = &ts
+		if chrysTriggerContradictsChild(call.ts, startedAt, endedAt, hasEnd) {
+			// Chrys's checkpoint rewrite can collapse a message's
+			// _chrys_created_at to the rewrite time; a launch anchor dated
+			// after the child it launched is causally impossible. The join
+			// identity stays exact, but the timestamp is withheld rather
+			// than emitted as fact (and would otherwise stretch downstream
+			// time domains).
+			trigger.Precision = collaboration.FactEvidence{
+				State:      collaboration.EvidenceMissing,
+				ReasonCode: collaboration.ReasonTimestampContradiction,
+			}
+		} else {
+			ts := call.ts
+			trigger.Timestamp = &ts
+		}
 	}
 	evidence := collaboration.DelegationEvidence{
 		Trigger: collaboration.ExactFact(),
@@ -318,6 +335,18 @@ func chrysChildCollaboration(rootSessionID, rootInvID string, child chrysEmbedde
 		}
 	}
 	return inv, del
+}
+
+// chrysTriggerContradictsChild reports whether a parent-side trigger
+// timestamp is causally impossible: the launch must precede the child's
+// recorded creation (meta.created_at), or — when no start is known — its
+// recorded terminal end. Equality is sound (launch and creation can share
+// one clock tick).
+func chrysTriggerContradictsChild(trigger, startedAt, endedAt time.Time, hasEnd bool) bool {
+	if !startedAt.IsZero() {
+		return trigger.After(startedAt)
+	}
+	return hasEnd && trigger.After(endedAt)
 }
 
 // chrysTimePrecision derives the timing evidence state from which boundaries

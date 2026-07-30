@@ -42,7 +42,10 @@ const HEADER_PX = 32
 const HANDLE_PX = 6
 const BANNER_PX = 26
 export const MIN_DOCK_HEIGHT_PX = 120
-export const DEFAULT_DOCK_HEIGHT_PX = 180
+// Header (32) + handle (6) + timeline chrome (52) + four fixed 28px lanes
+// leaves a small viewport margin at the default expansion. This keeps the
+// root and three children visible before the user has to scroll.
+export const DEFAULT_DOCK_HEIGHT_PX = 216
 export const COLLAPSED_DOCK_HEIGHT_PX = 34
 
 interface Props {
@@ -60,6 +63,12 @@ interface Props {
   onOpenSession: (id: string, agentType: string) => void
   onJumpToLaunch: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   onJumpToResult: (invocationId: string, anchor: SourceAnchorDTO) => void
+  /**
+   * True while the breadcrumb "back to parent session" shortcut is active.
+   * Escape then propagates to ReplayView's window handler so it can return
+   * to the parent session instead of being swallowed by the dock.
+   */
+  returnToParentActive: boolean
 }
 
 export default function CollaborationDock({
@@ -75,6 +84,7 @@ export default function CollaborationDock({
   onOpenSession,
   onJumpToLaunch,
   onJumpToResult,
+  returnToParentActive,
 }: Props) {
   const { t } = useI18n()
   const detail = status.kind === 'ready' ? status.detail : null
@@ -183,7 +193,7 @@ export default function CollaborationDock({
 
   return (
     <section
-      className="collab-dock flex flex-shrink-0 flex-col border-b border-[var(--border-default)] bg-[var(--bg-primary)]"
+      className="collab-dock relative z-20 flex flex-shrink-0 flex-col border-b border-[var(--border-default)] bg-[var(--bg-primary)]"
       style={{ height: heightPx }}
       role="region"
       aria-label={t('collaboration.dock.title')}
@@ -192,7 +202,10 @@ export default function CollaborationDock({
       data-state={stateAttr}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
-          e.stopPropagation()
+          // While the parent-return shortcut is active, let Escape reach
+          // ReplayView's window handler (it returns to the parent session);
+          // otherwise keep the event dock-local and just close.
+          if (!returnToParentActive) e.stopPropagation()
           onClose()
         }
       }}
@@ -203,6 +216,16 @@ export default function CollaborationDock({
       >
         <h2 className="text-nav font-medium text-[var(--text-primary)]">{t('collaboration.dock.title')}</h2>
         {summaryText && <span className="truncate text-meta text-[var(--text-muted)]">{summaryText}</span>}
+        {selectedInv && (
+          <span
+            className="truncate rounded-sm bg-[var(--bg-surface-hover)] px-1.5 py-0.5 text-meta text-[var(--text-secondary)]"
+            data-testid="collaboration-selected-summary"
+          >
+            {selectedInv.isGroup ? t('collaboration.unlinkedGroup') : selectedInv.label}
+            {' · '}
+            {t(`collaboration.status.${selectedInv.status}`)}
+          </span>
+        )}
         <span className="flex-1" />
         <button
           type="button"
@@ -259,27 +282,29 @@ export default function CollaborationDock({
       )}
 
       {detail && !isGraphEmpty(detail) && (
-        <div className="flex min-h-0 flex-1">
-          <div className="min-w-0 flex-1">
-            <CollaborationTimeline
-              graph={detail}
-              heightPx={timelinePx}
-              selectedId={selectedId}
-              onSelect={handleSelect}
-              onOpenChildContent={openBacking}
-              onJumpToLaunch={onJumpToLaunch}
-              onJumpToResult={onJumpToResult}
-              isChildContentAvailable={childContentState}
-            />
-          </div>
-          {selectedInv && (
-            <InvocationDetail
-              inv={selectedInv}
-              detail={detail}
-              onOpenBacking={() => openBacking(selectedInv.id)}
-            />
-          )}
+        // The graph column never resizes on selection. InvocationDetail is an
+        // in-dock overlay, so .ct-graph keeps an identical x/width before and
+        // after selection without extending into or intercepting the terminal.
+        <div className="min-h-0 flex-1">
+          <CollaborationTimeline
+            graph={detail}
+            heightPx={timelinePx}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            onOpenChildContent={openBacking}
+            onJumpToLaunch={onJumpToLaunch}
+            onJumpToResult={onJumpToResult}
+            isChildContentAvailable={childContentState}
+          />
         </div>
+      )}
+      {detail && !isGraphEmpty(detail) && selectedInv && (
+        <InvocationDetail
+          inv={selectedInv}
+          detail={detail}
+          onClose={() => handleSelect(null)}
+          onOpenBacking={() => openBacking(selectedInv.id)}
+        />
       )}
 
       <ResizeHandle
@@ -376,21 +401,26 @@ function ErrorState({ code }: { code: string }) {
 function InvocationDetail({
   inv,
   detail,
+  onClose,
   onOpenBacking,
 }: {
   inv: TimelineInvocation
   detail: CollaborationDetailResponse
+  onClose: () => void
   onOpenBacking: () => void
 }) {
   const { t, locale } = useI18n()
   if (inv.isGroup) {
     return (
       <aside
-        className="w-[280px] flex-shrink-0 overflow-y-auto border-l border-[var(--border-muted)] px-3 py-2"
+        className="absolute bottom-[8px] right-2 z-10 max-h-[calc(100%_-_48px)] w-[280px] overflow-y-auto border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-md)]"
         data-testid="collaboration-invocation-detail"
         aria-label={t('collaboration.detail.heading')}
       >
-        <h3 className="text-nav font-medium text-[var(--text-primary)]">{t('collaboration.unlinkedGroup')}</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-nav font-medium text-[var(--text-primary)]">{t('collaboration.unlinkedGroup')}</h3>
+          <DetailCloseButton onClose={onClose} />
+        </div>
       </aside>
     )
   }
@@ -399,13 +429,16 @@ function InvocationDetail({
 
   return (
     <aside
-      className="w-[280px] flex-shrink-0 overflow-y-auto border-l border-[var(--border-muted)] px-3 py-2"
+      className="absolute bottom-[8px] right-2 z-10 max-h-[calc(100%_-_48px)] w-[280px] overflow-y-auto border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-md)]"
       data-testid="collaboration-invocation-detail"
       aria-label={t('collaboration.detail.heading')}
     >
-      <h3 className="truncate text-nav font-medium text-[var(--text-primary)]" title={inv.label}>
-        {inv.label}
-      </h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="truncate text-nav font-medium text-[var(--text-primary)]" title={inv.label}>
+          {inv.label}
+        </h3>
+        <DetailCloseButton onClose={onClose} />
+      </div>
       <dl className="mt-1.5 space-y-0.5 text-meta">
         <Row label={t('collaboration.tooltip.status')} value={t(`collaboration.status.${inv.status}`)} />
         <Row label={t('collaboration.detail.agent')} value={inv.agentType} />
@@ -430,6 +463,21 @@ function InvocationDetail({
         </div>
       )}
     </aside>
+  )
+}
+
+function DetailCloseButton({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n()
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+      aria-label={t('collaboration.detail.close')}
+      data-testid="collaboration-detail-close"
+    >
+      ✕
+    </button>
   )
 }
 
