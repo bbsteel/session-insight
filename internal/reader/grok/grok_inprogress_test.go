@@ -47,6 +47,29 @@ func TestNoInProgressAfterTurnEnded(t *testing.T) {
 	}
 }
 
+func TestTrailingInProgressWhenEventsSidecarLagsUpdates(t *testing.T) {
+	root := t.TempDir()
+	id := "lagging1-bbbb-cccc-dddd-eeeeeeeeeeee"
+	// Grok writes these files independently. This is the brief interval after
+	// updates starts the next turn but before events records turn_started.
+	writeSession(t, root, "proj", id, summaryFile{}, sampleUpdatesOpen(), sampleEventsClosed())
+	dir := filepath.Join(root, "proj", id)
+	now := time.Now()
+	for _, name := range []string{"updates.jsonl", "events.jsonl", "summary.json"} {
+		if err := os.Chtimes(filepath.Join(dir, name), now, now); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
+	}
+
+	events, err := New(root).GetRenderEvents(id)
+	if err != nil {
+		t.Fatalf("GetRenderEvents: %v", err)
+	}
+	if !hasInProgress(events) {
+		t.Fatal("open updates must retain in_progress while events sidecar lags")
+	}
+}
+
 func TestNoInProgressWhenStale(t *testing.T) {
 	root := t.TempDir()
 	id := "stale111-bbbb-cccc-dddd-eeeeeeeeeeee"
