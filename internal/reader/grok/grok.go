@@ -38,6 +38,10 @@ type GrokReader struct {
 	grokHome    string // ~/.grok
 	locMu       sync.RWMutex
 	locs        map[string]sessionLoc
+	// lineageMu guards childParent: child session UUID → parent session UUID
+	// from structured subagents/*/meta.json (O(sessions+sidecars) build).
+	lineageMu   sync.RWMutex
+	childParent map[string]string
 }
 
 // New constructs a reader rooted at sessionsDir (~/.grok/sessions).
@@ -157,6 +161,10 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 		return nil, err
 	}
 
+	// One O(sessions+sidecars) lineage pass for the whole tree so each child
+	// gets IsSubagent / ParentSessionID without rescanning parents per child.
+	lineage := r.scanChildParentIndex(nil)
+
 	var sessions []model.Session
 	locs := make(map[string]sessionLoc)
 	for _, proj := range entries {
@@ -188,7 +196,7 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 				SummaryPath: sumPath,
 			}
 			locs[id] = loc
-			sessions = append(sessions, r.buildSession(loc, sum))
+			sessions = append(sessions, r.buildSession(loc, sum, lineage))
 		}
 	}
 
@@ -198,10 +206,11 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 	r.locMu.Lock()
 	r.locs = locs
 	r.locMu.Unlock()
+	r.storeLineage(lineage)
 	return sessions, nil
 }
 
-func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile) model.Session {
+func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile, lineage map[string]string) model.Session {
 	cwd := sum.Info.CWD
 	if cwd == "" {
 		// Decode url-encoded project dir name as a last resort.
@@ -237,7 +246,7 @@ func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile) model.Sessio
 		preview = shared.TruncateRunes(sum.SessionSummary, 200)
 	}
 
-	return model.Session{
+	sess := model.Session{
 		ID:           loc.ID,
 		AgentType:    "grok",
 		CWD:          cwd,
@@ -251,6 +260,141 @@ func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile) model.Sessio
 		CreatedAt:    created,
 		UpdatedAt:    updated,
 	}
+	// Lineage is exact only when a structured subagent meta records this
+	// session as child_session_id (or subagent_id). Never inferred from CWD,
+	// timestamps, model, title, or UUID order. AgentPath has no honest Grok
+	// source representation, so it stays empty.
+	if parent, ok := lineage[loc.ID]; ok && parent != "" && parent != loc.ID {
+		sess.IsSubagent = true
+		sess.ParentSessionID = parent
+	}
+	return sess
+}
+
+// subagentMetaLineage is the minimal on-disk shape used for Session lineage.
+// Full collaboration mapping lives in collaboration.go; this keeps list/get
+// free of large update scans.
+type subagentMetaLineage struct {
+	SubagentID      string `json:"subagent_id"`
+	ParentSessionID string `json:"parent_session_id"`
+	ChildSessionID  string `json:"child_session_id"`
+}
+
+// scanChildParentIndex walks every session's subagents/*/meta.json once and
+// returns child session UUID → parent session UUID. ctx may be nil. Conflicting
+// parents for one child keep the first deterministic (sorted path) claim.
+// Complexity: O(number of sessions + number of sidecars), not O(S²).
+func (r *GrokReader) scanChildParentIndex(ctx interface{ Err() error }) map[string]string {
+	out := map[string]string{}
+	entries, err := os.ReadDir(r.sessionsDir)
+	if err != nil {
+		return out
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, proj := range entries {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return out
+			}
+		}
+		if !proj.IsDir() {
+			continue
+		}
+		projPath := filepath.Join(r.sessionsDir, proj.Name())
+		subs, err := os.ReadDir(projPath)
+		if err != nil {
+			continue
+		}
+		sort.Slice(subs, func(i, j int) bool { return subs[i].Name() < subs[j].Name() })
+		for _, sub := range subs {
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return out
+				}
+			}
+			if !sub.IsDir() || !validSessionID(sub.Name()) {
+				continue
+			}
+			sessionDir := filepath.Join(projPath, sub.Name())
+			// Only sessions with a summary.json are discoverable Grok Sessions;
+			// still read their subagent sidecars for lineage of other sessions.
+			if _, err := os.Stat(filepath.Join(sessionDir, "summary.json")); err != nil {
+				continue
+			}
+			r.collectSubagentLineage(sessionDir, out, ctx)
+		}
+	}
+	return out
+}
+
+func (r *GrokReader) collectSubagentLineage(sessionDir string, out map[string]string, ctx interface{ Err() error }) {
+	subRoot := filepath.Join(sessionDir, "subagents")
+	entries, err := os.ReadDir(subRoot)
+	if err != nil {
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, ent := range entries {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+		}
+		if !ent.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(subRoot, ent.Name(), "meta.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+		var meta subagentMetaLineage
+		if json.Unmarshal(data, &meta) != nil {
+			continue
+		}
+		parent := strings.TrimSpace(meta.ParentSessionID)
+		child := strings.TrimSpace(meta.ChildSessionID)
+		if child == "" {
+			child = strings.TrimSpace(meta.SubagentID)
+		}
+		if parent == "" || child == "" || parent == child {
+			continue
+		}
+		if !validSessionID(parent) || !validSessionID(child) {
+			continue
+		}
+		if _, exists := out[child]; exists {
+			// Deterministic: first sorted path wins; do not thrash on conflicts.
+			continue
+		}
+		out[child] = parent
+	}
+}
+
+func (r *GrokReader) storeLineage(lineage map[string]string) {
+	r.lineageMu.Lock()
+	r.childParent = lineage
+	r.lineageMu.Unlock()
+}
+
+// ensureLineage returns child→parent, building the index when GetSession runs
+// cold (before ListSessions). Safe for concurrent readers.
+func (r *GrokReader) ensureLineage() map[string]string {
+	r.lineageMu.RLock()
+	if r.childParent != nil {
+		cp := r.childParent
+		r.lineageMu.RUnlock()
+		return cp
+	}
+	r.lineageMu.RUnlock()
+
+	r.lineageMu.Lock()
+	defer r.lineageMu.Unlock()
+	if r.childParent != nil {
+		return r.childParent
+	}
+	r.childParent = r.scanChildParentIndex(nil)
+	return r.childParent
 }
 
 func (r *GrokReader) scanPreview(dir string) string {
@@ -361,7 +505,9 @@ func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("grok session not found %q: %w", id, err)
 	}
-	session := r.buildSession(loc, sum)
+	// Cold GetSession must agree with ListSessions on lineage; build the
+	// index when list has not run yet.
+	session := r.buildSession(loc, sum, r.ensureLineage())
 	turns, billing := buildTurnsAndBilling(loc.Dir, sum.CurrentModelID)
 	session.TurnCount = len(turns)
 	msgCount := 0

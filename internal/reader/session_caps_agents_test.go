@@ -50,9 +50,8 @@ func TestResolveSixAgentsCatalogIntegration(t *testing.T) {
 		{
 			name:   "grok",
 			static: grok.Capabilities(),
-			unsupportedCaps: map[capability.CapabilityID]string{
-				capability.CapabilitySubtasks: grok.Capabilities().Capabilities[capability.CapabilitySubtasks].ReasonCode,
-			},
+			// subtasks is exact once collaboration recognition is implemented.
+			unsupportedCaps: map[capability.CapabilityID]string{},
 		},
 	}
 
@@ -147,7 +146,7 @@ func TestResolveCopilotResumeStaysUnsupportedEvenWithEmptyResumeID(t *testing.T)
 	}
 }
 
-func TestResolveGrokSubtasksUnsupported(t *testing.T) {
+func TestResolveGrokSubtasksExact(t *testing.T) {
 	static := grok.Capabilities()
 	d := detailBase("grok", "g1")
 	d.ResumeID = "g1"
@@ -157,8 +156,11 @@ func TestResolveGrokSubtasksUnsupported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status[capability.CapabilitySubtasks].State != capability.CapabilityUnsupported {
+	if got.Status[capability.CapabilitySubtasks].State != capability.CapabilityExact {
 		t.Fatalf("%+v", got.Status[capability.CapabilitySubtasks])
+	}
+	if static.Capabilities[capability.CapabilitySubtasks].State != capability.CapabilityExact {
+		t.Fatalf("static declaration must be exact: %+v", static.Capabilities[capability.CapabilitySubtasks])
 	}
 }
 

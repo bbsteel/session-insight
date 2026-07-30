@@ -139,12 +139,19 @@ type BackingSessionRef struct {
 //   - Chrys: parent_provider_call_id (fallback: unparsed invocation_id)
 //   - Copilot: toolCallId
 //   - Claude: agentId (transcript filename id = meta.json agentId)
+//   - Grok: subagent_id from subagents/<id>/meta.json and matching
+//     subagent_spawned / subagent_finished lifecycle updates (never a
+//     tool-call or provider-call ID; those would mislabel the native kind)
 const (
 	IdentityRootSession    = "root_session"
 	IdentityPayloadID      = "payload_id"
 	IdentityProviderCallID = "provider_call_id"
 	IdentityToolCallID     = "tool_call_id"
 	IdentityAgentID        = "agent_id"
+	// IdentitySubagentID is Grok's stable native child id (subagent_id).
+	// Contract extension: the frozen vocabulary had no truthful kind for
+	// this source field; do not reuse tool_call_id or provider_call_id.
+	IdentitySubagentID = "subagent_id"
 )
 
 // SourceIdentity is the raw native identity material behind an invocation
