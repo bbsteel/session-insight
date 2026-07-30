@@ -22,9 +22,14 @@ func (r *GrokReader) toRenderEvents(loc sessionLoc) ([]model.RenderEvent, error)
 		if err != nil {
 			return nil, err
 		}
-		// Prefer events.jsonl turn brackets when present (more precise).
+		// updates.jsonl and events.jsonl are written independently. During a
+		// live turn events.jsonl can briefly still end at the previous
+		// turn_ended while updates.jsonl has already recorded the next user
+		// message. Do not let that lagging close hide the shared in-progress
+		// row: either source observing an open bracket keeps the live affordance
+		// (hourglass and follow-pause control) anchored at the transcript tail.
 		if open, ok := turnOpenFromEvents(filepath.Join(loc.Dir, "events.jsonl")); ok {
-			turnOpen = open
+			turnOpen = turnOpen || open
 		}
 		events = shared.DropEmptyRenderTurns(events)
 		lastWrite := r.lastContentWrite(loc.Dir)
