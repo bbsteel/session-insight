@@ -168,13 +168,19 @@ func grokEvidenceCases() []adaptertest.EvidenceCase {
 					t.Fatal(err)
 				}
 				var child, root model.Session
+				var foundChild, foundRoot bool
 				for _, s := range list {
 					switch s.ID {
 					case gChildID:
 						child = s
+						foundChild = true
 					case gRootID:
 						root = s
+						foundRoot = true
 					}
+				}
+				if !foundChild || !foundRoot {
+					t.Fatalf("expected child and root in ListSessions: child=%v root=%v", foundChild, foundRoot)
 				}
 				if !child.IsSubagent || child.ParentSessionID != gRootID {
 					t.Fatalf("child lineage: IsSubagent=%v Parent=%q", child.IsSubagent, child.ParentSessionID)

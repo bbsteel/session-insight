@@ -71,8 +71,17 @@ func (r *GrokReader) ReadCollaboration(ctx context.Context, root model.Session) 
 	rootInvID := graph.Invocations[0].ID
 
 	seen := map[string]bool{} // native subagent_id already emitted
-	if err := r.appendGrokChildren(ctx, &graph, root.ID, rootInvID, loc.Dir, root.ID, live, seen); err != nil {
+	partial, err := r.appendGrokChildren(ctx, &graph, root.ID, rootInvID, loc.Dir, root.ID, live, seen)
+	if err != nil {
 		return collaboration.CollaborationGraph{}, err
+	}
+	if partial {
+		// Oversized JSONL lines can truncate the lifecycle stream; keep the
+		// graph but do not claim exact completeness.
+		graph.Completeness = collaboration.FactEvidence{
+			State:      collaboration.EvidenceEstimated,
+			ReasonCode: collaboration.ReasonSourceNotRecorded,
+		}
 	}
 
 	if v := collaboration.Validate(&graph); !v.OK() {
@@ -102,21 +111,22 @@ func grokRootInvocation(root model.Session) collaboration.AgentInvocation {
 }
 
 // appendGrokChildren discovers and merges children for one parent session
-// directory into the graph under parentInvID.
+// directory into the graph under parentInvID. The bool is true when any
+// lifecycle scan was truncated (oversized line).
 func (r *GrokReader) appendGrokChildren(
 	ctx context.Context,
 	graph *collaboration.CollaborationGraph,
 	rootSessionID, parentInvID, parentDir, parentSessionID string,
 	rootLive bool,
 	seen map[string]bool,
-) error {
+) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 
-	children, err := r.discoverGrokChildren(ctx, parentDir, parentSessionID)
+	children, truncated, err := r.discoverGrokChildren(ctx, parentDir, parentSessionID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	type nest struct {
@@ -127,7 +137,7 @@ func (r *GrokReader) appendGrokChildren(
 
 	for _, child := range children {
 		if err := ctx.Err(); err != nil {
-			return err
+			return truncated, err
 		}
 		if child.subagentID == "" || seen[child.subagentID] {
 			continue
@@ -155,17 +165,19 @@ func (r *GrokReader) appendGrokChildren(
 
 	for _, n := range nests {
 		if err := ctx.Err(); err != nil {
-			return err
+			return truncated, err
 		}
 		childLoc, err := r.findSession(n.childSessionID)
 		if err != nil {
 			continue
 		}
-		if err := r.appendGrokChildren(ctx, graph, rootSessionID, n.childInvID, childLoc.Dir, n.childSessionID, rootLive, seen); err != nil {
-			return err
+		nestedTrunc, err := r.appendGrokChildren(ctx, graph, rootSessionID, n.childInvID, childLoc.Dir, n.childSessionID, rootLive, seen)
+		if err != nil {
+			return truncated || nestedTrunc, err
 		}
+		truncated = truncated || nestedTrunc
 	}
-	return nil
+	return truncated, nil
 }
 
 // grokChildRec holds merged sidecar + lifecycle facts for one native child.
@@ -192,7 +204,8 @@ type grokChildRec struct {
 // discoverGrokChildren merges subagents/*/meta.json with parent updates.jsonl
 // lifecycle events for the same subagent_id. Ordering is deterministic:
 // earliest start time, then subagent_id. Malformed records are skipped.
-func (r *GrokReader) discoverGrokChildren(ctx context.Context, parentDir, parentSessionID string) ([]*grokChildRec, error) {
+// The bool is true when the parent lifecycle stream was truncated mid-scan.
+func (r *GrokReader) discoverGrokChildren(ctx context.Context, parentDir, parentSessionID string) ([]*grokChildRec, bool, error) {
 	byID := map[string]*grokChildRec{}
 
 	subRoot := filepath.Join(parentDir, "subagents")
@@ -200,7 +213,7 @@ func (r *GrokReader) discoverGrokChildren(ctx context.Context, parentDir, parent
 		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 		for _, ent := range entries {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			if !ent.IsDir() {
 				continue
@@ -255,13 +268,13 @@ func (r *GrokReader) discoverGrokChildren(ctx context.Context, parentDir, parent
 		}
 	}
 
-	stream, err := scanSubagentLifecycle(ctx, filepath.Join(parentDir, "updates.jsonl"))
+	stream, truncated, err := scanSubagentLifecycle(ctx, filepath.Join(parentDir, "updates.jsonl"))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, ev := range stream {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, truncated, err
 		}
 		id := strings.TrimSpace(ev.subagentID)
 		if id == "" {
@@ -344,7 +357,7 @@ func (r *GrokReader) discoverGrokChildren(ctx context.Context, parentDir, parent
 	for _, id := range ids {
 		out = append(out, byID[id])
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 // subagentMeta is the on-disk collaboration shape. prompt/output are never
@@ -388,14 +401,15 @@ type subagentLifecycleEvent struct {
 
 // scanSubagentLifecycle incrementally scans updates.jsonl for subagent
 // lifecycle events only. Bounded scanner; skips oversized/malformed lines.
-// Does not retain prompt/output bodies.
-func scanSubagentLifecycle(ctx context.Context, path string) ([]subagentLifecycleEvent, error) {
+// Does not retain prompt/output bodies. The bool is true when an oversized
+// line aborted the remainder of the scan (partial stream).
+func scanSubagentLifecycle(ctx context.Context, path string) ([]subagentLifecycleEvent, bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	defer f.Close()
 
@@ -406,7 +420,7 @@ func scanSubagentLifecycle(ctx context.Context, path string) ([]subagentLifecycl
 	var out []subagentLifecycleEvent
 	for sc.Scan() {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		line := sc.Bytes()
 		if len(line) == 0 || !bytes.Contains(line, []byte(`"subagent_`)) {
@@ -471,15 +485,14 @@ func scanSubagentLifecycle(ctx context.Context, path string) ([]subagentLifecycl
 		out = append(out, ev)
 	}
 	if err := sc.Err(); err != nil {
-		// Oversized line: return what was parsed so a complete prior graph is
-		// not replaced by empty (indexer retains last good revision on error
-		// paths; soft-skip here keeps partial but valid discovery).
+		// Oversized line aborts the remainder of the file for this scan.
+		// Return partial events and mark truncated so Completeness degrades.
 		if err == bufio.ErrTooLong {
-			return out, nil
+			return out, true, nil
 		}
-		return out, err
+		return out, false, err
 	}
-	return out, nil
+	return out, false, nil
 }
 
 func (r *GrokReader) mapGrokChild(

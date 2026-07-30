@@ -41,9 +41,6 @@ func writeSubagentMeta(t *testing.T, parentDir, subagentID string, meta map[stri
 	}
 }
 
-
-
-
 // local int formatter to avoid importing strconv noise in helpers.
 func formatInt(n int64) string {
 	if n == 0 {

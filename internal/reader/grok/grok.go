@@ -316,11 +316,9 @@ func (r *GrokReader) scanChildParentIndex(ctx interface{ Err() error }) map[stri
 				continue
 			}
 			sessionDir := filepath.Join(projPath, sub.Name())
-			// Only sessions with a summary.json are discoverable Grok Sessions;
-			// still read their subagent sidecars for lineage of other sessions.
-			if _, err := os.Stat(filepath.Join(sessionDir, "summary.json")); err != nil {
-				continue
-			}
+			// Collect lineage from subagent sidecars even when this directory
+			// lacks summary.json (incomplete write); children may still need
+			// parent_session_id from these metas.
 			r.collectSubagentLineage(sessionDir, out, ctx)
 		}
 	}
