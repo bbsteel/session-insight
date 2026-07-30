@@ -82,8 +82,8 @@ func TestHandleListAgentsReturnsFullCatalog(t *testing.T) {
 	if got := byType["chrys"].Capabilities[capability.CapabilityTerminate]; got.State != capability.CapabilityUnsupported {
 		t.Errorf("chrys.terminate state = %s", got.State)
 	}
-	if got := byType["grok"].Capabilities[capability.CapabilitySubtasks]; got.State != capability.CapabilityUnsupported {
-		t.Errorf("grok.subtasks state = %s", got.State)
+	if got := byType["grok"].Capabilities[capability.CapabilitySubtasks]; got.State != capability.CapabilityExact {
+		t.Errorf("grok.subtasks state = %s, want exact", got.State)
 	}
 }
 
