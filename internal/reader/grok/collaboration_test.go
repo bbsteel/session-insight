@@ -462,6 +462,29 @@ func TestGrokReadCollaborationDuplicateNativeAndWrongParent(t *testing.T) {
 	if len(g.Invocations) != 2 {
 		t.Fatalf("want only root+valid child, got %d: %+v", len(g.Invocations), g.Invocations)
 	}
+	rootID := collaboration.RootInvocationID("grok", gRootID)
+	wantChild := collaboration.ChildInvocationID("grok", gRootID, gChildID)
+	wrongID := collaboration.ChildInvocationID("grok", gRootID, other)
+	var sawChild, sawWrong bool
+	for _, inv := range g.Invocations {
+		switch inv.ID {
+		case wantChild:
+			sawChild = true
+		case wrongID:
+			sawWrong = true
+		}
+	}
+	if !sawChild {
+		t.Fatal("valid child invocation missing")
+	}
+	if sawWrong {
+		t.Fatal("wrong-parent child must not be attached under root")
+	}
+	if len(g.Delegations) != 1 ||
+		g.Delegations[0].ParentInvocationID != rootID ||
+		g.Delegations[0].ChildInvocationID != wantChild {
+		t.Fatalf("delegation must be root→valid child, got %+v", g.Delegations)
+	}
 	if v := collaboration.Validate(&g); !v.OK() {
 		t.Errorf("validate: %+v", v.Issues)
 	}

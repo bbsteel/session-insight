@@ -76,8 +76,8 @@ func (r *GrokReader) ReadCollaboration(ctx context.Context, root model.Session) 
 		return collaboration.CollaborationGraph{}, err
 	}
 	if partial {
-		// Oversized JSONL lines can truncate the lifecycle stream; keep the
-		// graph but do not claim exact completeness.
+		// Truncated lifecycle stream or non-missing FS errors during nest
+		// discovery: keep the graph but do not claim exact completeness.
 		graph.Completeness = collaboration.FactEvidence{
 			State:      collaboration.EvidenceEstimated,
 			ReasonCode: collaboration.ReasonSourceNotRecorded,
@@ -158,11 +158,26 @@ func (r *GrokReader) appendGrokChildren(
 		// Nesting uses the child session directory + subagents/, not
 		// readable-backing (summary.json). Intermediate dirs without a full
 		// Session still contribute descendants; BackingSessionRef stays gated.
+		// Missing paths are "no descendants"; other FS errors mark incomplete
+		// rather than claiming an exact zero-descendant branch.
 		if child.childSessionID != "" {
-			if childDir := r.findSessionDir(child.childSessionID); childDir != "" {
-				if info, err := os.Stat(filepath.Join(childDir, "subagents")); err == nil && info.IsDir() {
-					nests = append(nests, nest{childSessionID: child.childSessionID, childInvID: inv.ID, childDir: childDir})
+			childDir, err := r.findSessionDir(child.childSessionID)
+			if err != nil {
+				truncated = true
+				continue
+			}
+			if childDir == "" {
+				continue
+			}
+			info, err := os.Stat(filepath.Join(childDir, "subagents"))
+			if err != nil {
+				if !os.IsNotExist(err) {
+					truncated = true
 				}
+				continue
+			}
+			if info.IsDir() {
+				nests = append(nests, nest{childSessionID: child.childSessionID, childInvID: inv.ID, childDir: childDir})
 			}
 		}
 	}
@@ -173,7 +188,11 @@ func (r *GrokReader) appendGrokChildren(
 		}
 		dir := n.childDir
 		if dir == "" {
-			dir = r.findSessionDir(n.childSessionID)
+			var err error
+			dir, err = r.findSessionDir(n.childSessionID)
+			if err != nil {
+				return true, nil // incomplete, not a hard failure of the root graph
+			}
 		}
 		if dir == "" {
 			continue
@@ -673,27 +692,46 @@ func (r *GrokReader) sessionHasReadableBacking(sessionID string) bool {
 // findSessionDir locates a session directory by UUID even when summary.json is
 // absent (partial write). Used for nested subagent discovery only; list/get
 // still require a summary for a discoverable Session.
-func (r *GrokReader) findSessionDir(id string) string {
+// Returns ("", nil) when the id is not present; non-nil error for I/O failures
+// other than not-exist (callers must not treat those as "no descendants").
+func (r *GrokReader) findSessionDir(id string) (string, error) {
 	if !validSessionID(id) {
-		return ""
+		return "", nil
 	}
 	if loc, err := r.findSession(id); err == nil {
-		return loc.Dir
+		return loc.Dir, nil
 	}
 	entries, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
-		return ""
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
 	}
+	var firstStatErr error
 	for _, ent := range entries {
 		if !ent.IsDir() {
 			continue
 		}
 		dir := filepath.Join(r.sessionsDir, ent.Name(), id)
-		if st, err := os.Stat(dir); err == nil && st.IsDir() {
-			return dir
+		st, err := os.Stat(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			if firstStatErr == nil {
+				firstStatErr = err
+			}
+			continue
+		}
+		if st.IsDir() {
+			return dir, nil
 		}
 	}
-	return ""
+	if firstStatErr != nil {
+		return "", firstStatErr
+	}
+	return "", nil
 }
 
 func grokTimePrecision(hasStart, hasEnd bool) collaboration.FactEvidence {
