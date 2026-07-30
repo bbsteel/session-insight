@@ -132,6 +132,7 @@ func (r *GrokReader) appendGrokChildren(
 	type nest struct {
 		childSessionID string
 		childInvID     string
+		childDir       string
 	}
 	var nests []nest
 
@@ -154,10 +155,13 @@ func (r *GrokReader) appendGrokChildren(
 		graph.Invocations = append(graph.Invocations, inv)
 		graph.Delegations = append(graph.Delegations, del)
 
-		if child.childSessionID != "" && r.sessionHasReadableBacking(child.childSessionID) {
-			if childLoc, err := r.findSession(child.childSessionID); err == nil {
-				if _, err := os.Stat(filepath.Join(childLoc.Dir, "subagents")); err == nil {
-					nests = append(nests, nest{childSessionID: child.childSessionID, childInvID: inv.ID})
+		// Nesting uses the child session directory + subagents/, not
+		// readable-backing (summary.json). Intermediate dirs without a full
+		// Session still contribute descendants; BackingSessionRef stays gated.
+		if child.childSessionID != "" {
+			if childDir := r.findSessionDir(child.childSessionID); childDir != "" {
+				if info, err := os.Stat(filepath.Join(childDir, "subagents")); err == nil && info.IsDir() {
+					nests = append(nests, nest{childSessionID: child.childSessionID, childInvID: inv.ID, childDir: childDir})
 				}
 			}
 		}
@@ -167,11 +171,14 @@ func (r *GrokReader) appendGrokChildren(
 		if err := ctx.Err(); err != nil {
 			return truncated, err
 		}
-		childLoc, err := r.findSession(n.childSessionID)
-		if err != nil {
+		dir := n.childDir
+		if dir == "" {
+			dir = r.findSessionDir(n.childSessionID)
+		}
+		if dir == "" {
 			continue
 		}
-		nestedTrunc, err := r.appendGrokChildren(ctx, graph, rootSessionID, n.childInvID, childLoc.Dir, n.childSessionID, rootLive, seen)
+		nestedTrunc, err := r.appendGrokChildren(ctx, graph, rootSessionID, n.childInvID, dir, n.childSessionID, rootLive, seen)
 		if err != nil {
 			return truncated || nestedTrunc, err
 		}
@@ -661,6 +668,32 @@ func (r *GrokReader) sessionHasReadableBacking(sessionID string) bool {
 	}
 	_, err = os.Stat(loc.SummaryPath)
 	return err == nil
+}
+
+// findSessionDir locates a session directory by UUID even when summary.json is
+// absent (partial write). Used for nested subagent discovery only; list/get
+// still require a summary for a discoverable Session.
+func (r *GrokReader) findSessionDir(id string) string {
+	if !validSessionID(id) {
+		return ""
+	}
+	if loc, err := r.findSession(id); err == nil {
+		return loc.Dir
+	}
+	entries, err := os.ReadDir(r.sessionsDir)
+	if err != nil {
+		return ""
+	}
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		dir := filepath.Join(r.sessionsDir, ent.Name(), id)
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			return dir
+		}
+	}
+	return ""
 }
 
 func grokTimePrecision(hasStart, hasEnd bool) collaboration.FactEvidence {

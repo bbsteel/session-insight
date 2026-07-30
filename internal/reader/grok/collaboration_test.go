@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,28 +42,7 @@ func writeSubagentMeta(t *testing.T, parentDir, subagentID string, meta map[stri
 	}
 }
 
-// local int formatter to avoid importing strconv noise in helpers.
-func formatInt(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [32]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
-}
+func formatInt(n int64) string { return strconv.FormatInt(n, 10) }
 
 func lifecycleLine(sessionID, updateJSON string, eventID string, tsSec, agentMS int64) string {
 	meta := ""
@@ -446,7 +426,7 @@ func TestGrokReadCollaborationMalformedSidecar(t *testing.T) {
 	}
 }
 
-func TestGrokReadCollaborationDuplicateNativeAndCycle(t *testing.T) {
+func TestGrokReadCollaborationDuplicateNativeAndWrongParent(t *testing.T) {
 	root := fixtureStandaloneChild(t)
 	// Second sidecar dir claiming same subagent_id via different folder name —
 	// discover uses subagent_id field so same id merges.
