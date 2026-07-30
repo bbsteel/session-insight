@@ -101,6 +101,13 @@ When the working tree already has uncommitted or local-only work on `main` that 
 - Stop only the process recorded by the current worktree's PID file. Never use broad process-name matching or kill an unrelated listener merely because it occupies an expected port.
 - Keep runtime artifacts owned by a worktree inside that worktree. `PORT` and `SI_DATA_DIR` are escape hatches for explicit validation needs, not required per-instance setup.
 
+### Retiring merged PR worktrees
+
+- A linked worktree used for a PR must not leave a long-running SessionInsight instance behind after that PR is merged or abandoned. Before retiring it, first check the orchestration environment's active-agent record and confirm that no agent is still working in that checkout.
+- From the retiring worktree, run `./run.sh stop`. This uses that worktree's PID file and must be the only normal way to stop its application instance. Then run `./run.sh status` and confirm that its checkout is absent from the instance list before removing the worktree.
+- After the instance is stopped and the worktree is clean, remove the merged or abandoned linked worktree with `git worktree remove <path>`. Delete its remote feature branch only after a merged PR, as required above. Do not apply this cleanup rule to the primary checkout's user-owned development instance unless the user asks to stop it.
+- If an instance outlives a missing or stale PID record, do not use broad process matching. Identify the live process from the All instances table in `./run.sh status` (checkout, PID, and port when resolvable). The top-of-status stale-PID line reports only checkout state and PID — if port is still needed, read that worktree's `.runtime/session-insight.port` or `.runtime/session-insight.url` (or primary checkout `session-insight.port` / `session-insight.url`). Obtain explicit user approval before using `./run.sh kill <n>`.
+
 ## Terminal Interaction Positioning
 
 - Keep terminal hit-testing and hover rendering anchored to xterm APIs. Clickable terminal affordances should use the established matcher + buffer scan + xterm MouseService + marker/decoration pattern.
