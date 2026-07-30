@@ -467,24 +467,23 @@ export default function CollaborationTimeline({
   )
   // ---- Targeted zoom ---------------------------------------------------------
 
-  // Center of the selected invocation's known time extent, when any.
-  const selectedCenterMs = useMemo(() => {
+  // Keep button enablement and zoom action on the same source of time truth.
+  // Spans normally derive from complete invocation boundaries, but using them
+  // directly also keeps this interaction sound for future span-only models.
+  const selectedExtent = useMemo(() => {
     if (!selectedInv || selectedInv.isGroup) return null
     if (selectedInv.spans.length > 0) {
       const s = selectedInv.spans[0]
-      return (s.startMs + s.endMs) / 2
+      return { startMs: s.startMs, endMs: s.endMs }
     }
-    if (selectedInv.startedAtMs !== null && selectedInv.endedAtMs !== null) {
-      return (selectedInv.startedAtMs + selectedInv.endedAtMs) / 2
-    }
-    return selectedInv.startedAtMs ?? selectedInv.fallbackAnchorMs
+    const startMs = selectedInv.startedAtMs ?? selectedInv.fallbackAnchorMs
+    return startMs === null ? null : { startMs, endMs: selectedInv.endedAtMs ?? startMs }
   }, [selectedInv])
+  const selectedCenterMs = selectedExtent ? (selectedExtent.startMs + selectedExtent.endMs) / 2 : null
 
   const zoomToSelection = useCallback(() => {
-    if (!selectedInv || selectedInv.isGroup) return
-    const start = selectedInv.startedAtMs ?? selectedInv.fallbackAnchorMs
-    const end = selectedInv.endedAtMs ?? selectedInv.startedAtMs ?? selectedInv.fallbackAnchorMs
-    if (start === null || end === null) return
+    if (!selectedExtent) return
+    const { startMs: start, endMs: end } = selectedExtent
     const pad = Math.max((end - start) * 0.25, 5_000)
     let ns = start - pad
     let ne = end + pad
@@ -497,7 +496,7 @@ export default function CollaborationTimeline({
     const span = ne - ns
     ns = Math.max(model.domainStartMs - fullSpan * 0.1, Math.min(model.domainEndMs + fullSpan * 0.1 - span, ns))
     setDomain({ startMs: ns, endMs: ns + span })
-  }, [selectedInv, model.domainStartMs, model.domainEndMs])
+  }, [selectedExtent, model.domainStartMs, model.domainEndMs])
 
   // A selected invocation has a persistent detail surface in the dock. Do
   // not leave a second hover/focus tooltip competing with it.
