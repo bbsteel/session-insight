@@ -74,6 +74,24 @@ export function foldKeysInTurn(
     .map(f => f.key)
 }
 
+// Returns every fold that contains a replay jump target, including nested
+// ancestors. Callers open these folds before resolving the target against the
+// composed xterm buffer, so a target inside a collapsed Tool group cannot be
+// remapped to the group's header row.
+export function foldKeysContainingTarget(
+  folds: FoldRange[],
+  lineStart: number,
+  logicalStart?: number,
+): string[] {
+  return folds
+    .filter((fold) =>
+      typeof logicalStart === 'number'
+        ? fold.headerLogical <= logicalStart && logicalStart < fold.logicalEnd
+        : fold.headerDisplay <= lineStart && lineStart < fold.displayEnd,
+    )
+    .map((fold) => fold.key)
+}
+
 export interface FoldView {
   text: string
   hiddenTotal: number

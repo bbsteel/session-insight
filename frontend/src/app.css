@@ -372,6 +372,8 @@ body {
 }
 
 .ct-toolbar {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -379,6 +381,7 @@ body {
   height: 32px;
   flex: 0 0 32px;
   padding: 0 8px;
+  background: var(--bg-surface);
   border-bottom: 1px solid var(--border-muted);
 }
 .ct-toolbar-group {
@@ -505,11 +508,13 @@ body {
 /* Time axis: mirrors the graph's linear domain mapping (label spacer keeps
  * the tick track aligned with the graph column). */
 .ct-axis {
+  position: relative;
+  z-index: 2;
+  background: var(--bg-surface);
   display: flex;
   flex: 0 0 20px;
   height: 20px;
   border-bottom: 1px solid var(--border-muted);
-  background: var(--bg-surface);
   font-size: var(--text-meta-size);
   color: var(--text-muted);
   overflow: hidden;

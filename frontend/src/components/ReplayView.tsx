@@ -30,7 +30,7 @@ import ToolCallPanel from './ToolCallPanel'
 import UserMessagePanel from './UserMessagePanel'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
-import { foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
+import { foldKeysContainingTarget, foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
 import { getNavOpenPref } from '../navPrefs'
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
@@ -50,27 +50,30 @@ const COLLAB_DOCK_PREFS_KEY = 'si-collab-dock'
 
 type CollabDockMode = 'closed' | 'collapsed' | 'expanded'
 
-function readCollabDockPrefs(): { mode: CollabDockMode; height: number } {
-  const fallback = { mode: 'collapsed' as CollabDockMode, height: DEFAULT_DOCK_HEIGHT_PX }
+function readCollabDockPrefs(): { mode: CollabDockMode; height: number; autoFit: boolean } {
+  const fallback = { mode: 'collapsed' as CollabDockMode, height: DEFAULT_DOCK_HEIGHT_PX, autoFit: true }
   try {
     const raw = window.localStorage.getItem(COLLAB_DOCK_PREFS_KEY)
     if (!raw) return fallback
-    const parsed = JSON.parse(raw) as { mode?: unknown; height?: unknown }
+    const parsed = JSON.parse(raw) as { mode?: unknown; height?: unknown; autoFit?: unknown }
     const mode: CollabDockMode =
       parsed.mode === 'closed' || parsed.mode === 'collapsed' || parsed.mode === 'expanded' ? parsed.mode : fallback.mode
     const height =
       typeof parsed.height === 'number' && Number.isFinite(parsed.height)
         ? Math.max(MIN_DOCK_HEIGHT_PX, Math.min(600, parsed.height))
         : fallback.height
-    return { mode, height }
+    // Preferences written before auto-fit existed may contain the height from
+    // the short-lived automatic expansion. Treat them as auto-fit so stale
+    // space is recovered; a manual resize opts out and is persisted below.
+    return { mode, height, autoFit: parsed.autoFit !== false }
   } catch {
     return fallback
   }
 }
 
-function writeCollabDockPrefs(mode: CollabDockMode, height: number) {
+function writeCollabDockPrefs(mode: CollabDockMode, height: number, autoFit: boolean) {
   try {
-    window.localStorage.setItem(COLLAB_DOCK_PREFS_KEY, JSON.stringify({ mode, height }))
+    window.localStorage.setItem(COLLAB_DOCK_PREFS_KEY, JSON.stringify({ mode, height, autoFit }))
   } catch {
     // localStorage unavailable — prefs are best-effort.
   }
@@ -142,6 +145,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const collabGenRef = useRef(0)
   const [collabMode, setCollabMode] = useState<'closed' | 'collapsed' | 'expanded'>(readCollabDockPrefs().mode)
   const [collabHeight, setCollabHeight] = useState<number>(readCollabDockPrefs().height)
+  const [collabAutoFit, setCollabAutoFit] = useState<boolean>(readCollabDockPrefs().autoFit)
+  const [collabContentHeight, setCollabContentHeight] = useState<number | null>(null)
+  useEffect(() => {
+    setCollabContentHeight(null)
+  }, [sessionId])
   const collabEntryRef = useRef<HTMLButtonElement | null>(null)
   const wasCollabDockOpenRef = useRef(false)
   const terminalColumnRef = useRef<HTMLDivElement | null>(null)
@@ -168,7 +176,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     MIN_DOCK_HEIGHT_PX,
     Math.min(Math.floor(window.innerHeight * 0.4), terminalColumnHeight - MIN_TERMINAL_HEIGHT_PX),
   )
-  const collabEffectiveHeight = Math.max(MIN_DOCK_HEIGHT_PX, Math.min(collabMaxHeight, collabHeight))
+  const collabRequestedHeight = collabAutoFit && collabContentHeight !== null ? collabContentHeight : collabHeight
+  const collabEffectiveHeight = Math.max(MIN_DOCK_HEIGHT_PX, Math.min(collabMaxHeight, collabRequestedHeight))
   // Live follow (tail -f): pin viewport to bottom on every live refresh.
   // Only offered for active sessions; cleared when the session goes idle or changes.
   const [followOutput, setFollowOutput] = useState(false)
@@ -606,11 +615,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     collabHeightRef.current = collabHeight
   }, [collabHeight])
   useEffect(() => {
-    writeCollabDockPrefs(collabMode, collabHeightRef.current)
-  }, [collabMode])
+    writeCollabDockPrefs(collabMode, collabHeightRef.current, collabAutoFit)
+  }, [collabMode, collabAutoFit])
   const persistCollabHeight = useCallback(() => {
-    writeCollabDockPrefs(collabMode, collabHeightRef.current)
-  }, [collabMode])
+    writeCollabDockPrefs(collabMode, collabHeightRef.current, collabAutoFit)
+  }, [collabMode, collabAutoFit])
 
   const openBackingSession = useCallback(
     (id: string, agentType: string) => {
@@ -645,9 +654,25 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       const positions = positionsData?.positions
       if (!positions) return
       const target = resolveAnchorJump(anchor, positions)
-      if (target) termControlRef.current?.jumpToPosition(target.lineStart, target.logicalStart)
+      const control = termControlRef.current
+      if (!target || !control) return
+
+      // A Chrys sub-agent call lives inside the parent Tools fold. Resolve in
+      // the original coordinate space, open every collapsed ancestor first,
+      // then jump only after xterm has recomposed the buffer. Otherwise the
+      // logical target is remapped to a collapsed group header and appears to
+      // be a no-op (or lands at an imprecise location after manual expansion).
+      const ancestorFoldKeys = foldKeysContainingTarget(folds, target.lineStart, target.logicalStart)
+      const collapsed = new Set(control.getCollapsedFoldKeys())
+      const toOpen = ancestorFoldKeys.filter((key) => collapsed.has(key))
+      const jump = () => control.jumpToPosition(target.lineStart, target.logicalStart)
+      if (toOpen.length > 0) {
+        control.setFoldsCollapsed(toOpen, false, target.lineStart, jump)
+      } else {
+        jump()
+      }
     },
-    [positionsData],
+    [folds, positionsData],
   )
 
   // Session switch: save the outgoing session's view (follow choice + scroll
@@ -1717,8 +1742,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               onExpand={() => setCollabModePersist('expanded')}
               onCollapse={() => setCollabModePersist('collapsed')}
               onClose={() => setCollabModePersist('closed')}
-              onResize={setCollabHeight}
+              onResize={(heightPx) => {
+                setCollabAutoFit(false)
+                setCollabHeight(heightPx)
+              }}
               onResizeEnd={persistCollabHeight}
+              onContentHeightChange={setCollabContentHeight}
               onOpenSession={openBackingSession}
               onJumpToLaunch={(_id, anchor) => jumpToCollabAnchor(anchor)}
               onJumpToResult={(_id, anchor) => jumpToCollabAnchor(anchor)}

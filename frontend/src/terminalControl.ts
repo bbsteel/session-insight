@@ -61,7 +61,12 @@ export interface TerminalControl {
   // Batch collapse/expand fold groups in a single rewrite. anchorOriginalRow
   // (original render row, e.g. the right-clicked row) stays put on screen;
   // defaults to the top visible row when omitted.
-  setFoldsCollapsed: (keys: string[], collapsed: boolean, anchorOriginalRow?: number | null) => void
+  setFoldsCollapsed: (
+    keys: string[],
+    collapsed: boolean,
+    anchorOriginalRow?: number | null,
+    afterApply?: () => void,
+  ) => void
   getCollapsedFoldKeys: () => string[]
   // Live tail: re-fetch the render and apply it incrementally — pure appends
   // stream into the buffer, structural changes (group counters, folds) fall

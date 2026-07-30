@@ -41,6 +41,7 @@ export type CollaborationDockMode = 'collapsed' | 'expanded'
 const HEADER_PX = 32
 const HANDLE_PX = 6
 const BANNER_PX = 26
+const DETAIL_MIN_HEIGHT_PX = 164
 export const MIN_DOCK_HEIGHT_PX = 120
 // Header (32) + handle (6) + timeline chrome (52) + four fixed 28px lanes
 // leaves a small viewport margin at the default expansion. This keeps the
@@ -60,6 +61,8 @@ interface Props {
   /** Live drag updates; the parent persists on onResizeEnd. */
   onResize: (px: number) => void
   onResizeEnd: () => void
+  /** Minimum height required by the visible timeline lanes. */
+  onContentHeightChange: (heightPx: number) => void
   onOpenSession: (id: string, agentType: string) => void
   onJumpToLaunch: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   onJumpToResult: (invocationId: string, anchor: SourceAnchorDTO) => void
@@ -81,6 +84,7 @@ export default function CollaborationDock({
   onClose,
   onResize,
   onResizeEnd,
+  onContentHeightChange,
   onOpenSession,
   onJumpToLaunch,
   onJumpToResult,
@@ -282,29 +286,32 @@ export default function CollaborationDock({
       )}
 
       {detail && !isGraphEmpty(detail) && (
-        // The graph column never resizes on selection. InvocationDetail is an
-        // in-dock overlay, so .ct-graph keeps an identical x/width before and
-        // after selection without extending into or intercepting the terminal.
-        <div className="min-h-0 flex-1">
-          <CollaborationTimeline
-            graph={detail}
-            heightPx={timelinePx}
-            selectedId={selectedId}
-            onSelect={handleSelect}
-            onOpenChildContent={openBacking}
-            onJumpToLaunch={onJumpToLaunch}
-            onJumpToResult={onJumpToResult}
-            isChildContentAvailable={childContentState}
-          />
+        <div className="min-h-0 flex flex-1">
+          <div className="min-w-0 flex-1">
+            <CollaborationTimeline
+              graph={detail}
+              heightPx={timelinePx}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              onOpenChildContent={openBacking}
+              onJumpToLaunch={onJumpToLaunch}
+              onJumpToResult={onJumpToResult}
+              isChildContentAvailable={childContentState}
+              onContentHeightChange={(timelineHeightPx) => onContentHeightChange(Math.max(
+                HEADER_PX + HANDLE_PX + (showBanner ? BANNER_PX : 0) + timelineHeightPx,
+                selectedInv ? HEADER_PX + HANDLE_PX + (showBanner ? BANNER_PX : 0) + DETAIL_MIN_HEIGHT_PX : 0,
+              ))}
+            />
+          </div>
+          {selectedInv && (
+            <InvocationDetail
+              inv={selectedInv}
+              detail={detail}
+              onClose={() => handleSelect(null)}
+              onOpenBacking={() => openBacking(selectedInv.id)}
+            />
+          )}
         </div>
-      )}
-      {detail && !isGraphEmpty(detail) && selectedInv && (
-        <InvocationDetail
-          inv={selectedInv}
-          detail={detail}
-          onClose={() => handleSelect(null)}
-          onOpenBacking={() => openBacking(selectedInv.id)}
-        />
       )}
 
       <ResizeHandle
@@ -413,7 +420,7 @@ function InvocationDetail({
   if (inv.isGroup) {
     return (
       <aside
-        className="absolute bottom-[8px] right-2 z-10 max-h-[calc(100%_-_48px)] w-[280px] overflow-y-auto border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-md)]"
+        className="w-[280px] flex-shrink-0 overflow-y-auto border-l border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2"
         data-testid="collaboration-invocation-detail"
         aria-label={t('collaboration.detail.heading')}
       >
@@ -429,7 +436,7 @@ function InvocationDetail({
 
   return (
     <aside
-      className="absolute bottom-[8px] right-2 z-10 max-h-[calc(100%_-_48px)] w-[280px] overflow-y-auto border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2 shadow-[var(--shadow-md)]"
+      className="w-[280px] flex-shrink-0 overflow-y-auto border-l border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2"
       data-testid="collaboration-invocation-detail"
       aria-label={t('collaboration.detail.heading')}
     >
