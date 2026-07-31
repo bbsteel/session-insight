@@ -698,10 +698,10 @@ func TestToolInvocationEmitsToolPosition(t *testing.T) {
 	start := time.Date(2026, 7, 11, 10, 0, 0, 0, time.Local)
 	events := []model.RenderEvent{
 		{Type: "TurnBoundary", TurnIndex: 0, Timestamp: start, Depth: 0},
-		{Type: "ToolInvocation", TurnIndex: 0, Timestamp: start, Depth: 0,
+		{EventID: "call-call-1", Type: "ToolInvocation", TurnIndex: 0, Timestamp: start, Depth: 0,
 			ToolName: "Bash", ToolCallID: "call-1",
 			ToolInput: map[string]any{"command": "npm test"}},
-		{Type: "ToolResult", TurnIndex: 0, Timestamp: start.Add(3200 * time.Millisecond), Depth: 0,
+		{EventID: "result-call-1", Type: "ToolResult", TurnIndex: 0, Timestamp: start.Add(3200 * time.Millisecond), Depth: 0,
 			ToolCallID: "call-1", Stdout: "ok"},
 	}
 	ansi, positions := FormatEventsWithPositions(events, 80)
@@ -729,6 +729,22 @@ func TestToolInvocationEmitsToolPosition(t *testing.T) {
 	}
 	if got := tool.Payload["ts_ms"]; got != float64(start.UnixMilli()) {
 		t.Errorf("payload ts_ms: got %v, want %d", got, start.UnixMilli())
+	}
+	if got := tool.Payload["event_id"]; got != "call-call-1" {
+		t.Errorf("payload event_id: got %v, want call-call-1", got)
+	}
+	if got := tool.Payload["result_event_id"]; got != "result-call-1" {
+		t.Errorf("payload result_event_id: got %v, want result-call-1", got)
+	}
+	if got, ok := tool.Payload["result_line_start"].(float64); !ok || got <= float64(tool.LineStart) {
+		t.Errorf("payload result_line_start: got %v, want a line after invocation %d", tool.Payload["result_line_start"], tool.LineStart)
+	}
+	if got, ok := tool.Payload["result_logical_start"].(float64); !ok || got <= tool.Payload["logical_start"].(float64) {
+		t.Errorf("payload result_logical_start: got %v, want a logical line after invocation %v",
+			tool.Payload["result_logical_start"], tool.Payload["logical_start"])
+	}
+	if got := tool.Payload["result_ts_ms"]; got != float64(start.Add(3200*time.Millisecond).UnixMilli()) {
+		t.Errorf("payload result_ts_ms: got %v", got)
 	}
 	// Default (box) profile: the header line carries the salient arg and the
 	// duration so the invocation is readable without opening anything.

@@ -270,6 +270,7 @@ func (rs *renderState) appendToolMessage(m chrysMessage, turnIdx, depth int, spl
 		rejected = c.rejected()
 		timeoutSeconds = c.timeoutSeconds()
 		rs.emit(model.RenderEvent{
+			EventID:        "result-" + c.CallID,
 			ParentEventID:  "call-" + c.CallID,
 			Type:           "ToolResult",
 			Timestamp:      ts,

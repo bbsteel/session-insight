@@ -123,6 +123,9 @@ func TestChrysReadCollaborationEmbeddedChild(t *testing.T) {
 	if d.Result == nil || d.Result.ToolCallID != "call_sub_1" {
 		t.Errorf("result anchor = %+v, want exact call_id anchor", d.Result)
 	}
+	if d.Result != nil && d.Result.EventID != "result-call_sub_1" {
+		t.Errorf("result anchor EventID = %q, want result-call_sub_1", d.Result.EventID)
+	}
 	if d.Result.Precision.State != collaboration.EvidenceExact {
 		t.Errorf("result precision = %+v, want exact", d.Result.Precision)
 	}
