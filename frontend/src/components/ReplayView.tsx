@@ -646,14 +646,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   }, [onSelect])
 
   // Jump actions resolve the frozen source anchors against the existing
-  // replay positions (exact tool_call_id → turn → nearest timestamp); when
-  // nothing reliable matches the action stays a no-op rather than jumping to
-  // a guessed row.
+  // replay positions (exact event_id → tool_call_id → turn → timestamp).
+  // Launch and result use distinct coordinates even though both share one
+  // native tool_call_id.
   const jumpToCollabAnchor = useCallback(
-    (anchor: SourceAnchorDTO | null) => {
+    (anchor: SourceAnchorDTO | null, targetKind: 'launch' | 'result') => {
       const positions = positionsData?.positions
       if (!positions) return
-      const target = resolveAnchorJump(anchor, positions)
+      const target = resolveAnchorJump(anchor, positions, targetKind)
       const control = termControlRef.current
       if (!target || !control) return
 
@@ -1749,8 +1749,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               onResizeEnd={persistCollabHeight}
               onContentHeightChange={setCollabContentHeight}
               onOpenSession={openBackingSession}
-              onJumpToLaunch={(_id, anchor) => jumpToCollabAnchor(anchor)}
-              onJumpToResult={(_id, anchor) => jumpToCollabAnchor(anchor)}
+              onJumpToLaunch={(_id, anchor) => jumpToCollabAnchor(anchor, 'launch')}
+              onJumpToResult={(_id, anchor) => jumpToCollabAnchor(anchor, 'result')}
               returnToParentActive={Boolean(childContext && sessionId === childContext.childId)}
             />
           )}

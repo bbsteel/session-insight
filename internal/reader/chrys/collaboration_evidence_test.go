@@ -137,6 +137,9 @@ func TestCollaborationEmbeddedChildStableAcrossParses(t *testing.T) {
 			subSummaryIdx = i
 		case e.Type == "ToolResult" && e.ToolCallID == "call_sub_1":
 			resultIdx = i
+			if e.EventID != "result-call_sub_1" {
+				t.Errorf("summary ToolResult EventID = %q, want result-call_sub_1", e.EventID)
+			}
 			if e.ParentEventID != "call-call_sub_1" {
 				t.Errorf("summary ToolResult ParentEventID = %q, want call-call_sub_1", e.ParentEventID)
 			}

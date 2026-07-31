@@ -319,6 +319,7 @@ func chrysChildCollaboration(rootSessionID, rootInvID string, child chrysEmbedde
 		anchor := &collaboration.SourceAnchor{
 			AgentType:  "chrys",
 			SessionID:  rootSessionID,
+			EventID:    "result-" + callID,
 			ToolCallID: callID,
 			Precision:  collaboration.ExactFact(),
 		}

@@ -114,6 +114,11 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 	// to its summary text so the panel preview is not limited to the first
 	// chunk of a multi-chunk reply.
 	openAssistantPos := -1
+	// Tool positions remain one-per-invocation for the tool-call panel, but
+	// their payload is enriched when the matching result is rendered so
+	// collaboration result actions can land on the output instead of the
+	// invocation that shares its tool_call_id.
+	toolPositionByCallID := make(map[string]int)
 
 	// openFold tracks the tool run currently being rendered so its body's
 	// line extent (display rows AND logical lines, both needed by the
@@ -483,6 +488,9 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			// to the subagent transcript, not the parent session.
 			if evt.Depth == 0 {
 				emit("tool", evt.ToolName, "", evt.TurnIndex, toolPositionPayload(evt, outcome))
+				if evt.ToolCallID != "" {
+					toolPositionByCallID[evt.ToolCallID] = len(positions) - 1
+				}
 			}
 			// Each non-edit tool inside a group folds independently: its compact
 			// "▼ • Name summary" line stays visible while the input/output boxes
@@ -533,6 +541,19 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			if evt.Depth == 0 && p.ResultIndent != "" {
 				resultPrefix = prefix + p.ResultIndent
 			}
+			if idx, ok := toolPositionByCallID[evt.ToolCallID]; evt.Depth == 0 && ok {
+				payload := positions[idx].Payload
+				if _, recorded := payload["result_line_start"]; !recorded {
+					payload["result_line_start"] = float64(tb.CurrentLine())
+					payload["result_logical_start"] = float64(tb.CurrentLogicalLine())
+					if evt.EventID != "" {
+						payload["result_event_id"] = evt.EventID
+					}
+					if !evt.Timestamp.IsZero() {
+						payload["result_ts_ms"] = float64(evt.Timestamp.UnixMilli())
+					}
+				}
+			}
 			writeToolResult(p, tb, evt, resultPrefix, bWidth, makeOnTrunc(evt.TurnIndex))
 			closeToolFold() // finalize the per-tool fold immediately after its result, so following assistant text is not swallowed into the fold (fixes folding assistant messages)
 		case "CompactionBoundary":
@@ -573,7 +594,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 // shifts line numbers, so cached line positions keyed on it are invalidated.
 // It also covers position-set changes (e.g. a new position kind), since
 // positions are cached under the same key.
-const FormatVersion int64 = 31
+const FormatVersion int64 = 32
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
@@ -642,6 +663,9 @@ func toolPositionPayload(evt model.RenderEvent, outcome toolOutcome) map[string]
 	}
 	if evt.ToolCallID != "" {
 		payload["tool_call_id"] = evt.ToolCallID
+	}
+	if evt.EventID != "" {
+		payload["event_id"] = evt.EventID
 	}
 	if s := toolSummary(purpose, evt.ToolInput); s != "" {
 		payload["summary"] = truncateToWidth(s, 200)
