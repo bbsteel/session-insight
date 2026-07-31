@@ -1518,8 +1518,16 @@ const snapshotTerminal = () => {
         })
       }
 
-      const setFoldsCollapsed = (keys: string[], collapsed: boolean, anchorOriginalRow?: number | null) => {
-        if (!rawAnsi || !foldRanges.length) return
+      const setFoldsCollapsed = (
+        keys: string[],
+        collapsed: boolean,
+        anchorOriginalRow?: number | null,
+        afterApply?: () => void,
+      ) => {
+        if (!rawAnsi || !foldRanges.length) {
+          afterApply?.()
+          return
+        }
         const valid = new Set(foldRanges.map(f => f.key))
         let changed = false
         for (const k of keys) {
@@ -1527,12 +1535,16 @@ const snapshotTerminal = () => {
           if (collapsed && !collapsedKeys.has(k)) { collapsedKeys.add(k); changed = true }
           if (!collapsed && collapsedKeys.has(k)) { collapsedKeys.delete(k); changed = true }
         }
-        if (!changed) return
+        if (!changed) {
+          afterApply?.()
+          return
+        }
         openAtTop = false
         const anchor = anchorOriginalRow ?? toOriginalLine(term.buffer.active.viewportY)
         const viewportOffset = toDisplayLine(anchor) - term.buffer.active.viewportY
         recompose(() => {
           term.scrollToLine(Math.max(0, toDisplayLine(anchor) - viewportOffset))
+          afterApply?.()
         })
       }
 

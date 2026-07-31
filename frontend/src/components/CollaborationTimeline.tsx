@@ -87,6 +87,10 @@ export interface CollaborationTimelineProps {
   isChildContentAvailable?: (invocation: TimelineInvocation) => ChildContentActionState
   /** Accessible label for the whole timeline region. */
   ariaLabel?: string
+  /** Reports the rendered toolbar height so dock overlays can clear wrapped actions. */
+  onToolbarHeightChange?: (heightPx: number) => void
+  /** Reports the height needed to show the toolbar, axis, and every visible lane. */
+  onContentHeightChange?: (heightPx: number) => void
 }
 
 const STATUS_GLYPH: Record<InvocationStatus, string> = {
@@ -157,6 +161,8 @@ export default function CollaborationTimeline({
   onJumpToResult,
   isChildContentAvailable,
   ariaLabel,
+  onToolbarHeightChange,
+  onContentHeightChange,
 }: CollaborationTimelineProps) {
   const { t, locale } = useI18n()
   const model = useMemo(() => normalizeTimelineModel(graph), [graph])
@@ -176,6 +182,7 @@ export default function CollaborationTimeline({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const graphRef = useRef<HTMLDivElement | null>(null)
   const labelsRef = useRef<HTMLDivElement | null>(null)
+  const toolbarRef = useRef<HTMLDivElement | null>(null)
   const scrollRafRef = useRef(0)
   const panRef = useRef<{ pointerId: number; lastX: number; moved: boolean; id: string | null } | null>(null)
 
@@ -244,6 +251,20 @@ export default function CollaborationTimeline({
       }),
     [model, collapsedIds, viewportSize, rowHeightPx, scrollTop, overscanRows, domain, layoutNowMs, minSegmentPx, selectedPath, hoverId],
   )
+
+  useEffect(() => {
+    const toolbar = toolbarRef.current
+    if (!toolbar) return
+    const report = () => {
+      const toolbarHeight = toolbar.offsetHeight
+      onToolbarHeightChange?.(toolbarHeight)
+      onContentHeightChange?.(toolbarHeight + 20 + prims.totalHeightPx)
+    }
+    report()
+    const ro = new ResizeObserver(report)
+    ro.observe(toolbar)
+    return () => ro.disconnect()
+  }, [onToolbarHeightChange, onContentHeightChange, prims.totalHeightPx])
 
   const select = useCallback(
     (id: string | null) => {
@@ -546,7 +567,7 @@ export default function CollaborationTimeline({
 
   return (
     <div className="collab-timeline" style={{ height: heightPx }} role="region" aria-label={regionLabel} data-testid="collab-timeline">
-      <div className="ct-toolbar">
+      <div className="ct-toolbar" ref={toolbarRef}>
         <div className="ct-toolbar-group">
           <button type="button" className="ct-btn" title={t('collaboration.zoomOut')} aria-label={t('collaboration.zoomOut')} onClick={() => zoomDomain(1.25, selectedCenterMs ?? undefined)}>
             −

@@ -1,4 +1,4 @@
-import { foldsFromPositions, composeFoldView, foldKeysInTurn } from '/tmp/session-insight-terminal-folds/terminalFolds.js'
+import { foldsFromPositions, composeFoldView, foldKeysContainingTarget, foldKeysInTurn } from '/tmp/session-insight-terminal-folds/terminalFolds.js'
 
 let failures = 0
 function assertEq(actual, expected, label) {
@@ -90,6 +90,16 @@ assertEq(foldKeysInTurn(folds, [2, 6], 1), [], 'row before first banner → no t
 assertEq(foldKeysInTurn(folds, [], 3), [], 'no turn banners → no folds')
 assertEq(foldKeysInTurn([], turnStarts, 3), [], 'no folds → empty')
 assertEq(foldKeysInTurn(folds, [0], 9), ['fold:0:1', 'fold:0:6'], 'single turn spans everything → both folds')
+
+// Collaboration jumps must reveal every nested fold that contains the target
+// before TerminalPanel resolves its logical position in the recomposed buffer.
+const nested = foldsFromPositions([
+  { kind: 'fold', position_key: 'group:1:100', line_start: 100, label: 'Tools', payload: { display_start: 101, display_end: 180, logical_start: 76, logical_end: 140, header_logical: 75 } },
+  { kind: 'fold', position_key: 'tool:1:101', line_start: 101, label: 'Plan Agent', payload: { level: 'tool', display_start: 102, display_end: 130, logical_start: 77, logical_end: 120, header_logical: 76 } },
+])
+assertEq(foldKeysContainingTarget(nested, 101, 76), ['group:1:100', 'tool:1:101'], 'tool anchor opens group and tool ancestors')
+assertEq(foldKeysContainingTarget(nested, 110, 100), ['group:1:100', 'tool:1:101'], 'nested tool body opens both ancestors')
+assertEq(foldKeysContainingTarget(nested, 200, undefined), [], 'outside target opens no fold')
 
 if (failures > 0) {
   console.error(`${failures} failure(s)`)
