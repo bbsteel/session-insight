@@ -14,8 +14,9 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 
 - **Multi-agent session library** — auto-discover and index sessions from six coding agents, with live list refresh, accurate active-state detection, and live tail for running sessions
 - **Agent capability transparency** — inspect each Agent's support for discovery, replay, realtime updates, tokens, tools, diffs, subtasks, resume, deletion, and termination, with session-level exact, estimated, or missing states
+- **Sub-agent collaboration** — when an Agent records nested work, open a horizontal collaboration dock with a zoomable timeline and jump from each launch or result back into the terminal evidence (Grok, Codex, Chrys, and Copilot)
 - **Terminal-native replay** — preserve ANSI output, formatted assistant text, tool calls, code, and errors; fold noisy details and follow active sessions as they grow
-- **Fast session navigation** — start at the first prompt, keep the current user message visible while scrolling, use the semantic minimap, or jump through the combined user/assistant interaction panel
+- **Fast session navigation** — start at the first prompt, keep the current user message visible while scrolling, jump to the next user message, open clickable terminal links, use the semantic minimap, or browse the combined user/assistant interaction panel
 - **Search and organization** — search metadata, prompts, assistant replies, skills, tool inputs, and errors across sessions while background indexing reports progress; narrow results by project or agent and keep bookmarks with notes
 - **Tool, diff, and code inspection** — filter tool calls and jump to their source turn; inspect inline or side-by-side diffs; open referenced files in the structured code reader or your editor
 - **Usage analytics** — inspect prompt, output, and cache tokens, cost estimates, tool usage, errors, anomalies, continuation pressure, and per-turn trends
