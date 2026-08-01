@@ -34,6 +34,7 @@ import { foldKeysContainingTarget, foldKeysInTurn, foldsFromPositions } from '..
 import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
 import { getNavOpenPref } from '../navPrefs'
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
+import { openOnModifiedClick } from '../sessionLink'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -1722,7 +1723,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               </span>
               <button
                 type="button"
-                onClick={returnToParentSession}
+                onClick={(e) => { if (!openOnModifiedClick(e, childContext.parentAgentType, childContext.parentId)) returnToParentSession() }}
+                onAuxClick={(e) => { openOnModifiedClick(e, childContext.parentAgentType, childContext.parentId) }}
                 className="h-6 flex-shrink-0 rounded-md px-2 text-meta text-[var(--accent-blue)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                 data-testid="collaboration-return-parent"
               >

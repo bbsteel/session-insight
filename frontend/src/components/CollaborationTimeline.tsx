@@ -32,6 +32,7 @@ import {
   type RenderPrimitives,
 } from '../collaboration/layoutTimeline.js'
 import { axisStepMs, axisTicks } from '../collaboration/timeAxis.js'
+import { shouldOpenInNewTab } from '../sessionLink'
 import type { CollaborationGraphDTO, InvocationStatus, SourceAnchorDTO } from '../collaboration/types.js'
 
 const DEFAULT_ROW_HEIGHT = 28
@@ -77,8 +78,8 @@ export interface CollaborationTimelineProps {
   defaultSelectedId?: string | null
   /** Fired whenever selection changes (lane click or Enter). Never navigates. */
   onSelect?: (invocationId: string | null) => void
-  /** Explicit "View child Agent record" action. */
-  onOpenChildContent?: (invocationId: string) => void
+  /** Explicit "View child Agent record" action; newTab requests opening in a new browser tab. */
+  onOpenChildContent?: (invocationId: string, newTab?: boolean) => void
   /** Explicit jump to the launch anchor in the parent replay. */
   onJumpToLaunch?: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   /** Explicit jump to the returned-result anchor in the parent replay. */
@@ -597,7 +598,8 @@ export default function CollaborationTimeline({
             disabled={!openChildEnabled}
             title={openChildEnabled ? t('collaboration.action.openChild') : openChildReason}
             aria-label={t('collaboration.action.openChild')}
-            onClick={() => selectedInv && onOpenChildContent?.(selectedInv.id)}
+            onClick={(e) => selectedInv && onOpenChildContent?.(selectedInv.id, shouldOpenInNewTab(e))}
+            onAuxClick={(e) => { if (selectedInv && shouldOpenInNewTab(e)) onOpenChildContent?.(selectedInv.id, true) }}
           >
             {t('collaboration.action.openChild')}
           </button>

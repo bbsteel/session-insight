@@ -17,6 +17,8 @@ import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows
 import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
 import { modelMeta } from '../modelMeta'
 import { formatDate, formatNumber, useI18n } from '../i18n'
+import { openOnModifiedClick, openSessionInNewTab } from '../sessionLink'
+import { copySessionIdToClipboard, sessionCopyId } from '../copySessionId'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 
@@ -342,19 +344,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   }
 
   const copyId = useCallback(async (session: SessionSummary) => {
-    const id = session.resume_id || session.id
-    try {
-      await navigator.clipboard.writeText(id)
-      showToast(t('sidebar.copiedSessionId'))
-    } catch {
-      showToast(t('sidebar.copyFailed'))
-    }
+    const ok = await copySessionIdToClipboard(session)
+    showToast(t(ok ? 'sidebar.copiedSessionId' : 'sidebar.copyFailed'))
   }, [showToast, t])
 
   const copyAgentAndId = useCallback(async (session: SessionSummary) => {
-    const id = session.resume_id || session.id
     try {
-      await navigator.clipboard.writeText(`agent: ${getAgentLabel(session.agent_type)}, id: ${id}`)
+      await navigator.clipboard.writeText(`agent: ${getAgentLabel(session.agent_type)}, id: ${sessionCopyId(session)}`)
       showToast(t('sidebar.copiedAgentAndId'))
     } catch {
       showToast(t('sidebar.copyFailed'))
@@ -645,10 +641,11 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         <button
           data-session-id={session.id}
           data-agent-type={session.agent_type}
-          onClick={() => onSelect(session.id, session.agent_type)}
+          onClick={(e) => { if (!openOnModifiedClick(e, session.agent_type, session.id)) onSelect(session.id, session.agent_type) }}
+          onAuxClick={(e) => { openOnModifiedClick(e, session.agent_type, session.id) }}
           onContextMenu={(e) => openContextMenu(e, session)}
           title={t('sidebar.openMenu')}
-          className={`relative w-full text-left pl-2.5 pr-20 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
+          className={`relative w-full text-left pl-2.5 pr-24 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
             selected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
           style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
@@ -670,56 +667,71 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </div>
           </div>
         </button>
-        {session.bookmarked && session.bookmark_note?.trim() && (
+        <div className="absolute right-1 top-1.5 flex items-center gap-0.5">
+          {session.bookmarked && session.bookmark_note?.trim() && (
+            <InstantTooltip
+              text={t('bookmark.noteWithValue', { note: session.bookmark_note.trim() })}
+              placement="top"
+              className="flex h-5 w-5 items-center justify-center text-[var(--text-secondary)]"
+            >
+              <button
+                type="button"
+                onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
+                className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                aria-label={t('replay.editBookmarkNote')}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M5 3.75h10.5L20 8.25v12H5z" />
+                  <path d="M15.5 3.75v4.5H20" />
+                  <path d="M8.5 13h7M8.5 16.5h5" />
+                </svg>
+              </button>
+            </InstantTooltip>
+          )}
           <InstantTooltip
-            text={t('bookmark.noteWithValue', { note: session.bookmark_note.trim() })}
+            text={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
             placement="top"
-            className="absolute right-[3.25rem] top-1.5 flex h-5 w-5 items-center justify-center text-[var(--text-secondary)]"
           >
             <button
               type="button"
-              onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
-              className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-              aria-label={t('replay.editBookmarkNote')}
+              onClick={event => { void bookmarkFromRow(event, session) }}
+              className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                session.bookmarked
+                  ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
+                  : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
+              }`}
+              aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M5 3.75h10.5L20 8.25v12H5z" />
-                <path d="M15.5 3.75v4.5H20" />
-                <path d="M8.5 13h7M8.5 16.5h5" />
-              </svg>
+              <StarIcon size={14} filled={session.bookmarked} strokeWidth={1.75} />
             </button>
           </InstantTooltip>
-        )}
-        <InstantTooltip
-          text={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
-          placement="top"
-          className="absolute right-7 top-1.5"
-        >
           <button
-            type="button"
-            onClick={event => { void bookmarkFromRow(event, session) }}
-            className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-              session.bookmarked
-                ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
-                : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
-            }`}
-            aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
+            onClick={(e) => { e.stopPropagation(); openSessionInNewTab(session.agent_type, session.id) }}
+            tabIndex={-1}
+            className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
+            aria-hidden="true"
+            title={t('session.openInNewTab')}
+            data-testid="session-open-new-tab"
           >
-            <StarIcon size={14} filled={session.bookmarked} strokeWidth={1.75} />
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
           </button>
-        </InstantTooltip>
-        <button
-          onClick={(e) => { e.stopPropagation(); copyId(session) }}
-          tabIndex={-1}
-          className="absolute right-1 top-1.5 w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
-          aria-hidden="true"
-          title={t('sidebar.copySessionId')}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </svg>
-        </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); copyId(session) }}
+            tabIndex={-1}
+            className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
+            aria-hidden="true"
+            title={t('sidebar.copySessionId')}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+        </div>
       </div>
     )
   }
@@ -933,6 +945,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             className="fixed z-[var(--z-toast,50)] w-60 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg py-1 text-body"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
+            <button
+              className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+              data-testid="session-context-open-new-tab"
+              onClick={() => { openSessionInNewTab(contextMenu.session.agent_type, contextMenu.session.id); setContextMenu(null) }}
+            >
+              {t('session.openInNewTab')}
+            </button>
             <InstantTooltip
               text={
                 contextMenu.session.bookmarked
