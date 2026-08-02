@@ -586,10 +586,10 @@ export default function CollaborationTimeline({
           </button>
           {selectedBacking && (
             <>
-              <BackingCopyButton backing={selectedBacking} className="ct-btn" />
+              <BackingCopyButton backing={selectedBacking} className="ct-btn ct-btn-text" />
               <button
                 type="button"
-                className="ct-btn"
+                className="ct-btn ct-btn-text"
                 title={t('session.openInNewTab')}
                 aria-label={t('session.openInNewTab')}
                 data-testid="collaboration-open-backing-new-tab"
@@ -600,6 +600,7 @@ export default function CollaborationTimeline({
                   <polyline points="15 3 21 3 21 9" />
                   <line x1="10" y1="14" x2="21" y2="3" />
                 </svg>
+                <span>{t('session.openInNewTab')}</span>
               </button>
             </>
           )}
