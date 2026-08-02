@@ -32,7 +32,6 @@ import {
   type RenderPrimitives,
 } from '../collaboration/layoutTimeline.js'
 import { axisStepMs, axisTicks } from '../collaboration/timeAxis.js'
-import { shouldOpenInNewTab } from '../sessionLink'
 import type { CollaborationGraphDTO, InvocationStatus, SourceAnchorDTO } from '../collaboration/types.js'
 
 const DEFAULT_ROW_HEIGHT = 28
@@ -45,13 +44,6 @@ const MAX_LIVE_INTERVAL_MS = 1000
 const MIN_ZOOM_SPAN_MS = 60_000
 /** Drag distance below which a pointerup is a click (select), not a pan. */
 const CLICK_SLOP_PX = 3
-
-/** Availability of the "View child Agent record" action for one lane. */
-export interface ChildContentActionState {
-  available: boolean
-  /** i18n key explaining unavailability (already cataloged). */
-  reasonKey?: string
-}
 
 export interface CollaborationTimelineProps {
   /** Contract-shaped collaboration payload (internal/collaboration JSON tags). */
@@ -78,14 +70,10 @@ export interface CollaborationTimelineProps {
   defaultSelectedId?: string | null
   /** Fired whenever selection changes (lane click or Enter). Never navigates. */
   onSelect?: (invocationId: string | null) => void
-  /** Explicit "View child Agent record" action; newTab requests opening in a new browser tab. */
-  onOpenChildContent?: (invocationId: string, newTab?: boolean) => void
   /** Explicit jump to the launch anchor in the parent replay. */
   onJumpToLaunch?: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   /** Explicit jump to the returned-result anchor in the parent replay. */
   onJumpToResult?: (invocationId: string, anchor: SourceAnchorDTO) => void
-  /** Overrides child-content availability; defaults to content_precision. */
-  isChildContentAvailable?: (invocation: TimelineInvocation) => ChildContentActionState
   /** Accessible label for the whole timeline region. */
   ariaLabel?: string
   /** Reports the rendered toolbar height so dock overlays can clear wrapped actions. */
@@ -137,14 +125,6 @@ function markerShape(m: MarkerPrim, rowH: number): { d: string; cls: string } {
   }
 }
 
-function defaultChildContentState(inv: TimelineInvocation): ChildContentActionState {
-  if (inv.contentPrecision.state === 'exact') return { available: true }
-  return {
-    available: false,
-    reasonKey: reasonCodeLabelKey(inv.contentPrecision.reason_code) ?? `capability.state.${inv.contentPrecision.state}`,
-  }
-}
-
 export default function CollaborationTimeline({
   graph,
   nowMs: nowMsProp,
@@ -157,10 +137,8 @@ export default function CollaborationTimeline({
   selectedId: selectedIdProp,
   defaultSelectedId = null,
   onSelect,
-  onOpenChildContent,
   onJumpToLaunch,
   onJumpToResult,
-  isChildContentAvailable,
   ariaLabel,
   onToolbarHeightChange,
   onContentHeightChange,
@@ -528,25 +506,6 @@ export default function CollaborationTimeline({
     setHoverId(null)
   }, [selectedId])
 
-  const childContentState: ChildContentActionState = selectedInv
-    ? (isChildContentAvailable ?? defaultChildContentState)(selectedInv)
-    : { available: false }
-  const openChildReason = !selectedInv
-    ? ''
-    : selectedInv.isGroup
-      ? ''
-      : selectedInv.id === model.rootId
-        ? t('collaboration.action.rootIsCurrent')
-        : !childContentState.available
-          ? t('collaboration.action.noChildContent', {
-              reason: childContentState.reasonKey ? t(childContentState.reasonKey) : t(`capability.state.${selectedInv.contentPrecision.state}`),
-            })
-          : !onOpenChildContent
-            ? t('collaboration.action.notWired')
-            : ''
-  const openChildEnabled =
-    Boolean(selectedInv && !selectedInv.isGroup && selectedInv.id !== model.rootId && childContentState.available && onOpenChildContent)
-
   const launchAnchorAvailable = Boolean(selectedInv && (selectedInv.triggerAnchor || selectedInv.startedAtMs !== null))
   const jumpLaunchEnabled = Boolean(selectedInv && !selectedInv.isGroup && launchAnchorAvailable && onJumpToLaunch)
   const jumpLaunchReason = !launchAnchorAvailable
@@ -592,17 +551,6 @@ export default function CollaborationTimeline({
           </button>
         </div>
         <div className="ct-toolbar-group ct-actions" data-testid="ct-actions">
-          <button
-            type="button"
-            className="ct-btn ct-action"
-            disabled={!openChildEnabled}
-            title={openChildEnabled ? t('collaboration.action.openChild') : openChildReason}
-            aria-label={t('collaboration.action.openChild')}
-            onClick={(e) => selectedInv && onOpenChildContent?.(selectedInv.id, shouldOpenInNewTab(e))}
-            onAuxClick={(e) => { if (selectedInv && shouldOpenInNewTab(e)) onOpenChildContent?.(selectedInv.id, true) }}
-          >
-            {t('collaboration.action.openChild')}
-          </button>
           <button
             type="button"
             className="ct-btn ct-action"

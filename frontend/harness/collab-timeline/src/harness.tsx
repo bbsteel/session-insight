@@ -56,7 +56,6 @@ const state = {
   renderCount: 0,
   calls: {
     select: [] as (string | null)[],
-    openChild: [] as string[],
     jumpLaunch: [] as (string | null)[],
     jumpResult: [] as string[],
   },
@@ -87,7 +86,6 @@ function render(): void {
         heightPx: componentHeight(),
         liveIntervalMs: 0,
         onSelect: (id: string | null) => state.calls.select.push(id),
-        onOpenChildContent: (id: string) => state.calls.openChild.push(id),
         onJumpToLaunch: (id: string) => state.calls.jumpLaunch.push(id),
         onJumpToResult: (id: string) => state.calls.jumpResult.push(id),
       }),

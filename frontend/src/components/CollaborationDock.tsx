@@ -32,7 +32,7 @@ import {
   summarizeTimeline,
 } from '../collaboration/dockState'
 import type { FactEvidenceDTO, SourceAnchorDTO, BackingSessionRefDTO } from '../collaboration/types'
-import CollaborationTimeline, { type ChildContentActionState } from './CollaborationTimeline'
+import CollaborationTimeline from './CollaborationTimeline'
 
 export type CollaborationDockStatus =
   | { kind: 'loading' }
@@ -122,24 +122,12 @@ export default function CollaborationDock({
   }, [model, selectedId])
 
   const openBacking = useCallback(
-    (invocationId: string, newTab = false) => {
+    (invocationId: string) => {
       if (!detail) return
       const backing = backingSessionOf(detail, invocationId)
-      if (!backing) return
-      if (newTab) openSessionInNewTab(backing.agent_type, backing.session_id)
-      else onOpenSession(backing.session_id, backing.agent_type)
+      if (backing) onOpenSession(backing.session_id, backing.agent_type)
     },
     [detail, onOpenSession],
-  )
-
-  // The contract gates "View child Agent record" on a backing session: without
-  // one there is no standalone record to open, regardless of content precision.
-  const childContentState = useCallback(
-    (inv: TimelineInvocation): ChildContentActionState =>
-      inv.hasBackingSession
-        ? { available: true }
-        : { available: false, reasonKey: 'collaboration.dock.noBackingSession' },
-    [],
   )
 
   const summaryText = summary
@@ -298,10 +286,8 @@ export default function CollaborationDock({
               heightPx={timelinePx}
               selectedId={selectedId}
               onSelect={handleSelect}
-              onOpenChildContent={openBacking}
               onJumpToLaunch={onJumpToLaunch}
               onJumpToResult={onJumpToResult}
-              isChildContentAvailable={childContentState}
               onContentHeightChange={(timelineHeightPx) => onContentHeightChange(Math.max(
                 HEADER_PX + HANDLE_PX + (showBanner ? BANNER_PX : 0) + timelineHeightPx,
                 selectedInv ? HEADER_PX + HANDLE_PX + (showBanner ? BANNER_PX : 0) + DETAIL_MIN_HEIGHT_PX : 0,
