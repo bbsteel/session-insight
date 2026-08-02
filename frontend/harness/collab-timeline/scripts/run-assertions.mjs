@@ -136,11 +136,12 @@ async function runCombo(browser, url, dataset, theme) {
     }
     return out
   })
-  assert(actions.count === 2, 'two explicit actions rendered (jump to launch / result)')
+  assert(actions.count === 3, 'three explicit actions rendered')
   assert(actions.enabled >= 1, 'at least one action enabled for a typical selected lane')
   const callbackFired = await page.evaluate(
     () =>
-      window.__collab.calls.jumpLaunch.length +
+      window.__collab.calls.openChild.length +
+        window.__collab.calls.jumpLaunch.length +
         window.__collab.calls.jumpResult.length >
       0,
   )

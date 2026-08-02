@@ -32,6 +32,8 @@ import {
   type RenderPrimitives,
 } from '../collaboration/layoutTimeline.js'
 import { axisStepMs, axisTicks } from '../collaboration/timeAxis.js'
+import { openSessionInNewTab, shouldOpenInNewTab } from '../sessionLink'
+import BackingCopyButton from './BackingCopyButton'
 import type { CollaborationGraphDTO, InvocationStatus, SourceAnchorDTO } from '../collaboration/types.js'
 
 const DEFAULT_ROW_HEIGHT = 28
@@ -70,6 +72,8 @@ export interface CollaborationTimelineProps {
   defaultSelectedId?: string | null
   /** Fired whenever selection changes (lane click or Enter). Never navigates. */
   onSelect?: (invocationId: string | null) => void
+  /** Explicit "View child Agent record" action; newTab requests opening in a new browser tab. */
+  onOpenChildContent?: (invocationId: string, newTab?: boolean) => void
   /** Explicit jump to the launch anchor in the parent replay. */
   onJumpToLaunch?: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   /** Explicit jump to the returned-result anchor in the parent replay. */
@@ -137,6 +141,7 @@ export default function CollaborationTimeline({
   selectedId: selectedIdProp,
   defaultSelectedId = null,
   onSelect,
+  onOpenChildContent,
   onJumpToLaunch,
   onJumpToResult,
   ariaLabel,
@@ -506,6 +511,22 @@ export default function CollaborationTimeline({
     setHoverId(null)
   }, [selectedId])
 
+  // The contract gates backing-session actions on the backing_session
+  // reference — never on agent_type branching or content precision.
+  const selectedBacking = useMemo(() => {
+    if (!selectedInv || selectedInv.isGroup || selectedInv.id === model.rootId) return null
+    return graph.invocations.find((inv) => inv.id === selectedInv.id)?.backing_session ?? null
+  }, [graph, selectedInv, model.rootId])
+
+  const openChildEnabled = Boolean(selectedBacking && onOpenChildContent)
+  const openChildReason = !selectedInv || selectedInv.isGroup || selectedInv.id === model.rootId
+    ? ''
+    : !selectedBacking
+      ? t('collaboration.action.noBackingSession')
+      : !onOpenChildContent
+        ? t('collaboration.action.notWired')
+        : ''
+
   const launchAnchorAvailable = Boolean(selectedInv && (selectedInv.triggerAnchor || selectedInv.startedAtMs !== null))
   const jumpLaunchEnabled = Boolean(selectedInv && !selectedInv.isGroup && launchAnchorAvailable && onJumpToLaunch)
   const jumpLaunchReason = !launchAnchorAvailable
@@ -551,6 +572,37 @@ export default function CollaborationTimeline({
           </button>
         </div>
         <div className="ct-toolbar-group ct-actions" data-testid="ct-actions">
+          <button
+            type="button"
+            className="ct-btn ct-action"
+            disabled={!openChildEnabled}
+            title={openChildEnabled ? t('collaboration.action.openChild') : openChildReason}
+            aria-label={t('collaboration.action.openChild')}
+            data-testid="ct-open-child"
+            onClick={(e) => selectedInv && onOpenChildContent?.(selectedInv.id, shouldOpenInNewTab(e))}
+            onAuxClick={(e) => { if (selectedInv && shouldOpenInNewTab(e)) onOpenChildContent?.(selectedInv.id, true) }}
+          >
+            {t('collaboration.action.openChild')}
+          </button>
+          {selectedBacking && (
+            <>
+              <BackingCopyButton backing={selectedBacking} className="ct-btn" />
+              <button
+                type="button"
+                className="ct-btn"
+                title={t('session.openInNewTab')}
+                aria-label={t('session.openInNewTab')}
+                data-testid="collaboration-open-backing-new-tab"
+                onClick={() => openSessionInNewTab(selectedBacking.agent_type, selectedBacking.session_id)}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="ct-btn ct-action"

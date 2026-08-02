@@ -14,11 +14,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CollaborationDetailResponse } from '../api'
-import { fetchSession } from '../api'
 import { formatDate, useI18n, type Locale } from '../i18n'
 import { reasonCodeLabelKey } from '../capabilityPresentation'
-import { openOnModifiedClick, openSessionInNewTab } from '../sessionLink'
-import { copySessionIdToClipboard } from '../copySessionId'
+import { openSessionInNewTab } from '../sessionLink'
 import {
   normalizeTimelineModel,
   UNLINKED_GROUP_ID,
@@ -31,7 +29,7 @@ import {
   isGraphEmpty,
   summarizeTimeline,
 } from '../collaboration/dockState'
-import type { FactEvidenceDTO, SourceAnchorDTO, BackingSessionRefDTO } from '../collaboration/types'
+import type { FactEvidenceDTO, SourceAnchorDTO } from '../collaboration/types'
 import CollaborationTimeline from './CollaborationTimeline'
 
 export type CollaborationDockStatus =
@@ -122,10 +120,12 @@ export default function CollaborationDock({
   }, [model, selectedId])
 
   const openBacking = useCallback(
-    (invocationId: string) => {
+    (invocationId: string, newTab = false) => {
       if (!detail) return
       const backing = backingSessionOf(detail, invocationId)
-      if (backing) onOpenSession(backing.session_id, backing.agent_type)
+      if (!backing) return
+      if (newTab) openSessionInNewTab(backing.agent_type, backing.session_id)
+      else onOpenSession(backing.session_id, backing.agent_type)
     },
     [detail, onOpenSession],
   )
@@ -286,6 +286,7 @@ export default function CollaborationDock({
               heightPx={timelinePx}
               selectedId={selectedId}
               onSelect={handleSelect}
+              onOpenChildContent={openBacking}
               onJumpToLaunch={onJumpToLaunch}
               onJumpToResult={onJumpToResult}
               onContentHeightChange={(timelineHeightPx) => onContentHeightChange(Math.max(
@@ -297,9 +298,7 @@ export default function CollaborationDock({
           {selectedInv && (
             <InvocationDetail
               inv={selectedInv}
-              detail={detail}
               onClose={() => handleSelect(null)}
-              onOpenBacking={() => openBacking(selectedInv.id)}
             />
           )}
         </div>
@@ -398,14 +397,10 @@ function ErrorState({ code }: { code: string }) {
 
 function InvocationDetail({
   inv,
-  detail,
   onClose,
-  onOpenBacking,
 }: {
   inv: TimelineInvocation
-  detail: CollaborationDetailResponse
   onClose: () => void
-  onOpenBacking: () => void
 }) {
   const { t, locale } = useI18n()
   if (inv.isGroup) {
@@ -422,8 +417,6 @@ function InvocationDetail({
       </aside>
     )
   }
-
-  const backing = backingSessionOf(detail, inv.id)
 
   return (
     <aside
@@ -448,96 +441,7 @@ function InvocationDetail({
         {inv.executionMode && <Row label={t('collaboration.detail.executionMode')} value={t(`collaboration.mode.${inv.executionMode}`)} />}
         {inv.taskSummary && <Row label={t('collaboration.tooltip.task')} value={inv.taskSummary} title={inv.taskSummary} />}
       </dl>
-      {backing && (
-        <div className="mt-2 flex items-center gap-1.5 border-t border-[var(--border-muted)] pt-2">
-          <button
-            type="button"
-            onClick={(e) => { if (!openOnModifiedClick(e, backing.agent_type, backing.session_id)) onOpenBacking() }}
-            onAuxClick={(e) => { openOnModifiedClick(e, backing.agent_type, backing.session_id) }}
-            className="h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            data-testid="collaboration-open-backing"
-          >
-            {t('collaboration.backing.open')}
-          </button>
-          <BackingCopyButton backing={backing} />
-          <button
-            type="button"
-            onClick={() => openSessionInNewTab(backing.agent_type, backing.session_id)}
-            className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            aria-label={t('session.openInNewTab')}
-            title={t('session.openInNewTab')}
-            data-testid="collaboration-open-backing-new-tab"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </button>
-        </div>
-      )}
     </aside>
-  )
-}
-
-// BackingCopyButton copies the backed session's CLI-resumable agent ID using
-// the same shared logic as the session list (resume_id || id). The
-// collaboration payload carries only the backing session id, so the resume id
-// is fetched lazily from the session detail and cached per session; on fetch
-// failure it falls back to the session id.
-function BackingCopyButton({ backing }: { backing: BackingSessionRefDTO }) {
-  const { t } = useI18n()
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const resumeCache = useRef(new Map<string, string | null>())
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
-
-  const copy = async () => {
-    const key = backing.session_id
-    let resumeId = resumeCache.current.get(key)
-    if (resumeId === undefined) {
-      try {
-        const detail = await fetchSession(key)
-        resumeId = detail.resume_id ?? null
-      } catch {
-        resumeId = null
-      }
-      resumeCache.current.set(key, resumeId)
-    }
-    const ok = await copySessionIdToClipboard({ id: key, resume_id: resumeId })
-    setState(ok ? 'copied' : 'failed')
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => setState('idle'), 2000)
-  }
-
-  const label = state === 'copied'
-    ? t('sidebar.copiedSessionId')
-    : state === 'failed'
-      ? t('sidebar.copyFailed')
-      : t('collaboration.backing.copyAgentId')
-
-  return (
-    <button
-      type="button"
-      onClick={() => { void copy() }}
-      className={`flex h-7 items-center gap-1 rounded-md border border-[var(--border-default)] px-2 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-        state === 'copied'
-          ? 'text-[var(--success)]'
-          : state === 'failed'
-            ? 'text-[var(--error)]'
-            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-      }`}
-      aria-label={t('collaboration.backing.copyAgentId')}
-      title={label}
-      data-testid="collaboration-copy-agent-id"
-    >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-      </svg>
-      <span>{label}</span>
-    </button>
   )
 }
 
