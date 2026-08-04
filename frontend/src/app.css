@@ -22,7 +22,9 @@
   /* Surface */
   --bg-primary: #f5f6f8;
   --bg-surface: #ffffff;
-  --bg-surface-hover: #f0f1f4;
+  /* Hover stays soft; selected is a step darker so filter chips read on white */
+  --bg-surface-hover: #e4e6ec;
+  --bg-surface-selected: #c8ccd6;
   --bg-inset: #ecedf2;
 
   /* Border */
@@ -96,8 +98,9 @@
 .dark {
   --bg-primary: #0d0d12;
   --bg-surface: #16161e;
-  /* Lighter than surface so selected/hover chips stay readable on dark chrome */
-  --bg-surface-hover: #2c2c3a;
+  /* Hover + selected step up from surface so chips stay readable on dark chrome */
+  --bg-surface-hover: #323246;
+  --bg-surface-selected: #4e4e68;
   --bg-inset: #111116;
 
   --border-default: #2b2b38;
