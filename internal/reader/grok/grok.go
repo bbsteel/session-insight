@@ -528,9 +528,29 @@ func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 		Billing: billing,
 	}
 	detail.AnomalySummary = shared.RunAnomalyDetection(detail.Turns)
+	// List real files for open-in-editor (directory path is not openable as a
+	// transcript in text editors and triggers broken desktop openers).
+	// Primary is updates.jsonl when present, else chat_history.jsonl fallback
+	// — same preference as turn parsing.
 	sources := []model.SessionSourceFile{
 		provenance.StatSource(model.SourceRoleMetadata, loc.SummaryPath),
-		provenance.StatSource(model.SourceRolePrimaryTranscript, loc.Dir),
+	}
+	updatesPath := filepath.Join(loc.Dir, "updates.jsonl")
+	chatPath := filepath.Join(loc.Dir, "chat_history.jsonl")
+	eventsPath := filepath.Join(loc.Dir, "events.jsonl")
+	if _, err := os.Stat(updatesPath); err == nil {
+		sources = append(sources, provenance.StatSource(model.SourceRolePrimaryTranscript, updatesPath))
+		if _, err := os.Stat(chatPath); err == nil {
+			sources = append(sources, provenance.StatSource(model.SourceRoleOther, chatPath))
+		}
+	} else if _, err := os.Stat(chatPath); err == nil {
+		sources = append(sources, provenance.StatSource(model.SourceRolePrimaryTranscript, chatPath))
+	} else {
+		// Last resort: keep the session dir so inventory is non-empty.
+		sources = append(sources, provenance.StatSource(model.SourceRolePrimaryTranscript, loc.Dir))
+	}
+	if _, err := os.Stat(eventsPath); err == nil {
+		sources = append(sources, provenance.StatSource(model.SourceRoleEvents, eventsPath))
 	}
 	p := provenance.Build(provenance.Input{
 		CapturedAt:        time.Now().UTC(),

@@ -36,6 +36,9 @@ export default function RecordStatusPanel({
   const [removing, setRemoving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [openingPath, setOpeningPath] = useState<string | null>(null)
+  /** Path currently showing copy feedback: 'copied' | 'failed' */
+  const [copyFeedback, setCopyFeedback] = useState<{ path: string; state: 'copied' | 'failed' } | null>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pres = presentFromSession(session)
   const prov = session.provenance
 
@@ -54,6 +57,10 @@ export default function RecordStatusPanel({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [open, onClose])
 
+  useEffect(() => () => {
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+  }, [])
+
   if (!open) return null
 
   const label =
@@ -64,11 +71,14 @@ export default function RecordStatusPanel({
         : t(pres.labelKey)
 
   async function copyPath(path: string) {
+    if (copyTimer.current) clearTimeout(copyTimer.current)
     try {
       await navigator.clipboard.writeText(path)
+      setCopyFeedback({ path, state: 'copied' })
     } catch {
-      /* ignore */
+      setCopyFeedback({ path, state: 'failed' })
     }
+    copyTimer.current = setTimeout(() => setCopyFeedback(null), 2000)
   }
 
   async function openPathInEditor(path: string) {
@@ -76,15 +86,19 @@ export default function RecordStatusPanel({
     setError(null)
     const cwd = session.cwd || ''
     try {
-      // resolveFile only accepts regular files; open-file also accepts dirs
-      // (folder open). Prefer resolved absolute path when available.
+      // Prefer absolute regular file when resolvable; directories open via
+      // open-file folder path (file managers / VS Code workspace).
       const resolved = await resolveFile(path, cwd)
       await openFile({ path: resolved || path, cwd: cwd || undefined })
     } catch {
-      // Multi-scenario fallback when the host open chain fails entirely:
-      // SI built-in file viewer (new tab) always works for readable files.
+      // Host open chain failed: SI built-in viewer for regular files only.
       try {
-        const params = new URLSearchParams({ path, cwd })
+        const resolved = await resolveFile(path, cwd)
+        if (!resolved) {
+          setError(t('record.panel.openInEditorFailed'))
+          return
+        }
+        const params = new URLSearchParams({ path: resolved, cwd })
         const w = window.open(`#/file?${params.toString()}`, '_blank', 'noopener')
         if (!w) setError(t('record.panel.openInEditorFailed'))
       } catch {
@@ -187,14 +201,22 @@ export default function RecordStatusPanel({
                           </span>
                         )}
                         {typeof s.size_bytes === 'number' && (
-                          <span data-testid="record-source-size">{formatSourceSize(s.size_bytes)}</span>
+                          <span data-testid="record-source-size">
+                            · {formatSourceSize(s.size_bytes)}
+                          </span>
                         )}
                         <button
                           type="button"
                           className="text-[var(--accent-blue)] hover:underline"
+                          data-testid="record-copy-path"
+                          data-state={copyFeedback?.path === s.path ? copyFeedback.state : 'idle'}
                           onClick={() => void copyPath(s.path)}
                         >
-                          {t('record.panel.copyPath')}
+                          {copyFeedback?.path === s.path && copyFeedback.state === 'copied'
+                            ? t('common.copied')
+                            : copyFeedback?.path === s.path && copyFeedback.state === 'failed'
+                              ? t('record.panel.copyFailed')
+                              : t('record.panel.copyPath')}
                         </button>
                         {s.path && s.state === 'present' && (
                           <button

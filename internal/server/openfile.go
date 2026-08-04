@@ -234,9 +234,26 @@ func tryLaunchTemplate(template, path string, line int) error {
 	return tryLaunchArgs(buildEditorArgs(template, path, line), "")
 }
 
+// isFolderCapableEditor reports editors that open a directory as a workspace.
+func isFolderCapableEditor(bins []string) bool {
+	for _, b := range bins {
+		lb := strings.ToLower(filepath.Base(b))
+		lb = strings.TrimSuffix(lb, ".exe")
+		lb = strings.TrimSuffix(lb, ".cmd")
+		switch lb {
+		case "code", "code-insiders", "cursor", "codium", "code-oss":
+			return true
+		}
+	}
+	return false
+}
+
 // platformDefaultOpen launches the OS-native “open this path” helper.
 // Used as the final fallback after named editors; argv is built without
 // strings.Fields so Windows `start` empty-title works with spaced paths.
+//
+// On Linux we prefer desktop-aware openers for *directories* (dolphin, nautilus)
+// before xdg-open, which can hand file: URLs to a broken KIO worker.
 func platformDefaultOpen(goos, path string) error {
 	var cmd *exec.Cmd
 	switch goos {
@@ -246,11 +263,21 @@ func platformDefaultOpen(goos, path string) error {
 	case "darwin":
 		cmd = exec.Command("open", path)
 	default:
-		bin, err := lookPath("xdg-open")
-		if err != nil {
-			return err
+		// Prefer file managers for directories / last-resort path open.
+		for _, name := range []string{"dolphin", "nautilus", "nemo", "thunar", "pcmanfm", "xdg-open"} {
+			bin, err := lookPath(name)
+			if err != nil {
+				continue
+			}
+			// dolphin prefers the path as a single arg; same for others.
+			c := exec.Command(bin, path)
+			c.Stdout = nil
+			c.Stderr = nil
+			if err := startEditorCommand(c); err == nil {
+				return nil
+			}
 		}
-		cmd = exec.Command(bin, path)
+		return fmt.Errorf("no linux open helper found")
 	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -276,7 +303,25 @@ func (s *Server) openExistingPath(path string, line int, isDir bool) error {
 			continue
 		}
 		tmpl := c.Template
-		if isDir && c.DirTemplate != "" {
+		if isDir {
+			// Directories: only use candidates that know how to open a folder.
+			// Feeding "kate -l 1 /some/dir" or "code --goto dir:1" often fails
+			// or falls through to a broken desktop file: handler (KIO).
+			if c.DirTemplate == "" {
+				// VS Code / Cursor open folders when given a bare path.
+				if isFolderCapableEditor(c.Bins) {
+					tmpl = "{path}"
+					// Prepend the resolved binary: tryLaunchArgs overrides argv[0].
+					args := []string{bin, path}
+					if err := tryLaunchArgs(args, bin); err == nil {
+						return nil
+					} else {
+						errs = append(errs, c.Bins[0]+": "+err.Error())
+					}
+					continue
+				}
+				continue
+			}
 			tmpl = c.DirTemplate
 		}
 		args := buildEditorArgs(tmpl, path, line)

@@ -184,6 +184,42 @@ func TestOpenExistingPathUserTemplatePreferred(t *testing.T) {
 	}
 }
 
+func TestOpenDirectorySkipsLineEditors(t *testing.T) {
+	origLook := lookPath
+	origStart := startEditorCommand
+	origGOOS := runtimeGOOS
+	defer func() {
+		lookPath = origLook
+		startEditorCommand = origStart
+		runtimeGOOS = origGOOS
+	}()
+	runtimeGOOS = "linux"
+	// Only kate and dolphin available — kate must not be used for directories.
+	lookPath = func(file string) (string, error) {
+		switch file {
+		case "kate":
+			return "/usr/bin/kate", nil
+		case "dolphin":
+			return "/usr/bin/dolphin", nil
+		default:
+			return "", exec.ErrNotFound
+		}
+	}
+	var launched []string
+	startEditorCommand = func(cmd *exec.Cmd) error {
+		launched = append([]string{cmd.Path}, cmd.Args[1:]...)
+		return nil
+	}
+	srv := New(nil, []reader.BaseSessionReader{})
+	dir := t.TempDir()
+	if err := srv.openExistingPath(dir, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	if launched[0] != "/usr/bin/dolphin" {
+		t.Fatalf("want dolphin for dir, got %v", launched)
+	}
+}
+
 func TestResolveExistingAllowsDirectory(t *testing.T) {
 	dir := t.TempDir()
 	abs, info, err := resolveExisting(dir, "")
