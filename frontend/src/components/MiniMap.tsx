@@ -135,9 +135,14 @@ function turnTooltip(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit:
         {tw?.estCost != null && <span className="text-[var(--text-secondary)]">~{fmtCost(tw.estCost, unit)} ({t('minimap.estimated')})</span>}
       </div>
       <div className="my-1 border-t border-[var(--border-muted)]" />
-      <div>{t('minimap.tokenValue', { count: formatCompactCount(locale, getTotalTokens(turn)) })}</div>
-      <div>{t('minimap.requestValue', { count: formatNumber(locale, turn.request_count ?? 0) })}</div>
-      <div>{t('minimap.toolCallValue', { count: formatNumber(locale, turn.tool_call_count) })}</div>
+      <div className="grid grid-cols-[max-content_1fr] items-baseline gap-x-3 gap-y-0.5">
+        <span className="text-right font-medium tabular-nums">{formatCompactCount(locale, getTotalTokens(turn))}</span>
+        <span className="text-[var(--text-secondary)]">{t('minimap.tokenLabel')}</span>
+        <span className="text-right font-medium tabular-nums">{t('minimap.metricCount', { count: formatNumber(locale, turn.request_count ?? 0) })}</span>
+        <span className="text-[var(--text-secondary)]">{t('minimap.requestLabel')}</span>
+        <span className="text-right font-medium tabular-nums">{t('minimap.metricCount', { count: formatNumber(locale, turn.tool_call_count) })}</span>
+        <span className="text-[var(--text-secondary)]">{t('minimap.toolCallLabel')}</span>
+      </div>
       {eventName && <div className="mt-1 text-[var(--text-secondary)]">{eventName}</div>}
     </div>
   )
