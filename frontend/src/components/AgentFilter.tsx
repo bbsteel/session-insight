@@ -120,7 +120,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
           title={`${t('filter.allAgents')} (${totalLive}/${totalSessions})`}
           className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
             selected === ''
-              ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
+              ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)] ring-1 ring-inset ring-[var(--border-default)]'
               : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
           }`}
           style={{ width: ICON_BTN, height: ICON_BTN }}
@@ -143,7 +143,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
               title={title}
               className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] relative ${
                 isSelected
-                  ? 'bg-[var(--bg-surface-hover)]'
+                  ? 'bg-[var(--bg-surface-hover)] ring-1 ring-inset ring-[var(--border-default)]'
                   : 'hover:bg-[var(--bg-surface-hover)]'
               }`}
               style={{ width: ICON_BTN, height: ICON_BTN }}
@@ -201,7 +201,9 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
                       aria-selected={isSelected}
                       onClick={() => selectAgent(agent.type)}
                       className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                        isSelected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                        isSelected
+                          ? 'bg-[var(--bg-surface-hover)] ring-1 ring-inset ring-[var(--border-default)]'
+                          : 'hover:bg-[var(--bg-surface-hover)]'
                       }`}
                     >
                       <AgentIcon agentType={agent.type} size={18} />
