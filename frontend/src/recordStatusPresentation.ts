@@ -60,9 +60,10 @@ export function presentRecordStatus(
     case 'complete':
       return {
         state,
+        // Neutral tone: complete must not look like a celebratory green CTA.
         labelKey: 'record.status.complete',
         warningCount: 0,
-        tone: 'success',
+        tone: 'neutral',
         replayable: true,
         emptyStateKey: null,
       }
@@ -175,16 +176,48 @@ export function sourceStateLabelKey(state: string): string {
 export function toneClass(tone: RecordTone): string {
   switch (tone) {
     case 'success':
-      return 'text-[var(--text-secondary)] border-[var(--border-default)]'
+    case 'neutral':
+      // Complete/neutral: quiet chip, not a filled green button.
+      return 'text-[var(--text-secondary)] border-[var(--border-default)] bg-[var(--bg-surface)]'
     case 'warning':
-      return 'text-[var(--warning)] border-[var(--warning)]/40'
+      return 'text-[var(--warning)] border-[var(--warning)]/40 bg-[var(--warning)]/5'
     case 'danger':
-      return 'text-[var(--error)] border-[var(--error)]/40'
+      return 'text-[var(--error)] border-[var(--error)]/40 bg-[var(--error)]/5'
     case 'muted':
-      return 'text-[var(--text-muted)] border-[var(--border-default)]'
+      return 'text-[var(--text-muted)] border-[var(--border-default)] bg-[var(--bg-surface)]'
     default:
-      return 'text-[var(--text-secondary)] border-[var(--border-default)]'
+      return 'text-[var(--text-secondary)] border-[var(--border-default)] bg-[var(--bg-surface)]'
   }
+}
+
+/** Local timezone wall clock, second precision (no fractional seconds / no raw Z). */
+export function formatRecordTime(locale: string, value: string | Date | number | undefined | null): string {
+  if (value == null || value === '') return ''
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value)
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(d)
+}
+
+/**
+ * Human size: prefer KiB (binary KB) for transcript files.
+ * Below 1024 bytes shows B; otherwise one decimal KB.
+ */
+export function formatSourceSize(bytes: number | undefined | null): string {
+  if (bytes == null || !Number.isFinite(bytes)) return ''
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  const kb = bytes / 1024
+  // One decimal for readability; drop trailing .0
+  const rounded = Math.round(kb * 10) / 10
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+  return `${text} KB`
 }
 
 /**

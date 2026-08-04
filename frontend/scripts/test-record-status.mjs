@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import {
   doNotSumCapabilityAndParser,
+  formatRecordTime,
+  formatSourceSize,
   isKnownRecordState,
   parserWarningCount,
   presentFromSession,
@@ -20,7 +22,8 @@ const complete = presentRecordStatus({
   warnings: [],
 })
 assert.equal(complete.state, 'complete')
-assert.equal(complete.tone, 'success')
+// Complete is neutral — not a celebratory green CTA.
+assert.equal(complete.tone, 'neutral')
 assert.equal(complete.replayable, true)
 assert.equal(complete.emptyStateKey, null)
 
@@ -119,5 +122,14 @@ assert.equal(split.combinedLabelForbidden, true)
 assert.equal(parserWarningCount({ total: 5 }), 5)
 assert.equal(isKnownRecordState('complete'), true)
 assert.equal(isKnownRecordState('nope'), false)
+
+// Local time to the second (no fractional / raw Z); size in KB.
+const local = formatRecordTime('en', '2026-08-04T06:32:17.754538719Z')
+assert.ok(local.length > 0, 'formatRecordTime returns a value')
+assert.ok(!local.includes('T') || !local.endsWith('Z'), 'not raw ISO Z')
+assert.ok(!/\.\d{3,}/.test(local), 'no fractional seconds: ' + local)
+assert.equal(formatSourceSize(500), '500 B')
+assert.equal(formatSourceSize(4949339), '4833.3 KB')
+assert.equal(formatSourceSize(2048), '2 KB')
 
 console.log('test-record-status: ok')

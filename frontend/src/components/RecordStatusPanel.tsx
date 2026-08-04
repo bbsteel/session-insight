@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SessionDetail } from '../types'
 import {
+  formatRecordTime,
+  formatSourceSize,
   impactLabelKey,
   presentFromSession,
   sourceRoleLabelKey,
@@ -10,7 +12,8 @@ import {
 } from '../recordStatusPresentation'
 import { useI18n } from '../i18n'
 import { CloseIcon } from './icons'
-import { removeSessionFromIndex } from '../api'
+import { openFile, removeSessionFromIndex } from '../api'
+import InstantTooltip from './InstantTooltip'
 
 interface Props {
   open: boolean
@@ -27,11 +30,12 @@ export default function RecordStatusPanel({
   onRemovedFromIndex,
   onRescan,
 }: Props) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const closeRef = useRef<HTMLButtonElement>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [openingPath, setOpeningPath] = useState<string | null>(null)
   const pres = presentFromSession(session)
   const prov = session.provenance
 
@@ -64,6 +68,18 @@ export default function RecordStatusPanel({
       await navigator.clipboard.writeText(path)
     } catch {
       /* ignore */
+    }
+  }
+
+  async function openPathInEditor(path: string) {
+    setOpeningPath(path)
+    setError(null)
+    try {
+      await openFile({ path, cwd: session.cwd || undefined })
+    } catch {
+      setError(t('record.panel.openInEditorFailed'))
+    } finally {
+      setOpeningPath(null)
     }
   }
 
@@ -101,8 +117,16 @@ export default function RecordStatusPanel({
               {t('record.panel.title')}
             </h2>
             <p className="mt-1 text-meta text-[var(--text-muted)]">{t('record.panel.subtitle')}</p>
-            <div className={`mt-2 inline-flex rounded-md border px-2 py-0.5 text-meta font-medium ${toneClass(pres.tone)}`}>
-              {label}
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-meta text-[var(--text-muted)]">{t('record.panel.overall')}</span>
+              {/* Status chip — not a primary action button */}
+              <span
+                className={`inline-flex rounded-md border px-2 py-0.5 text-meta font-medium ${toneClass(pres.tone)}`}
+                data-testid="record-status-chip"
+                role="status"
+              >
+                {label}
+              </span>
             </div>
           </div>
           <button
@@ -145,9 +169,15 @@ export default function RecordStatusPanel({
                       <code className="mt-1 block break-all font-mono text-[11px] text-[var(--text-secondary)]">
                         {s.path}
                       </code>
-                      <div className="mt-1 flex flex-wrap gap-2 text-meta text-[var(--text-muted)]">
-                        {s.updated_at && <span>{t('record.panel.sourceUpdated')}: {s.updated_at}</span>}
-                        {typeof s.size_bytes === 'number' && <span>{s.size_bytes} B</span>}
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-[var(--text-muted)]">
+                        {s.updated_at && (
+                          <span>
+                            {t('record.panel.sourceUpdated')}: {formatRecordTime(locale, s.updated_at)}
+                          </span>
+                        )}
+                        {typeof s.size_bytes === 'number' && (
+                          <span data-testid="record-source-size">{formatSourceSize(s.size_bytes)}</span>
+                        )}
                         <button
                           type="button"
                           className="text-[var(--accent-blue)] hover:underline"
@@ -155,6 +185,17 @@ export default function RecordStatusPanel({
                         >
                           {t('record.panel.copyPath')}
                         </button>
+                        {s.path && s.state === 'present' && (
+                          <button
+                            type="button"
+                            className="text-[var(--accent-blue)] hover:underline disabled:opacity-50"
+                            data-testid="record-open-in-editor"
+                            disabled={openingPath === s.path}
+                            onClick={() => void openPathInEditor(s.path)}
+                          >
+                            {t('record.panel.openInEditor')}
+                          </button>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -164,29 +205,37 @@ export default function RecordStatusPanel({
               <section className="space-y-1 text-meta text-[var(--text-secondary)]">
                 <div>
                   <span className="text-[var(--text-muted)]">{t('record.panel.siCapture')}: </span>
-                  {prov.captured_at}
+                  <span data-testid="record-si-capture">{formatRecordTime(locale, prov.captured_at)}</span>
                 </div>
                 {prov.source_updated_at && (
                   <div>
                     <span className="text-[var(--text-muted)]">{t('record.panel.sourceUpdated')}: </span>
-                    {prov.source_updated_at}
+                    <span data-testid="record-source-updated">{formatRecordTime(locale, prov.source_updated_at)}</span>
                   </div>
                 )}
                 {prov.last_successful_at && (
                   <div>
                     <span className="text-[var(--text-muted)]">{t('record.panel.lastSuccessful')}: </span>
-                    {prov.last_successful_at}
+                    {formatRecordTime(locale, prov.last_successful_at)}
                   </div>
                 )}
                 {prov.missing_since && (
                   <div>
                     <span className="text-[var(--text-muted)]">{t('record.panel.missingSince')}: </span>
-                    {prov.missing_since}
+                    {formatRecordTime(locale, prov.missing_since)}
                   </div>
                 )}
-                <div>
-                  <span className="text-[var(--text-muted)]">{t('record.panel.adapterRevision')}: </span>
-                  {prov.adapter_revision}
+                <div className="flex items-center gap-1">
+                  <InstantTooltip text={t('record.panel.adapterRevisionHelp')} maxWidth={320}>
+                    <span
+                      className="cursor-help border-b border-dotted border-[var(--text-muted)] text-[var(--text-muted)]"
+                      data-testid="record-adapter-revision-label"
+                    >
+                      {t('record.panel.adapterRevision')}
+                    </span>
+                  </InstantTooltip>
+                  <span>: </span>
+                  <span data-testid="record-adapter-revision">{prov.adapter_revision}</span>
                 </div>
               </section>
 
