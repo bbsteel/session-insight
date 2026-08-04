@@ -117,13 +117,30 @@ function fmtCost(v: number, unit?: string): string {
   return v.toFixed(2)
 }
 
-function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string): string {
-  if (!turn) return ''
-  const parts = [t('minimap.turnTitle', { turn: turn.turn_index })]
-  if (tw?.estCost != null) parts.push(`~${fmtCost(tw.estCost, unit)} (${t('minimap.estimated')})`)
-  parts.push(t('minimap.tokenValue', { count: formatNumber(locale, getTotalTokens(turn)) }))
-  if ((turn.request_count ?? 0) > 0) parts.push(t('minimap.requestValue', { count: formatNumber(locale, turn.request_count ?? 0) }))
-  return parts.join(' · ')
+function formatCompactCount(locale: 'en' | 'zh-CN', count: number): string {
+  const abs = Math.abs(count)
+  if (abs < 1_000) return formatNumber(locale, count)
+  const divisor = abs >= 1_000_000 ? 1_000_000 : 1_000
+  const suffix = divisor === 1_000_000 ? 'M' : 'K'
+  const compact = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(count / divisor)
+  return `${compact}${suffix}`
+}
+
+function turnTooltip(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string, eventName = ''): React.ReactNode {
+  if (!turn) return null
+  return (
+    <div className="min-w-[132px]">
+      <div className="flex items-baseline justify-between gap-3 font-medium">
+        <span>{t('minimap.turnTitle', { turn: turn.turn_index })}</span>
+        {tw?.estCost != null && <span className="text-[var(--text-secondary)]">~{fmtCost(tw.estCost, unit)} ({t('minimap.estimated')})</span>}
+      </div>
+      <div className="my-1 border-t border-[var(--border-muted)]" />
+      <div>{t('minimap.tokenValue', { count: formatCompactCount(locale, getTotalTokens(turn)) })}</div>
+      <div>{t('minimap.requestValue', { count: formatNumber(locale, turn.request_count ?? 0) })}</div>
+      <div>{t('minimap.toolCallValue', { count: formatNumber(locale, turn.tool_call_count) })}</div>
+      {eventName && <div className="mt-1 text-[var(--text-secondary)]">{eventName}</div>}
+    </div>
+  )
 }
 
 // ── Position-based rendering ──────────────────────────────────────────────────
@@ -199,7 +216,7 @@ function PositionModeContent({
               style={{ top: segStart + 1, height: segHeight }}
             >
               <InstantTooltip
-                text={turnTitle(turns[pos.turn_index], tw, billingUnit, locale, t)}
+                content={turnTooltip(turns[pos.turn_index], tw, billingUnit, locale, t)}
                 placement="cursor-left"
                 nowrap
                 className="block h-full w-full"
@@ -534,7 +551,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
               const pressureTone = getTokenPressureTone(pressureRatio)
               const eventKind = getMiniMapEventKind(turn)
               const eventName = eventKind ? eventLabel(eventKind, t) : ''
-              const title = `${turnTitle(turn, weights.get(turn.turn_index), billing?.billing_unit, locale, t)}${eventName ? ` · ${eventName}` : ''}`
+              const tooltip = turnTooltip(turn, weights.get(turn.turn_index), billing?.billing_unit, locale, t, eventName)
 
               return (
                 <div
@@ -567,7 +584,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
                     </InstantTooltip>
                   )}
                   <InstantTooltip
-                    text={title}
+                    content={tooltip}
                     placement="cursor-left"
                     nowrap
                     className="pointer-events-auto absolute left-[40px] right-[14px] top-1/2 h-[12px] -translate-y-1/2"

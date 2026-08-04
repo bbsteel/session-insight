@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom'
 interface InstantTooltipProps {
   /** Empty/undefined text disables the tooltip and renders children as-is. */
   text?: string
+  /** Structured content for tooltips that need deliberate visual hierarchy. */
+  content?: ReactNode
   children: ReactNode
   className?: string
   placement?: 'top' | 'bottom' | 'left' | 'cursor' | 'cursor-left'
@@ -19,6 +21,7 @@ interface InstantTooltipProps {
  */
 export default function InstantTooltip({
   text,
+  content,
   children,
   className,
   placement = 'top',
@@ -28,8 +31,9 @@ export default function InstantTooltip({
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const wrapRef = useRef<HTMLSpanElement>(null)
   const tip = text?.trim() ?? ''
+  const tooltipContent = content ?? tip
 
-  if (!tip) {
+  if (!tip && content == null) {
     return <span className={className}>{children}</span>
   }
 
@@ -79,7 +83,7 @@ export default function InstantTooltip({
                   : 'translate(-50%, -100%)',
           }}
         >
-          {tip}
+          {tooltipContent}
         </div>,
         document.body,
       )}
