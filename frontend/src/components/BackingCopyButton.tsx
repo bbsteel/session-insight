@@ -17,12 +17,18 @@ export default function BackingCopyButton({ backing, className }: { backing: Bac
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const resumeCache = useRef(new Map<string, string | null>())
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Tracks the backing the feedback label currently describes, so a clipboard
+  // promise resolving after a selection switch can't stamp "copied"/"failed"
+  // onto a different invocation's button.
+  const activeSessionId = useRef(backing.session_id)
+  activeSessionId.current = backing.session_id
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
 
   // A prior "Copied!"/"Failed" label must not bleed into a different
   // invocation's button after the selection switches.
   useEffect(() => {
+    if (timer.current) clearTimeout(timer.current)
     setState('idle')
   }, [backing.session_id])
 
@@ -41,9 +47,12 @@ export default function BackingCopyButton({ backing, className }: { backing: Bac
     // prefetch resolves — never await it inside the click handler.
     const resumeId = resumeCache.current.get(key) ?? undefined
     void copySessionIdToClipboard({ id: key, resume_id: resumeId }).then((ok) => {
+      if (activeSessionId.current !== key) return
       setState(ok ? 'copied' : 'failed')
       if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(() => setState('idle'), 2000)
+      timer.current = setTimeout(() => {
+        if (activeSessionId.current === key) setState('idle')
+      }, 2000)
     })
   }
 
