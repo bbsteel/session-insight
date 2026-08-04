@@ -12,6 +12,7 @@ import { getMiniMapEventKind, getMiniMapTurnPositionPercent, getTokenPressureTon
 import { TERMINAL_LINE_HEIGHT } from '../terminalControl'
 import type { VisibleTurnRange } from '../scrollSync'
 import { formatNumber, useI18n } from '../i18n'
+import InstantTooltip from './InstantTooltip'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
 
@@ -116,13 +117,35 @@ function fmtCost(v: number, unit?: string): string {
   return v.toFixed(2)
 }
 
-function turnTitle(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string): string {
-  if (!turn) return ''
-  const parts = [t('minimap.turnTitle', { turn: turn.turn_index })]
-  if (tw?.estCost != null) parts.push(`~${fmtCost(tw.estCost, unit)} (${t('minimap.estimated')})`)
-  parts.push(t('minimap.tokenValue', { count: formatNumber(locale, getTotalTokens(turn)) }))
-  if ((turn.request_count ?? 0) > 0) parts.push(t('minimap.requestValue', { count: formatNumber(locale, turn.request_count ?? 0) }))
-  return parts.join(' · ')
+function formatCompactCount(locale: 'en' | 'zh-CN', count: number): string {
+  const abs = Math.abs(count)
+  if (abs < 1_000) return formatNumber(locale, count)
+  const divisor = abs >= 1_000_000 ? 1_000_000 : 1_000
+  const suffix = divisor === 1_000_000 ? 'M' : 'K'
+  const compact = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(count / divisor)
+  return `${compact}${suffix}`
+}
+
+function turnTooltip(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string, eventName = ''): React.ReactNode {
+  if (!turn) return null
+  return (
+    <div className="min-w-[132px]">
+      <div className="flex items-baseline justify-between gap-3 font-medium">
+        <span>{t('minimap.turnTitle', { turn: turn.turn_index })}</span>
+        {tw?.estCost != null && <span className="text-[var(--text-secondary)]">~{fmtCost(tw.estCost, unit)} ({t('minimap.estimated')})</span>}
+      </div>
+      <div className="my-1 border-t border-[var(--border-muted)]" />
+      <div className="grid grid-cols-[max-content_1fr] items-baseline gap-x-3 gap-y-0.5">
+        <span className="text-right font-medium tabular-nums">{formatCompactCount(locale, getTotalTokens(turn))}</span>
+        <span className="text-[var(--text-secondary)]">{t('minimap.tokenLabel')}</span>
+        <span className="text-right font-medium tabular-nums">{t('minimap.metricCount', { count: formatNumber(locale, turn.request_count ?? 0) })}</span>
+        <span className="text-[var(--text-secondary)]">{t('minimap.requestLabel')}</span>
+        <span className="text-right font-medium tabular-nums">{t('minimap.metricCount', { count: formatNumber(locale, turn.tool_call_count) })}</span>
+        <span className="text-[var(--text-secondary)]">{t('minimap.toolCallLabel')}</span>
+      </div>
+      {eventName && <div className="mt-1 text-[var(--text-secondary)]">{eventName}</div>}
+    </div>
+  )
 }
 
 // ── Position-based rendering ──────────────────────────────────────────────────
@@ -196,12 +219,18 @@ function PositionModeContent({
               // NOT stopped here so dragging through a segment still scrolls.
               className="pointer-events-auto absolute left-[40px] right-[14px]"
               style={{ top: segStart + 1, height: segHeight }}
-              title={turnTitle(turns[pos.turn_index], tw, billingUnit, locale, t)}
             >
-              <span
-                className="absolute left-0 top-0 h-full rounded-[2px]"
-                style={{ width: `${clamp(rel * 100, 6, 100)}%`, background: pressureColors[tone], opacity: 0.65 }}
-              />
+              <InstantTooltip
+                content={turnTooltip(turns[pos.turn_index], tw, billingUnit, locale, t)}
+                placement="cursor-left"
+                nowrap
+                className="block h-full w-full"
+              >
+                <span
+                  className="absolute left-0 top-0 h-full rounded-[2px]"
+                  style={{ width: `${clamp(rel * 100, 6, 100)}%`, background: pressureColors[tone], opacity: 0.65 }}
+                />
+              </InstantTooltip>
             </div>
           )
         })}
@@ -217,19 +246,25 @@ function PositionModeContent({
               className="absolute left-0 right-0 h-3"
               style={{ top: markerY, transform: 'translateY(-50%)' }}
             >
-              <button
-                type="button"
-                className={`pointer-events-auto absolute left-[7px] top-1/2 flex h-[16px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                  eventClassNames[eventKind]
-                } ${isActive ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
-                style={{ minWidth: '16px', minHeight: '16px' }}
-                title={t('minimap.markerLine', { event: eventLabel(eventKind, t), line: pos.line_start })}
-                aria-label={`${eventLabel(eventKind, t)} · ${t('minimap.jump')}`}
-                onPointerDown={e => e.stopPropagation()}
-                onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}
+              <InstantTooltip
+                text={t('minimap.markerLine', { event: eventLabel(eventKind, t), line: pos.line_start })}
+                placement="cursor-left"
+                nowrap
+                className="pointer-events-auto absolute left-[7px] top-1/2 inline-flex -translate-y-1/2"
               >
-                {eventShortLabels[eventKind]}
-              </button>
+                <button
+                  type="button"
+                  className={`flex h-[16px] w-[22px] items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                    eventClassNames[eventKind]
+                  } ${isActive ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
+                  style={{ minWidth: '16px', minHeight: '16px' }}
+                  aria-label={`${eventLabel(eventKind, t)} · ${t('minimap.jump')}`}
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}
+                >
+                  {eventShortLabels[eventKind]}
+                </button>
+              </InstantTooltip>
             </div>
           )
         })}
@@ -467,19 +502,25 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       className="minimap-shell flex-shrink-0 border-l border-[var(--border-default)] bg-[var(--bg-inset)] flex flex-col select-none"
       aria-label="MiniMap"
     >
-      <button
-        type="button"
-        className="flex h-[22px] flex-shrink-0 items-center justify-center border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
-        title={t('minimap.top')}
-        aria-label={t('minimap.top')}
-        onPointerDown={e => e.stopPropagation()}
-        onClick={e => {
-          e.stopPropagation()
-          scrollToBoundary('top')
-        }}
+      <InstantTooltip
+        text={t('minimap.top')}
+        placement="cursor-left"
+        nowrap
+        className="flex h-[22px] flex-shrink-0"
       >
-        ↑
-      </button>
+        <button
+          type="button"
+          className="flex h-full w-full items-center justify-center border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
+          aria-label={t('minimap.top')}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => {
+            e.stopPropagation()
+            scrollToBoundary('top')
+          }}
+        >
+          ↑
+        </button>
+      </InstantTooltip>
       <div
         ref={containerRef}
         className="flex-1 relative overflow-hidden bg-[var(--bg-inset)]"
@@ -515,39 +556,51 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
               const pressureTone = getTokenPressureTone(pressureRatio)
               const eventKind = getMiniMapEventKind(turn)
               const eventName = eventKind ? eventLabel(eventKind, t) : ''
-              const title = `${turnTitle(turn, weights.get(turn.turn_index), billing?.billing_unit, locale, t)}${eventName ? ` · ${eventName}` : ''}`
+              const tooltip = turnTooltip(turn, weights.get(turn.turn_index), billing?.billing_unit, locale, t, eventName)
 
               return (
                 <div
                   key={index}
                   className="pointer-events-none absolute left-0 right-0 h-3"
                   style={{ top: rowTop, transform: rowTransform }}
-                  title={title}
                 >
                   {eventKind && (
-                    <button
-                      type="button"
-                      className={`pointer-events-auto absolute left-[7px] top-1/2 flex h-[16px] w-[22px] -translate-y-1/2 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                        eventClassNames[eventKind]
-                      } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
-                      title={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
-                      aria-label={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
-                      onPointerDown={e => e.stopPropagation()}
-                      onClick={e => {
-                        e.stopPropagation()
-                        setActiveIndex(index)
-                        scrollTo(index)
-                      }}
+                    <InstantTooltip
+                      text={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
+                      placement="cursor-left"
+                      nowrap
+                      className="pointer-events-auto absolute left-[7px] top-1/2 inline-flex -translate-y-1/2"
                     >
-                      {eventShortLabels[eventKind]}
-                    </button>
+                      <button
+                        type="button"
+                        className={`flex h-[16px] w-[22px] items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                          eventClassNames[eventKind]
+                        } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
+                        aria-label={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
+                        onPointerDown={e => e.stopPropagation()}
+                        onClick={e => {
+                          e.stopPropagation()
+                          setActiveIndex(index)
+                          scrollTo(index)
+                        }}
+                      >
+                        {eventShortLabels[eventKind]}
+                      </button>
+                    </InstantTooltip>
                   )}
-                  <span
-                    className="absolute left-[40px] right-[14px] top-1/2 h-[4px] -translate-y-1/2 rounded-[2px]"
-                    style={{
-                      background: pressureColors[pressureTone],
-                    }}
-                  />
+                  <InstantTooltip
+                    content={tooltip}
+                    placement="cursor-left"
+                    nowrap
+                    className="pointer-events-auto absolute left-[40px] right-[14px] top-1/2 h-[12px] -translate-y-1/2"
+                  >
+                    <span
+                      className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 rounded-[2px]"
+                      style={{
+                        background: pressureColors[pressureTone],
+                      }}
+                    />
+                  </InstantTooltip>
                 </div>
               )
             })}
@@ -571,19 +624,25 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
         </div>
       </div>
 
-      <button
-        type="button"
-        className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
-        title={t('minimap.bottom')}
-        aria-label={t('minimap.bottom')}
-        onPointerDown={e => e.stopPropagation()}
-        onClick={e => {
-          e.stopPropagation()
-          scrollToBoundary('bottom')
-        }}
+      <InstantTooltip
+        text={t('minimap.bottom')}
+        placement="cursor-left"
+        nowrap
+        className="flex h-[22px] flex-shrink-0"
       >
-        ↓
-      </button>
+        <button
+          type="button"
+          className="flex h-full w-full items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
+          aria-label={t('minimap.bottom')}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={e => {
+            e.stopPropagation()
+            scrollToBoundary('bottom')
+          }}
+        >
+          ↓
+        </button>
+      </InstantTooltip>
       <div className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
         <span ref={rangeLabelRef} className="text-meta text-[var(--text-muted)]">
           {usePositions ? `0 / ${positions!.total_lines}` : `1 / ${barCount}`}
