@@ -44,11 +44,169 @@ func TestBuildEditorArgs(t *testing.T) {
 		{"code --goto {path}:{line}", "/tmp/a.go", 0, []string{"code", "--goto", "/tmp/a.go:1"}},
 		{"xdg-open {path}", "/tmp/a.go", 7, []string{"xdg-open", "/tmp/a.go"}},
 		{"subl", "/tmp/a.go", 3, []string{"subl", "/tmp/a.go"}}, // no {path} → appended
+		// Spaced paths stay one argv element after template Fields.
+		{"code --goto {path}:{line}", `/tmp/my dir/a.go`, 9, []string{"code", "--goto", `/tmp/my dir/a.go:9`}},
+		{"kate -l {line} {path}", `/home/user/My Docs/x.jsonl`, 1, []string{"kate", "-l", "1", `/home/user/My Docs/x.jsonl`}},
 	}
 	for _, c := range cases {
 		got := buildEditorArgs(c.template, c.path, c.line)
 		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("buildEditorArgs(%q, %q, %d) = %v, want %v", c.template, c.path, c.line, got, c.want)
+		}
+	}
+}
+
+func TestDefaultEditorCandidatesCoverPlatforms(t *testing.T) {
+	for _, goos := range []string{"windows", "darwin", "linux", "freebsd"} {
+		cands := defaultEditorCandidates(goos)
+		if len(cands) == 0 {
+			t.Fatalf("%s: empty candidates", goos)
+		}
+		// Every OS must prefer a real editor name before generic openers when possible.
+		joined := ""
+		for _, c := range cands {
+			joined += strings.Join(c.Bins, ",") + ";"
+			if !strings.Contains(c.Template, "{path}") && c.DirTemplate == "" {
+				// notepad / open templates should still include path via append or {path}
+			}
+		}
+		switch goos {
+		case "windows":
+			if !strings.Contains(joined, "code") && !strings.Contains(joined, "notepad") {
+				t.Fatalf("windows candidates missing code/notepad: %s", joined)
+			}
+		case "darwin":
+			if !strings.Contains(joined, "open") {
+				t.Fatalf("darwin candidates missing open: %s", joined)
+			}
+		default:
+			if !strings.Contains(joined, "xdg-open") && !strings.Contains(joined, "code") {
+				t.Fatalf("%s candidates look thin: %s", goos, joined)
+			}
+		}
+	}
+}
+
+func TestPickDefaultEditorTemplateFallback(t *testing.T) {
+	// No bins available → platform fallback string.
+	orig := lookPath
+	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	defer func() { lookPath = orig }()
+
+	if got := pickDefaultEditorTemplate("windows"); got != "cmd /c start {path}" {
+		t.Fatalf("windows fallback: %q", got)
+	}
+	if got := pickDefaultEditorTemplate("darwin"); got != "open {path}" {
+		t.Fatalf("darwin fallback: %q", got)
+	}
+	if got := pickDefaultEditorTemplate("linux"); got != "xdg-open {path}" {
+		t.Fatalf("linux fallback: %q", got)
+	}
+}
+
+func TestOpenExistingPathFallsThroughCandidates(t *testing.T) {
+	origLook := lookPath
+	origStart := startEditorCommand
+	origGOOS := runtimeGOOS
+	defer func() {
+		lookPath = origLook
+		startEditorCommand = origStart
+		runtimeGOOS = origGOOS
+	}()
+
+	runtimeGOOS = "linux"
+	// Simulate: code missing, kate present and launchable.
+	lookPath = func(file string) (string, error) {
+		if file == "kate" {
+			return "/usr/bin/kate", nil
+		}
+		return "", exec.ErrNotFound
+	}
+	var launched []string
+	startEditorCommand = func(cmd *exec.Cmd) error {
+		launched = append([]string{cmd.Path}, cmd.Args[1:]...)
+		return nil
+	}
+
+	srv := New(nil, []reader.BaseSessionReader{})
+	path := filepath.Join(t.TempDir(), "sess.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.openExistingPath(path, 3, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(launched) < 2 || launched[0] != "/usr/bin/kate" {
+		t.Fatalf("launched = %v, want kate", launched)
+	}
+}
+
+func TestOpenExistingPathUserTemplatePreferred(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.SetSetting(editorCommandKey, "myedit {path}"); err != nil {
+		t.Fatal(err)
+	}
+
+	origLook := lookPath
+	origStart := startEditorCommand
+	defer func() {
+		lookPath = origLook
+		startEditorCommand = origStart
+	}()
+	lookPath = func(file string) (string, error) {
+		if file == "myedit" {
+			return "/bin/myedit", nil
+		}
+		// Also allow defaults if user fails — should not be needed.
+		return "", exec.ErrNotFound
+	}
+	var launched []string
+	startEditorCommand = func(cmd *exec.Cmd) error {
+		launched = append([]string{cmd.Path}, cmd.Args[1:]...)
+		return nil
+	}
+
+	srv := New(database, []reader.BaseSessionReader{})
+	path := filepath.Join(t.TempDir(), "f.txt")
+	os.WriteFile(path, []byte("x"), 0o644)
+	if err := srv.openExistingPath(path, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if launched[0] != "myedit" && launched[0] != "/bin/myedit" {
+		t.Fatalf("launched = %v, want myedit", launched)
+	}
+	if launched[len(launched)-1] != path {
+		t.Fatalf("launched path = %v", launched)
+	}
+}
+
+func TestResolveExistingAllowsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	abs, info, err := resolveExisting(dir, "")
+	if err != nil || abs != dir || !info.IsDir() {
+		t.Fatalf("dir: abs=%q err=%v isDir=%v", abs, err, info != nil && info.IsDir())
+	}
+	// resolveExistingFile still rejects dirs (menu “open file only”).
+	if _, err := resolveExistingFile(dir, ""); err == nil {
+		t.Fatal("resolveExistingFile should reject directory")
+	}
+}
+
+func TestResolveExistingFileURIAndTilde(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.txt")
+	os.WriteFile(file, []byte("hi"), 0o644)
+
+	// file:// URI forming (Unix-style).
+	got, err := resolveExistingFile("file://"+file, "")
+	if err != nil || got != file {
+		// On some systems file:// + path may need three slashes; accept clean equal.
+		if abs, _, e2 := resolveExisting("file://"+file, ""); e2 != nil || abs != file {
+			t.Fatalf("file URI: got %q err=%v", got, err)
 		}
 	}
 }

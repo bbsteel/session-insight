@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,13 @@ import (
 // (app_settings, key "editor_command") and is never accepted from the request:
 // the HTTP surface only ever supplies a file path that must exist on disk, so
 // a hostile page on localhost cannot turn this endpoint into "run anything".
+//
+// Default open strategy (multi-OS / multi-scenario):
+//  1. User-configured editor_command (if set and launchable)
+//  2. Platform-specific editor candidates (VS Code / Cursor / Kate / …)
+//  3. OS default opener (open / start / xdg-open as last resort)
+// Each step falls through on LookPath or Start failure so one broken helper
+// cannot strand the user.
 
 const (
 	editorCommandKey = "editor_command"
@@ -62,38 +70,125 @@ var startEditorCommand = func(cmd *exec.Cmd) error {
 	return cmd.Process.Release()
 }
 
-func (s *Server) editorCommandTemplate() string {
-	if s.DB != nil {
-		if v, err := s.DB.GetSetting(editorCommandKey); err == nil && strings.TrimSpace(v) != "" {
-			return v
+// lookPath and runtimeGOOS are injectable so tests can cover Windows/macOS
+// candidate lists without depending on the host OS or installed binaries.
+var (
+	lookPath   = exec.LookPath
+	runtimeGOOS = runtime.GOOS
+)
+
+// editorCandidate is one preferred open strategy: any of Bins may satisfy the
+// candidate; Template is expanded via buildEditorArgs ({path}, {line}).
+type editorCandidate struct {
+	Bins     []string
+	Template string
+	// DirTemplate, when non-empty, is used for directories instead of Template.
+	DirTemplate string
+}
+
+// defaultEditorCandidates returns ordered open strategies for goos.
+// Prefer real text editors over generic desktop openers: xdg-open/KIO and
+// similar can start successfully then fail async (file: protocol sockets).
+func defaultEditorCandidates(goos string) []editorCandidate {
+	switch goos {
+	case "windows":
+		return []editorCandidate{
+			{Bins: []string{"code.cmd", "code.exe", "code"}, Template: "code --goto {path}:{line}"},
+			{Bins: []string{"cursor.cmd", "cursor.exe", "cursor"}, Template: "cursor --goto {path}:{line}"},
+			{Bins: []string{"codium.cmd", "codium.exe", "codium"}, Template: "codium --goto {path}:{line}"},
+			{Bins: []string{"notepad++.exe", "notepad++"}, Template: "notepad++ -n{line} {path}"},
+			{Bins: []string{"notepad.exe", "notepad"}, Template: "notepad {path}"},
+		}
+	case "darwin":
+		return []editorCandidate{
+			{Bins: []string{"code"}, Template: "code --goto {path}:{line}"},
+			{Bins: []string{"cursor"}, Template: "cursor --goto {path}:{line}"},
+			{Bins: []string{"codium"}, Template: "codium --goto {path}:{line}"},
+			{Bins: []string{"subl"}, Template: "subl {path}:{line}"},
+			// -t: open in default *text* editor (not Preview for images/logs).
+			{Bins: []string{"open"}, Template: "open -t {path}", DirTemplate: "open {path}"},
+			{Bins: []string{"open"}, Template: "open {path}", DirTemplate: "open {path}"},
+		}
+	default:
+		// Linux, FreeBSD, and other Unix-likes.
+		return []editorCandidate{
+			{Bins: []string{"code", "code-insiders"}, Template: "code --goto {path}:{line}"},
+			{Bins: []string{"cursor"}, Template: "cursor --goto {path}:{line}"},
+			{Bins: []string{"codium", "code-oss"}, Template: "codium --goto {path}:{line}"},
+			{Bins: []string{"subl"}, Template: "subl {path}:{line}"},
+			{Bins: []string{"kate"}, Template: "kate -l {line} {path}"},
+			{Bins: []string{"kwrite"}, Template: "kwrite {path}"},
+			{Bins: []string{"gedit"}, Template: "gedit +{line} {path}"},
+			{Bins: []string{"gnome-text-editor"}, Template: "gnome-text-editor +{line} {path}"},
+			{Bins: []string{"xed"}, Template: "xed +{line} {path}"},
+			{Bins: []string{"mousepad"}, Template: "mousepad {path}"},
+			{Bins: []string{"leafpad"}, Template: "leafpad {path}"},
+			// Last: desktop opener (KDE KIO may still fail async after Start).
+			{Bins: []string{"xdg-open"}, Template: "xdg-open {path}", DirTemplate: "xdg-open {path}"},
 		}
 	}
-	// Prefer real text editors over xdg-open: on some KDE/SteamOS setups
-	// xdg-open hands "file:" URLs to KIO and fails with a socket error even
-	// though the process starts successfully.
-	if _, err := exec.LookPath("code"); err == nil {
-		return "code --goto {path}:{line}"
+}
+
+// findFirstBin returns the first LookPath hit among names.
+func findFirstBin(names []string) (string, error) {
+	var last error
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		p, err := lookPath(n)
+		if err == nil {
+			return p, nil
+		}
+		last = err
 	}
-	if _, err := exec.LookPath("kate"); err == nil {
-		return "kate -l {line} {path}"
+	if last == nil {
+		return "", fmt.Errorf("no binary names")
 	}
-	if _, err := exec.LookPath("kwrite"); err == nil {
-		return "kwrite {path}"
+	return "", last
+}
+
+// pickDefaultEditorTemplate returns the first launchable default template for
+// display in settings (editor_command_default). It does not launch anything.
+func pickDefaultEditorTemplate(goos string) string {
+	for _, c := range defaultEditorCandidates(goos) {
+		if _, err := findFirstBin(c.Bins); err == nil {
+			return c.Template
+		}
 	}
-	if _, err := exec.LookPath("gedit"); err == nil {
-		return "gedit +{line} {path}"
+	// Platform opener templates (not always in PATH as a single bin name).
+	switch goos {
+	case "windows":
+		return "cmd /c start {path}"
+	case "darwin":
+		return "open {path}"
+	default:
+		return "xdg-open {path}"
 	}
-	if _, err := exec.LookPath("gnome-text-editor"); err == nil {
-		return "gnome-text-editor +{line} {path}"
+}
+
+func (s *Server) userEditorTemplate() string {
+	if s.DB == nil {
+		return ""
 	}
-	if _, err := exec.LookPath("mousepad"); err == nil {
-		return "mousepad {path}"
+	v, err := s.DB.GetSetting(editorCommandKey)
+	if err != nil {
+		return ""
 	}
-	return "xdg-open {path}"
+	return strings.TrimSpace(v)
+}
+
+func (s *Server) editorCommandTemplate() string {
+	if t := s.userEditorTemplate(); t != "" {
+		return t
+	}
+	return pickDefaultEditorTemplate(runtimeGOOS)
 }
 
 // buildEditorArgs expands {path} and {line} inside each whitespace-separated
 // template field. Templates without a {path} placeholder get the path appended.
+// Paths may contain spaces: Fields splits the *template* only, then substitution
+// keeps a path with spaces as a single argv element when {path} occupies one field.
 func buildEditorArgs(template, path string, line int) []string {
 	if line <= 0 {
 		line = 1
@@ -115,36 +210,151 @@ func buildEditorArgs(template, path string, line int) []string {
 	return args
 }
 
+// tryLaunchArgs starts an editor from an already-built argv. binOverride, when
+// non-empty, replaces argv[0] (used when we already resolved LookPath).
+func tryLaunchArgs(args []string, binOverride string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("empty editor command")
+	}
+	bin := args[0]
+	if binOverride != "" {
+		bin = binOverride
+	}
+	cmd := exec.Command(bin, args[1:]...)
+	// Detach from our stdio so chatty editors cannot block the API process.
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return startEditorCommand(cmd)
+}
+
+// tryLaunchTemplate expands template and starts the process. PATH lookup is
+// deferred to exec.Command/Start so test doubles and unusual PATHs still work
+// the same way as a user shell.
+func tryLaunchTemplate(template, path string, line int) error {
+	return tryLaunchArgs(buildEditorArgs(template, path, line), "")
+}
+
+// platformDefaultOpen launches the OS-native “open this path” helper.
+// Used as the final fallback after named editors; argv is built without
+// strings.Fields so Windows `start` empty-title works with spaced paths.
+func platformDefaultOpen(goos, path string) error {
+	var cmd *exec.Cmd
+	switch goos {
+	case "windows":
+		// Empty title arg so start does not treat a quoted path as the title.
+		cmd = exec.Command("cmd", "/c", "start", "", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		bin, err := lookPath("xdg-open")
+		if err != nil {
+			return err
+		}
+		cmd = exec.Command(bin, path)
+	}
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return startEditorCommand(cmd)
+}
+
+// openExistingPath tries user template → editor candidates → OS default open.
+// isDir selects directory-oriented templates when available.
+func (s *Server) openExistingPath(path string, line int, isDir bool) error {
+	var errs []string
+
+	if user := s.userEditorTemplate(); user != "" {
+		if err := tryLaunchTemplate(user, path, line); err == nil {
+			return nil
+		} else {
+			errs = append(errs, "user: "+err.Error())
+		}
+	}
+
+	for _, c := range defaultEditorCandidates(runtimeGOOS) {
+		bin, err := findFirstBin(c.Bins)
+		if err != nil {
+			continue
+		}
+		tmpl := c.Template
+		if isDir && c.DirTemplate != "" {
+			tmpl = c.DirTemplate
+		}
+		args := buildEditorArgs(tmpl, path, line)
+		if len(args) == 0 {
+			continue
+		}
+		// Use the resolved binary path so Windows code.cmd / PATH variants work.
+		if err := tryLaunchArgs(args, bin); err == nil {
+			return nil
+		} else {
+			errs = append(errs, c.Bins[0]+": "+err.Error())
+		}
+	}
+
+	if err := platformDefaultOpen(runtimeGOOS, path); err == nil {
+		return nil
+	} else {
+		errs = append(errs, "platform: "+err.Error())
+	}
+
+	if len(errs) == 0 {
+		return fmt.Errorf("no editor or open helper available on %s", runtimeGOOS)
+	}
+	return fmt.Errorf("open failed (%s)", strings.Join(errs, "; "))
+}
+
 // resolveExistingFile normalises path (expanding ~ and joining relative paths
 // onto cwd) and returns the absolute path only if it is an existing regular
 // file.
 func resolveExistingFile(path, cwd string) (string, error) {
+	abs, info, err := resolveExisting(path, cwd)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("not a regular file: %s", abs)
+	}
+	return abs, nil
+}
+
+// resolveExisting accepts regular files or directories (for open-folder).
+func resolveExisting(path, cwd string) (string, os.FileInfo, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return "", fmt.Errorf("empty path")
+		return "", nil, fmt.Errorf("empty path")
 	}
-	if path == "~" || strings.HasPrefix(path, "~/") {
+	// Windows: strip file:/// or file:// prefixes if a client sends them.
+	if strings.HasPrefix(strings.ToLower(path), "file:") {
+		if u, err := url.Parse(path); err == nil && u.Path != "" {
+			path = u.Path
+			// url.Path on Windows file:///C:/x is /C:/x — strip leading slash.
+			if runtimeGOOS == "windows" && len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+				path = path[1:]
+			}
+		}
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+		path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~/"), `~\`))
 	}
 	if !filepath.IsAbs(path) {
 		if cwd == "" || !filepath.IsAbs(cwd) {
-			return "", fmt.Errorf("relative path without absolute cwd: %s", path)
+			return "", nil, fmt.Errorf("relative path without absolute cwd: %s", path)
 		}
 		path = filepath.Join(cwd, path)
 	}
 	path = filepath.Clean(path)
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("not a regular file: %s", path)
+	if !info.Mode().IsRegular() && !info.IsDir() {
+		return "", nil, fmt.Errorf("not a file or directory: %s", path)
 	}
-	return path, nil
+	return path, info, nil
 }
 
 // findLineBySearch returns the 1-based line whose trimmed content matches the
@@ -205,28 +415,29 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "open_file_failed", "invalid request body")
 		return
 	}
-	resolved, err := resolveExistingFile(req.Path, req.Cwd)
+	// Files and directories: provenance sources may be a transcript dir (e.g. Grok).
+	resolved, info, err := resolveExisting(req.Path, req.Cwd)
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "open_file_failed", "file not found")
 		return
 	}
+	isDir := info.IsDir()
 
 	line := req.Line
-	if line <= 0 && req.Search != "" {
+	if !isDir && line <= 0 && req.Search != "" {
 		line = findLineBySearch(resolved, req.Search)
 	}
 
-	args := buildEditorArgs(s.editorCommandTemplate(), resolved, line)
-	if len(args) == 0 {
-		writeAPIError(w, http.StatusInternalServerError, "open_file_failed", "editor command not configured")
-		return
-	}
-	if err := startEditorCommand(exec.Command(args[0], args[1:]...)); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "open_file_failed", fmt.Sprintf("failed to launch editor: %v", err))
+	if err := s.openExistingPath(resolved, line, isDir); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "open_file_failed", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"path": resolved, "line": line})
+	json.NewEncoder(w).Encode(map[string]any{
+		"path":  resolved,
+		"line":  line,
+		"is_dir": isDir,
+	})
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {

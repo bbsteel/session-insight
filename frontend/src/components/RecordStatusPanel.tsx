@@ -74,18 +74,19 @@ export default function RecordStatusPanel({
   async function openPathInEditor(path: string) {
     setOpeningPath(path)
     setError(null)
+    const cwd = session.cwd || ''
     try {
-      // Resolve first so directories / missing paths surface as errors instead of
-      // handing xdg-open a bad target. Prefer the user's configured editor.
-      const resolved = await resolveFile(path, session.cwd || '')
-      const target = resolved || path
-      await openFile({ path: target, cwd: session.cwd || undefined })
+      // resolveFile only accepts regular files; open-file also accepts dirs
+      // (folder open). Prefer resolved absolute path when available.
+      const resolved = await resolveFile(path, cwd)
+      await openFile({ path: resolved || path, cwd: cwd || undefined })
     } catch {
-      // Fallback: SI built-in viewer always works when system open fails
-      // (e.g. KIO/xdg-open socket errors on some KDE desktops).
+      // Multi-scenario fallback when the host open chain fails entirely:
+      // SI built-in file viewer (new tab) always works for readable files.
       try {
-        const params = new URLSearchParams({ path, cwd: session.cwd || '' })
-        window.open(`#/file?${params.toString()}`, '_blank', 'noopener')
+        const params = new URLSearchParams({ path, cwd })
+        const w = window.open(`#/file?${params.toString()}`, '_blank', 'noopener')
+        if (!w) setError(t('record.panel.openInEditorFailed'))
       } catch {
         setError(t('record.panel.openInEditorFailed'))
       }
