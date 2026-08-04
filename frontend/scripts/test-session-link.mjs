@@ -36,6 +36,12 @@ assert.equal(parseSessionRoute('#/session/grok/'), null)
 assert.equal(parseSessionRoute('#/session//abc'), null)
 assert.equal(parseSessionRoute('#/session/a/b/c'), null)
 
+// Malformed percent-encoding degrades to null instead of throwing URIError
+// (App.tsx parses the hash in a useState initializer; a throw would crash load).
+assert.equal(parseSessionRoute('#/session/foo%bar/baz'), null)
+assert.equal(parseSessionRoute('#/session/grok/%'), null)
+assert.equal(parseSessionRoute('#/session/%/x'), null)
+
 // --- New-tab click predicate ----------------------------------------------------
 
 assert.equal(shouldOpenInNewTab({ metaKey: true, ctrlKey: false }), true)

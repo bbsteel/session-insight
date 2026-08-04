@@ -31,8 +31,16 @@ export function parseSessionRoute(hash: string): SessionRoute | null {
   const rawId = rest.slice(slash + 1)
   // Exactly two segments: a second slash means a malformed route.
   if (!rawAgent || !rawId || rawId.includes('/')) return null
-  const agentType = decodeURIComponent(rawAgent)
-  const id = decodeURIComponent(rawId)
+  let agentType: string
+  let id: string
+  try {
+    agentType = decodeURIComponent(rawAgent)
+    id = decodeURIComponent(rawId)
+  } catch {
+    // Malformed percent-encoding must degrade to "no route", not crash the
+    // app (App.tsx calls this in a useState initializer on load).
+    return null
+  }
   if (!agentType || !id) return null
   return { agentType, id }
 }

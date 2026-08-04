@@ -1,8 +1,10 @@
 // Copy button for a backed invocation's CLI-resumable agent ID, using the
 // same shared logic as the session list (resume_id || id). The collaboration
-// payload carries only the backing session id, so the resume id is fetched
-// lazily from the session detail and cached per session; on fetch failure it
-// falls back to the session id. Rendered as a compact toolbar icon button.
+// payload carries only the backing session id, so the resume id is prefetched
+// on hover/press and cached per session; the click never awaits before the
+// clipboard write (an async gap can break transient user activation), so a
+// cold click copies the session id while the fetch warms the cache for the
+// next one. Rendered as a compact toolbar button.
 
 import { useEffect, useRef, useState } from 'react'
 import { fetchSession } from '../api'
@@ -18,22 +20,31 @@ export default function BackingCopyButton({ backing, className }: { backing: Bac
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
 
-  const copy = async () => {
+  // A prior "Copied!"/"Failed" label must not bleed into a different
+  // invocation's button after the selection switches.
+  useEffect(() => {
+    setState('idle')
+  }, [backing.session_id])
+
+  const prefetch = () => {
     const key = backing.session_id
-    let resumeId = resumeCache.current.get(key)
-    if (resumeId === undefined) {
-      try {
-        const detail = await fetchSession(key)
-        resumeId = detail.resume_id ?? null
-      } catch {
-        resumeId = null
-      }
-      resumeCache.current.set(key, resumeId)
-    }
-    const ok = await copySessionIdToClipboard({ id: key, resume_id: resumeId })
-    setState(ok ? 'copied' : 'failed')
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => setState('idle'), 2000)
+    if (resumeCache.current.has(key)) return
+    resumeCache.current.set(key, null) // claim the slot; fill on resolve
+    fetchSession(key)
+      .then((detail) => resumeCache.current.set(key, detail.resume_id ?? null))
+      .catch(() => resumeCache.current.set(key, null))
+  }
+
+  const copy = () => {
+    const key = backing.session_id
+    // resume_id stays undefined (copy falls back to the session id) until the
+    // prefetch resolves — never await it inside the click handler.
+    const resumeId = resumeCache.current.get(key) ?? undefined
+    void copySessionIdToClipboard({ id: key, resume_id: resumeId }).then((ok) => {
+      setState(ok ? 'copied' : 'failed')
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => setState('idle'), 2000)
+    })
   }
 
   const label = state === 'copied'
@@ -45,7 +56,9 @@ export default function BackingCopyButton({ backing, className }: { backing: Bac
   return (
     <button
       type="button"
-      onClick={(e) => { e.stopPropagation(); void copy() }}
+      onPointerEnter={prefetch}
+      onPointerDown={prefetch}
+      onClick={(e) => { e.stopPropagation(); copy() }}
       className={className}
       aria-label={t('collaboration.backing.copyAgentId')}
       title={label}
