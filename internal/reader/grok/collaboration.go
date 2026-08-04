@@ -630,7 +630,22 @@ func (r *GrokReader) mapGrokChild(
 		}
 		if !child.spawnTS.IsZero() {
 			ts := child.spawnTS
-			anchor.Timestamp = &ts
+			// The harness records the child's started_at (ns clock) before it
+			// emits the subagent_spawned update (ms clock), so the raw spawn
+			// timestamp can post-date started_at by a few milliseconds for the
+			// same launch fact. The contract forbids a trigger post-dating the
+			// child's start, so fall back to the stronger meta timestamp.
+			switch {
+			case hasStart && ts.After(startedAt):
+				ts = startedAt
+			case !hasStart && hasEnd && ts.After(endedAt):
+				// No start fact and the spawn update post-dates the recorded
+				// end: withhold the contradictory timestamp, keep the anchor.
+				ts = time.Time{}
+			}
+			if !ts.IsZero() {
+				anchor.Timestamp = &ts
+			}
 		} else if hasStart {
 			ts := startedAt
 			anchor.Timestamp = &ts

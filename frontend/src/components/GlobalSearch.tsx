@@ -7,6 +7,7 @@ import SettingsDialog from './SettingsDialog'
 import { LanguageSwitch } from './LanguageSwitch'
 import { ThemeSwitch } from './ThemeToggle'
 import { formatRelativeTime, useI18n, type Locale } from '../i18n'
+import { openOnModifiedClick, openSessionInNewTab } from '../sessionLink'
 
 const HISTORY_KEY = 'search-history'
 const HISTORY_LIMIT_KEY = 'search-history-limit'
@@ -331,8 +332,14 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
       setActiveIndex(i => Math.max(i - 1, 0))
     } else if (e.key === 'Enter' && activeIndex >= 0) {
       e.preventDefault()
-      if (isHistoryMode) selectHistory(visibleHistory[activeIndex].query)
-      else selectResult(results[activeIndex])
+      if (isHistoryMode) {
+        selectHistory(visibleHistory[activeIndex].query)
+      } else if (e.metaKey || e.ctrlKey) {
+        const r = results[activeIndex]
+        openSessionInNewTab(r.agent_type, r.session_id)
+      } else {
+        selectResult(results[activeIndex])
+      }
     }
   }
 
@@ -434,32 +441,52 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
                   </div>
                 )}
                 {results.map((r, i) => (
-                  <button
-                    key={`${r.agent_type}-${r.session_id}`}
-                    onClick={() => selectResult(r)}
-                    onMouseEnter={() => setActiveIndex(i)}
-                    className={`w-full border-b border-[var(--border-muted)] px-3 py-2 text-left transition-colors duration-fast last:border-b-0 ${
-                      i === activeIndex ? 'bg-[var(--accent-blue)]/10' : 'hover:bg-[var(--bg-surface-hover)]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <AgentIcon agentType={r.agent_type} size={14} />
-                      <span className="min-w-0 flex-1 truncate text-helper text-[var(--text-primary)]">
-                        {r.name || r.session_id}
-                      </span>
-                      {r.project && (
-                        <span className="max-w-[120px] flex-shrink-0 truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5 text-meta text-[var(--text-secondary)]">
-                          {r.project}
+                  <div key={`${r.agent_type}-${r.session_id}`} className="group relative">
+                    <button
+                      onClick={(e) => {
+                        if (openOnModifiedClick(e, r.agent_type, r.session_id)) return
+                        selectResult(r)
+                      }}
+                      onAuxClick={(e) => { openOnModifiedClick(e, r.agent_type, r.session_id) }}
+                      onMouseEnter={() => setActiveIndex(i)}
+                      className={`w-full border-b border-[var(--border-muted)] px-3 py-2 pr-8 text-left transition-colors duration-fast last:border-b-0 ${
+                        i === activeIndex ? 'bg-[var(--accent-blue)]/10' : 'hover:bg-[var(--bg-surface-hover)]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <AgentIcon agentType={r.agent_type} size={14} />
+                        <span className="min-w-0 flex-1 truncate text-helper text-[var(--text-primary)]">
+                          {r.name || r.session_id}
                         </span>
-                      )}
-                      {r.updated_at && (
-                        <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">{relTime(r.updated_at, locale)}</span>
-                      )}
-                    </div>
-                    <div className="mt-0.5 truncate pl-[20px] text-helper text-[var(--text-secondary)]">
-                      <HighlightedSnippet text={r.match} query={query} />
-                    </div>
-                  </button>
+                        {r.project && (
+                          <span className="max-w-[120px] flex-shrink-0 truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5 text-meta text-[var(--text-secondary)]">
+                            {r.project}
+                          </span>
+                        )}
+                        {r.updated_at && (
+                          <span className="flex-shrink-0 text-meta text-[var(--text-muted)]">{relTime(r.updated_at, locale)}</span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 truncate pl-[20px] text-helper text-[var(--text-secondary)]">
+                        <HighlightedSnippet text={r.match} query={query} />
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openSessionInNewTab(r.agent_type, r.session_id) }}
+                      tabIndex={-1}
+                      className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-sm text-[var(--text-muted)] opacity-0 transition-opacity duration-fast hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] group-hover:opacity-100 group-focus-within:opacity-100"
+                      aria-label={t('session.openInNewTab')}
+                      title={t('session.openInNewTab')}
+                      data-testid="search-open-new-tab"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                        <polyline points="15 3 21 3 21 9" />
+                        <line x1="10" y1="14" x2="21" y2="3" />
+                      </svg>
+                    </button>
+                  </div>
                 ))}
               </>
             )}

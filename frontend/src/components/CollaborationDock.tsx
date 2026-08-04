@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CollaborationDetailResponse } from '../api'
 import { formatDate, useI18n, type Locale } from '../i18n'
 import { reasonCodeLabelKey } from '../capabilityPresentation'
+import { openSessionInNewTab } from '../sessionLink'
 import {
   normalizeTimelineModel,
   UNLINKED_GROUP_ID,
@@ -29,7 +30,7 @@ import {
   summarizeTimeline,
 } from '../collaboration/dockState'
 import type { FactEvidenceDTO, SourceAnchorDTO } from '../collaboration/types'
-import CollaborationTimeline, { type ChildContentActionState } from './CollaborationTimeline'
+import CollaborationTimeline from './CollaborationTimeline'
 
 export type CollaborationDockStatus =
   | { kind: 'loading' }
@@ -119,22 +120,14 @@ export default function CollaborationDock({
   }, [model, selectedId])
 
   const openBacking = useCallback(
-    (invocationId: string) => {
+    (invocationId: string, newTab = false) => {
       if (!detail) return
       const backing = backingSessionOf(detail, invocationId)
-      if (backing) onOpenSession(backing.session_id, backing.agent_type)
+      if (!backing) return
+      if (newTab) openSessionInNewTab(backing.agent_type, backing.session_id)
+      else onOpenSession(backing.session_id, backing.agent_type)
     },
     [detail, onOpenSession],
-  )
-
-  // The contract gates "View child Agent record" on a backing session: without
-  // one there is no standalone record to open, regardless of content precision.
-  const childContentState = useCallback(
-    (inv: TimelineInvocation): ChildContentActionState =>
-      inv.hasBackingSession
-        ? { available: true }
-        : { available: false, reasonKey: 'collaboration.dock.noBackingSession' },
-    [],
   )
 
   const summaryText = summary
@@ -296,7 +289,6 @@ export default function CollaborationDock({
               onOpenChildContent={openBacking}
               onJumpToLaunch={onJumpToLaunch}
               onJumpToResult={onJumpToResult}
-              isChildContentAvailable={childContentState}
               onContentHeightChange={(timelineHeightPx) => onContentHeightChange(Math.max(
                 HEADER_PX + HANDLE_PX + (showBanner ? BANNER_PX : 0) + timelineHeightPx,
                 selectedInv ? HEADER_PX + HANDLE_PX + (showBanner ? BANNER_PX : 0) + DETAIL_MIN_HEIGHT_PX : 0,
@@ -306,9 +298,7 @@ export default function CollaborationDock({
           {selectedInv && (
             <InvocationDetail
               inv={selectedInv}
-              detail={detail}
               onClose={() => handleSelect(null)}
-              onOpenBacking={() => openBacking(selectedInv.id)}
             />
           )}
         </div>
@@ -407,14 +397,10 @@ function ErrorState({ code }: { code: string }) {
 
 function InvocationDetail({
   inv,
-  detail,
   onClose,
-  onOpenBacking,
 }: {
   inv: TimelineInvocation
-  detail: CollaborationDetailResponse
   onClose: () => void
-  onOpenBacking: () => void
 }) {
   const { t, locale } = useI18n()
   if (inv.isGroup) {
@@ -431,8 +417,6 @@ function InvocationDetail({
       </aside>
     )
   }
-
-  const backing = backingSessionOf(detail, inv.id)
 
   return (
     <aside
@@ -457,18 +441,6 @@ function InvocationDetail({
         {inv.executionMode && <Row label={t('collaboration.detail.executionMode')} value={t(`collaboration.mode.${inv.executionMode}`)} />}
         {inv.taskSummary && <Row label={t('collaboration.tooltip.task')} value={inv.taskSummary} title={inv.taskSummary} />}
       </dl>
-      {backing && (
-        <div className="mt-2 border-t border-[var(--border-muted)] pt-2">
-          <button
-            type="button"
-            onClick={onOpenBacking}
-            className="h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            data-testid="collaboration-open-backing"
-          >
-            {t('collaboration.backing.open')}
-          </button>
-        </div>
-      )}
     </aside>
   )
 }

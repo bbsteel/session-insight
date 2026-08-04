@@ -96,7 +96,7 @@ func TestCollaborationMigrationFromPriorSchema(t *testing.T) {
 		`DROP TABLE collaboration_delegations`,
 		`DROP TABLE collaboration_invocations`,
 		`DROP TABLE collaboration_roots`,
-		`DELETE FROM schema_migrations WHERE version = 28`,
+		`DELETE FROM schema_migrations WHERE version >= 28`,
 	} {
 		if _, err := database.Conn().Exec(stmt); err != nil {
 			t.Fatalf("rewind schema: %v", err)

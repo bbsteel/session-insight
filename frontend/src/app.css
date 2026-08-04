@@ -413,6 +413,13 @@ body {
   outline-offset: -2px;
 }
 
+/* Text-labeled action buttons mixing an icon glyph with a label. */
+.ct-btn-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .ct-scroll {
   flex: 1 1 auto;
   min-height: 0;

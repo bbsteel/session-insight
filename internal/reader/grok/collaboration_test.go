@@ -609,3 +609,42 @@ func TestGrokImpossibleEndTimestampDropped(t *testing.T) {
 		t.Errorf("impossible end must be dropped, got %v", child.EndedAt)
 	}
 }
+
+// The harness records meta started_at (ns clock) before emitting the
+// subagent_spawned update (ms clock), so the spawn timestamp lands a few
+// milliseconds after the child's recorded start for the same launch fact.
+// The trigger anchor must fall back to started_at instead of tripping the
+// contract causality check (observed on real sessions: +8ms).
+func TestGrokSpawnEventSlightlyAfterStartClamped(t *testing.T) {
+	root := t.TempDir()
+	// 1700000010 = 2023-11-14T22:13:20Z; meta start is 8ms before the spawn ms clock.
+	rootUpdates := lifecycleLine(gRootID,
+		`{"sessionUpdate":"subagent_spawned","subagent_id":"`+gChildID+`","parent_session_id":"`+gRootID+`","child_session_id":"`+gChildID+`","subagent_type":"general-purpose","description":"late spawn clock"}`,
+		gRootID+"-spawn-1", 1700000010, 1700000010008) + "\n"
+	writeSession(t, root, gProj, gRootID, summaryFile{}, rootUpdates, sampleEventsClosed())
+	writeSubagentMeta(t, filepath.Join(root, gProj, gRootID), gChildID, map[string]any{
+		"subagent_id":       gChildID,
+		"parent_session_id": gRootID,
+		"child_session_id":  gChildID,
+		"subagent_type":     "general-purpose",
+		"description":       "late spawn clock",
+		"status":            "running",
+		"started_at":        "2023-11-14T22:13:20.000000000Z",
+	})
+	r := New(root)
+	g, err := r.ReadCollaboration(context.Background(), listRoot(t, r, gRootID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Delegations) != 1 || g.Delegations[0].Trigger == nil || g.Delegations[0].Trigger.Timestamp == nil {
+		t.Fatalf("trigger anchor missing: %+v", g.Delegations)
+	}
+	child := g.Invocations[1]
+	trigger := *g.Delegations[0].Trigger.Timestamp
+	if !trigger.Equal(*child.StartedAt) {
+		t.Errorf("trigger must clamp to child started_at %v, got %v", child.StartedAt, trigger)
+	}
+	if g.Delegations[0].Trigger.EventID != gRootID+"-spawn-1" {
+		t.Errorf("event anchor must survive the clamp: %+v", g.Delegations[0].Trigger)
+	}
+}

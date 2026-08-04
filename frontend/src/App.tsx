@@ -4,6 +4,7 @@ import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
 import type { BookmarkChange } from './bookmarkState'
 import { useI18n } from './i18n'
+import { parseSessionRoute } from './sessionLink'
 
 // Hash route for the new-tab file viewer (#/file?path=…&cwd=…): the Go embed
 // file server only knows "/", so client-side hash routing keeps it zero-config.
@@ -20,11 +21,16 @@ function parseFileRoute(): { path: string; cwd: string; line?: number } | null {
 export default function App() {
   const { t } = useI18n()
   const [fileRoute] = useState(parseFileRoute)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [selectedAgentType, setSelectedAgentType] = useState<string | null>(null)
+  // #/session/<agentType>/<id> opens a specific session directly (new-tab
+  // entry point); parsed once at mount like the file route.
+  const [sessionRoute] = useState(() => (fileRoute ? null : parseSessionRoute(window.location.hash)))
+  const [selectedId, setSelectedId] = useState<string | null>(sessionRoute?.id ?? null)
+  const [selectedAgentType, setSelectedAgentType] = useState<string | null>(sessionRoute?.agentType ?? null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
-  const [sidebarFocusTarget, setSidebarFocusTarget] = useState<{ id: string; agentType: string } | null>(null)
+  const [sidebarFocusTarget, setSidebarFocusTarget] = useState<{ id: string; agentType: string } | null>(
+    sessionRoute ? { id: sessionRoute.id, agentType: sessionRoute.agentType } : null,
+  )
   const [searchTarget, setSearchTarget] = useState<{ sessionId: string; agentType: string; query: string } | null>(null)
 
   const selectSession = (id: string, agentType?: string, focusSidebar = false, searchQuery?: string) => {

@@ -32,6 +32,8 @@ import {
   type RenderPrimitives,
 } from '../collaboration/layoutTimeline.js'
 import { axisStepMs, axisTicks } from '../collaboration/timeAxis.js'
+import { openSessionInNewTab, shouldOpenInNewTab } from '../sessionLink'
+import BackingCopyButton from './BackingCopyButton'
 import type { CollaborationGraphDTO, InvocationStatus, SourceAnchorDTO } from '../collaboration/types.js'
 
 const DEFAULT_ROW_HEIGHT = 28
@@ -44,13 +46,6 @@ const MAX_LIVE_INTERVAL_MS = 1000
 const MIN_ZOOM_SPAN_MS = 60_000
 /** Drag distance below which a pointerup is a click (select), not a pan. */
 const CLICK_SLOP_PX = 3
-
-/** Availability of the "View child Agent record" action for one lane. */
-export interface ChildContentActionState {
-  available: boolean
-  /** i18n key explaining unavailability (already cataloged). */
-  reasonKey?: string
-}
 
 export interface CollaborationTimelineProps {
   /** Contract-shaped collaboration payload (internal/collaboration JSON tags). */
@@ -77,14 +72,12 @@ export interface CollaborationTimelineProps {
   defaultSelectedId?: string | null
   /** Fired whenever selection changes (lane click or Enter). Never navigates. */
   onSelect?: (invocationId: string | null) => void
-  /** Explicit "View child Agent record" action. */
-  onOpenChildContent?: (invocationId: string) => void
+  /** Explicit "View child Agent record" action; newTab requests opening in a new browser tab. */
+  onOpenChildContent?: (invocationId: string, newTab?: boolean) => void
   /** Explicit jump to the launch anchor in the parent replay. */
   onJumpToLaunch?: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   /** Explicit jump to the returned-result anchor in the parent replay. */
   onJumpToResult?: (invocationId: string, anchor: SourceAnchorDTO) => void
-  /** Overrides child-content availability; defaults to content_precision. */
-  isChildContentAvailable?: (invocation: TimelineInvocation) => ChildContentActionState
   /** Accessible label for the whole timeline region. */
   ariaLabel?: string
   /** Reports the rendered toolbar height so dock overlays can clear wrapped actions. */
@@ -136,14 +129,6 @@ function markerShape(m: MarkerPrim, rowH: number): { d: string; cls: string } {
   }
 }
 
-function defaultChildContentState(inv: TimelineInvocation): ChildContentActionState {
-  if (inv.contentPrecision.state === 'exact') return { available: true }
-  return {
-    available: false,
-    reasonKey: reasonCodeLabelKey(inv.contentPrecision.reason_code) ?? `capability.state.${inv.contentPrecision.state}`,
-  }
-}
-
 export default function CollaborationTimeline({
   graph,
   nowMs: nowMsProp,
@@ -159,7 +144,6 @@ export default function CollaborationTimeline({
   onOpenChildContent,
   onJumpToLaunch,
   onJumpToResult,
-  isChildContentAvailable,
   ariaLabel,
   onToolbarHeightChange,
   onContentHeightChange,
@@ -527,24 +511,21 @@ export default function CollaborationTimeline({
     setHoverId(null)
   }, [selectedId])
 
-  const childContentState: ChildContentActionState = selectedInv
-    ? (isChildContentAvailable ?? defaultChildContentState)(selectedInv)
-    : { available: false }
-  const openChildReason = !selectedInv
+  // The contract gates backing-session actions on the backing_session
+  // reference — never on agent_type branching or content precision.
+  const selectedBacking = useMemo(() => {
+    if (!selectedInv || selectedInv.isGroup || selectedInv.id === model.rootId) return null
+    return graph.invocations.find((inv) => inv.id === selectedInv.id)?.backing_session ?? null
+  }, [graph, selectedInv, model.rootId])
+
+  const openChildEnabled = Boolean(selectedBacking && onOpenChildContent)
+  const openChildReason = !selectedInv || selectedInv.isGroup || selectedInv.id === model.rootId
     ? ''
-    : selectedInv.isGroup
-      ? ''
-      : selectedInv.id === model.rootId
-        ? t('collaboration.action.rootIsCurrent')
-        : !childContentState.available
-          ? t('collaboration.action.noChildContent', {
-              reason: childContentState.reasonKey ? t(childContentState.reasonKey) : t(`capability.state.${selectedInv.contentPrecision.state}`),
-            })
-          : !onOpenChildContent
-            ? t('collaboration.action.notWired')
-            : ''
-  const openChildEnabled =
-    Boolean(selectedInv && !selectedInv.isGroup && selectedInv.id !== model.rootId && childContentState.available && onOpenChildContent)
+    : !selectedBacking
+      ? t('collaboration.action.noBackingSession')
+      : !onOpenChildContent
+        ? t('collaboration.action.notWired')
+        : ''
 
   const launchAnchorAvailable = Boolean(selectedInv && (selectedInv.triggerAnchor || selectedInv.startedAtMs !== null))
   const jumpLaunchEnabled = Boolean(selectedInv && !selectedInv.isGroup && launchAnchorAvailable && onJumpToLaunch)
@@ -597,10 +578,32 @@ export default function CollaborationTimeline({
             disabled={!openChildEnabled}
             title={openChildEnabled ? t('collaboration.action.openChild') : openChildReason}
             aria-label={t('collaboration.action.openChild')}
-            onClick={() => selectedInv && onOpenChildContent?.(selectedInv.id)}
+            data-testid="ct-open-child"
+            onClick={(e) => selectedInv && onOpenChildContent?.(selectedInv.id, shouldOpenInNewTab(e))}
+            onAuxClick={(e) => { if (selectedInv && shouldOpenInNewTab(e)) onOpenChildContent?.(selectedInv.id, true) }}
           >
             {t('collaboration.action.openChild')}
           </button>
+          {selectedBacking && (
+            <>
+              <BackingCopyButton backing={selectedBacking} className="ct-btn ct-btn-text" />
+              <button
+                type="button"
+                className="ct-btn ct-btn-text"
+                title={t('session.openInNewTab')}
+                aria-label={t('session.openInNewTab')}
+                data-testid="collaboration-open-backing-new-tab"
+                onClick={() => openSessionInNewTab(selectedBacking.agent_type, selectedBacking.session_id)}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+                <span>{t('session.openInNewTab')}</span>
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="ct-btn ct-action"

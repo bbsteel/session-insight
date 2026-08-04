@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 28
+const currentSchemaVersion = 29
 
 type DB struct {
 	conn *sql.DB
@@ -757,6 +757,40 @@ func migrate(conn *sql.DB) error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("v28 commit: %w", err)
+		}
+	}
+
+	// Version 29: backfill the collaboration_roots list-aggregate columns for
+	// databases whose table predates them (created by a pre-merge collaboration
+	// binary where the CREATE TABLE lacked the counts). The v28 CREATE TABLE IF
+	// NOT EXISTS cannot add columns to an existing table, and a stray version
+	// row cannot be trusted either — gate on the physical columns like v14 so
+	// the migration is self-healing on every open.
+	ctx := context.Background()
+	var rootsTable string
+	err = conn.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'collaboration_roots'`,
+	).Scan(&rootsTable)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("v29 inspect collaboration_roots: %w", err)
+	}
+	if rootsTable != "" {
+		for _, col := range []struct{ name, ddl string }{
+			{"child_count", `child_count INTEGER NOT NULL DEFAULT 0`},
+			{"active_count", `active_count INTEGER NOT NULL DEFAULT 0`},
+			{"problem_count", `problem_count INTEGER NOT NULL DEFAULT 0`},
+		} {
+			has, err := tableHasColumn(ctx, conn, "collaboration_roots", col.name)
+			if err != nil {
+				return fmt.Errorf("v29 inspect collaboration_roots.%s: %w", col.name, err)
+			}
+			if has {
+				continue
+			}
+			if _, err := conn.Exec(`ALTER TABLE collaboration_roots ADD COLUMN ` + col.ddl); err != nil &&
+				!strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("v29 add collaboration_roots.%s: %w", col.name, err)
+			}
 		}
 	}
 
