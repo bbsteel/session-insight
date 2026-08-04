@@ -27,6 +27,9 @@ session-insight.pid
 session-insight.url
 .runtime/
 
+# Agent-managed linked worktrees (see AGENTS.md "Worktree Development")
+.worktrees/
+
 # Environment
 .env
 .env.local
