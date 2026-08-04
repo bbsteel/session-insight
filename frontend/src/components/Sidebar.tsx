@@ -646,7 +646,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           onContextMenu={(e) => openContextMenu(e, session)}
           title={t('sidebar.openMenu')}
           className={`relative w-full text-left pl-2.5 pr-24 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
-            selected ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+            selected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
           style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
         >

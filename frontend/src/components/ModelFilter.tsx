@@ -275,7 +275,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                   aria-selected={selected === ''}
                   onClick={() => pick('')}
                   className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === '' ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                    selected === '' ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
                   }`}
                 >
                   <span className="text-[var(--text-muted)] flex-shrink-0">
@@ -346,7 +346,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                   aria-selected={selected === model.key}
                   onClick={() => pick(model.key)}
                   className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === model.key ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                    selected === model.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
                   }`}
                 >
                   <span className="w-2 h-2 rounded-full bg-[var(--accent-blue)] flex-shrink-0" aria-hidden="true" />
@@ -364,7 +364,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                   aria-selected={selected === provider.key}
                   onClick={() => pick(provider.key)}
                   className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === provider.key ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                    selected === provider.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
                   }`}
                 >
                   <span className="w-2 h-2 rounded-full bg-[var(--text-muted)]/60 flex-shrink-0" aria-hidden="true" />
