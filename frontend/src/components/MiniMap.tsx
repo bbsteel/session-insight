@@ -200,7 +200,8 @@ function PositionModeContent({
             >
               <InstantTooltip
                 text={turnTitle(turns[pos.turn_index], tw, billingUnit, locale, t)}
-                placement="left"
+                placement="cursor-left"
+                nowrap
                 className="block h-full w-full"
               >
                 <span
@@ -225,7 +226,8 @@ function PositionModeContent({
             >
               <InstantTooltip
                 text={t('minimap.markerLine', { event: eventLabel(eventKind, t), line: pos.line_start })}
-                placement="left"
+                placement="cursor-left"
+                nowrap
                 className="pointer-events-auto absolute left-[7px] top-1/2 inline-flex -translate-y-1/2"
               >
                 <button
@@ -480,7 +482,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
     >
       <InstantTooltip
         text={t('minimap.top')}
-        placement="left"
+        placement="cursor-left"
+        nowrap
         className="flex h-[22px] flex-shrink-0"
       >
         <button
@@ -542,7 +545,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
                   {eventKind && (
                     <InstantTooltip
                       text={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
-                      placement="left"
+                      placement="cursor-left"
+                      nowrap
                       className="pointer-events-auto absolute left-[7px] top-1/2 inline-flex -translate-y-1/2"
                     >
                       <button
@@ -564,7 +568,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
                   )}
                   <InstantTooltip
                     text={title}
-                    placement="left"
+                    placement="cursor-left"
+                    nowrap
                     className="pointer-events-auto absolute left-[40px] right-[14px] top-1/2 h-[12px] -translate-y-1/2"
                   >
                     <span
@@ -599,7 +604,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
 
       <InstantTooltip
         text={t('minimap.bottom')}
-        placement="left"
+        placement="cursor-left"
+        nowrap
         className="flex h-[22px] flex-shrink-0"
       >
         <button
