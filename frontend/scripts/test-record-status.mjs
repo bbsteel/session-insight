@@ -22,8 +22,8 @@ const complete = presentRecordStatus({
   warnings: [],
 })
 assert.equal(complete.state, 'complete')
-// Complete is neutral — not a celebratory green CTA.
-assert.equal(complete.tone, 'neutral')
+// Soft green chip next to “记录状态”, not a separate “总体状态” row.
+assert.equal(complete.tone, 'success')
 assert.equal(complete.replayable, true)
 assert.equal(complete.emptyStateKey, null)
 

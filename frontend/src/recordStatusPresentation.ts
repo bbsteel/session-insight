@@ -60,10 +60,10 @@ export function presentRecordStatus(
     case 'complete':
       return {
         state,
-        // Neutral tone: complete must not look like a celebratory green CTA.
+        // Quiet green chip next to “记录状态”, not a separate “总体状态” row.
         labelKey: 'record.status.complete',
         warningCount: 0,
-        tone: 'neutral',
+        tone: 'success',
         replayable: true,
         emptyStateKey: null,
       }
@@ -172,17 +172,18 @@ export function sourceStateLabelKey(state: string): string {
   return 'record.sourceState.unknown'
 }
 
-/** Header tone CSS class tokens (not green full success for missing/degraded). */
+/** Header tone CSS class tokens for the status chip next to “记录状态”. */
 export function toneClass(tone: RecordTone): string {
   switch (tone) {
     case 'success':
+      // Quiet green background for complete — design: soft green, not a loud CTA.
+      return 'text-[var(--accent-green)] border-[var(--accent-green)]/35 bg-[var(--accent-green)]/15'
     case 'neutral':
-      // Complete/neutral: quiet chip, not a filled green button.
       return 'text-[var(--text-secondary)] border-[var(--border-default)] bg-[var(--bg-surface)]'
     case 'warning':
-      return 'text-[var(--warning)] border-[var(--warning)]/40 bg-[var(--warning)]/5'
+      return 'text-[var(--warning)] border-[var(--warning)]/40 bg-[var(--warning)]/10'
     case 'danger':
-      return 'text-[var(--error)] border-[var(--error)]/40 bg-[var(--error)]/5'
+      return 'text-[var(--error)] border-[var(--error)]/40 bg-[var(--error)]/10'
     case 'muted':
       return 'text-[var(--text-muted)] border-[var(--border-default)] bg-[var(--bg-surface)]'
     default:

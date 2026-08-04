@@ -12,7 +12,7 @@ import {
 } from '../recordStatusPresentation'
 import { useI18n } from '../i18n'
 import { CloseIcon } from './icons'
-import { openFile, removeSessionFromIndex } from '../api'
+import { openFile, removeSessionFromIndex, resolveFile } from '../api'
 import InstantTooltip from './InstantTooltip'
 
 interface Props {
@@ -75,9 +75,20 @@ export default function RecordStatusPanel({
     setOpeningPath(path)
     setError(null)
     try {
-      await openFile({ path, cwd: session.cwd || undefined })
+      // Resolve first so directories / missing paths surface as errors instead of
+      // handing xdg-open a bad target. Prefer the user's configured editor.
+      const resolved = await resolveFile(path, session.cwd || '')
+      const target = resolved || path
+      await openFile({ path: target, cwd: session.cwd || undefined })
     } catch {
-      setError(t('record.panel.openInEditorFailed'))
+      // Fallback: SI built-in viewer always works when system open fails
+      // (e.g. KIO/xdg-open socket errors on some KDE desktops).
+      try {
+        const params = new URLSearchParams({ path, cwd: session.cwd || '' })
+        window.open(`#/file?${params.toString()}`, '_blank', 'noopener')
+      } catch {
+        setError(t('record.panel.openInEditorFailed'))
+      }
     } finally {
       setOpeningPath(null)
     }
@@ -113,13 +124,11 @@ export default function RecordStatusPanel({
       >
         <div className="flex items-start justify-between gap-2 border-b border-[var(--border-default)] px-4 py-3">
           <div className="min-w-0">
-            <h2 id="record-status-panel-title" className="text-body font-semibold text-[var(--text-primary)]">
-              {t('record.panel.title')}
-            </h2>
-            <p className="mt-1 text-meta text-[var(--text-muted)]">{t('record.panel.subtitle')}</p>
-            <div className="mt-2 flex items-center gap-2">
-              <span className="text-meta text-[var(--text-muted)]">{t('record.panel.overall')}</span>
-              {/* Status chip — not a primary action button */}
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="record-status-panel-title" className="text-body font-semibold text-[var(--text-primary)]">
+                {t('record.panel.title')}
+              </h2>
+              {/* Status chip immediately after the title, e.g. 记录状态 [完整] */}
               <span
                 className={`inline-flex rounded-md border px-2 py-0.5 text-meta font-medium ${toneClass(pres.tone)}`}
                 data-testid="record-status-chip"
@@ -128,6 +137,7 @@ export default function RecordStatusPanel({
                 {label}
               </span>
             </div>
+            <p className="mt-1 text-meta text-[var(--text-muted)]">{t('record.panel.subtitle')}</p>
           </div>
           <button
             ref={closeRef}

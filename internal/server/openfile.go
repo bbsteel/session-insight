@@ -68,8 +68,26 @@ func (s *Server) editorCommandTemplate() string {
 			return v
 		}
 	}
+	// Prefer real text editors over xdg-open: on some KDE/SteamOS setups
+	// xdg-open hands "file:" URLs to KIO and fails with a socket error even
+	// though the process starts successfully.
 	if _, err := exec.LookPath("code"); err == nil {
 		return "code --goto {path}:{line}"
+	}
+	if _, err := exec.LookPath("kate"); err == nil {
+		return "kate -l {line} {path}"
+	}
+	if _, err := exec.LookPath("kwrite"); err == nil {
+		return "kwrite {path}"
+	}
+	if _, err := exec.LookPath("gedit"); err == nil {
+		return "gedit +{line} {path}"
+	}
+	if _, err := exec.LookPath("gnome-text-editor"); err == nil {
+		return "gnome-text-editor +{line} {path}"
+	}
+	if _, err := exec.LookPath("mousepad"); err == nil {
+		return "mousepad {path}"
 	}
 	return "xdg-open {path}"
 }
