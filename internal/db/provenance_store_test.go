@@ -2,7 +2,6 @@ package db
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -58,7 +57,7 @@ func TestReplaceSessionSnapshotAtomic(t *testing.T) {
 	if err := db.ReplaceSessionSnapshot(SessionSnapshotWrite{
 		AgentType: "claude", Session: sess,
 		TurnCount: 1, MessageCount: 2,
-		Turns: []TurnText{{TurnIndex: 0, Role: "user", Content: "hello"}},
+		Turns:      []TurnText{{TurnIndex: 0, Role: "user", Content: "hello"}},
 		Provenance: &prov, Revision: now.UnixNano(),
 	}); err != nil {
 		t.Fatal(err)
@@ -95,7 +94,7 @@ func TestSourceMissingTombstoneChainAndRestore(t *testing.T) {
 	sess := model.Session{ID: "s1", AgentType: "claude", Name: "n", CreatedAt: now, UpdatedAt: now}
 	if err := db.ReplaceSessionSnapshot(SessionSnapshotWrite{
 		AgentType: "claude", Session: sess, TurnCount: 1, MessageCount: 1,
-		Turns: []TurnText{{TurnIndex: 0, Role: "user", Content: "keep-me"}},
+		Turns:      []TurnText{{TurnIndex: 0, Role: "user", Content: "keep-me"}},
 		Provenance: &prov, Revision: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -137,7 +136,7 @@ func TestSourceMissingTombstoneChainAndRestore(t *testing.T) {
 	prov2.CapturedAt = now.Add(3 * time.Hour)
 	if err := db.ReplaceSessionSnapshot(SessionSnapshotWrite{
 		AgentType: "claude", Session: sess, TurnCount: 1, MessageCount: 1,
-		Turns: []TurnText{{TurnIndex: 0, Role: "user", Content: "keep-me"}},
+		Turns:      []TurnText{{TurnIndex: 0, Role: "user", Content: "keep-me"}},
 		Provenance: &prov2, Revision: 2,
 	}); err != nil {
 		t.Fatal(err)
@@ -232,8 +231,9 @@ func TestListProvenanceStatusNoPaths(t *testing.T) {
 		t.Fatalf("compact: %+v", st)
 	}
 	// Ensure the compact type itself has no path when marshaled.
-	b, _ := json.Marshal(st)
-	if filepath.Base(string(b)) == "" { // silence unused in case
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if containsSubstring(string(b), "/secret") {
 		t.Fatalf("compact status leaked path: %s", b)

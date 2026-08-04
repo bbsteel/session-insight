@@ -59,8 +59,8 @@ func TestBuildCompleteAndDegraded(t *testing.T) {
 		[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, ptrInt64(10), 3)
 	degraded := Build(Input{
 		CapturedAt: now, AdapterRevision: 2,
-		Sources: []model.SessionSourceFile{src},
-		Warnings: []model.ParseWarning{warn, warn}, // aggregate
+		Sources:           []model.SessionSourceFile{src},
+		Warnings:          []model.ParseWarning{warn, warn}, // aggregate
 		HasReplayableBody: true,
 	})
 	if degraded.State != model.RecordDegraded {

@@ -1024,13 +1024,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type result struct {
-		SessionID    string `json:"session_id"`
-		AgentType    string `json:"agent_type"`
-		Project      string `json:"project"`
-		Name         string `json:"name"`
-		UpdatedAt    string `json:"updated_at"`
-		Match        string `json:"match"`
-		SourceMissing bool  `json:"source_missing,omitempty"`
+		SessionID     string `json:"session_id"`
+		AgentType     string `json:"agent_type"`
+		Project       string `json:"project"`
+		Name          string `json:"name"`
+		UpdatedAt     string `json:"updated_at"`
+		Match         string `json:"match"`
+		SourceMissing bool   `json:"source_missing,omitempty"`
 		// Stale is an alias signal for historical-index hits (source missing).
 		Stale bool `json:"stale,omitempty"`
 	}

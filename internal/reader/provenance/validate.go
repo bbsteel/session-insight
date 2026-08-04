@@ -66,7 +66,8 @@ func IsKnownSourceRole(role string) bool {
 	switch role {
 	case model.SourceRolePrimaryTranscript, model.SourceRoleMetadata,
 		model.SourceRoleEvents, model.SourceRoleUpdates, model.SourceRoleToolResults,
-		model.SourceRoleCollaboration, model.SourceRoleOther:
+		model.SourceRoleCollaboration, model.SourceRoleRecovery,
+		model.SourceRoleSnapshot, model.SourceRoleEditCache, model.SourceRoleOther:
 		return true
 	default:
 		return false

@@ -25,6 +25,8 @@ const (
 )
 
 // Stable source roles (cross-adapter). Not filenames.
+// Each adapter maps its on-disk layout onto these roles; do not invent
+// agent-specific role strings in the API. Prefer a precise role over "other".
 const (
 	SourceRolePrimaryTranscript = "primary_transcript"
 	SourceRoleMetadata          = "metadata"
@@ -32,7 +34,17 @@ const (
 	SourceRoleUpdates           = "updates"
 	SourceRoleToolResults       = "tool_results"
 	SourceRoleCollaboration     = "collaboration"
-	SourceRoleOther             = "other"
+	// Recovery is a crash/in-flight sidecar that can supersede the primary
+	// (e.g. chrys session.recovery.json).
+	SourceRoleRecovery = "recovery"
+	// Snapshot is a point-in-time turn/session checkpoint file.
+	SourceRoleSnapshot = "snapshot"
+	// EditCache is agent-local file-edit mutation/cache blobs (e.g. chrys
+	// mutations/). UI may collapse this group by default.
+	SourceRoleEditCache = "edit_cache"
+	// Other is a last resort for a real source that fits no stable role.
+	// Adapters should rarely use it; prefer a precise role above.
+	SourceRoleOther = "other"
 )
 
 // Warning severities.
@@ -56,17 +68,17 @@ const (
 
 // First-batch stable warning codes (de-identified, localizable).
 const (
-	WarnMalformedRecordSkipped   = "malformed_record_skipped"
-	WarnTruncatedRecord          = "truncated_record"
-	WarnSidecarMissing           = "sidecar_missing"
-	WarnSourceUnreadable         = "source_unreadable"
-	WarnSourceChangedDuringRead  = "source_changed_during_read"
-	WarnUnsupportedSchema        = "unsupported_schema_revision"
-	WarnIdentityMismatch         = "identity_mismatch"
-	WarnTimestampInvalid         = "timestamp_invalid"
-	WarnPartialToolResult        = "partial_tool_result"
-	WarnPartialCollaboration     = "partial_collaboration_graph"
-	WarnUnknownRecordIgnored     = "unknown_record_ignored"
+	WarnMalformedRecordSkipped  = "malformed_record_skipped"
+	WarnTruncatedRecord         = "truncated_record"
+	WarnSidecarMissing          = "sidecar_missing"
+	WarnSourceUnreadable        = "source_unreadable"
+	WarnSourceChangedDuringRead = "source_changed_during_read"
+	WarnUnsupportedSchema       = "unsupported_schema_revision"
+	WarnIdentityMismatch        = "identity_mismatch"
+	WarnTimestampInvalid        = "timestamp_invalid"
+	WarnPartialToolResult       = "partial_tool_result"
+	WarnPartialCollaboration    = "partial_collaboration_graph"
+	WarnUnknownRecordIgnored    = "unknown_record_ignored"
 )
 
 // SessionSourceFile is one file SI consulted for a session snapshot.

@@ -17,12 +17,12 @@ import (
 type Input struct {
 	// StateOverride, when non-empty, forces the overall state (e.g. source_missing
 	// tombstones or parser_unsupported) instead of deriving from body/warnings.
-	StateOverride model.RecordCompletenessState
-	ReasonCode    string
-	CapturedAt    time.Time
+	StateOverride   model.RecordCompletenessState
+	ReasonCode      string
+	CapturedAt      time.Time
 	AdapterRevision int
-	Sources       []model.SessionSourceFile
-	Warnings      []model.ParseWarning
+	Sources         []model.SessionSourceFile
+	Warnings        []model.ParseWarning
 	// HasReplayableBody is true when the detail includes usable turn content.
 	HasReplayableBody bool
 	LastSuccessfulAt  *time.Time
@@ -144,7 +144,18 @@ func NormalizeSources(in []model.SessionSourceFile) []model.SessionSourceFile {
 		}
 		out = append(out, s)
 	}
+	// primary_transcript first, then other roles alphabetically, path within role.
+	roleRank := func(role string) int {
+		if role == model.SourceRolePrimaryTranscript {
+			return 0
+		}
+		return 1
+	}
 	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := roleRank(out[i].Role), roleRank(out[j].Role)
+		if ri != rj {
+			return ri < rj
+		}
 		if out[i].Role != out[j].Role {
 			return out[i].Role < out[j].Role
 		}

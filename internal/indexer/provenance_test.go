@@ -62,8 +62,8 @@ func TestIndexerTombstoneOnSuccessfulDiscovery(t *testing.T) {
 		Sources: []model.SessionSourceFile{{Role: "primary_transcript", Path: "/x", State: model.SourcePresent}},
 	}
 	detail := &model.SessionDetail{
-		Session: sess,
-		Turns:   []model.TurnVM{{TurnIndex: 0, UserMessage: "hi", AssistantMessage: "yo"}},
+		Session:    sess,
+		Turns:      []model.TurnVM{{TurnIndex: 0, UserMessage: "hi", AssistantMessage: "yo"}},
 		Provenance: &prov,
 	}
 	fr := &fakeReader{

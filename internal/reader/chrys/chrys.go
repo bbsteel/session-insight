@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
@@ -441,20 +441,25 @@ func readSessionFile(path string) (*sessionFile, error) {
 // newer than the primary's. Reading only session.json would show such a
 // session ending at the interruption even though it continued. This viewer
 // never deletes a stale sidecar (chrys heals it on its next save).
-func readEffectiveSession(sessionDir string) (*sessionFile, error) {
-	primary, perr := readSessionFile(filepath.Join(sessionDir, "session.json"))
-	recovery, rerr := readSessionFile(filepath.Join(sessionDir, "session.recovery.json"))
+//
+// sourcePath is the concrete file that won (session.json or session.recovery.json),
+// never the session directory — open-in-editor needs a real file.
+func readEffectiveSession(sessionDir string) (sf *sessionFile, sourcePath string, err error) {
+	primaryPath := filepath.Join(sessionDir, "session.json")
+	recoveryPath := filepath.Join(sessionDir, "session.recovery.json")
+	primary, perr := readSessionFile(primaryPath)
+	recovery, rerr := readSessionFile(recoveryPath)
 	if perr != nil {
 		if rerr != nil {
-			return nil, perr
+			return nil, "", perr
 		}
 		// Recovery-only session: crashed before its first primary save.
-		return recovery, nil
+		return recovery, recoveryPath, nil
 	}
 	if rerr == nil && parseTS(recovery.Meta.UpdatedAt).After(parseTS(primary.Meta.UpdatedAt)) {
-		return recovery, nil
+		return recovery, recoveryPath, nil
 	}
-	return primary, nil
+	return primary, primaryPath, nil
 }
 
 // ---- ListSessions ----
@@ -471,7 +476,7 @@ func (r *ChrysReader) ListSessions() ([]model.Session, error) {
 			continue
 		}
 		id := entry.Name()
-		sf, err := readEffectiveSession(filepath.Join(r.sessionsDir, id))
+		sf, _, err := readEffectiveSession(filepath.Join(r.sessionsDir, id))
 		if err != nil {
 			continue // directories without any session file (aborted/empty sessions)
 		}
@@ -544,8 +549,8 @@ func (r *ChrysReader) GetSession(id string) (*model.SessionDetail, error) {
 	if !validSessionID(id) {
 		return nil, fmt.Errorf("invalid chrys session id: %q", id)
 	}
-	sessPath := filepath.Join(r.sessionsDir, id)
-	sf, err := readEffectiveSession(sessPath)
+	sessDir := filepath.Join(r.sessionsDir, id)
+	sf, sourcePath, err := readEffectiveSession(sessDir)
 	if err != nil {
 		return nil, readerr.New(readerr.SourceMissing, "source_missing",
 			fmt.Errorf("chrys session not found %q: %w", id, err))
@@ -561,9 +566,14 @@ func (r *ChrysReader) GetSession(id string) (*model.SessionDetail, error) {
 		Billing: buildBilling(sf, turns),
 	}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
-	p := provenance.AttachWithWarnings(
-		Capabilities().AdapterRevision, sessPath, len(turns) > 0, nil, time.Now().UTC(),
-	)
+	// List real files (session.json / session.recovery.json), not the session
+	// directory — directory paths open as folders and break text editors.
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           chrysSourceInventory(sessDir, sourcePath),
+		HasReplayableBody: len(turns) > 0,
+	})
 	detail.Provenance = &p
 	return detail, nil
 }

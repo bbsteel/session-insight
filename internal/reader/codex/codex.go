@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -117,9 +117,12 @@ func indexDetailFromEvents(session model.Session, events []model.RenderEvent, pa
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
 	if path != "" {
-		p := provenance.AttachWithWarnings(
-			Capabilities().AdapterRevision, path, len(turns) > 0, nil, time.Now().UTC(),
-		)
+		p := provenance.Build(provenance.Input{
+			CapturedAt:        time.Now().UTC(),
+			AdapterRevision:   Capabilities().AdapterRevision,
+			Sources:           sourceInventory(path),
+			HasReplayableBody: len(turns) > 0,
+		})
 		detail.Provenance = &p
 	}
 	return detail
@@ -601,9 +604,12 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: parsed.Active, RollbackGroups: parsed.RollbackGroups}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(parsed.Active)
-	p := provenance.AttachWithWarnings(
-		Capabilities().AdapterRevision, jsonlPath, len(parsed.Active) > 0, nil, time.Now().UTC(),
-	)
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(jsonlPath),
+		HasReplayableBody: len(parsed.Active) > 0,
+	})
 	detail.Provenance = &p
 
 	return detail, nil

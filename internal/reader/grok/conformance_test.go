@@ -63,6 +63,9 @@ func TestGrokProvenanceMetadataOnly(t *testing.T) {
 	if detail.Provenance.State != "metadata_only" {
 		t.Fatalf("state=%s turns=%d", detail.Provenance.State, len(detail.Turns))
 	}
+	if len(detail.Turns) != 0 {
+		t.Fatalf("metadata_only must have zero turns, got %d", len(detail.Turns))
+	}
 	if len(detail.Provenance.Sources) == 0 {
 		t.Fatal("expected source inventory")
 	}

@@ -14,9 +14,9 @@ import (
 // never invent complete.
 func (db *DB) GetProvenance(agentType, sessionID string) (p *model.SessionProvenance, ok bool, err error) {
 	var (
-		state, reason, capturedAt string
-		sourceUpdated, lastOK, missingSince sql.NullString
-		adapterRev, revision                int
+		state, reason, capturedAt              string
+		sourceUpdated, lastOK, missingSince    sql.NullString
+		adapterRev, revision                   int
 		sourcesJSON, warningsJSON, summaryJSON string
 	)
 	err = db.conn.QueryRow(`
@@ -76,11 +76,8 @@ func (db *DB) ListProvenanceStatus(agentType string) (map[string]*model.RecordSt
 			}
 		}
 		captured, _ := time.Parse(time.RFC3339, capturedAt)
-		keyAgent := agentType
-		if keyAgent == "" {
-			// When listing all agents we need agent_type in the key — re-query pattern below.
-		}
-		_ = keyAgent
+		// Keyed by session_id only; use ListProvenanceStatusByAgent when the
+		// caller needs agent_type\x00session_id composite keys.
 		out[sessionID] = &model.RecordStatus{
 			State:        model.RecordCompletenessState(state),
 			WarningCount: summary.Total,

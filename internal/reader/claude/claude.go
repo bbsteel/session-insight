@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
@@ -409,7 +409,7 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	turns, modelName, skipped, err := parseClaudeEvents(jsonlPath)
 	if err != nil {
 		detail := &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}
-		detail.Provenance = attachClaudeProvenance(jsonlPath, false, skipped)
+		detail.Provenance = r.attachProvenance(jsonlPath, false, skipped)
 		return detail, nil
 	}
 
@@ -421,12 +421,12 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
-	detail.Provenance = attachClaudeProvenance(jsonlPath, len(turns) > 0, skipped)
+	detail.Provenance = r.attachProvenance(jsonlPath, len(turns) > 0, skipped)
 
 	return detail, nil
 }
 
-func attachClaudeProvenance(jsonlPath string, hasBody bool, skipped int) *model.SessionProvenance {
+func (r *ClaudeReader) attachProvenance(jsonlPath string, hasBody bool, skipped int) *model.SessionProvenance {
 	var warnings []model.ParseWarning
 	if skipped > 0 {
 		warnings = append(warnings, provenance.Warning(
@@ -434,7 +434,13 @@ func attachClaudeProvenance(jsonlPath string, hasBody bool, skipped int) *model.
 			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
 		))
 	}
-	p := provenance.AttachWithWarnings(Capabilities().AdapterRevision, jsonlPath, hasBody, warnings, time.Now().UTC())
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(jsonlPath, r.claudeRoot()),
+		Warnings:          warnings,
+		HasReplayableBody: hasBody,
+	})
 	return &p
 }
 

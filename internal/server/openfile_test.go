@@ -66,8 +66,14 @@ func TestDefaultEditorCandidatesCoverPlatforms(t *testing.T) {
 		joined := ""
 		for _, c := range cands {
 			joined += strings.Join(c.Bins, ",") + ";"
-			if !strings.Contains(c.Template, "{path}") && c.DirTemplate == "" {
-				// notepad / open templates should still include path via append or {path}
+			// Template must either embed {path} or rely on DirTemplate / path-append
+			// (buildEditorArgs appends path when {path} is absent).
+			if !strings.Contains(c.Template, "{path}") && c.DirTemplate == "" && c.Template != "" {
+				// Empty DirTemplate is OK only if buildEditorArgs will append path.
+				args := buildEditorArgs(c.Template, "/tmp/x", 1)
+				if len(args) < 2 || args[len(args)-1] != "/tmp/x" {
+					t.Fatalf("%s candidate %v template %q does not carry path", goos, c.Bins, c.Template)
+				}
 			}
 		}
 		switch goos {
@@ -104,6 +110,23 @@ func TestPickDefaultEditorTemplateFallback(t *testing.T) {
 	}
 }
 
+// unwrapLaunchArgv strips a systemd-run --user … -- wrapper so tests can
+// assert the logical editor argv regardless of the GUI session launcher.
+func unwrapLaunchArgv(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	if filepath.Base(args[0]) != "systemd-run" {
+		return args
+	}
+	for i, a := range args {
+		if a == "--" && i+1 < len(args) {
+			return args[i+1:]
+		}
+	}
+	return args
+}
+
 func TestOpenExistingPathFallsThroughCandidates(t *testing.T) {
 	origLook := lookPath
 	origStart := startEditorCommand
@@ -116,6 +139,7 @@ func TestOpenExistingPathFallsThroughCandidates(t *testing.T) {
 
 	runtimeGOOS = "linux"
 	// Simulate: code missing, kate present and launchable.
+	// Hide systemd-run so this test asserts the kate candidate path itself.
 	lookPath = func(file string) (string, error) {
 		if file == "kate" {
 			return "/usr/bin/kate", nil
@@ -136,7 +160,8 @@ func TestOpenExistingPathFallsThroughCandidates(t *testing.T) {
 	if err := srv.openExistingPath(path, 3, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(launched) < 2 || launched[0] != "/usr/bin/kate" {
+	got := unwrapLaunchArgv(launched)
+	if len(got) < 2 || got[0] != "/usr/bin/kate" {
 		t.Fatalf("launched = %v, want kate", launched)
 	}
 }
@@ -161,7 +186,7 @@ func TestOpenExistingPathUserTemplatePreferred(t *testing.T) {
 		if file == "myedit" {
 			return "/bin/myedit", nil
 		}
-		// Also allow defaults if user fails — should not be needed.
+		// Hide systemd-run so we assert the user template argv directly.
 		return "", exec.ErrNotFound
 	}
 	var launched []string
@@ -176,11 +201,99 @@ func TestOpenExistingPathUserTemplatePreferred(t *testing.T) {
 	if err := srv.openExistingPath(path, 1, false); err != nil {
 		t.Fatal(err)
 	}
-	if launched[0] != "myedit" && launched[0] != "/bin/myedit" {
+	got := unwrapLaunchArgv(launched)
+	if got[0] != "myedit" && got[0] != "/bin/myedit" {
 		t.Fatalf("launched = %v, want myedit", launched)
 	}
-	if launched[len(launched)-1] != path {
+	if got[len(got)-1] != path {
 		t.Fatalf("launched path = %v", launched)
+	}
+}
+
+func TestDesktopSessionEnvForcesUserBus(t *testing.T) {
+	// Even with a stale bus address, prefer /run/user/UID/bus when present.
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/nonexistent-bus")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	env := desktopSessionEnv()
+	var bus, runtime string
+	for _, e := range env {
+		if strings.HasPrefix(e, "DBUS_SESSION_BUS_ADDRESS=") {
+			bus = strings.TrimPrefix(e, "DBUS_SESSION_BUS_ADDRESS=")
+		}
+		if strings.HasPrefix(e, "XDG_RUNTIME_DIR=") {
+			runtime = strings.TrimPrefix(e, "XDG_RUNTIME_DIR=")
+		}
+	}
+	uid := os.Getuid()
+	wantRuntime := fmt.Sprintf("/run/user/%d", uid)
+	if _, err := os.Stat(wantRuntime); err != nil {
+		t.Skip("no /run/user/UID on this host")
+	}
+	if runtime != wantRuntime {
+		t.Fatalf("XDG_RUNTIME_DIR=%q want %q", runtime, wantRuntime)
+	}
+	wantBus := "unix:path=" + filepath.Join(wantRuntime, "bus")
+	if _, err := os.Stat(filepath.Join(wantRuntime, "bus")); err == nil && bus != wantBus {
+		t.Fatalf("DBUS=%q want %q", bus, wantBus)
+	}
+}
+
+func TestTryLaunchArgsPrefersSystemdUserRun(t *testing.T) {
+	origLook := lookPath
+	origStart := startEditorCommand
+	origGOOS := runtimeGOOS
+	defer func() {
+		lookPath = origLook
+		startEditorCommand = origStart
+		runtimeGOOS = origGOOS
+	}()
+	runtimeGOOS = "linux"
+	lookPath = func(file string) (string, error) {
+		if file == "systemd-run" {
+			return "/usr/bin/systemd-run", nil
+		}
+		if file == "kate" {
+			return "/usr/bin/kate", nil
+		}
+		return "", exec.ErrNotFound
+	}
+	var launched []string
+	startEditorCommand = func(cmd *exec.Cmd) error {
+		launched = append([]string{cmd.Path}, cmd.Args[1:]...)
+		return nil
+	}
+	if err := tryLaunchArgs([]string{"kate", "-l", "1", "/tmp/x.jsonl"}, "/usr/bin/kate"); err != nil {
+		t.Fatal(err)
+	}
+	// First attempt should be systemd-run --user … --setenv=… -- /usr/bin/kate …
+	if len(launched) < 4 || launched[0] != "/usr/bin/systemd-run" {
+		t.Fatalf("want systemd-run launch, got %v", launched)
+	}
+	joined := strings.Join(launched, " ")
+	if !strings.Contains(joined, "--user") || !strings.Contains(joined, "/usr/bin/kate") {
+		t.Fatalf("systemd-run argv incomplete: %v", launched)
+	}
+	// Desktop keys must be injected so transient services see the session bus.
+	if !strings.Contains(joined, "--setenv=DBUS_SESSION_BUS_ADDRESS=") &&
+		!strings.Contains(joined, "--setenv=XDG_RUNTIME_DIR=") {
+		// On hosts without /run/user/UID these may be absent; still require --setenv
+		// when any desktop key is present in the process env.
+		hasSetenv := false
+		for _, a := range launched {
+			if strings.HasPrefix(a, "--setenv=") {
+				hasSetenv = true
+				break
+			}
+		}
+		if os.Getenv("DBUS_SESSION_BUS_ADDRESS") != "" || os.Getenv("DISPLAY") != "" {
+			if !hasSetenv {
+				t.Fatalf("expected --setenv for desktop keys, got %v", launched)
+			}
+		}
+	}
+	inner := unwrapLaunchArgv(launched)
+	if !reflect.DeepEqual(inner, []string{"/usr/bin/kate", "-l", "1", "/tmp/x.jsonl"}) {
+		t.Fatalf("inner editor argv = %v", inner)
 	}
 }
 
@@ -195,6 +308,7 @@ func TestOpenDirectorySkipsLineEditors(t *testing.T) {
 	}()
 	runtimeGOOS = "linux"
 	// Only kate and dolphin available — kate must not be used for directories.
+	// Hide systemd-run so the assertion is on dolphin itself.
 	lookPath = func(file string) (string, error) {
 		switch file {
 		case "kate":
@@ -215,7 +329,8 @@ func TestOpenDirectorySkipsLineEditors(t *testing.T) {
 	if err := srv.openExistingPath(dir, 1, true); err != nil {
 		t.Fatal(err)
 	}
-	if launched[0] != "/usr/bin/dolphin" {
+	got := unwrapLaunchArgv(launched)
+	if got[0] != "/usr/bin/dolphin" {
 		t.Fatalf("want dolphin for dir, got %v", launched)
 	}
 }
@@ -413,6 +528,8 @@ func TestOpenFileAndSettingsHandlers(t *testing.T) {
 	}
 
 	// open-file: capture argv instead of launching, search resolves the line.
+	// On Linux the launch may be wrapped in systemd-run --user for GUI session
+	// affinity; assert the logical editor command after unwrapping.
 	var captured []string
 	orig := startEditorCommand
 	startEditorCommand = func(cmd *exec.Cmd) error {
@@ -428,8 +545,9 @@ func TestOpenFileAndSettingsHandlers(t *testing.T) {
 		t.Fatalf("open-file: %d %s", w.Code, w.Body.String())
 	}
 	want := []string{"myedit", "--jump", file + ":2"}
-	if !reflect.DeepEqual(captured, want) {
-		t.Fatalf("editor argv = %v, want %v", captured, want)
+	got := unwrapLaunchArgv(captured)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("editor argv = %v (raw %v), want %v", got, captured, want)
 	}
 
 	// open-file with a missing file must not launch anything.

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -251,10 +251,12 @@ func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	detail := &model.SessionDetail{Session: meta, Turns: turns, Todos: todos, Billing: billing}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
-	p := provenance.AttachWithWarnings(
-		Capabilities().AdapterRevision, r.dbPath, len(turns) > 0, nil, time.Now().UTC(),
-	)
-	// OpenCode primary is the shared SQLite store (role still primary_transcript).
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(r.dbPath),
+		HasReplayableBody: len(turns) > 0,
+	})
 	detail.Provenance = &p
 	return detail, nil
 }

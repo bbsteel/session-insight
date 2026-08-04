@@ -16,8 +16,8 @@ import (
 
 	"github.com/bbsteel/session-insight/internal/collaboration"
 	"github.com/bbsteel/session-insight/internal/model"
-	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -226,7 +226,7 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	turns, modelName, err := parseEventsJSONL(eventsPath)
 	if err != nil {
 		detail := &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}
-		detail.Provenance = attachCopilotProvenance(wsPath, eventsPath, false, true)
+		detail.Provenance = r.attachProvenance(id, false, true)
 		return detail, nil
 	}
 
@@ -246,7 +246,7 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	// Anomaly detection
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
-	detail.Provenance = attachCopilotProvenance(wsPath, eventsPath, len(turns) > 0, false)
+	detail.Provenance = r.attachProvenance(id, len(turns) > 0, false)
 
 	// MissingShutdown check (copilot-specific: session.shutdown event).
 	// The same event carries the session bill (tokenDetails / modelMetrics /
@@ -270,11 +270,7 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	return detail, nil
 }
 
-func attachCopilotProvenance(wsPath, eventsPath string, hasBody, eventsMissing bool) *model.SessionProvenance {
-	sources := []model.SessionSourceFile{
-		provenance.StatSource(model.SourceRoleMetadata, wsPath),
-		provenance.StatSource(model.SourceRolePrimaryTranscript, eventsPath),
-	}
+func (r *CopilotReader) attachProvenance(sessionID string, hasBody, eventsMissing bool) *model.SessionProvenance {
 	var warnings []model.ParseWarning
 	if eventsMissing {
 		warnings = append(warnings, provenance.Warning(
@@ -285,7 +281,7 @@ func attachCopilotProvenance(wsPath, eventsPath string, hasBody, eventsMissing b
 	p := provenance.Build(provenance.Input{
 		CapturedAt:        time.Now().UTC(),
 		AdapterRevision:   Capabilities().AdapterRevision,
-		Sources:           sources,
+		Sources:           sourceInventory(r.sessionDir, sessionID),
 		Warnings:          warnings,
 		HasReplayableBody: hasBody,
 	})

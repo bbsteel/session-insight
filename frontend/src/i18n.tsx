@@ -724,6 +724,10 @@ export const messages: Record<Locale, Messages> = {
     'record.panel.copyFailed': 'Copy failed',
     'record.panel.openInEditor': 'Open in editor',
     'record.panel.openInEditorFailed': 'Could not open the path. Try Settings → file opener, or copy the path.',
+    'record.panel.sourceGroup': '{role} ({n})',
+    'record.panel.sourceGroupExpand': 'Expand',
+    'record.panel.sourceGroupCollapse': 'Collapse',
+    'record.panel.openBinaryHint': 'Binary store — copy path; not opened as text',
     'record.panel.removeFromIndex': 'Remove from SI index',
     'record.panel.removeFromIndexHelp': 'Deletes this historical index entry from SessionInsight only. It does not delete any Agent session files.',
     'record.panel.removeConfirm': 'Remove this historical record from the SI index? This cannot be undone.',
@@ -736,14 +740,95 @@ export const messages: Record<Locale, Messages> = {
     'record.banner.degraded': 'Record is degraded: some content may be incomplete. Open record status for details.',
     'record.banner.dismiss': 'Dismiss',
     'record.banner.reopen': 'Show degradation notice',
-    'record.sourceRole.primary_transcript': 'Primary transcript',
+    'record.sourceRole.primary_transcript': 'Primary source',
     'record.sourceRole.metadata': 'Metadata',
     'record.sourceRole.events': 'Events',
     'record.sourceRole.updates': 'Updates',
     'record.sourceRole.tool_results': 'Tool results',
     'record.sourceRole.collaboration': 'Collaboration',
+    'record.sourceRole.recovery': 'Recovery sidecar',
+    'record.sourceRole.snapshot': 'Snapshot',
+    'record.sourceRole.edit_cache': 'Edit cache',
     'record.sourceRole.other': 'Other',
     'record.sourceRole.unknown': 'Source ({role})',
+    'record.sourceRoleHelp.primary_transcript':
+      'Main store SI used for this session body — a transcript file (JSON/JSONL) or a database such as OpenCode’s SQLite. Binary DBs are for path copy, not a text editor.',
+    'record.sourceRoleHelp.metadata':
+      'Session identity and run context SI uses or exposes (summary, system prompt, prompt context, signals, resource flags, announcements). Not the full conversation body. Multiple files are collapsed by default.',
+    'record.sourceRoleHelp.events':
+      'Event or bracket stream separate from the main transcript (e.g. turn start/end).',
+    'record.sourceRoleHelp.updates':
+      'Secondary update or compact stream when the primary body is another file.',
+    'record.sourceRoleHelp.tool_results':
+      'Tool/todo/sqlite data the adapter reads for tool outcomes — not SQLite WAL/SHM sidecars.',
+    'record.sourceRoleHelp.collaboration':
+      'Subagent or child-agent transcript files linked to this session.',
+    'record.sourceRoleHelp.recovery':
+      'Crash or in-flight recovery sidecar that can supersede the durable primary.',
+    'record.sourceRoleHelp.snapshot':
+      'Turn or session checkpoints / backups. Often many files — collapsed by default.',
+    'record.sourceRoleHelp.edit_cache':
+      'Agent-local file-edit mutation or hunk cache. Collapsed by default; expand only if you need a blob.',
+    'record.sourceRoleHelp.other':
+      'A real source that fits no more specific role. Adapters should rarely use this.',
+    'record.sourceRoleHelp.unknown': 'Source category “{role}”.',
+    'record.sourceFileLabel.summary_json': 'Session summary',
+    'record.sourceFileLabel.system_prompt_txt': 'System prompt',
+    'record.sourceFileLabel.prompt_context_json': 'Prompt context',
+    'record.sourceFileLabel.signals_json': 'Run signals',
+    'record.sourceFileLabel.resources_state_json': 'Resource flags',
+    'record.sourceFileLabel.announcement_state_json': 'Announcements / skills',
+    'record.sourceFileLabel.updates_jsonl': 'ACP updates stream',
+    'record.sourceFileLabel.chat_history_jsonl': 'Chat history',
+    'record.sourceFileLabel.events_jsonl': 'Turn events',
+    'record.sourceFileLabel.rewind_points_jsonl': 'Rewind points',
+    'record.sourceFileLabel.hunk_records_jsonl': 'Edit hunks',
+    'record.sourceFileLabel.meta_json': 'Subagent meta',
+    'record.sourceFileLabel.session_json': 'Session body',
+    'record.sourceFileLabel.session_recovery_json': 'Recovery session',
+    'record.sourceFileLabel.session_json_bak': 'Session backup',
+    'record.sourceFileLabel.turn_snapshot_json': 'Turn snapshot',
+    'record.sourceFileLabel.mutation_blob': 'Edit mutation blob',
+    'record.sourceFileLabel.workspace_yaml': 'Workspace meta',
+    'record.sourceFileLabel.opencode_db': 'OpenCode database',
+    'record.sourceFileHelp.summary_json':
+      'Grok session summary: title, cwd, model, timestamps. SI uses this for list/detail identity.',
+    'record.sourceFileHelp.system_prompt_txt':
+      'System prompt text the agent ran with for this session. Useful to see instructions and policy in force.',
+    'record.sourceFileHelp.prompt_context_json':
+      'Prompt context bundle (e.g. AGENTS.md and project context files injected into the run).',
+    'record.sourceFileHelp.signals_json':
+      'Run counters: turns, user/assistant messages, errors, cancellations, regenerations.',
+    'record.sourceFileHelp.resources_state_json':
+      'Per-tool / resource feature flags active for this Grok session.',
+    'record.sourceFileHelp.announcement_state_json':
+      'Which skills and MCP servers were announced (fingerprints). Helps explain available tools.',
+    'record.sourceFileHelp.updates_jsonl':
+      'Primary ACP event stream used for terminal replay when present.',
+    'record.sourceFileHelp.chat_history_jsonl':
+      'Compact chat transcript; fallback when updates.jsonl is missing, or secondary stream.',
+    'record.sourceFileHelp.events_jsonl':
+      'Turn start/end brackets; used for live / in-progress detection.',
+    'record.sourceFileHelp.rewind_points_jsonl':
+      'Rewind checkpoints recorded by Grok for this session.',
+    'record.sourceFileHelp.hunk_records_jsonl':
+      'File-edit hunk cache for this session’s tool edits.',
+    'record.sourceFileHelp.meta_json':
+      'Subagent metadata linking a child agent to the parent session.',
+    'record.sourceFileHelp.session_json':
+      'Chrys durable primary session body (messages and meta).',
+    'record.sourceFileHelp.session_recovery_json':
+      'Chrys in-flight / crash recovery sidecar; may be newer than session.json.',
+    'record.sourceFileHelp.session_json_bak':
+      'Backup copy of session.json.',
+    'record.sourceFileHelp.turn_snapshot_json':
+      'Per-turn checkpoint snapshot written by Chrys.',
+    'record.sourceFileHelp.mutation_blob':
+      'Chrys file-edit mutation cache blob (hash-named).',
+    'record.sourceFileHelp.workspace_yaml':
+      'Copilot workspace metadata: cwd, title, timestamps.',
+    'record.sourceFileHelp.opencode_db':
+      'Shared SQLite store for all OpenCode sessions (messages/parts/todos). Binary — copy path, do not open as text.',
     'record.sourceState.present': 'Present',
     'record.sourceState.missing': 'Missing',
     'record.sourceState.unreadable': 'Unreadable',
@@ -1668,6 +1753,10 @@ export const messages: Record<Locale, Messages> = {
     'record.panel.copyFailed': '复制失败',
     'record.panel.openInEditor': '在编辑器中打开',
     'record.panel.openInEditorFailed': '无法打开该路径。可在设置中指定打开程序，或复制路径后手动打开。',
+    'record.panel.sourceGroup': '{role}（{n}）',
+    'record.panel.sourceGroupExpand': '展开',
+    'record.panel.sourceGroupCollapse': '收起',
+    'record.panel.openBinaryHint': '二进制存储 — 请复制路径；不作为文本打开',
     'record.panel.removeFromIndex': '从 SI 索引移除',
     'record.panel.removeFromIndexHelp': '仅删除 SessionInsight 中的历史索引记录，不会删除任何 Agent 源会话文件。',
     'record.panel.removeConfirm': '从 SI 索引移除此历史记录？此操作不可撤销。',
@@ -1680,14 +1769,95 @@ export const messages: Record<Locale, Messages> = {
     'record.banner.degraded': '记录已降级：部分内容可能不完整。打开记录状态查看详情。',
     'record.banner.dismiss': '关闭',
     'record.banner.reopen': '显示降级提示',
-    'record.sourceRole.primary_transcript': '主 transcript',
+    'record.sourceRole.primary_transcript': '主来源',
     'record.sourceRole.metadata': '元数据',
     'record.sourceRole.events': '事件',
     'record.sourceRole.updates': '更新流',
     'record.sourceRole.tool_results': '工具结果',
     'record.sourceRole.collaboration': '协作',
+    'record.sourceRole.recovery': '恢复旁路',
+    'record.sourceRole.snapshot': '快照',
+    'record.sourceRole.edit_cache': '修改缓存',
     'record.sourceRole.other': '其他',
     'record.sourceRole.unknown': '来源（{role}）',
+    'record.sourceRoleHelp.primary_transcript':
+      'SI 用来生成会话正文的主存储——可以是 transcript 文件（JSON/JSONL），也可以是数据库（如 OpenCode 的 SQLite）。二进制库请复制路径，不宜当文本用编辑器打开。',
+    'record.sourceRoleHelp.metadata':
+      'SI 使用或展示的会话身份与运行上下文（summary、system prompt、prompt context、signals、资源开关、公告指纹等），不是完整对话正文。多个文件时默认折叠。',
+    'record.sourceRoleHelp.events':
+      '与主 transcript 分开的事件/括号流（例如 turn 起止）。',
+    'record.sourceRoleHelp.updates':
+      '次要的更新流或压缩 transcript；当主正文是另一份文件时使用。',
+    'record.sourceRoleHelp.tool_results':
+      '适配器为工具结果读取的 todo/sqlite 等数据，不是 SQLite 的 WAL/SHM 运维文件。',
+    'record.sourceRoleHelp.collaboration':
+      '与本会话关联的子代理 / 协作 transcript 文件。',
+    'record.sourceRoleHelp.recovery':
+      '崩溃或进行中恢复旁路，可能覆盖磁盘上的主文件。',
+    'record.sourceRoleHelp.snapshot':
+      '回合或会话的检查点/备份。文件往往很多，默认折叠。',
+    'record.sourceRoleHelp.edit_cache':
+      'Agent 本地的文件修改/hunk 缓存。默认折叠；需要某个 blob 时再展开。',
+    'record.sourceRoleHelp.other':
+      '确实存在但无法归入更精确角色的来源。适配器应尽量少用。',
+    'record.sourceRoleHelp.unknown': '来源类别「{role}」。',
+    'record.sourceFileLabel.summary_json': '会话摘要',
+    'record.sourceFileLabel.system_prompt_txt': '系统提示',
+    'record.sourceFileLabel.prompt_context_json': '提示上下文',
+    'record.sourceFileLabel.signals_json': '运行信号',
+    'record.sourceFileLabel.resources_state_json': '资源开关',
+    'record.sourceFileLabel.announcement_state_json': '技能/MCP 公告',
+    'record.sourceFileLabel.updates_jsonl': 'ACP 更新流',
+    'record.sourceFileLabel.chat_history_jsonl': '对话历史',
+    'record.sourceFileLabel.events_jsonl': 'Turn 事件',
+    'record.sourceFileLabel.rewind_points_jsonl': '回退点',
+    'record.sourceFileLabel.hunk_records_jsonl': '编辑 hunk',
+    'record.sourceFileLabel.meta_json': '子代理元数据',
+    'record.sourceFileLabel.session_json': '会话正文',
+    'record.sourceFileLabel.session_recovery_json': '恢复会话',
+    'record.sourceFileLabel.session_json_bak': '会话备份',
+    'record.sourceFileLabel.turn_snapshot_json': '回合快照',
+    'record.sourceFileLabel.mutation_blob': '修改缓存块',
+    'record.sourceFileLabel.workspace_yaml': '工作区元数据',
+    'record.sourceFileLabel.opencode_db': 'OpenCode 数据库',
+    'record.sourceFileHelp.summary_json':
+      'Grok 会话摘要：标题、cwd、模型、时间戳。SI 用它做列表/详情身份。',
+    'record.sourceFileHelp.system_prompt_txt':
+      '本会话实际使用的系统提示文本，便于查看当时的指令与策略。',
+    'record.sourceFileHelp.prompt_context_json':
+      '注入本轮的提示上下文（如 AGENTS.md、项目级说明文件）。',
+    'record.sourceFileHelp.signals_json':
+      '运行计数：turn、用户/助手消息、错误、取消、重新生成等。',
+    'record.sourceFileHelp.resources_state_json':
+      '本会话生效的工具/资源特性开关。',
+    'record.sourceFileHelp.announcement_state_json':
+      '已公告的 skill 与 MCP 指纹，有助于理解当时可用的工具集。',
+    'record.sourceFileHelp.updates_jsonl':
+      '主 ACP 事件流；存在时用于终端回放。',
+    'record.sourceFileHelp.chat_history_jsonl':
+      '压缩对话记录；updates 缺失时作主正文，否则作次要流。',
+    'record.sourceFileHelp.events_jsonl':
+      'Turn 起止括号；用于 live / 进行中检测。',
+    'record.sourceFileHelp.rewind_points_jsonl':
+      'Grok 为本会话记录的回退检查点。',
+    'record.sourceFileHelp.hunk_records_jsonl':
+      '本会话工具编辑产生的文件 hunk 缓存。',
+    'record.sourceFileHelp.meta_json':
+      '子代理元数据，用于关联到父会话。',
+    'record.sourceFileHelp.session_json':
+      'Chrys 持久主会话正文（消息与 meta）。',
+    'record.sourceFileHelp.session_recovery_json':
+      'Chrys 进行中/崩溃恢复旁路，可能比 session.json 更新。',
+    'record.sourceFileHelp.session_json_bak':
+      'session.json 的备份副本。',
+    'record.sourceFileHelp.turn_snapshot_json':
+      'Chrys 按回合写入的检查点快照。',
+    'record.sourceFileHelp.mutation_blob':
+      'Chrys 文件修改缓存块（哈希命名）。',
+    'record.sourceFileHelp.workspace_yaml':
+      'Copilot 工作区元数据：cwd、标题、时间戳。',
+    'record.sourceFileHelp.opencode_db':
+      'OpenCode 全部会话共用的 SQLite 库（消息/parts/todos）。二进制——请复制路径，不要当文本打开。',
     'record.sourceState.present': '存在',
     'record.sourceState.missing': '缺失',
     'record.sourceState.unreadable': '不可读',

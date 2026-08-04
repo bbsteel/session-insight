@@ -111,7 +111,7 @@ func TestListCompactRecordStatusNoPaths(t *testing.T) {
 	sess := model.Session{ID: "s1", AgentType: "claude", Name: "n", CreatedAt: now, UpdatedAt: now}
 	if err := database.ReplaceSessionSnapshot(db.SessionSnapshotWrite{
 		AgentType: "claude", Session: sess, TurnCount: 1, MessageCount: 1,
-		Turns: []db.TurnText{{TurnIndex: 0, Role: "user", Content: "x"}},
+		Turns:      []db.TurnText{{TurnIndex: 0, Role: "user", Content: "x"}},
 		Provenance: &prov, Revision: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestSearchMarksSourceMissingStale(t *testing.T) {
 	sess := model.Session{ID: "s1", AgentType: "claude", Name: "n", CreatedAt: now, UpdatedAt: now}
 	_ = database.ReplaceSessionSnapshot(db.SessionSnapshotWrite{
 		AgentType: "claude", Session: sess,
-		Turns: []db.TurnText{{TurnIndex: 0, Role: "user", Content: "unique-tombstone-token"}},
+		Turns:      []db.TurnText{{TurnIndex: 0, Role: "user", Content: "unique-tombstone-token"}},
 		Provenance: &prov, Revision: 1,
 	})
 	s := New(database, nil)

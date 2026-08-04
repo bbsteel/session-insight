@@ -73,9 +73,169 @@ var startEditorCommand = func(cmd *exec.Cmd) error {
 // lookPath and runtimeGOOS are injectable so tests can cover Windows/macOS
 // candidate lists without depending on the host OS or installed binaries.
 var (
-	lookPath   = exec.LookPath
+	lookPath    = exec.LookPath
 	runtimeGOOS = runtime.GOOS
+	osGetuid    = os.Getuid
 )
+
+// desktopEnvKeys are session variables graphical apps (especially KDE/Kate)
+// need. SI is often started from a non-graphical parent and lacks them; we
+// refill from the live user systemd environment and local sockets.
+var desktopEnvKeys = []string{
+	"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR",
+	"DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP", "DESKTOP_SESSION",
+	"KDE_FULL_SESSION", "KDE_SESSION_VERSION", "KDE_SESSION_UID",
+	"KDE_APPLICATIONS_AS_SCOPE", "XDG_SESSION_TYPE", "XDG_SESSION_CLASS",
+	"XDG_SEAT", "XDG_VTNR", "SESSION_MANAGER", "QT_QPA_PLATFORM",
+	"QT_WAYLAND_RECONNECT", "XDG_CONFIG_DIRS", "XDG_DATA_DIRS",
+	"HOME", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE",
+}
+
+// loadUserSystemdEnv returns KEY→value from `systemctl --user show-environment`.
+// That map is the graphical session's view of DISPLAY/KDE_*/bus — more reliable
+// than whatever incomplete env the SI process inherited.
+func loadUserSystemdEnv() map[string]string {
+	out, err := exec.Command("systemctl", "--user", "show-environment").Output()
+	if err != nil || len(out) == 0 {
+		return nil
+	}
+	m := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Values may be shell-quoted: KEY=$'...' or KEY="..."
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || k == "" {
+			continue
+		}
+		v = unquoteSystemdEnvValue(v)
+		m[k] = v
+	}
+	return m
+}
+
+// unquoteSystemdEnvValue strips common systemctl show-environment quoting.
+func unquoteSystemdEnvValue(v string) string {
+	if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+		return v[1 : len(v)-1]
+	}
+	// $'...' ANSI-C quoting — strip the outer form; content is usually plain.
+	if strings.HasPrefix(v, "$'") && strings.HasSuffix(v, "'") && len(v) >= 3 {
+		return v[2 : len(v)-1]
+	}
+	return v
+}
+
+// desktopSessionEnv returns an environment suitable for launching GUI apps
+// from a long-running server. SI is often started from a non-graphical parent
+// (agent, systemd service, nohup). KDE apps (Kate) then inherit a missing or
+// stale DBUS_SESSION_BUS_ADDRESS / KDE_FULL_SESSION and pop "KIO worker /
+// file protocol" errors even when the document still opens. We re-point at
+// the user's session bus, display, and Plasma session flags.
+func desktopSessionEnv() []string {
+	env := os.Environ()
+	put := func(key, val string) {
+		if key == "" {
+			return
+		}
+		prefix := key + "="
+		for i, e := range env {
+			if strings.HasPrefix(e, prefix) {
+				env[i] = prefix + val
+				return
+			}
+		}
+		env = append(env, prefix+val)
+	}
+	// Prefer the live graphical session's exported environment.
+	if userEnv := loadUserSystemdEnv(); userEnv != nil {
+		for _, k := range desktopEnvKeys {
+			if v, ok := userEnv[k]; ok && v != "" {
+				put(k, v)
+			}
+		}
+	}
+	uid := osGetuid()
+	runtimeDir := fmt.Sprintf("/run/user/%d", uid)
+	if st, err := os.Stat(runtimeDir); err == nil && st.IsDir() {
+		put("XDG_RUNTIME_DIR", runtimeDir)
+		busPath := filepath.Join(runtimeDir, "bus")
+		if _, err := os.Stat(busPath); err == nil {
+			// Always prefer the live user bus socket over a stale inherited value.
+			put("DBUS_SESSION_BUS_ADDRESS", "unix:path="+busPath)
+		}
+		// XAUTHORITY often lives under the runtime dir with a random suffix.
+		if cur := envLookup(env, "XAUTHORITY"); cur == "" || fileMissing(cur) {
+			if matches, _ := filepath.Glob(filepath.Join(runtimeDir, "xauth_*")); len(matches) > 0 {
+				put("XAUTHORITY", matches[0])
+			}
+		}
+		if envLookup(env, "WAYLAND_DISPLAY") == "" {
+			if _, err := os.Stat(filepath.Join(runtimeDir, "wayland-0")); err == nil {
+				put("WAYLAND_DISPLAY", "wayland-0")
+			}
+		}
+	}
+	if envLookup(env, "DISPLAY") == "" {
+		if _, err := os.Stat("/tmp/.X11-unix/X0"); err == nil {
+			put("DISPLAY", ":0")
+		}
+	}
+	return env
+}
+
+func envLookup(env []string, key string) string {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return strings.TrimPrefix(e, prefix)
+		}
+	}
+	return ""
+}
+
+func fileMissing(path string) bool {
+	if path == "" {
+		return true
+	}
+	_, err := os.Stat(path)
+	return err != nil
+}
+
+// trySystemdUserRun launches argv inside the calling user's systemd --user
+// session so KDE/Qt services (kiod, KIO file workers) are available. Returns
+// errNoSystemdRun when systemd-run is missing so callers can fall back.
+var errNoSystemdRun = fmt.Errorf("systemd-run unavailable")
+
+func trySystemdUserRun(bin string, args []string) error {
+	sr, err := lookPath("systemd-run")
+	if err != nil {
+		return errNoSystemdRun
+	}
+	sessionEnv := desktopSessionEnv()
+	// systemd-run --user creates a transient service whose environment is the
+	// user manager's, not necessarily the caller's. Pass desktop keys via
+	// --setenv so Kate/KIO see DISPLAY, the session bus, and KDE_FULL_SESSION.
+	srArgs := []string{"--user", "--quiet", "--collect"}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		srArgs = append(srArgs, "--working-directory="+home)
+	}
+	for _, k := range desktopEnvKeys {
+		if v := envLookup(sessionEnv, k); v != "" {
+			srArgs = append(srArgs, "--setenv="+k+"="+v)
+		}
+	}
+	srArgs = append(srArgs, "--", bin)
+	srArgs = append(srArgs, args...)
+	cmd := exec.Command(sr, srArgs...)
+	// Also set the systemd-run process env so it can reach the user bus.
+	cmd.Env = sessionEnv
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return startEditorCommand(cmd)
+}
 
 // editorCandidate is one preferred open strategy: any of Bins may satisfy the
 // candidate; Template is expanded via buildEditorArgs ({path}, {line}).
@@ -106,8 +266,8 @@ func defaultEditorCandidates(goos string) []editorCandidate {
 			{Bins: []string{"codium"}, Template: "codium --goto {path}:{line}"},
 			{Bins: []string{"subl"}, Template: "subl {path}:{line}"},
 			// -t: open in default *text* editor (not Preview for images/logs).
+			// Untyped open falls through to platformDefaultOpen.
 			{Bins: []string{"open"}, Template: "open -t {path}", DirTemplate: "open {path}"},
-			{Bins: []string{"open"}, Template: "open {path}", DirTemplate: "open {path}"},
 		}
 	default:
 		// Linux, FreeBSD, and other Unix-likes.
@@ -116,15 +276,17 @@ func defaultEditorCandidates(goos string) []editorCandidate {
 			{Bins: []string{"cursor"}, Template: "cursor --goto {path}:{line}"},
 			{Bins: []string{"codium", "code-oss"}, Template: "codium --goto {path}:{line}"},
 			{Bins: []string{"subl"}, Template: "subl {path}:{line}"},
-			{Bins: []string{"kate"}, Template: "kate -l {line} {path}"},
+			// Prefer lighter non-IDE editors before full Kate (cold Kate can still
+			// touch KIO; we also launch via systemd --user when available).
 			{Bins: []string{"kwrite"}, Template: "kwrite {path}"},
+			{Bins: []string{"kate"}, Template: "kate -l {line} {path}"},
 			{Bins: []string{"gedit"}, Template: "gedit +{line} {path}"},
 			{Bins: []string{"gnome-text-editor"}, Template: "gnome-text-editor +{line} {path}"},
 			{Bins: []string{"xed"}, Template: "xed +{line} {path}"},
 			{Bins: []string{"mousepad"}, Template: "mousepad {path}"},
 			{Bins: []string{"leafpad"}, Template: "leafpad {path}"},
-			// Last: desktop opener (KDE KIO may still fail async after Start).
-			{Bins: []string{"xdg-open"}, Template: "xdg-open {path}", DirTemplate: "xdg-open {path}"},
+			// Avoid xdg-open for local files: often routes through KIO file: and
+			// surfaces socket errors even when a document window already opened.
 		}
 	}
 }
@@ -212,6 +374,10 @@ func buildEditorArgs(template, path string, line int) []string {
 
 // tryLaunchArgs starts an editor from an already-built argv. binOverride, when
 // non-empty, replaces argv[0] (used when we already resolved LookPath).
+//
+// On Linux, prefer systemd-run --user so the process joins the graphical user
+// session (fixes Kate cold-start KIO "file protocol" dialogs when SI itself
+// was started without a full desktop bus).
 func tryLaunchArgs(args []string, binOverride string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("empty editor command")
@@ -220,7 +386,18 @@ func tryLaunchArgs(args []string, binOverride string) error {
 	if binOverride != "" {
 		bin = binOverride
 	}
-	cmd := exec.Command(bin, args[1:]...)
+	rest := args[1:]
+
+	if runtimeGOOS != "windows" && runtimeGOOS != "darwin" {
+		if err := trySystemdUserRun(bin, rest); err == nil {
+			return nil
+		}
+		// errNoSystemdRun or launch failure: fall through to direct spawn with
+		// desktopSessionEnv so editors still start without a full user unit.
+	}
+
+	cmd := exec.Command(bin, rest...)
+	cmd.Env = desktopSessionEnv()
 	// Detach from our stdio so chatty editors cannot block the API process.
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -252,36 +429,41 @@ func isFolderCapableEditor(bins []string) bool {
 // Used as the final fallback after named editors; argv is built without
 // strings.Fields so Windows `start` empty-title works with spaced paths.
 //
-// On Linux we prefer desktop-aware openers for *directories* (dolphin, nautilus)
-// before xdg-open, which can hand file: URLs to a broken KIO worker.
+// On Linux we prefer desktop-aware openers (dolphin, nautilus) launched in the
+// user session. xdg-open is last and often routes local paths through KIO.
 func platformDefaultOpen(goos, path string) error {
-	var cmd *exec.Cmd
 	switch goos {
 	case "windows":
-		// Empty title arg so start does not treat a quoted path as the title.
-		cmd = exec.Command("cmd", "/c", "start", "", path)
+		// FileProtocolHandler avoids cmd.exe metacharacter reinterpretation of
+		// the path (safer than `cmd /c start "" path` for hostile names).
+		cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+		cmd.Env = desktopSessionEnv()
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		return startEditorCommand(cmd)
 	case "darwin":
-		cmd = exec.Command("open", path)
+		cmd := exec.Command("open", path)
+		cmd.Env = desktopSessionEnv()
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		return startEditorCommand(cmd)
 	default:
-		// Prefer file managers for directories / last-resort path open.
-		for _, name := range []string{"dolphin", "nautilus", "nemo", "thunar", "pcmanfm", "xdg-open"} {
+		// Prefer file managers; launch via the same GUI-aware path as editors.
+		for _, name := range []string{"dolphin", "nautilus", "nemo", "thunar", "pcmanfm"} {
 			bin, err := lookPath(name)
 			if err != nil {
 				continue
 			}
-			// dolphin prefers the path as a single arg; same for others.
-			c := exec.Command(bin, path)
-			c.Stdout = nil
-			c.Stderr = nil
-			if err := startEditorCommand(c); err == nil {
+			if err := tryLaunchArgs([]string{bin, path}, bin); err == nil {
 				return nil
 			}
 		}
+		// Last resort only — may still surface KIO dialogs on some KDE setups.
+		if bin, err := lookPath("xdg-open"); err == nil {
+			return tryLaunchArgs([]string{bin, path}, bin)
+		}
 		return fmt.Errorf("no linux open helper found")
 	}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return startEditorCommand(cmd)
 }
 
 // openExistingPath tries user template → editor candidates → OS default open.
@@ -310,8 +492,7 @@ func (s *Server) openExistingPath(path string, line int, isDir bool) error {
 			if c.DirTemplate == "" {
 				// VS Code / Cursor open folders when given a bare path.
 				if isFolderCapableEditor(c.Bins) {
-					tmpl = "{path}"
-					// Prepend the resolved binary: tryLaunchArgs overrides argv[0].
+					// tryLaunchArgs overrides argv[0] with the resolved binary.
 					args := []string{bin, path}
 					if err := tryLaunchArgs(args, bin); err == nil {
 						return nil
@@ -378,12 +559,21 @@ func resolveExisting(path, cwd string) (string, os.FileInfo, error) {
 			}
 		}
 	}
-	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+	if path == "~" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", nil, err
 		}
-		path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~/"), `~\`))
+		path = home
+	} else if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", nil, err
+		}
+		// Remainder after ~/ or ~\ — bare "~" is handled above so Join does not
+		// produce a trailing separator-only segment.
+		rest := strings.TrimPrefix(strings.TrimPrefix(path, "~/"), `~\`)
+		path = filepath.Join(home, rest)
 	}
 	if !filepath.IsAbs(path) {
 		if cwd == "" || !filepath.IsAbs(cwd) {
@@ -479,8 +669,8 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"path":  resolved,
-		"line":  line,
+		"path":   resolved,
+		"line":   line,
 		"is_dir": isDir,
 	})
 }

@@ -4,12 +4,19 @@ import {
   formatRecordTime,
   formatSourceSize,
   impactLabelKey,
+  isEditorFriendlySourcePath,
+  partitionSourceFiles,
   presentFromSession,
+  sourceFileBaseName,
+  sourceFileHelpKey,
+  sourceFileLabelKey,
+  sourceRoleHelpKey,
   sourceRoleLabelKey,
   sourceStateLabelKey,
   toneClass,
   warningCodeLabelKey,
 } from '../recordStatusPresentation'
+import type { SessionSourceFile } from '../types'
 import { useI18n } from '../i18n'
 import { CloseIcon } from './icons'
 import { openFile, removeSessionFromIndex, resolveFile } from '../api'
@@ -41,6 +48,7 @@ export default function RecordStatusPanel({
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pres = presentFromSession(session)
   const prov = session.provenance
+  const { main: mainSources, groups: sourceGroups } = partitionSourceFiles(prov?.sources)
 
   useEffect(() => {
     if (!open) return
@@ -180,56 +188,65 @@ export default function RecordStatusPanel({
                 <h3 className="text-meta font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                   {t('record.panel.sources')}
                 </h3>
-                <ul className="mt-2 space-y-2">
-                  {(prov.sources || []).map((s, i) => (
-                    <li key={`${s.role}-${s.path}-${i}`} className="rounded-md border border-[var(--border-default)] p-2">
-                      <div className="flex items-center justify-between gap-2 text-meta">
-                        <span className="font-medium text-[var(--text-primary)]">
-                          {t(sourceRoleLabelKey(s.role), { role: s.role })}
-                        </span>
-                        <span className="text-[var(--text-muted)]">
-                          {t(sourceStateLabelKey(s.state), { state: s.state })}
-                        </span>
-                      </div>
-                      <code className="mt-1 block break-all font-mono text-[11px] text-[var(--text-secondary)]">
-                        {s.path}
-                      </code>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-[var(--text-muted)]">
-                        {s.updated_at && (
-                          <span>
-                            {t('record.panel.sourceUpdated')}: {formatRecordTime(locale, s.updated_at)}
-                          </span>
-                        )}
-                        {typeof s.size_bytes === 'number' && (
-                          <span data-testid="record-source-size">
-                            · {formatSourceSize(s.size_bytes)}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          className="text-[var(--accent-blue)] hover:underline"
-                          data-testid="record-copy-path"
-                          data-state={copyFeedback?.path === s.path ? copyFeedback.state : 'idle'}
-                          onClick={() => void copyPath(s.path)}
-                        >
-                          {copyFeedback?.path === s.path && copyFeedback.state === 'copied'
-                            ? t('common.copied')
-                            : copyFeedback?.path === s.path && copyFeedback.state === 'failed'
-                              ? t('record.panel.copyFailed')
-                              : t('record.panel.copyPath')}
-                        </button>
-                        {s.path && s.state === 'present' && (
-                          <button
-                            type="button"
-                            className="text-[var(--accent-blue)] hover:underline disabled:opacity-50"
-                            data-testid="record-open-in-editor"
-                            disabled={openingPath === s.path}
-                            onClick={() => void openPathInEditor(s.path)}
-                          >
-                            {t('record.panel.openInEditor')}
-                          </button>
-                        )}
-                      </div>
+                <ul className="mt-2 space-y-2" data-testid="record-source-list">
+                  {mainSources.map((s, i) => (
+                    <SourceFileRow
+                      key={`${s.role}-${s.path}-${i}`}
+                      source={s}
+                      locale={locale}
+                      t={t}
+                      copyFeedback={copyFeedback}
+                      openingPath={openingPath}
+                      onCopyPath={copyPath}
+                      onOpenPath={openPathInEditor}
+                    />
+                  ))}
+                  {sourceGroups.map(g => (
+                    <li key={g.role} className="rounded-md border border-[var(--border-default)] p-2">
+                      <details
+                        data-testid={`record-source-group-${g.role}`}
+                        className="group"
+                      >
+                        <summary className="cursor-pointer list-none text-meta [&::-webkit-details-marker]:hidden">
+                          <div className="flex items-center justify-between gap-2">
+                            <InstantTooltip text={t(sourceRoleHelpKey(g.role), { role: g.role })} maxWidth={320}>
+                              <span
+                                className="cursor-help border-b border-dotted border-[var(--text-muted)] font-medium text-[var(--text-primary)]"
+                                data-testid={`record-source-group-label-${g.role}`}
+                              >
+                                {t('record.panel.sourceGroup', {
+                                  role: t(sourceRoleLabelKey(g.role), { role: g.role }),
+                                  n: g.sources.length,
+                                })}
+                              </span>
+                            </InstantTooltip>
+                            <span className="text-[var(--text-muted)] group-open:hidden">
+                              {t('record.panel.sourceGroupExpand')}
+                            </span>
+                            <span className="hidden text-[var(--text-muted)] group-open:inline">
+                              {t('record.panel.sourceGroupCollapse')}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-[var(--text-muted)]">
+                            {t(sourceRoleHelpKey(g.role), { role: g.role })}
+                          </p>
+                        </summary>
+                        <ul className="mt-2 space-y-2 border-t border-[var(--border-default)] pt-2">
+                          {g.sources.map((s, i) => (
+                            <SourceFileRow
+                              key={`${g.role}-${s.path}-${i}`}
+                              source={s}
+                              locale={locale}
+                              t={t}
+                              copyFeedback={copyFeedback}
+                              openingPath={openingPath}
+                              onCopyPath={copyPath}
+                              onOpenPath={openPathInEditor}
+                              compact
+                            />
+                          ))}
+                        </ul>
+                      </details>
                     </li>
                   ))}
                 </ul>
@@ -362,5 +379,132 @@ export default function RecordStatusPanel({
         </div>
       </aside>
     </div>
+  )
+}
+
+type CopyFeedback = { path: string; state: 'copied' | 'failed' } | null
+
+function SourceFileRow({
+  source: s,
+  locale,
+  t,
+  copyFeedback,
+  openingPath,
+  onCopyPath,
+  onOpenPath,
+  compact = false,
+}: {
+  source: SessionSourceFile
+  locale: string
+  t: (key: string, vars?: Record<string, string | number>) => string
+  copyFeedback: CopyFeedback
+  openingPath: string | null
+  onCopyPath: (path: string) => void | Promise<void>
+  onOpenPath: (path: string) => void | Promise<void>
+  compact?: boolean
+}) {
+  return (
+    <li
+      className={
+        compact
+          ? 'rounded border border-[var(--border-default)]/70 p-1.5'
+          : 'rounded-md border border-[var(--border-default)] p-2'
+      }
+    >
+      <div className={`flex items-center justify-between gap-2 text-meta ${compact ? '' : ''}`}>
+        <div className="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          {!compact && (
+            <InstantTooltip text={t(sourceRoleHelpKey(s.role), { role: s.role })} maxWidth={320}>
+              <span
+                className="cursor-help border-b border-dotted border-[var(--text-muted)] font-medium text-[var(--text-primary)]"
+                data-testid="record-source-role"
+              >
+                {t(sourceRoleLabelKey(s.role), { role: s.role })}
+              </span>
+            </InstantTooltip>
+          )}
+          {(() => {
+            const labelKey = sourceFileLabelKey(s.path)
+            const helpKey = sourceFileHelpKey(s.path)
+            const base = sourceFileBaseName(s.path)
+            if (labelKey && helpKey) {
+              return (
+                <InstantTooltip text={t(helpKey, { name: base })} maxWidth={340}>
+                  <span
+                    className="cursor-help border-b border-dotted border-[var(--text-muted)] text-[var(--text-secondary)]"
+                    data-testid="record-source-file-label"
+                  >
+                    {t(labelKey, { name: base })}
+                  </span>
+                </InstantTooltip>
+              )
+            }
+            if (helpKey) {
+              return (
+                <InstantTooltip text={t(helpKey, { name: base })} maxWidth={340}>
+                  <span
+                    className="cursor-help border-b border-dotted border-[var(--text-muted)] font-mono text-[11px] text-[var(--text-secondary)]"
+                    data-testid="record-source-file-label"
+                  >
+                    {base}
+                  </span>
+                </InstantTooltip>
+              )
+            }
+            return null
+          })()}
+        </div>
+        {!compact && (
+          <span className="shrink-0 text-[var(--text-muted)]">
+            {t(sourceStateLabelKey(s.state), { state: s.state })}
+          </span>
+        )}
+      </div>
+      <code
+        className="mt-1 block break-all font-mono text-[11px] text-[var(--text-secondary)]"
+        title={s.path}
+      >
+        {s.path}
+      </code>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-[var(--text-muted)]">
+        {s.updated_at && (
+          <span>
+            {t('record.panel.sourceUpdated')}: {formatRecordTime(locale, s.updated_at)}
+          </span>
+        )}
+        {typeof s.size_bytes === 'number' && (
+          <span data-testid="record-source-size">· {formatSourceSize(s.size_bytes)}</span>
+        )}
+        <button
+          type="button"
+          className="text-[var(--accent-blue)] hover:underline"
+          data-testid="record-copy-path"
+          data-state={copyFeedback?.path === s.path ? copyFeedback.state : 'idle'}
+          onClick={() => void onCopyPath(s.path)}
+        >
+          {copyFeedback?.path === s.path && copyFeedback.state === 'copied'
+            ? t('common.copied')
+            : copyFeedback?.path === s.path && copyFeedback.state === 'failed'
+              ? t('record.panel.copyFailed')
+              : t('record.panel.copyPath')}
+        </button>
+        {s.path && s.state === 'present' && isEditorFriendlySourcePath(s.path) && (
+          <button
+            type="button"
+            className="text-[var(--accent-blue)] hover:underline disabled:opacity-50"
+            data-testid="record-open-in-editor"
+            disabled={openingPath === s.path}
+            onClick={() => void onOpenPath(s.path)}
+          >
+            {t('record.panel.openInEditor')}
+          </button>
+        )}
+        {s.path && s.state === 'present' && !isEditorFriendlySourcePath(s.path) && (
+          <span className="text-[var(--text-muted)]" data-testid="record-open-not-text">
+            {t('record.panel.openBinaryHint')}
+          </span>
+        )}
+      </div>
+    </li>
   )
 }

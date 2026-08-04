@@ -4,7 +4,14 @@ import {
   formatRecordTime,
   formatSourceSize,
   isKnownRecordState,
+  isCollapsibleSourceRole,
+  isEditorFriendlySourcePath,
+  isEditCacheRole,
   parserWarningCount,
+  partitionSourceFiles,
+  sourceFileHelpKey,
+  sourceFileLabelKey,
+  sourceRoleHelpKey,
   presentFromSession,
   presentRecordStatus,
   impactLabelKey,
@@ -131,5 +138,38 @@ assert.ok(!/\.\d{3,}/.test(local), 'no fractional seconds: ' + local)
 assert.equal(formatSourceSize(500), '500 B')
 assert.equal(formatSourceSize(4949339), '4833.3 KB')
 assert.equal(formatSourceSize(2048), '2 KB')
+
+// Bulk roles collapse by role (edit_cache + snapshot), not path heuristics.
+assert.equal(isCollapsibleSourceRole('edit_cache'), true)
+assert.equal(isCollapsibleSourceRole('snapshot'), true)
+assert.equal(isCollapsibleSourceRole('metadata'), true)
+assert.equal(isCollapsibleSourceRole('events'), false)
+assert.equal(isEditCacheRole('edit_cache'), true)
+assert.equal(sourceRoleHelpKey('snapshot'), 'record.sourceRoleHelp.snapshot')
+assert.equal(sourceFileHelpKey('/a/b/summary.json'), 'record.sourceFileHelp.summary_json')
+assert.equal(sourceFileLabelKey('/a/b/signals.json'), 'record.sourceFileLabel.signals_json')
+assert.equal(sourceFileHelpKey('/a/b/unknown-xyz.dat'), null)
+assert.equal(isEditorFriendlySourcePath('/x/opencode.db'), false)
+assert.equal(isEditorFriendlySourcePath('/x/session.json'), true)
+assert.equal(isEditorFriendlySourcePath('/x/opencode.db-wal'), false)
+const parts = partitionSourceFiles([
+  { role: 'primary_transcript', path: '/s/session.json', state: 'present' },
+  { role: 'collaboration', path: '/s/sub_agents/sessions/a.json', state: 'present' },
+  { role: 'edit_cache', path: '/s/mutations/aaa', state: 'present' },
+  { role: 'edit_cache', path: '/s/mutations/bbb', state: 'present' },
+  { role: 'snapshot', path: '/s/snapshots/turn_1.json', state: 'present' },
+  { role: 'snapshot', path: '/s/snapshots/turn_2.json', state: 'present' },
+  { role: 'metadata', path: '/s/summary.json', state: 'present' },
+  { role: 'metadata', path: '/s/signals.json', state: 'present' },
+  { role: 'recovery', path: '/s/session.recovery.json', state: 'present' },
+])
+assert.equal(parts.main.length, 3) // primary, collab, recovery
+assert.equal(parts.groups.length, 3)
+assert.equal(parts.groups[0].role, 'edit_cache')
+assert.equal(parts.groups[0].sources.length, 2)
+assert.equal(parts.groups[1].role, 'snapshot')
+assert.equal(parts.groups[1].sources.length, 2)
+assert.equal(parts.groups[2].role, 'metadata')
+assert.equal(parts.groups[2].sources.length, 2)
 
 console.log('test-record-status: ok')
