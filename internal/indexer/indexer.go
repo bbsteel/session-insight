@@ -13,6 +13,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
 )
 
 const IndexInterval = 3 * time.Minute
@@ -365,7 +366,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		detailElapsed = time.Since(snapshotStarted)
 		renderElapsed = 0
 		if err != nil {
-			return ix.handleReadFailure(agentType, sess, err)
+			return ix.handleReadFailure(r, agentType, sess, err)
 		}
 	} else {
 		detailStarted := time.Now()
@@ -373,7 +374,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		detail, err = r.GetSession(sess.ID)
 		detailElapsed = time.Since(detailStarted)
 		if err != nil {
-			return ix.handleReadFailure(agentType, sess, err)
+			return ix.handleReadFailure(r, agentType, sess, err)
 		}
 		renderStarted := time.Now()
 		renderEvents, err = r.GetRenderEvents(sess.ID)
@@ -424,12 +425,19 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 
 // handleReadFailure maps typed SessionReadError into persisted provenance
 // without inventing complete, and without bulk-missing behavior.
-func (ix *Indexer) handleReadFailure(agentType string, sess model.Session, err error) (bool, error) {
+func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType string, sess model.Session, err error) (bool, error) {
 	sre, ok := reader.AsSessionReadError(err)
 	if !ok {
 		return false, fmt.Errorf("get session: %w", err)
 	}
 	now := time.Now().UTC()
+	adapterRev := 1
+	if def, ok := reader.AgentDefinition(agentType); ok && def.AdapterRevision > 0 {
+		adapterRev = def.AdapterRevision
+	} else if def, ok := reader.AgentDefinition(r.AgentType()); ok && def.AdapterRevision > 0 {
+		adapterRev = def.AdapterRevision
+	}
+
 	state := model.RecordMetadataOnly
 	reason := sre.ReasonCode
 	switch sre.Kind {
@@ -465,17 +473,17 @@ func (ix *Indexer) handleReadFailure(agentType string, sess model.Session, err e
 			reason = string(sre.Kind)
 		}
 	}
-	prov := model.SessionProvenance{
-		State:           state,
-		ReasonCode:      reason,
-		CapturedAt:      now,
-		AdapterRevision: 1,
-		Sources:         sre.Sources,
-		Warnings:        sre.Warnings,
-	}
-	if prov.Sources == nil {
-		prov.Sources = []model.SessionSourceFile{}
-	}
+	// Use shared Build so warnings are aggregated and warning_summary is filled.
+	// HasReplayableBody is false: these paths could not produce a body.
+	prov := provenance.Build(provenance.Input{
+		StateOverride:     state,
+		ReasonCode:        reason,
+		CapturedAt:        now,
+		AdapterRevision:   adapterRev,
+		Sources:           sre.Sources,
+		Warnings:          sre.Warnings,
+		HasReplayableBody: false,
+	})
 	if err := ix.db.UpsertSessionMetaWithHistoryLineageAndProvider(
 		agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
 		sess.Project, sess.Name, sess.ModelName, sess.ModelProvider, sess.ResumeID,

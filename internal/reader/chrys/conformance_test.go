@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 )
 
 // Minimal Chrys session directory with session.json (reuses the layout from
@@ -90,5 +91,57 @@ func TestChrysProvenanceSourceMissing(t *testing.T) {
 	_, err := New(dir).GetSession("missing-id")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+	sre, ok := readerr.As(err)
+	if !ok {
+		t.Fatalf("expected typed readerr, got %T %v", err, err)
+	}
+	if sre.Kind != readerr.SourceMissing {
+		t.Fatalf("kind=%s", sre.Kind)
+	}
+}
+
+func TestChrysProvenanceMetadataOnly(t *testing.T) {
+	// Meta present, no messages → no replayable body.
+	sessionsDir := t.TempDir()
+	sessionID := "metaonly01"
+	dir := filepath.Join(sessionsDir, sessionID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+  "meta": {
+    "schema_version": 1,
+    "session_id": "metaonly01-full",
+    "agent_profile": "Code",
+    "model_id": "test-model",
+    "created_at": "2026-01-01T00:00:00+00:00",
+    "updated_at": "2026-01-01T00:01:00+00:00",
+    "message_count": 0,
+    "primary_cwd": "/tmp/proj",
+    "title": "Metadata Only"
+  },
+  "state": {
+    "messages": [],
+    "compressed_msgs": [],
+    "turn_counter": 0,
+    "total_session_input_tokens": 0,
+    "total_session_output_tokens": 0,
+    "total_session_cache_hit_tokens": 0
+  }
+}`
+	if err := os.WriteFile(filepath.Join(dir, "session.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := New(sessionsDir).GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceDegradedOrUnsupported(t, detail, Capabilities())
+	if detail.Provenance.State != "metadata_only" {
+		t.Fatalf("state=%s", detail.Provenance.State)
+	}
+	if len(detail.Provenance.Sources) == 0 {
+		t.Fatal("expected source inventory")
 	}
 }

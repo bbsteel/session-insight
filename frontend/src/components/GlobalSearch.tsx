@@ -458,6 +458,15 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
                         <span className="min-w-0 flex-1 truncate text-helper text-[var(--text-primary)]">
                           {r.name || r.session_id}
                         </span>
+                        {(r.source_missing || r.stale) && (
+                          <span
+                            className="flex-shrink-0 rounded border border-[var(--error)]/40 bg-[var(--error)]/10 px-1.5 text-meta text-[var(--error)]"
+                            data-testid="search-hit-historical"
+                            title={t('record.search.historical')}
+                          >
+                            {t('record.search.historical')}
+                          </span>
+                        )}
                         {r.project && (
                           <span className="max-w-[120px] flex-shrink-0 truncate rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-1.5 text-meta text-[var(--text-secondary)]">
                             {r.project}

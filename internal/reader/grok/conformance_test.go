@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 )
 
 func TestGrokConformance(t *testing.T) {
@@ -40,5 +41,29 @@ func TestGrokProvenanceSourceMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	// Typed SessionReadError — verified by non-nil error (kind checked in unit tests)
+	sre, ok := readerr.As(err)
+	if !ok {
+		t.Fatalf("expected typed readerr, got %T %v", err, err)
+	}
+	if sre.Kind != readerr.SourceMissing {
+		t.Fatalf("kind=%s", sre.Kind)
+	}
+}
+
+func TestGrokProvenanceMetadataOnly(t *testing.T) {
+	// Summary present, empty updates/events → no replayable turns.
+	root := t.TempDir()
+	sessionID := "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+	writeSession(t, root, "%2Ftmp%2Fdemo", sessionID, summaryFile{}, "", "")
+	detail, err := New(root).GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceDegradedOrUnsupported(t, detail, Capabilities())
+	if detail.Provenance.State != "metadata_only" {
+		t.Fatalf("state=%s turns=%d", detail.Provenance.State, len(detail.Turns))
+	}
+	if len(detail.Provenance.Sources) == 0 {
+		t.Fatal("expected source inventory")
+	}
 }

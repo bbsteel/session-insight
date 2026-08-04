@@ -123,6 +123,53 @@ func TestIndexerScanFailureDoesNotMassMissing(t *testing.T) {
 	}
 }
 
+func TestHandleReadFailureUsesCatalogAdapterRevision(t *testing.T) {
+	// claude catalog declares AdapterRevision >= 2 after provenance wiring.
+	database := openIndexerDB(t)
+	now := time.Now().UTC()
+	sess := model.Session{ID: "s-fail", AgentType: "claude", CreatedAt: now, UpdatedAt: now}
+	fr := &fakeReader{
+		agent:    "claude",
+		sessions: []model.Session{sess},
+		getErr: map[string]error{
+			"s-fail": reader.NewSessionReadError(reader.ReadFormatUnsupported, model.WarnUnsupportedSchema,
+				errors.New("schema too new")),
+		},
+	}
+	// Attach sources on the typed error so Build inventory is non-empty.
+	if sre, ok := reader.AsSessionReadError(fr.getErr["s-fail"]); ok {
+		sre.Sources = []model.SessionSourceFile{{
+			Role: model.SourceRolePrimaryTranscript, Path: "/tmp/x.jsonl", State: model.SourceUnsupported,
+		}}
+		sre.Warnings = []model.ParseWarning{{
+			Code: model.WarnUnsupportedSchema, Severity: model.WarningSeverityError,
+			AffectsCompleteness: true, Impacts: []string{model.ImpactReplay}, Count: 1,
+		}}
+	}
+	ix := New(database, []reader.BaseSessionReader{fr})
+	if err := ix.RunOnce(context.Background()); err != nil {
+		// completed_with_errors is fine; we care about persisted revision
+		t.Logf("cycle err (expected ok): %v", err)
+	}
+	got, ok, err := database.GetProvenance("claude", "s-fail")
+	if err != nil || !ok {
+		t.Fatalf("provenance: ok=%v err=%v", ok, err)
+	}
+	if got.State != model.RecordParserUnsupported {
+		t.Fatalf("state=%s", got.State)
+	}
+	def, defOK := reader.AgentDefinition("claude")
+	if !defOK {
+		t.Fatal("claude catalog missing")
+	}
+	if got.AdapterRevision != def.AdapterRevision {
+		t.Fatalf("adapter_revision=%d want catalog %d", got.AdapterRevision, def.AdapterRevision)
+	}
+	if got.WarningSummary.Total < 1 {
+		t.Fatalf("warning_summary not aggregated: %+v", got.WarningSummary)
+	}
+}
+
 func TestIndexerCancelDoesNotTombstone(t *testing.T) {
 	database := openIndexerDB(t)
 	now := time.Now().UTC()
