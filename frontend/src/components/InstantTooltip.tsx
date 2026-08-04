@@ -6,7 +6,7 @@ interface InstantTooltipProps {
   text?: string
   children: ReactNode
   className?: string
-  placement?: 'top' | 'bottom' | 'cursor'
+  placement?: 'top' | 'bottom' | 'left' | 'cursor'
   /** Max width for long notes. */
   maxWidth?: number
 }
@@ -41,8 +41,8 @@ export default function InstantTooltip({
       return
     }
     setPos({
-      x: r.left + r.width / 2,
-      y: placement === 'bottom' ? r.bottom : r.top,
+      x: placement === 'left' ? r.left : r.left + r.width / 2,
+      y: placement === 'left' ? r.top + r.height / 2 : placement === 'bottom' ? r.bottom : r.top,
     })
   }
 
@@ -60,11 +60,13 @@ export default function InstantTooltip({
           role="tooltip"
           className="fixed z-[var(--z-tooltip)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2 py-1.5 text-helper text-[var(--text-primary)] shadow-md pointer-events-none whitespace-pre-wrap break-words"
           style={{
-            left: pos.x,
-            top: placement === 'bottom' ? pos.y + 6 : pos.y - 6,
+            left: placement === 'left' ? pos.x - 6 : pos.x,
+            top: placement === 'bottom' ? pos.y + 6 : placement === 'left' ? pos.y : pos.y - 6,
             maxWidth,
             transform:
-              placement === 'cursor'
+              placement === 'left'
+                ? 'translate(-100%, -50%)'
+                : placement === 'cursor'
                 ? 'translate(12px, calc(-100% - 4px))'
                 : placement === 'bottom'
                   ? 'translate(-50%, 0)'
