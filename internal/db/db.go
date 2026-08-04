@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 29
+const currentSchemaVersion = 30
 
 type DB struct {
 	conn *sql.DB
@@ -791,6 +791,34 @@ func migrate(conn *sql.DB) error {
 				!strings.Contains(err.Error(), "duplicate column name") {
 				return fmt.Errorf("v29 add collaboration_roots.%s: %w", col.name, err)
 			}
+		}
+	}
+
+	// Version 30: session_provenance — independent record-completeness snapshots
+	// persisted with the session index so list/detail/source-missing fallbacks
+	// do not require a successful re-parse of agent source files.
+	if maxVersion < 30 {
+		if _, err := conn.Exec(`
+			CREATE TABLE IF NOT EXISTS session_provenance (
+				agent_type           TEXT NOT NULL,
+				session_id           TEXT NOT NULL,
+				state                TEXT NOT NULL,
+				reason_code          TEXT NOT NULL DEFAULT '',
+				captured_at          TEXT NOT NULL,
+				source_updated_at    TEXT,
+				adapter_revision     INTEGER NOT NULL,
+				sources_json         TEXT NOT NULL DEFAULT '[]',
+				warnings_json        TEXT NOT NULL DEFAULT '[]',
+				warning_summary_json TEXT NOT NULL DEFAULT '{}',
+				last_successful_at   TEXT,
+				missing_since        TEXT,
+				revision             INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (agent_type, session_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_session_provenance_state
+				ON session_provenance(agent_type, state);
+		`); err != nil {
+			return fmt.Errorf("v30 session_provenance: %w", err)
 		}
 	}
 

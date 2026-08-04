@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
@@ -394,17 +396,21 @@ func resolveSessionName(aiTitle, lastPrompt, firstUserMsg string, createdAt time
 func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	jsonlPath := r.findSessionFile(id)
 	if jsonlPath == "" {
-		return nil, fmt.Errorf("claude session not found: %s", id)
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("claude session not found: %s", id))
 	}
 
 	session, ok := readSessionMeta(jsonlPath, id)
 	if !ok {
-		return nil, fmt.Errorf("failed to read session: %s", id)
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("failed to read session: %s", id))
 	}
 
-	turns, modelName, err := parseClaudeEvents(jsonlPath)
+	turns, modelName, skipped, err := parseClaudeEvents(jsonlPath)
 	if err != nil {
-		return &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}, nil
+		detail := &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}
+		detail.Provenance = attachClaudeProvenance(jsonlPath, false, skipped)
+		return detail, nil
 	}
 
 	if modelName != "" {
@@ -415,8 +421,21 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	detail.Provenance = attachClaudeProvenance(jsonlPath, len(turns) > 0, skipped)
 
 	return detail, nil
+}
+
+func attachClaudeProvenance(jsonlPath string, hasBody bool, skipped int) *model.SessionProvenance {
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
+	p := provenance.AttachWithWarnings(Capabilities().AdapterRevision, jsonlPath, hasBody, warnings, time.Now().UTC())
+	return &p
 }
 
 func (r *ClaudeReader) findSessionFile(sessionID string) string {
@@ -449,15 +468,14 @@ func (r *ClaudeReader) findSessionFile(sessionID string) string {
 
 // ---- Event parsing ----
 
-func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
+func parseClaudeEvents(path string) (turns []model.TurnVM, modelName string, skipped int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer f.Close()
 
 	var (
-		turns       []model.TurnVM
 		foundModel  string
 		currentTurn *model.TurnVM
 		toolUseMap  = make(map[string]string)
@@ -468,8 +486,13 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
 	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytesTrimSpace(line)) == 0 {
+			continue
+		}
 		var evt claudeEvent
-		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+		if err := json.Unmarshal(line, &evt); err != nil {
+			skipped++
 			continue
 		}
 
@@ -601,7 +624,11 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 	}
 
 	_ = toolUseMap
-	return turns, foundModel, scanner.Err()
+	return turns, foundModel, skipped, scanner.Err()
+}
+
+func bytesTrimSpace(b []byte) []byte {
+	return []byte(strings.TrimSpace(string(b)))
 }
 
 func cleanUserContent(s string) string {

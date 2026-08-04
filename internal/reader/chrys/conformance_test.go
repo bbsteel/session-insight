@@ -75,3 +75,20 @@ func TestChrysConformance(t *testing.T) {
 		},
 	})
 }
+
+func TestChrysProvenanceComplete(t *testing.T) {
+	dir, sessionID := writeChrysBasicFixture(t)
+	detail, err := New(dir).GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceComplete(t, detail, Capabilities())
+}
+
+func TestChrysProvenanceSourceMissing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := New(dir).GetSession("missing-id")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

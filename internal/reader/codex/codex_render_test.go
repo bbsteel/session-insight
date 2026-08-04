@@ -63,7 +63,7 @@ func TestIndexDetailFromEvents(t *testing.T) {
 		{Type: "TextChunk", TurnIndex: 0, Text: "answer"},
 		{Type: "ToolInvocation", TurnIndex: 0, ToolName: "exec"},
 		{Type: "ToolResult", TurnIndex: 0, ExitCode: 1, Stderr: "failed"},
-	})
+	}, "")
 	if len(detail.Turns) != 1 {
 		t.Fatalf("turns=%d, want 1", len(detail.Turns))
 	}

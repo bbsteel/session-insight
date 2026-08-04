@@ -42,3 +42,38 @@ func TestClaudeConformance(t *testing.T) {
 		},
 	})
 }
+
+func TestClaudeProvenanceComplete(t *testing.T) {
+	dir, sessionID := writeClaudeBasicFixture(t)
+	r := New(dir)
+	detail, err := r.GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceComplete(t, detail, Capabilities())
+}
+
+func TestClaudeProvenanceDegraded(t *testing.T) {
+	projectsDir := t.TempDir()
+	sessionID := "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+	proj := filepath.Join(projectsDir, "-tmp-proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// One malformed line between valid turns → skipped records, degraded.
+	content := `{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp/proj","sessionId":"` + sessionID + `","message":{"role":"user","content":"hello"}}
+NOT_JSON_LINE
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:05.000Z","message":{"role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"hi"}]}}
+`
+	if err := os.WriteFile(filepath.Join(proj, sessionID+".jsonl"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := New(projectsDir).GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceDegradedOrUnsupported(t, detail, Capabilities())
+	if detail.Provenance.State != "degraded" {
+		t.Fatalf("state=%s", detail.Provenance.State)
+	}
+}

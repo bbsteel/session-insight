@@ -210,7 +210,7 @@ func TestCompactBoundaryMarksTurnAnomaly(t *testing.T) {
 {"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:03Z","message":{"role":"user","content":"after compact"}}
 `
 	path := writeTempJSONL(t, "compact_turn.jsonl", fixture)
-	turns, _, err := parseClaudeEvents(path)
+	turns, _, _, err := parseClaudeEvents(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

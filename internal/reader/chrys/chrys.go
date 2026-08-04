@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
@@ -542,9 +544,11 @@ func (r *ChrysReader) GetSession(id string) (*model.SessionDetail, error) {
 	if !validSessionID(id) {
 		return nil, fmt.Errorf("invalid chrys session id: %q", id)
 	}
-	sf, err := readEffectiveSession(filepath.Join(r.sessionsDir, id))
+	sessPath := filepath.Join(r.sessionsDir, id)
+	sf, err := readEffectiveSession(sessPath)
 	if err != nil {
-		return nil, fmt.Errorf("chrys session not found %q: %w", id, err)
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("chrys session not found %q: %w", id, err))
 	}
 
 	session := buildSession(id, sf)
@@ -557,6 +561,10 @@ func (r *ChrysReader) GetSession(id string) (*model.SessionDetail, error) {
 		Billing: buildBilling(sf, turns),
 	}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	p := provenance.AttachWithWarnings(
+		Capabilities().AdapterRevision, sessPath, len(turns) > 0, nil, time.Now().UTC(),
+	)
+	detail.Provenance = &p
 	return detail, nil
 }
 

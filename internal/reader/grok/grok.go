@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -497,11 +499,12 @@ func extractUserQuery(text string) string {
 func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 	loc, err := r.findSession(id)
 	if err != nil {
-		return nil, err
+		return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
 	}
 	sum, err := readSummary(loc.SummaryPath)
 	if err != nil {
-		return nil, fmt.Errorf("grok session not found %q: %w", id, err)
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("grok session not found %q: %w", id, err))
 	}
 	// Cold GetSession must agree with ListSessions on lineage; build the
 	// index when list has not run yet.
@@ -525,6 +528,17 @@ func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 		Billing: billing,
 	}
 	detail.AnomalySummary = shared.RunAnomalyDetection(detail.Turns)
+	sources := []model.SessionSourceFile{
+		provenance.StatSource(model.SourceRoleMetadata, loc.SummaryPath),
+		provenance.StatSource(model.SourceRolePrimaryTranscript, loc.Dir),
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sources,
+		HasReplayableBody: len(filtered) > 0,
+	})
+	detail.Provenance = &p
 	return detail, nil
 }
 

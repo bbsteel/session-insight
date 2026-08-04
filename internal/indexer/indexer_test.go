@@ -321,12 +321,33 @@ func TestIndexer_OrphanCleanup(t *testing.T) {
 		t.Fatalf("second RunOnce: %v", err)
 	}
 
+	// v0.5.1: successful discovery with a missing session becomes a recoverable
+	// source_missing tombstone — FTS/metadata retained, not hard-deleted.
 	results, err := database.SearchTurns("bravo", 30)
 	if err != nil {
 		t.Fatalf("SearchTurns: %v", err)
 	}
-	if len(results) != 0 {
-		t.Fatalf("expected 0 results for orphan B, got %d", len(results))
+	if len(results) != 1 {
+		t.Fatalf("expected retained FTS hit for tombstoned B, got %d", len(results))
+	}
+	prov, ok, err := database.GetProvenance("test", "b")
+	if err != nil || !ok {
+		t.Fatalf("provenance for B: ok=%v err=%v", ok, err)
+	}
+	if prov.State != model.RecordSourceMissing {
+		t.Fatalf("expected source_missing for B, got %s", prov.State)
+	}
+	// Session A still complete/searchable and not tombstoned.
+	resultsA, err := database.SearchTurns("alpha", 30)
+	if err != nil {
+		t.Fatalf("SearchTurns alpha: %v", err)
+	}
+	if len(resultsA) != 1 {
+		t.Fatalf("expected A retained, got %d", len(resultsA))
+	}
+	provA, okA, _ := database.GetProvenance("test", "a")
+	if okA && provA.State == model.RecordSourceMissing {
+		t.Fatal("session A must not be marked source_missing")
 	}
 }
 

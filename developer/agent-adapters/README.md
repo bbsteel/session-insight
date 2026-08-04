@@ -144,6 +144,8 @@ A new Agent adapter is complete only when every applicable item is satisfied:
 - [ ] Interrupted sessions, absent fields, and empty sessions are not misreported.
 - [ ] Applicable operating-system differences are covered; unverified platforms are explicit in declarations or the PR.
 - [ ] The registry, API, and UI contain no duplicate hand-written capability matrix.
+- [ ] Session detail provenance is emitted on the same read path as body/metadata (sources, warnings, adapter_revision); use `readerr` for structured failures and `provenance.Build` for state — never scrape error strings or invent frontend agent→status tables.
+- [ ] Shared provenance conformance covers at least one complete fixture and one degraded/metadata_only/parser_unsupported fixture with source inventory and impact assertions.
 - [ ] `go test ./internal/reader/...` and all tests in the affected scope pass.
 - [ ] The PR lists verified capabilities, known gaps, and fixture provenance.
 

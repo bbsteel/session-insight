@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -63,7 +65,8 @@ func (r *CodexReader) ReadIndexSnapshot(ctx context.Context, session model.Sessi
 	}
 	path := r.findSessionFile(session.ID)
 	if path == "" {
-		return nil, nil, fmt.Errorf("codex session not found: %s", session.ID)
+		return nil, nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("codex session not found: %s", session.ID))
 	}
 	events, err := codexToRenderEvents(path)
 	if err != nil {
@@ -75,11 +78,11 @@ func (r *CodexReader) ReadIndexSnapshot(ctx context.Context, session model.Sessi
 			return detail, events, err
 		}
 	}
-	detail := indexDetailFromEvents(session, events)
+	detail := indexDetailFromEvents(session, events, path)
 	return detail, events, nil
 }
 
-func indexDetailFromEvents(session model.Session, events []model.RenderEvent) *model.SessionDetail {
+func indexDetailFromEvents(session model.Session, events []model.RenderEvent, path string) *model.SessionDetail {
 	turns := make([]model.TurnVM, 0)
 	ensureTurn := func(index int) *model.TurnVM {
 		for len(turns) <= index {
@@ -113,6 +116,12 @@ func indexDetailFromEvents(session model.Session, events []model.RenderEvent) *m
 	session.TurnCount = len(turns)
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	if path != "" {
+		p := provenance.AttachWithWarnings(
+			Capabilities().AdapterRevision, path, len(turns) > 0, nil, time.Now().UTC(),
+		)
+		detail.Provenance = &p
+	}
 	return detail
 }
 
@@ -566,12 +575,14 @@ func resolveName(firstUserMsg string, createdAt time.Time) string {
 func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	jsonlPath := r.findSessionFile(id)
 	if jsonlPath == "" {
-		return nil, fmt.Errorf("codex session not found: %s", id)
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("codex session not found: %s", id))
 	}
 
 	session, ok := readSessionMeta(jsonlPath)
 	if !ok {
-		return nil, fmt.Errorf("failed to read codex session: %s", id)
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("failed to read codex session: %s", id))
 	}
 
 	parsed, modelName, modelProvider := parseCodexEvents(jsonlPath)
@@ -590,6 +601,10 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: parsed.Active, RollbackGroups: parsed.RollbackGroups}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(parsed.Active)
+	p := provenance.AttachWithWarnings(
+		Capabilities().AdapterRevision, jsonlPath, len(parsed.Active) > 0, nil, time.Now().UTC(),
+	)
+	detail.Provenance = &p
 
 	return detail, nil
 }

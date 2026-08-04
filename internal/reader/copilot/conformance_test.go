@@ -51,3 +51,36 @@ func TestCopilotConformance(t *testing.T) {
 		},
 	})
 }
+
+func TestCopilotProvenanceComplete(t *testing.T) {
+	dir, sessionID := writeCopilotBasicFixture(t)
+	detail, err := New(dir).GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceComplete(t, detail, Capabilities())
+}
+
+func TestCopilotProvenanceDegradedMissingEvents(t *testing.T) {
+	stateDir := t.TempDir()
+	sessionID := "sess-missing-events"
+	sessionDir := filepath.Join(stateDir, sessionID)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws := `id: ` + sessionID + `
+cwd: /tmp/proj
+name: Missing Events
+created_at: 2026-01-01T00:00:00Z
+updated_at: 2026-01-01T00:01:00Z
+`
+	if err := os.WriteFile(filepath.Join(sessionDir, "workspace.yaml"), []byte(ws), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No events.jsonl → parse error path with sidecar_missing warning
+	detail, err := New(stateDir).GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceDegradedOrUnsupported(t, detail, Capabilities())
+}

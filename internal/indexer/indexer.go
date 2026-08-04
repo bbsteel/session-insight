@@ -285,17 +285,41 @@ func (ix *Indexer) indexReaderSessions(
 		}
 	}
 
-	// 清理该 agent 下已消失的会话（删除不在 knownIDs 中的旧数据）
-	// 注意：GetSession 失败的会话仍在 knownIDs 中，保留其旧索引不删除。
-	removed, err := ix.db.DeleteOrphansByAgent(r.AgentType(), knownIDs)
+	// Successful discovery: sessions present last cycle but absent this round
+	// become recoverable source_missing tombstones (keep metadata + FTS).
+	// Do not hard-delete — only explicit SI delete removes index rows.
+	// listErr path never reaches here, so scan/permission failure cannot
+	// mass-mark source_missing. Context cancellation returns above.
+	tombstoned, err := ix.tombstoneMissingSessions(r.AgentType(), knownIDs)
 	if err != nil {
-		log.Printf("[indexer] %s: orphan cleanup error: %v", r.AgentType(), err)
-		// 孤儿清理失败不阻止其他 reader
+		log.Printf("[indexer] %s: source-missing tombstone error: %v", r.AgentType(), err)
 	}
 	if len(sessionErrs) > 0 {
-		return changed + removed, fmt.Errorf("session errors: %s", strings.Join(sessionErrs, "; "))
+		return changed + tombstoned, fmt.Errorf("session errors: %s", strings.Join(sessionErrs, "; "))
 	}
-	return changed + removed, nil
+	return changed + tombstoned, nil
+}
+
+// tombstoneMissingSessions marks indexed sessions not in knownIDs as source_missing.
+func (ix *Indexer) tombstoneMissingSessions(agentType string, knownIDs []string) (int, error) {
+	existing, err := ix.db.SessionIDsByAgent(agentType)
+	if err != nil {
+		return 0, err
+	}
+	known := make(map[string]struct{}, len(knownIDs))
+	for _, id := range knownIDs {
+		known[id] = struct{}{}
+	}
+	var missing []string
+	for _, id := range existing {
+		if _, ok := known[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return 0, nil
+	}
+	return ix.db.MarkSessionsSourceMissing(agentType, missing, time.Now().UTC())
 }
 
 // indexSession 返回是否发生了实际写入（watermark 未变时跳过并返回 false）。
@@ -341,7 +365,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		detailElapsed = time.Since(snapshotStarted)
 		renderElapsed = 0
 		if err != nil {
-			return false, fmt.Errorf("read index snapshot: %w", err)
+			return ix.handleReadFailure(agentType, sess, err)
 		}
 	} else {
 		detailStarted := time.Now()
@@ -349,7 +373,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		detail, err = r.GetSession(sess.ID)
 		detailElapsed = time.Since(detailStarted)
 		if err != nil {
-			return false, fmt.Errorf("get session: %w", err)
+			return ix.handleReadFailure(agentType, sess, err)
 		}
 		renderStarted := time.Now()
 		renderEvents, err = r.GetRenderEvents(sess.ID)
@@ -365,23 +389,9 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	persisted := sess
 	applyDetailMetadata(&persisted, detail.Session)
 
-	// Persist metadata before UpsertTurns commits the watermark. If metadata
-	// fails after a watermark write, the next cycle would otherwise treat the
-	// session as unchanged and permanently skip the resume_id backfill.
-	if err := ix.db.UpsertSessionMetaWithHistoryLineageAndProvider(
-		agentType, persisted.ID, persisted.CWD, persisted.Repository, persisted.Branch,
-		persisted.Project, persisted.Name, persisted.ModelName, persisted.ModelProvider, persisted.ResumeID,
-		persisted.ParentSessionID, persisted.AgentPath, persisted.IsSubagent,
-		detail.TurnCount, detail.HistoricalTurnCount, detail.RolledBackTurnCount, persisted.MessageCount,
-		persisted.CreatedAt, persisted.UpdatedAt,
-	); err != nil {
-		return false, err
-	}
-
-	// Collaboration runs before UpsertTurns commits the shared revision: a
-	// collaboration failure aborts the session (watermark not advanced) so the
-	// next cycle retries instead of locking in a turn-only index. The previous
-	// complete graph is preserved inside the collaboration store either way.
+	// Collaboration runs before the shared snapshot commit: a collaboration
+	// failure aborts the session (watermark not advanced) so the next cycle
+	// retries. The previous complete graph is preserved either way.
 	collabStarted := time.Now()
 	if err := ix.indexCollaboration(ctx, r, persisted, revision, collabCurrentKnown, collabCurrent); err != nil {
 		return false, err
@@ -390,12 +400,94 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 
 	turns := buildTurnTexts(persisted, detail, renderEvents)
 	writeStarted := time.Now()
-	if err := ix.db.UpsertTurns(agentType, sess.ID, turns, revision); err != nil {
-		return false, fmt.Errorf("upsert turns: %w", err)
+	// Atomic metadata + turns + provenance so list/detail never mix revisions.
+	if err := ix.db.ReplaceSessionSnapshot(db.SessionSnapshotWrite{
+		AgentType:           agentType,
+		Session:             persisted,
+		TurnCount:           detail.TurnCount,
+		HistoricalTurnCount: detail.HistoricalTurnCount,
+		RolledBackTurnCount: detail.RolledBackTurnCount,
+		MessageCount:        persisted.MessageCount,
+		Turns:               turns,
+		Provenance:          detail.Provenance,
+		Revision:            revision,
+	}); err != nil {
+		return false, fmt.Errorf("replace session snapshot: %w", err)
 	}
+	// Structured read failures with metadata-only / unsupported provenance may
+	// still surface via detail.Provenance without body; handled above.
 	log.Printf("[indexer] %s/%s: indexed %d row(s) in %s (detail=%s render=%s collaboration=%s write=%s)",
 		agentType, sess.ID, len(turns), time.Since(started).Round(time.Millisecond), detailElapsed.Round(time.Millisecond),
 		renderElapsed.Round(time.Millisecond), collabElapsed.Round(time.Millisecond), time.Since(writeStarted).Round(time.Millisecond))
+	return true, nil
+}
+
+// handleReadFailure maps typed SessionReadError into persisted provenance
+// without inventing complete, and without bulk-missing behavior.
+func (ix *Indexer) handleReadFailure(agentType string, sess model.Session, err error) (bool, error) {
+	sre, ok := reader.AsSessionReadError(err)
+	if !ok {
+		return false, fmt.Errorf("get session: %w", err)
+	}
+	now := time.Now().UTC()
+	state := model.RecordMetadataOnly
+	reason := sre.ReasonCode
+	switch sre.Kind {
+	case reader.ReadSourceMissing:
+		// Ensure session meta exists before tombstone (MarkSessionsSourceMissing
+		// only updates rows already in sessions).
+		if err := ix.db.UpsertSessionMetaWithHistoryLineageAndProvider(
+			agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
+			sess.Project, sess.Name, sess.ModelName, sess.ModelProvider, sess.ResumeID,
+			sess.ParentSessionID, sess.AgentPath, sess.IsSubagent,
+			sess.TurnCount, sess.HistoricalTurnCount, sess.RolledBackTurnCount, sess.MessageCount,
+			sess.CreatedAt, sess.UpdatedAt,
+		); err != nil {
+			return false, err
+		}
+		if _, markErr := ix.db.MarkSessionsSourceMissing(agentType, []string{sess.ID}, now); markErr != nil {
+			return false, markErr
+		}
+		return true, nil
+	case reader.ReadFormatUnsupported:
+		state = model.RecordParserUnsupported
+		if reason == "" {
+			reason = model.WarnUnsupportedSchema
+		}
+	case reader.ReadMetadataOnly:
+		state = model.RecordMetadataOnly
+		if reason == "" {
+			reason = "no_body"
+		}
+	case reader.ReadSourceUnreadable, reader.ReadParseFailed:
+		state = model.RecordMetadataOnly
+		if reason == "" {
+			reason = string(sre.Kind)
+		}
+	}
+	prov := model.SessionProvenance{
+		State:           state,
+		ReasonCode:      reason,
+		CapturedAt:      now,
+		AdapterRevision: 1,
+		Sources:         sre.Sources,
+		Warnings:        sre.Warnings,
+	}
+	if prov.Sources == nil {
+		prov.Sources = []model.SessionSourceFile{}
+	}
+	if err := ix.db.UpsertSessionMetaWithHistoryLineageAndProvider(
+		agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
+		sess.Project, sess.Name, sess.ModelName, sess.ModelProvider, sess.ResumeID,
+		sess.ParentSessionID, sess.AgentPath, sess.IsSubagent,
+		sess.TurnCount, sess.HistoricalTurnCount, sess.RolledBackTurnCount, sess.MessageCount,
+		sess.CreatedAt, sess.UpdatedAt,
+	); err != nil {
+		return false, err
+	}
+	if err := ix.db.UpsertProvenance(agentType, sess.ID, prov, sess.UpdatedAt.UnixNano()); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 

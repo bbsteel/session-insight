@@ -16,6 +16,8 @@ import (
 
 	"github.com/bbsteel/session-insight/internal/collaboration"
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -208,12 +210,14 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	wsPath := filepath.Join(r.sessionDir, id, "workspace.yaml")
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
-		return nil, fmt.Errorf("session not found: %s", id)
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("session not found: %s", id))
 	}
 
 	var ws workspaceYAML
 	if err := yaml.Unmarshal(data, &ws); err != nil {
-		return nil, fmt.Errorf("invalid workspace.yaml: %w", err)
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("invalid workspace.yaml: %w", err))
 	}
 
 	session := toSession(ws)
@@ -221,7 +225,9 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
 	turns, modelName, err := parseEventsJSONL(eventsPath)
 	if err != nil {
-		return &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}, nil
+		detail := &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}
+		detail.Provenance = attachCopilotProvenance(wsPath, eventsPath, false, true)
+		return detail, nil
 	}
 
 	if modelName != "" {
@@ -240,6 +246,7 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	// Anomaly detection
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	detail.Provenance = attachCopilotProvenance(wsPath, eventsPath, len(turns) > 0, false)
 
 	// MissingShutdown check (copilot-specific: session.shutdown event).
 	// The same event carries the session bill (tokenDetails / modelMetrics /
@@ -261,6 +268,28 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	}
 
 	return detail, nil
+}
+
+func attachCopilotProvenance(wsPath, eventsPath string, hasBody, eventsMissing bool) *model.SessionProvenance {
+	sources := []model.SessionSourceFile{
+		provenance.StatSource(model.SourceRoleMetadata, wsPath),
+		provenance.StatSource(model.SourceRolePrimaryTranscript, eventsPath),
+	}
+	var warnings []model.ParseWarning
+	if eventsMissing {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnSidecarMissing, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, 1,
+		))
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sources,
+		Warnings:          warnings,
+		HasReplayableBody: hasBody,
+	})
+	return &p
 }
 
 // parseShutdownBilling converts a session.shutdown payload into the canonical
