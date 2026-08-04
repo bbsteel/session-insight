@@ -138,7 +138,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
                   aria-selected={selected === ''}
                   onClick={() => pick('')}
                   className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === '' ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                    selected === '' ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
                   }`}
                 >
                   <span className="text-[var(--text-muted)] flex-shrink-0"><FolderIcon size={16} /></span>
@@ -155,7 +155,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
                   aria-selected={selected === p.name}
                   onClick={() => pick(p.name)}
                   className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === p.name ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                    selected === p.name ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
                   }`}
                 >
                   <span className="text-[var(--accent-blue)] flex-shrink-0"><FolderIcon size={16} /></span>
