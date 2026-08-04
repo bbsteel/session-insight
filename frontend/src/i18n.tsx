@@ -695,7 +695,7 @@ export const messages: Record<Locale, Messages> = {
     'capability.session.tokensNA': 'Tokens n/a',
     'capability.session.tokensUnknown': 'Tokens unavailable',
 
-    'record.status.complete': 'Complete',
+    'record.status.complete': 'Session record complete',
     'record.status.degraded': 'Degraded',
     'record.status.metadata_only': 'Metadata only',
     'record.status.source_missing': 'Source missing',
@@ -1636,7 +1636,7 @@ export const messages: Record<Locale, Messages> = {
     'capability.session.tokensNA': '用量不适用',
     'capability.session.tokensUnknown': '用量不可用',
 
-    'record.status.complete': '完整',
+    'record.status.complete': '会话记录完整',
     'record.status.degraded': '降级',
     'record.status.metadata_only': '仅元数据',
     'record.status.source_missing': '来源缺失',
