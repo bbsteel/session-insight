@@ -84,7 +84,7 @@ func (r *ChrysReader) toRenderEvents(id string) ([]model.RenderEvent, error) {
 		return nil, fmt.Errorf("invalid chrys session id: %q", id)
 	}
 	sessionDir := filepath.Join(r.sessionsDir, id)
-	sf, err := readEffectiveSession(sessionDir)
+	sf, _, err := readEffectiveSession(sessionDir)
 	if err != nil {
 		return nil, fmt.Errorf("chrys session not found %q: %w", id, err)
 	}

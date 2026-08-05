@@ -119,7 +119,7 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 			TurnIndex: turnIdx,
 		})
 
-		uParts := r.readParts(uid)
+		uParts, _ := r.readParts(uid)
 		if text := strings.TrimSpace(strings.Join(uParts.Texts, "\n")); text != "" {
 			emit(model.RenderEvent{
 				Type:      "UserPrompt",

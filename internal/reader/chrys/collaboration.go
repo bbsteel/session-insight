@@ -51,7 +51,7 @@ func (r *ChrysReader) ReadCollaboration(ctx context.Context, root model.Session)
 	}
 
 	sessionDir := filepath.Join(r.sessionsDir, root.ID)
-	sf, err := readEffectiveSession(sessionDir)
+	sf, _, err := readEffectiveSession(sessionDir)
 	if err != nil {
 		return collaboration.CollaborationGraph{}, fmt.Errorf(
 			"chrys collaboration: root session %q: %w", root.ID, err)

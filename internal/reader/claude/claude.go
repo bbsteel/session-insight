@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
@@ -163,27 +165,49 @@ func (m *claudeMessage) contentBlocks() []claudeContentBlock {
 // ---- ListSessions ----
 
 func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+func (r *ClaudeReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	entries, err := os.ReadDir(r.projectsDir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	type fileJob struct {
 		path, id string
 	}
 	var jobs []fileJob
+	complete = true
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == "memory" {
 			continue
 		}
 		projDir := filepath.Join(r.projectsDir, entry.Name())
-		jsonlFiles, _ := filepath.Glob(filepath.Join(projDir, "*.jsonl"))
-		for _, jf := range jsonlFiles {
-			jobs = append(jobs, fileJob{jf, strings.TrimSuffix(filepath.Base(jf), ".jsonl")})
+		projectEntries, readErr := os.ReadDir(projDir)
+		if readErr != nil {
+			// filepath.Glob deliberately suppresses directory I/O failures. That
+			// would make an unreadable project look like an authoritative empty
+			// inventory and allow false source_missing tombstones.
+			complete = false
+			continue
+		}
+		for _, projectEntry := range projectEntries {
+			if projectEntry.IsDir() || !strings.HasSuffix(projectEntry.Name(), ".jsonl") {
+				continue
+			}
+			jf := filepath.Join(projDir, projectEntry.Name())
+			jobs = append(jobs, fileJob{jf, strings.TrimSuffix(projectEntry.Name(), ".jsonl")})
 		}
 	}
 
-	results := make(chan model.Session, len(jobs))
+	type jobResult struct {
+		sess model.Session
+		ok   bool
+		skip bool // file exists but meta unreadable
+	}
+	results := make(chan jobResult, len(jobs))
 	sem := make(chan struct{}, 20)
 	var wg sync.WaitGroup
 	for _, job := range jobs {
@@ -192,16 +216,25 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 		go func(j fileJob) {
 			defer func() { <-sem; wg.Done() }()
 			if sess, ok := readSessionMeta(j.path, j.id); ok {
-				results <- sess
+				results <- jobResult{sess: sess, ok: true}
+				return
+			}
+			// Existing file that failed meta parse → inventory incomplete.
+			if _, err := os.Stat(j.path); err == nil || !os.IsNotExist(err) {
+				results <- jobResult{skip: true}
 			}
 		}(job)
 	}
 	wg.Wait()
 	close(results)
 
-	sessions := make([]model.Session, 0, len(results))
-	for s := range results {
-		sessions = append(sessions, s)
+	sessions = make([]model.Session, 0, len(jobs))
+	for r := range results {
+		if r.ok {
+			sessions = append(sessions, r.sess)
+		} else if r.skip {
+			complete = false
+		}
 	}
 	paths := make(map[string]string, len(jobs))
 	for _, job := range jobs {
@@ -215,7 +248,7 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
 
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
@@ -394,17 +427,27 @@ func resolveSessionName(aiTitle, lastPrompt, firstUserMsg string, createdAt time
 func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	jsonlPath := r.findSessionFile(id)
 	if jsonlPath == "" {
-		return nil, fmt.Errorf("claude session not found: %s", id)
+		readErr := readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("claude session not found: %s", id))
+		if known := r.knownSessionFile(id); known != "" {
+			readErr.WithSources(sourceInventory(known, r.claudeRoot()))
+		}
+		return nil, readErr
 	}
 
 	session, ok := readSessionMeta(jsonlPath, id)
 	if !ok {
-		return nil, fmt.Errorf("failed to read session: %s", id)
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("failed to read session: %s", id)).
+			WithSources(sourceInventory(jsonlPath, r.claudeRoot())).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRolePrimaryTranscript)})
 	}
 
-	turns, modelName, err := parseClaudeEvents(jsonlPath)
+	turns, modelName, skipped, err := parseClaudeEvents(jsonlPath)
 	if err != nil {
-		return &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}, nil
+		detail := &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}
+		detail.Provenance = r.attachProvenance(jsonlPath, false, skipped)
+		return detail, nil
 	}
 
 	if modelName != "" {
@@ -415,8 +458,27 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	detail.Provenance = r.attachProvenance(jsonlPath, len(turns) > 0, skipped)
 
 	return detail, nil
+}
+
+func (r *ClaudeReader) attachProvenance(jsonlPath string, hasBody bool, skipped int) *model.SessionProvenance {
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(jsonlPath, r.claudeRoot()),
+		Warnings:          warnings,
+		HasReplayableBody: hasBody,
+	})
+	return &p
 }
 
 func (r *ClaudeReader) findSessionFile(sessionID string) string {
@@ -447,17 +509,22 @@ func (r *ClaudeReader) findSessionFile(sessionID string) string {
 	return ""
 }
 
+func (r *ClaudeReader) knownSessionFile(sessionID string) string {
+	r.pathsMu.RLock()
+	defer r.pathsMu.RUnlock()
+	return r.paths[sessionID]
+}
+
 // ---- Event parsing ----
 
-func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
+func parseClaudeEvents(path string) (turns []model.TurnVM, modelName string, skipped int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer f.Close()
 
 	var (
-		turns       []model.TurnVM
 		foundModel  string
 		currentTurn *model.TurnVM
 		toolUseMap  = make(map[string]string)
@@ -468,8 +535,13 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
 	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytesTrimSpace(line)) == 0 {
+			continue
+		}
 		var evt claudeEvent
-		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+		if err := json.Unmarshal(line, &evt); err != nil {
+			skipped++
 			continue
 		}
 
@@ -601,7 +673,11 @@ func parseClaudeEvents(path string) ([]model.TurnVM, string, error) {
 	}
 
 	_ = toolUseMap
-	return turns, foundModel, scanner.Err()
+	return turns, foundModel, skipped, scanner.Err()
+}
+
+func bytesTrimSpace(b []byte) []byte {
+	return []byte(strings.TrimSpace(string(b)))
 }
 
 func cleanUserContent(s string) string {

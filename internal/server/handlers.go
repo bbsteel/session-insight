@@ -66,6 +66,13 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		collabSummaries = nil
 	}
 
+	// Compact record status (no paths). Missing rows stay omitted (unavailable).
+	recordStatuses, err := s.DB.ListProvenanceStatusByAgent(agentFilter)
+	if err != nil {
+		log.Printf("GET /api/sessions: ListProvenanceStatusByAgent: %v", err)
+		recordStatuses = nil
+	}
+
 	overrides := s.titleOverrides()
 	sessions := make([]SessionSummary, 0, len(list))
 	for _, sess := range list {
@@ -92,6 +99,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 				Precision:    agg.Precision,
 				ReasonCode:   agg.ReasonCode,
 			}
+		}
+		if st, ok := recordStatuses[sess.AgentType+"\x00"+sess.ID]; ok {
+			summary.RecordStatus = st
 		}
 		sessions = append(sessions, summary)
 	}
@@ -151,6 +161,12 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 			if t, _ := s.DB.TitleOverride(detail.AgentType, detail.ID); t != "" {
 				detail.Name = t
 			}
+			// Prefer live reader provenance; if absent, hydrate stored snapshot.
+			if detail.Provenance == nil {
+				if p, ok, _ := s.DB.GetProvenance(detail.AgentType, detail.ID); ok {
+					detail.Provenance = p
+				}
+			}
 		}
 
 		static, ok := reader.AgentDefinition(detail.AgentType)
@@ -180,7 +196,115 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reader could not produce a body: if the session is indexed, return a
+	// 200 metadata/provenance envelope instead of 404 (never-indexed stays 404).
+	if s.DB != nil {
+		if envelope, ok := s.metadataEnvelope(id); ok {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(envelope)
+			return
+		}
+	}
+
 	http.Error(w, "session not found", http.StatusNotFound)
+}
+
+// metadataEnvelope builds a 200 detail payload for indexed sessions whose
+// live source is missing, metadata-only, or parser-unsupported.
+func (s *Server) metadataEnvelope(id string) (sessionDetailResponse, bool) {
+	sess, ok, err := s.DB.FindSessionRowByID(id)
+	if err != nil || !ok {
+		return sessionDetailResponse{}, false
+	}
+	detail := &model.SessionDetail{
+		Session: sess,
+		Turns:   []model.TurnVM{},
+	}
+	falseVal := false
+	detail.RecordAvailable = &falseVal
+	if p, ok, _ := s.DB.GetProvenance(sess.AgentType, sess.ID); ok {
+		detail.Provenance = p
+	}
+	// Never invent complete when no provenance row exists.
+	if note, bookmarked, err := s.DB.GetBookmark(sess.AgentType, sess.ID); err == nil {
+		detail.Bookmarked = bookmarked
+		if bookmarked {
+			detail.BookmarkNote = note
+		}
+	}
+	if t, _ := s.DB.TitleOverride(sess.AgentType, sess.ID); t != "" {
+		detail.Name = t
+	}
+
+	var resolved capability.SessionCapabilities
+	static, hasStatic := reader.AgentDefinition(sess.AgentType)
+	if hasStatic {
+		// Find matching reader if present for capability resolution; otherwise
+		// resolve from static declaration only via a nil-reader-safe path.
+		var rd reader.BaseSessionReader
+		for _, r := range s.Readers {
+			if r.AgentType() == sess.AgentType {
+				rd = r
+				break
+			}
+		}
+		if rd != nil {
+			if caps, err := reader.ResolveSessionCapabilities(rd, detail, static); err == nil {
+				resolved = caps
+				detail.IsLive = resolved.Liveness.IsLive
+			}
+		} else {
+			resolved = capability.SessionCapabilities{
+				AgentType:       static.AgentType,
+				AdapterRevision: static.AdapterRevision,
+			}
+		}
+	}
+	return sessionDetailResponse{SessionDetail: detail, AgentCapabilities: resolved}, true
+}
+
+// handleRemoveFromIndex deletes SI index data for a source_missing tombstone
+// without touching the agent source (which is already gone).
+func (s *Server) handleRemoveFromIndex(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+	agentType := strings.TrimSpace(r.URL.Query().Get("agent"))
+	if agentType == "" {
+		http.Error(w, "missing agent type", http.StatusBadRequest)
+		return
+	}
+	if s.DB == nil {
+		http.Error(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+	sess, ok, err := s.DB.GetSessionRow(agentType, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	missing, err := s.DB.IsSourceMissing(sess.AgentType, sess.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !missing {
+		http.Error(w, "only source_missing records can be removed from the index via this endpoint", http.StatusConflict)
+		return
+	}
+	if err := s.DB.DeleteSessionData(sess.AgentType, sess.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Broadcast so every client (including the actor) drops the row from the sidebar.
+	s.NotifySessionsChanged()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // titleOverrides returns the display-title override map keyed by
@@ -893,13 +1017,32 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Mark historical index hits for non-replayable provenance states.
+	staleKeys := map[string]bool{}
+	if s.DB != nil && len(results) > 0 {
+		if statuses, err := s.DB.ListProvenanceStatusByAgent(""); err == nil {
+			for k, st := range statuses {
+				if st == nil {
+					continue
+				}
+				switch st.State {
+				case model.RecordSourceMissing, model.RecordMetadataOnly, model.RecordParserUnsupported:
+					staleKeys[k] = true
+				}
+			}
+		}
+	}
+
 	type result struct {
-		SessionID string `json:"session_id"`
-		AgentType string `json:"agent_type"`
-		Project   string `json:"project"`
-		Name      string `json:"name"`
-		UpdatedAt string `json:"updated_at"`
-		Match     string `json:"match"`
+		SessionID     string `json:"session_id"`
+		AgentType     string `json:"agent_type"`
+		Project       string `json:"project"`
+		Name          string `json:"name"`
+		UpdatedAt     string `json:"updated_at"`
+		Match         string `json:"match"`
+		SourceMissing bool   `json:"source_missing,omitempty"`
+		// Stale is an alias signal for historical-index hits (source missing).
+		Stale bool `json:"stale,omitempty"`
 	}
 	out := make([]result, 0, len(results))
 	for _, r := range results {
@@ -908,13 +1051,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if !meta.UpdatedAt.IsZero() {
 			updatedAt = model.FormatTime(meta.UpdatedAt)
 		}
+		key := r.AgentType + "\x00" + r.SessionID
+		stale := staleKeys[key]
 		out = append(out, result{
-			SessionID: r.SessionID,
-			AgentType: r.AgentType,
-			Project:   meta.Project,
-			Name:      meta.Name,
-			UpdatedAt: updatedAt,
-			Match:     r.Match,
+			SessionID:     r.SessionID,
+			AgentType:     r.AgentType,
+			Project:       meta.Project,
+			Name:          meta.Name,
+			UpdatedAt:     updatedAt,
+			Match:         r.Match,
+			SourceMissing: stale,
+			Stale:         stale,
 		})
 	}
 

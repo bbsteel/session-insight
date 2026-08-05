@@ -6,6 +6,17 @@ import (
 	"github.com/bbsteel/session-insight/internal/model"
 )
 
+// DetailedSessionLister is an optional discovery path that reports whether the
+// list is a complete inventory. When complete is false, the indexer must not
+// tombstone sessions absent from the list (entries may have been skipped as
+// unreadable). Prefer this over ListSessions when present.
+//
+// Implementations live in adapter packages and must not import this package
+// (import cycle via registry); structural interface satisfaction is enough.
+type DetailedSessionLister interface {
+	ListSessionsDetailed() (sessions []model.Session, complete bool, err error)
+}
+
 type BaseSessionReader interface {
 	AgentType() string
 	DisplayName() string

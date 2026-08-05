@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -63,9 +65,14 @@ func (r *CodexReader) ReadIndexSnapshot(ctx context.Context, session model.Sessi
 	}
 	path := r.findSessionFile(session.ID)
 	if path == "" {
-		return nil, nil, fmt.Errorf("codex session not found: %s", session.ID)
+		readErr := readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("codex session not found: %s", session.ID))
+		if known := r.knownSessionFile(session.ID); known != "" {
+			readErr.WithSources(sourceInventory(known))
+		}
+		return nil, nil, readErr
 	}
-	events, err := codexToRenderEvents(path)
+	events, skipped, err := codexToRenderEventsDetailed(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -75,11 +82,11 @@ func (r *CodexReader) ReadIndexSnapshot(ctx context.Context, session model.Sessi
 			return detail, events, err
 		}
 	}
-	detail := indexDetailFromEvents(session, events)
+	detail := indexDetailFromEvents(session, events, path, skipped)
 	return detail, events, nil
 }
 
-func indexDetailFromEvents(session model.Session, events []model.RenderEvent) *model.SessionDetail {
+func indexDetailFromEvents(session model.Session, events []model.RenderEvent, path string, skipped int) *model.SessionDetail {
 	turns := make([]model.TurnVM, 0)
 	ensureTurn := func(index int) *model.TurnVM {
 		for len(turns) <= index {
@@ -113,6 +120,23 @@ func indexDetailFromEvents(session model.Session, events []model.RenderEvent) *m
 	session.TurnCount = len(turns)
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	if path != "" {
+		var warnings []model.ParseWarning
+		if skipped > 0 {
+			warnings = append(warnings, provenance.Warning(
+				model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+				[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+			))
+		}
+		p := provenance.Build(provenance.Input{
+			CapturedAt:        time.Now().UTC(),
+			AdapterRevision:   Capabilities().AdapterRevision,
+			Sources:           sourceInventory(path),
+			Warnings:          warnings,
+			HasReplayableBody: len(turns) > 0,
+		})
+		detail.Provenance = &p
+	}
 	return detail
 }
 
@@ -320,9 +344,16 @@ func parseTimestamp(ts string) time.Time {
 // ---- ListSessions ----
 
 func (r *CodexReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+func (r *CodexReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	var files []string
-	err := filepath.WalkDir(r.sessionsDir, func(path string, d os.DirEntry, err error) error {
+	walkIncomplete := false
+	err = filepath.WalkDir(r.sessionsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
+			walkIncomplete = true
 			return nil
 		}
 		if !d.IsDir() && strings.HasSuffix(d.Name(), ".jsonl") {
@@ -331,12 +362,13 @@ func (r *CodexReader) ListSessions() ([]model.Session, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	type result struct {
 		session model.Session
 		ok      bool
+		skip    bool
 	}
 	results := make(chan result, len(files))
 	sem := make(chan struct{}, 20)
@@ -348,17 +380,25 @@ func (r *CodexReader) ListSessions() ([]model.Session, error) {
 		go func(path string) {
 			defer func() { <-sem; wg.Done() }()
 			if sess, ok := readSessionMeta(path); ok {
-				results <- result{sess, true}
+				results <- result{session: sess, ok: true}
+				return
+			}
+			if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
+				results <- result{skip: true}
 			}
 		}(f)
 	}
 	wg.Wait()
 	close(results)
 
-	var sessions []model.Session
+	complete = !walkIncomplete
 	paths := make(map[string]string, len(files))
-	for r := range results {
-		sessions = append(sessions, r.session)
+	for res := range results {
+		if res.ok {
+			sessions = append(sessions, res.session)
+		} else if res.skip {
+			complete = false
+		}
 	}
 	for _, path := range files {
 		paths[strings.TrimSuffix(filepath.Base(path), ".jsonl")] = path
@@ -371,7 +411,7 @@ func (r *CodexReader) ListSessions() ([]model.Session, error) {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
 
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func readSessionMeta(jsonlPath string) (model.Session, bool) {
@@ -566,15 +606,23 @@ func resolveName(firstUserMsg string, createdAt time.Time) string {
 func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	jsonlPath := r.findSessionFile(id)
 	if jsonlPath == "" {
-		return nil, fmt.Errorf("codex session not found: %s", id)
+		readErr := readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("codex session not found: %s", id))
+		if known := r.knownSessionFile(id); known != "" {
+			readErr.WithSources(sourceInventory(known))
+		}
+		return nil, readErr
 	}
 
 	session, ok := readSessionMeta(jsonlPath)
 	if !ok {
-		return nil, fmt.Errorf("failed to read codex session: %s", id)
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("failed to read codex session: %s", id)).
+			WithSources(sourceInventory(jsonlPath)).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRolePrimaryTranscript)})
 	}
 
-	parsed, modelName, modelProvider := parseCodexEvents(jsonlPath)
+	parsed, modelName, modelProvider, skipped := parseCodexEvents(jsonlPath)
 	if modelName != "" {
 		session.ModelName = modelName
 	}
@@ -590,6 +638,21 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: parsed.Active, RollbackGroups: parsed.RollbackGroups}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(parsed.Active)
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(jsonlPath),
+		Warnings:          warnings,
+		HasReplayableBody: len(parsed.Active) > 0,
+	})
+	detail.Provenance = &p
 
 	return detail, nil
 }
@@ -621,6 +684,15 @@ func (r *CodexReader) findSessionFile(sessionID string) string {
 	return found
 }
 
+// knownSessionFile returns the last discovered path without requiring it to
+// still exist. Read failures use it to persist a missing source inventory when
+// the file disappears between discovery and detail capture.
+func (r *CodexReader) knownSessionFile(sessionID string) string {
+	r.pathsMu.RLock()
+	defer r.pathsMu.RUnlock()
+	return r.paths[sessionID]
+}
+
 // ---- Event parsing ----
 
 type codexParsedTurns struct {
@@ -640,10 +712,10 @@ type codexRollbackAttempt struct {
 	removed   []*codexTurnAttempt
 }
 
-func parseCodexEvents(path string) (codexParsedTurns, string, string) {
+func parseCodexEvents(path string) (codexParsedTurns, string, string, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return codexParsedTurns{}, "", ""
+		return codexParsedTurns{}, "", "", 0
 	}
 	defer f.Close()
 
@@ -657,6 +729,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 		turnStartTS   string
 		pendingGoal   string
 		lastGoal      string
+		skipped       int
 	)
 
 	scanner := bufio.NewScanner(f)
@@ -665,6 +738,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 	for scanner.Scan() {
 		var evt codexEvent
 		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			skipped++
 			continue
 		}
 
@@ -954,7 +1028,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 		}
 	}
 
-	return result, foundModel, foundProvider
+	return result, foundModel, foundProvider, skipped
 }
 
 // ---- RenderEvent adapter ----
@@ -1001,9 +1075,14 @@ func codexRenderAttemptVisible(a *codexRenderAttempt) bool {
 // codexToRenderEvents parses a Codex JSONL session file into a flat
 // []model.RenderEvent stream suitable for render.FormatEvents.
 func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
+	events, _, err := codexToRenderEventsDetailed(path)
+	return events, err
+}
+
+func codexToRenderEventsDetailed(path string) ([]model.RenderEvent, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer f.Close()
 
@@ -1018,6 +1097,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		completed    = make(map[string]bool)   // patch_apply_end already emitted the result
 		cellTasks    = make(map[string]codexCellTask)
 		waitTasks    = make(map[string]codexCellTask)
+		skipped      int
 
 		// Codex rollouts carry explicit turn brackets: task_started opens a
 		// turn, task_complete / turn_aborted closes it. An open bracket at
@@ -1050,6 +1130,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 	for scanner.Scan() {
 		var evt codexEvent
 		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			skipped++
 			continue
 		}
 
@@ -1059,6 +1140,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		case "event_msg":
 			var p codexPayload
 			if json.Unmarshal(evt.Payload, &p) != nil {
+				skipped++
 				continue
 			}
 			switch p.Type {
@@ -1315,7 +1397,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, skipped, err
 	}
 
 	visible := make(map[*codexRenderAttempt]bool, len(attempts))
@@ -1413,7 +1495,7 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 		appendAttempt(attempt, false)
 	}
 
-	return events, nil
+	return events, skipped, nil
 }
 
 // parseArguments attempts to unmarshal a JSON string into map[string]any.

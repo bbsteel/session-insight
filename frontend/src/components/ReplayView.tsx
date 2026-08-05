@@ -4,8 +4,10 @@ import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePat
 import { extractTerminalUrl } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
 import { sessionCapabilityHeaderHint, sessionTokenHeaderDisplay } from '../capabilityPresentation'
+import { presentFromSession, recordStatusLabel, toneClass } from '../recordStatusPresentation'
 import AgentIcon from './AgentIcon'
 import SessionCapabilityPanel from './SessionCapabilityPanel'
+import RecordStatusPanel from './RecordStatusPanel'
 import AgentCapabilityCompareDialog from './AgentCapabilityCompareDialog'
 import CollaborationDock, {
   DEFAULT_DOCK_HEIGHT_PX,
@@ -109,6 +111,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
+  const [recordPanelOpen, setRecordPanelOpen] = useState(false)
+  const [degradedBannerDismissed, setDegradedBannerDismissed] = useState(false)
+  useEffect(() => {
+    setDegradedBannerDismissed(false)
+    setRecordPanelOpen(false)
+  }, [sessionId])
   const [capCompareOpen, setCapCompareOpen] = useState(false)
   const [agentsCatalog, setAgentsCatalog] = useState<AgentInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -1402,24 +1410,93 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   )
 
   // turns may be null from older backends / nil Go slices — never touch .length bare.
-  if (!session || !(session.turns?.length)) return (
-    <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
-      <GlobalSearch onSelect={onSelect} />
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center px-6">
-          <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
-          <h3 className="text-body font-medium text-[var(--text-primary)]">
-            {session ? t('replay.noReplay') : t('replay.noSessions')}
-          </h3>
-          <p className="text-helper text-[var(--text-muted)] mt-1">
-            {session
-              ? t('replay.createdNoTurns')
-              : t('replay.agentHint')}
-          </p>
+  // Non-replayable record states get a dedicated empty state (never “0 turns success”).
+  if (!session || !(session.turns?.length)) {
+    const rec = session ? presentFromSession(session) : null
+    const emptyKey = rec?.emptyStateKey
+    return (
+      <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
+        <GlobalSearch onSelect={onSelect} />
+        {session && (
+          <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setCapPanelOpen(true)
+                if (agentsCatalog.length === 0) {
+                  void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
+                }
+              }}
+              className="h-7 max-w-[11rem] rounded-md border border-[var(--border-default)] px-2 inline-flex items-center gap-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
+              aria-label={t('capability.session.openButton')}
+              data-testid="session-agent-capability-button"
+            >
+              <AgentIcon agentType={session.agent_type} size={16} />
+              <span className="truncate">{session.agent_type}</span>
+            </button>
+            {rec && (
+              <button
+                type="button"
+                onClick={() => setRecordPanelOpen(true)}
+                className={`h-7 max-w-[12rem] rounded-md border px-2 inline-flex items-center gap-1.5 text-nav ${toneClass(rec.tone)}`}
+                aria-label={t('record.pill.open')}
+                data-testid="session-record-status-button"
+              >
+                <span className="truncate">{recordStatusLabel(rec, t)}</span>
+              </button>
+            )}
+          </header>
+        )}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center px-6 max-w-md" data-testid="record-empty-state">
+            <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
+            <h3 className="text-body font-medium text-[var(--text-primary)]">
+              {emptyKey && rec
+                ? recordStatusLabel(rec, t)
+                : session
+                  ? t('replay.noReplay')
+                  : t('replay.noSessions')}
+            </h3>
+            <p className="text-helper text-[var(--text-muted)] mt-1">
+              {emptyKey
+                ? t(emptyKey)
+                : session
+                  ? t('replay.createdNoTurns')
+                  : t('replay.agentHint')}
+            </p>
+            {emptyKey && (
+              <p className="text-meta text-[var(--text-muted)] mt-2">{t('record.empty.notSuccess')}</p>
+            )}
+            {session && emptyKey && (
+              <button
+                type="button"
+                className="mt-3 rounded-md border border-[var(--border-default)] px-3 py-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
+                onClick={() => setRecordPanelOpen(true)}
+              >
+                {t('record.pill.open')}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-    </main>
-  )
+        {session && (
+          <>
+            <SessionCapabilityPanel
+              open={capPanelOpen}
+              session={session}
+              agentInfo={agentsCatalog.find(a => a.type === session.agent_type) ?? null}
+              onClose={() => setCapPanelOpen(false)}
+            />
+            <RecordStatusPanel
+              open={recordPanelOpen}
+              session={session}
+              onClose={() => setRecordPanelOpen(false)}
+              onRemovedFromIndex={() => onSelect?.('')}
+            />
+          </>
+        )}
+      </main>
+    )
+  }
 
   // Chrys reports exact usage only at session level, so its per-turn buckets
   // are empty. Prefer the session bill when present and keep the turn sum as
@@ -1495,6 +1572,20 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               </span>
             )}
           </button>
+          {session && (() => {
+            const rec = presentFromSession(session)
+            return (
+              <button
+                type="button"
+                onClick={() => setRecordPanelOpen(true)}
+                className={`h-7 max-w-[12rem] rounded-md border px-2 inline-flex items-center gap-1.5 text-nav hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${toneClass(rec.tone)}`}
+                aria-label={t('record.pill.open')}
+                data-testid="session-record-status-button"
+              >
+                <span className="truncate">{recordStatusLabel(rec, t)}</span>
+              </button>
+            )
+          })()}
           {bookmarkError && (
             <span className="text-meta text-[var(--error)]" role="status">
               {t(bookmarkError)}
@@ -1649,6 +1740,33 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           Turn ?/{session.turn_count}
         </span>
       </header>
+
+      {presentFromSession(session).state === 'degraded' && !degradedBannerDismissed && (
+        <div
+          className="flex-shrink-0 flex items-center justify-between gap-2 border-b border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-1.5 text-meta text-[var(--warning)]"
+          data-testid="record-degraded-banner"
+          role="status"
+        >
+          <span>{t('record.banner.degraded')}</span>
+          <div className="flex items-center gap-2">
+            <button type="button" className="underline" onClick={() => setRecordPanelOpen(true)}>
+              {t('record.pill.open')}
+            </button>
+            <button type="button" className="underline" onClick={() => setDegradedBannerDismissed(true)}>
+              {t('record.banner.dismiss')}
+            </button>
+          </div>
+        </div>
+      )}
+      {presentFromSession(session).state === 'degraded' && degradedBannerDismissed && (
+        <button
+          type="button"
+          className="flex-shrink-0 self-start px-3 py-0.5 text-meta text-[var(--warning)] underline"
+          onClick={() => setDegradedBannerDismissed(false)}
+        >
+          {t('record.banner.reopen')}
+        </button>
+      )}
 
       {showHelp && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(0,0,0,var(--opacity-overlay))]" onClick={() => setShowHelp(false)}>
@@ -1850,6 +1968,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
           }
         }}
+      />
+      <RecordStatusPanel
+        open={recordPanelOpen}
+        session={session}
+        onClose={() => setRecordPanelOpen(false)}
+        onRemovedFromIndex={() => onSelect?.('')}
       />
       <AgentCapabilityCompareDialog
         open={capCompareOpen}

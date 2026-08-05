@@ -16,6 +16,8 @@ import (
 
 	"github.com/bbsteel/session-insight/internal/collaboration"
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -104,12 +106,17 @@ func scanPreviewText(eventsPath string) string {
 }
 
 func (r *CopilotReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+func (r *CopilotReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	entries, err := os.ReadDir(r.sessionDir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	var sessions []model.Session
+	complete = true
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -118,17 +125,24 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 		// Only list sessions that have events.jsonl
 		eventsPath := filepath.Join(r.sessionDir, entry.Name(), "events.jsonl")
 		if _, err := os.Stat(eventsPath); err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 
 		wsPath := filepath.Join(r.sessionDir, entry.Name(), "workspace.yaml")
 		data, err := os.ReadFile(wsPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 
 		var ws workspaceYAML
 		if err := yaml.Unmarshal(data, &ws); err != nil {
+			complete = false
 			continue
 		}
 
@@ -170,7 +184,7 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
 
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func toSession(ws workspaceYAML) model.Session {
@@ -208,20 +222,33 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	wsPath := filepath.Join(r.sessionDir, id, "workspace.yaml")
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
-		return nil, fmt.Errorf("session not found: %s", id)
+		sources := sourceInventory(r.sessionDir, id)
+		if os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing",
+				fmt.Errorf("session not found: %s", id)).WithSources(sources)
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("read workspace.yaml: %w", err)).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 
 	var ws workspaceYAML
 	if err := yaml.Unmarshal(data, &ws); err != nil {
-		return nil, fmt.Errorf("invalid workspace.yaml: %w", err)
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("invalid workspace.yaml: %w", err)).
+			WithSources(sourceInventory(r.sessionDir, id)).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 
 	session := toSession(ws)
 
 	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
-	turns, modelName, err := parseEventsJSONL(eventsPath)
+	turns, modelName, skipped, err := parseEventsJSONL(eventsPath)
 	if err != nil {
-		return &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}, nil
+		detail := &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}
+		detail.Provenance = r.attachProvenance(id, false, true, skipped)
+		return detail, nil
 	}
 
 	if modelName != "" {
@@ -240,6 +267,7 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	// Anomaly detection
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	detail.Provenance = r.attachProvenance(id, len(turns) > 0, false, skipped)
 
 	// MissingShutdown check (copilot-specific: session.shutdown event).
 	// The same event carries the session bill (tokenDetails / modelMetrics /
@@ -261,6 +289,30 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	}
 
 	return detail, nil
+}
+
+func (r *CopilotReader) attachProvenance(sessionID string, hasBody, eventsMissing bool, malformed int) *model.SessionProvenance {
+	var warnings []model.ParseWarning
+	if eventsMissing {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnSidecarMissing, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, 1,
+		))
+	}
+	if malformed > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, malformed,
+		))
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(r.sessionDir, sessionID),
+		Warnings:          warnings,
+		HasReplayableBody: hasBody,
+	})
+	return &p
 }
 
 // parseShutdownBilling converts a session.shutdown payload into the canonical
@@ -351,15 +403,16 @@ func nestedMap(data map[string]any, key string) map[string]any {
 	return nil
 }
 
-func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
+func parseEventsJSONL(path string) ([]model.TurnVM, string, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer f.Close()
 
 	var turns []model.TurnVM
 	var foundModel string
+	var skipped int
 	var toolStarts = make(map[string]string) // toolCallId -> toolName
 	var currentTurn *model.TurnVM
 	var turnStartTimestamp string
@@ -369,6 +422,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 	for scanner.Scan() {
 		var evt jsonlEvent
 		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			skipped++
 			continue
 		}
 
@@ -482,7 +536,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 		turns = append(turns, *currentTurn)
 	}
 
-	return turns, foundModel, scanner.Err()
+	return turns, foundModel, skipped, scanner.Err()
 }
 
 func extractString(data map[string]any, key string) (string, bool) {

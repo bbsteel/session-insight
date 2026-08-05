@@ -3,6 +3,7 @@ package opencode
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -157,6 +160,20 @@ type toolInfo struct {
 // ---- ListSessions ----
 
 func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+// ListSessionsDetailed is a full SQL inventory (authoritative when the query succeeds).
+func (r *OpenCodeReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
+	sessions, err = r.listSessions()
+	if err != nil {
+		return nil, false, err
+	}
+	return sessions, true, nil
+}
+
+func (r *OpenCodeReader) listSessions() ([]model.Session, error) {
 	rows, err := r.db.Query(`
 		SELECT s.id, s.directory, s.title,
 		       s.time_created, s.time_updated, s.time_archived,
@@ -233,10 +250,16 @@ func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
 func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 	meta, err := r.readSessionMeta(id)
 	if err != nil {
-		return nil, err
+		sources := sourceInventory(r.dbPath)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing", err).WithSources(sources)
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRolePrimaryTranscript)})
 	}
 
-	turns, modelName, modelProvider, billing := r.parseMessages(id)
+	turns, modelName, modelProvider, billing, skipped := r.parseMessages(id)
 	if modelName != "" && meta.ModelName == "" {
 		meta.ModelName = modelName
 	}
@@ -249,6 +272,21 @@ func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	detail := &model.SessionDetail{Session: meta, Turns: turns, Todos: todos, Billing: billing}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(r.dbPath),
+		Warnings:          warnings,
+		HasReplayableBody: len(turns) > 0,
+	})
+	detail.Provenance = &p
 	return detail, nil
 }
 
@@ -264,7 +302,10 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 		FROM session WHERE id = ?
 	`, id).Scan(&directory, &title, &timeCreated, &timeUpdated, &timeArchived, &modelJSON)
 	if err != nil {
-		return model.Session{}, fmt.Errorf("openCode session not found: %s", id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.Session{}, fmt.Errorf("openCode session not found: %s: %w", id, sql.ErrNoRows)
+		}
+		return model.Session{}, fmt.Errorf("openCode session read: %w", err)
 	}
 
 	modelName := ""
@@ -296,14 +337,14 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 
 // ---- Message/Turn parsing ----
 
-func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string, string, *model.SessionBilling) {
+func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string, string, *model.SessionBilling, int) {
 	rows, err := r.db.Query(`
 		SELECT id, time_created, data FROM message
 		WHERE session_id = ?
 		ORDER BY time_created ASC
 	`, sessionID)
 	if err != nil {
-		return nil, "", "", nil
+		return nil, "", "", nil, 0
 	}
 	defer rows.Close()
 
@@ -313,9 +354,11 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 		data        string
 	}
 	var msgs []row
+	var skipped int
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.id, &r.timeCreated, &r.data); err != nil {
+			skipped++
 			continue
 		}
 		msgs = append(msgs, r)
@@ -332,6 +375,7 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 	for _, m := range msgs {
 		var base msgBase
 		if json.Unmarshal([]byte(m.data), &base) != nil {
+			skipped++
 			continue
 		}
 		switch base.Role {
@@ -349,6 +393,8 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 					foundProvider = a.ProviderID
 				}
 				accumulateModelUsage(byModel, &totalCost, a)
+			} else {
+				skipped++
 			}
 		}
 	}
@@ -366,7 +412,8 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 			Events:    []model.EventVM{},
 		}
 
-		uParts := r.readParts(uMsg.id)
+		uParts, partSkipped := r.readParts(uMsg.id)
+		skipped += partSkipped
 		turn.UserMessage = strings.Join(uParts.Texts, "\n")
 
 		var turnStartedAt, turnCompletedAt int64
@@ -406,7 +453,8 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 				}
 			}
 
-			aParts := r.readParts(aMsg.id)
+			aParts, partSkipped := r.readParts(aMsg.id)
+			skipped += partSkipped
 			turn.AssistantMessage += strings.Join(aParts.Texts, "\n")
 			if len(aParts.Reasoning) > 0 {
 				reasoning := strings.Join(aParts.Reasoning, "\n")
@@ -441,7 +489,7 @@ func (r *OpenCodeReader) parseMessages(sessionID string) ([]model.TurnVM, string
 		turns = append(turns, turn)
 	}
 
-	return turns, foundModel, foundProvider, buildBilling(byModel, totalCost)
+	return turns, foundModel, foundProvider, buildBilling(byModel, totalCost), skipped
 }
 
 // accumulateModelUsage folds one assistant message into the per-model bill.
@@ -497,25 +545,28 @@ func buildBilling(byModel map[string]*model.ModelUsage, totalCost float64) *mode
 	return b
 }
 
-func (r *OpenCodeReader) readParts(messageID string) resolvedParts {
+func (r *OpenCodeReader) readParts(messageID string) (resolvedParts, int) {
 	rows, err := r.db.Query(`
 		SELECT data FROM part
 		WHERE message_id = ?
 		ORDER BY id ASC
 	`, messageID)
 	if err != nil {
-		return resolvedParts{}
+		return resolvedParts{}, 0
 	}
 	defer rows.Close()
 
 	var out resolvedParts
+	var skipped int
 	for rows.Next() {
 		var data string
 		if err := rows.Scan(&data); err != nil {
+			skipped++
 			continue
 		}
 		var p partData
 		if json.Unmarshal([]byte(data), &p) != nil {
+			skipped++
 			continue
 		}
 		switch p.Type {
@@ -547,7 +598,7 @@ func (r *OpenCodeReader) readParts(messageID string) resolvedParts {
 			}
 		}
 	}
-	return out
+	return out, skipped
 }
 
 // ---- Todo ----
