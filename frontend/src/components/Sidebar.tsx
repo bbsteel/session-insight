@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { addBookmark, fetchAgents, fetchSearch, fetchSessions, fetchVersion, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
-import type { AgentInfo, SessionSummary } from '../types'
+import { addBookmark, fetchAgents, fetchResumePlan, fetchSearch, fetchSessions, fetchVersion, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
+import type { AgentInfo, ResumePlan, SessionSummary } from '../types'
 import { applyBookmarkChange, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
@@ -14,7 +14,6 @@ import StarIcon from './StarIcon'
 import { InfoIcon } from './icons'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
-import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
 import { modelMeta } from '../modelMeta'
 import { formatDate, formatNumber, useI18n } from '../i18n'
 import { openOnModifiedClick, openSessionInNewTab } from '../sessionLink'
@@ -58,10 +57,6 @@ function sessionMatchesModelFilter(s: Pick<SessionSummary, 'model_name' | 'model
   if (filter.startsWith('provider\x00')) return sessionModelProviderKey(s) === filter
   if (filter.startsWith('model\x00')) return sessionModelKey(s) === filter
   return sessionModelProviderKey(s) === filter || sessionModelKey(s) === filter
-}
-
-function hostIsWindows(): boolean {
-  return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform)
 }
 
 interface ContextMenuState {
@@ -143,12 +138,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [contextResumePlan, setContextResumePlan] = useState<ResumePlan | null>(null)
   const [noteEditorSession, setNoteEditorSession] = useState<SessionSummary | null>(null)
   const [notePopover, setNotePopover] = useState<{ session: BookmarkNoteTarget; anchor: BookmarkNoteAnchor } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   // 活跃会话点「复制恢复命令」不直接复制，先弹窗确认——对同一会话开第二个
   // CLI 实例可能与正在写入的进程双写冲突。
-  const [resumeConfirm, setResumeConfirm] = useState<{ session: SessionSummary; shell: ResumeShell; mode: ResumeCommandMode } | null>(null)
+  const [resumeConfirm, setResumeConfirm] = useState<{ session: SessionSummary; unsafe: boolean } | null>(null)
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   )
@@ -192,6 +188,24 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [isMobile, onClose, contextMenu])
+
+  useEffect(() => {
+    const session = contextMenu?.session
+    if (!session) {
+      setContextResumePlan(null)
+      return
+    }
+    let cancelled = false
+    setContextResumePlan(null)
+    void fetchResumePlan(session.id, session.agent_type)
+      .then(plan => {
+        if (!cancelled) setContextResumePlan(plan)
+      })
+      .catch(() => {
+        if (!cancelled) setContextResumePlan(null)
+      })
+    return () => { cancelled = true }
+  }, [contextMenu])
 
   // Load all sessions once on mount — agent/search filters are client-side
   useEffect(() => {
@@ -357,13 +371,15 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [showToast, t])
 
-  const copyResumeCmd = useCallback(async (session: SessionSummary, shell: ResumeShell, mode: ResumeCommandMode) => {
-    const option = getResumeCommandOptions(session).find(item => item.shell === shell && item.mode === mode)
-    if (!option) return
+  const copyResumeCmd = useCallback(async (session: SessionSummary, unsafe: boolean) => {
     try {
-      await navigator.clipboard.writeText(option.command)
-      writeStorage(getResumePreferenceKey(session), shell)
-      showToast(t('sidebar.copiedResume', { shell: shell === 'powershell' ? 'PowerShell' : 'Git Bash' }))
+      const plan = await fetchResumePlan(session.id, session.agent_type, unsafe)
+      if (!plan.command) {
+        showToast(t('sidebar.resumeUnsupported'))
+        return
+      }
+      await navigator.clipboard.writeText(plan.command)
+      showToast(t('sidebar.copiedResume'))
     } catch {
       showToast(t('sidebar.copyFailed'))
     }
@@ -1002,14 +1018,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </button>
             {(() => {
               const session = contextMenu.session
-              const stored = readStorage(getResumePreferenceKey(session))
-              const preferred = stored === 'powershell' || stored === 'git-bash' ? stored : null
-              const options = getResumeCommandOptions(session, preferred)
-              const isLive = isSessionLive(contextMenu.session, now)
-              const windows = isWindowsSession(session, hostIsWindows())
-              const visibleOptions = windows ? options : options.filter(option => option.shell === 'git-bash')
-              const disabled = visibleOptions.length === 0
-              if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={t('sidebar.resumeUnsupported')}>{t('sidebar.copyResume')}</button>
+              const plan = contextResumePlan
+              const isLive = plan?.liveness.is_live ?? isSessionLive(contextMenu.session, now)
+              if (!plan || !plan.command) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={plan ? t('sidebar.resumeUnsupported') : undefined}>{t('sidebar.copyResume')}</button>
               const rollbackInfo = (session.rolled_back_turn_count ?? 0) > 0
                 ? t('sidebar.rollbackInfo', { count: session.rolled_back_turn_count ?? 0, turn: session.turn_count })
                 : ''
@@ -1019,28 +1030,30 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                     ↩ {rollbackInfo}
                   </div>
                 )}
-                {visibleOptions.map(option => {
-                const shellLabel = windows ? option.shell === 'powershell' ? 'PowerShell' : 'Git Bash' : ''
-                const reason = option.reason === 'last-used' ? t('sidebar.lastUsed') : windows && option.reason === 'recommended' ? t('sidebar.recommended') : ''
-                const dangerous = option.mode === 'skip-permissions'
-                return (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+                  title={rollbackInfo || undefined}
+                  onClick={() => {
+                    if (isLive) setResumeConfirm({ session, unsafe: false })
+                    else void copyResumeCmd(session, false)
+                    setContextMenu(null)
+                  }}
+                >
+                  {t('sidebar.copyResume')}
+                </button>
+                {plan.supports_unsafe && (
                   <button
-                    key={`${option.shell}:${option.mode}`}
                     className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
-                    title={dangerous ? t('sidebar.unsafeHint', { rollback: rollbackInfo ? `; ${rollbackInfo}` : '' }) : rollbackInfo || undefined}
+                    title={t('sidebar.unsafeHint', { rollback: rollbackInfo ? `; ${rollbackInfo}` : '' })}
                     onClick={() => {
-                      if (isLive) setResumeConfirm({ session, shell: option.shell, mode: option.mode })
-                      else void copyResumeCmd(session, option.shell, option.mode)
+                      if (isLive) setResumeConfirm({ session, unsafe: true })
+                      else void copyResumeCmd(session, true)
                       setContextMenu(null)
                     }}
                   >
-                    {dangerous ? t('sidebar.copyResumeUnsafe') : t('sidebar.copyResume')}
-                    {(shellLabel || dangerous) && (
-                      <> ({[shellLabel, reason].filter(Boolean).join(', ')}{(shellLabel || reason) && dangerous ? ', ' : ''}{dangerous && <span className="text-[var(--error)]">{t('sidebar.unsafe')}</span>})</>
-                    )}
+                    {t('sidebar.copyResumeUnsafe')} (<span className="text-[var(--error)]">{t('sidebar.unsafe')}</span>)
                   </button>
-                )
-                })}
+                )}
               </>
             })()}
             {deletableAgents.has(contextMenu.session.agent_type) && (
@@ -1123,7 +1136,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 onClick={() => {
                   const target = resumeConfirm
                   setResumeConfirm(null)
-                  void copyResumeCmd(target.session, target.shell, target.mode)
+                  void copyResumeCmd(target.session, target.unsafe)
                 }}
                 className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white hover:opacity-90 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >

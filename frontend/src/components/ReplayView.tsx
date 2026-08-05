@@ -37,6 +37,7 @@ import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
 import { getNavOpenPref } from '../navPrefs'
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 import { openOnModifiedClick } from '../sessionLink'
+import ResumeTerminalControl from './ResumeTerminalControl'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -1532,8 +1533,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
       <GlobalSearch onSelect={onSelect} />
-      <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px' }}>
+      <header className="relative flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }}>
         <div className="flex items-center gap-2">
+          <ResumeTerminalControl session={session} />
           <button
             type="button"
             onClick={() => {

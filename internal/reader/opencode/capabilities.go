@@ -24,7 +24,12 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "opencode",
 		DisplayName:     "OpenCode",
-		AdapterRevision: 3,
+		AdapterRevision: 4,
+		ResumeCommand: &capability.ResumeCommandDeclaration{
+			Executable:   "opencode",
+			StandardArgs: []string{"-s", "{id}"},
+			UnsafeArgs:   []string{"--auto", "-s", "{id}"},
+		},
 		Capabilities: map[capability.CapabilityID]capability.CapabilityDeclaration{
 			capability.CapabilityDiscovery:   capability.Exact(),
 			capability.CapabilityReplay:      capability.Exact(),

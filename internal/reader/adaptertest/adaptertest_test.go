@@ -75,6 +75,9 @@ func validCaps(agentType, display string) capability.AgentCapabilities {
 		DisplayName:     display,
 		AdapterRevision: 1,
 		Capabilities:    caps,
+		ResumeCommand: &capability.ResumeCommandDeclaration{
+			Executable: agentType, StandardArgs: []string{"resume", "{id}"},
+		},
 	}
 }
 

@@ -81,6 +81,44 @@ func TestAgentDefinitionLookup(t *testing.T) {
 	}
 }
 
+func TestResumeCommandDeclarationsBuildNativeIdentity(t *testing.T) {
+	tests := []struct {
+		agent    string
+		standard []string
+		unsafe   []string
+		model    string
+	}{
+		{agent: "claude", standard: []string{"--resume", "native-id", "--model", "recorded-model"}, unsafe: []string{"--dangerously-skip-permissions", "--resume", "native-id", "--model", "recorded-model"}, model: "recorded-model"},
+		{agent: "codex", standard: []string{"resume", "native-id", "-m", "recorded-model"}, unsafe: []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "native-id", "-m", "recorded-model"}, model: "recorded-model"},
+		{agent: "opencode", standard: []string{"-s", "native-id"}, unsafe: []string{"--auto", "-s", "native-id"}},
+		{agent: "chrys", standard: []string{"-s", "native-id"}},
+		{agent: "grok", standard: []string{"--resume", "native-id"}, unsafe: []string{"--always-approve", "--resume", "native-id"}},
+		{agent: "hermes", standard: []string{"--resume", "native-id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			definition, ok := reader.AgentDefinition(tt.agent)
+			if !ok || definition.ResumeCommand == nil {
+				t.Fatalf("missing resume declaration for %s", tt.agent)
+			}
+			standard, ok := definition.ResumeCommand.BuildResumeArgs("native-id", tt.model, false)
+			if !ok || strings.Join(standard, "\x00") != strings.Join(tt.standard, "\x00") {
+				t.Fatalf("standard=%q want %q", standard, tt.standard)
+			}
+			unsafe, supported := definition.ResumeCommand.BuildResumeArgs("native-id", tt.model, true)
+			if len(tt.unsafe) == 0 {
+				if supported {
+					t.Fatalf("unexpected unsafe args %q", unsafe)
+				}
+				return
+			}
+			if !supported || strings.Join(unsafe, "\x00") != strings.Join(tt.unsafe, "\x00") {
+				t.Fatalf("unsafe=%q want %q", unsafe, tt.unsafe)
+			}
+		})
+	}
+}
+
 func TestAgentDefinitionsStableOrder(t *testing.T) {
 	a := agentTypes(reader.AgentDefinitions())
 	b := agentTypes(reader.AgentDefinitions())

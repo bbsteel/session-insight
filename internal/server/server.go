@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/terminal"
 )
 
 // IndexStatusProvider exposes FTS indexer progress for the search UI.
@@ -49,6 +51,10 @@ type Server struct {
 	// 重启，避免新进程撞上浏览器缓存的旧 ETag。
 	listRev   atomic.Int64
 	startNano int64
+
+	terminalLauncher terminal.Launcher
+	resumeMu         sync.Mutex
+	resumeInFlight   map[string]bool
 }
 
 // SetIndexStatus wires the indexer progress provider (call before Serve).
@@ -86,11 +92,13 @@ type SessionSummary struct {
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 	s := &Server{
-		DB:        database,
-		Readers:   readers,
-		Mux:       http.NewServeMux(),
-		events:    newEventHub(),
-		startNano: time.Now().UnixNano(),
+		DB:               database,
+		Readers:          readers,
+		Mux:              http.NewServeMux(),
+		events:           newEventHub(),
+		startNano:        time.Now().UnixNano(),
+		terminalLauncher: terminal.NewSystemLauncher(),
+		resumeInFlight:   make(map[string]bool),
 	}
 	s.registerRoutes()
 	return s
@@ -101,6 +109,10 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/resume", s.handleGetResumePlan)
+	s.Mux.HandleFunc("POST /api/sessions/{id}/resume", s.handleResumeSession)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/terminal", s.handleGetSessionTerminal)
+	s.Mux.HandleFunc("POST /api/sessions/{id}/terminal/focus", s.handleFocusSessionTerminal)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/collaboration", s.handleGetCollaboration)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	// Remove a source_missing tombstone from the SI index only (not agent source).

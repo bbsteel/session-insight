@@ -18,7 +18,11 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "chrys",
 		DisplayName:     "Chrys",
-		AdapterRevision: 2,
+		AdapterRevision: 3,
+		ResumeCommand: &capability.ResumeCommandDeclaration{
+			Executable:   "chrys",
+			StandardArgs: []string{"-s", "{id}"},
+		},
 		Capabilities: map[capability.CapabilityID]capability.CapabilityDeclaration{
 			capability.CapabilityDiscovery:   capability.Exact(),
 			capability.CapabilityReplay:      capability.Exact(),

@@ -16,6 +16,9 @@ func validBase() AgentCapabilities {
 		DisplayName:     "Test Agent",
 		AdapterRevision: 1,
 		Capabilities:    caps,
+		ResumeCommand: &ResumeCommandDeclaration{
+			Executable: "testagent", StandardArgs: []string{"resume", "{id}"},
+		},
 	}
 }
 
@@ -43,6 +46,23 @@ func TestValidateStaticAcceptsValidDeclaration(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("valid declaration: %v", errs)
 	}
+}
+
+func TestBuildResumeArgsRejectsMissingIdentity(t *testing.T) {
+	cmd := ResumeCommandDeclaration{StandardArgs: []string{"resume", "{id}"}}
+	if args, ok := cmd.BuildResumeArgs("", "", false); ok || args != nil {
+		t.Fatalf("args=%q ok=%v", args, ok)
+	}
+}
+
+func TestValidateStaticRejectsMalformedResumeCommands(t *testing.T) {
+	ac := validBase()
+	ac.ResumeCommand.StandardArgs = []string{"resume"}
+	requireCode(t, ValidateStatic(ac), CodeResumeCommandInvalid)
+
+	ac = validBase()
+	ac.Capabilities[CapabilityResume] = Unsupported("not_supported")
+	requireCode(t, ValidateStatic(ac), CodeResumeCommandInvalid)
 }
 
 func TestValidateStaticEmptyAgentType(t *testing.T) {
