@@ -33,8 +33,8 @@ func TestHandleListAgentsReturnsFullCatalog(t *testing.T) {
 	if len(agents) != len(defs) {
 		t.Fatalf("agents = %d, want %d catalog entries", len(agents), len(defs))
 	}
-	if len(agents) != 6 {
-		t.Fatalf("want 6 agents, got %d", len(agents))
+	if len(agents) != 7 {
+		t.Fatalf("want 7 agents, got %d", len(agents))
 	}
 
 	byType := map[string]AgentInfo{}
@@ -109,8 +109,8 @@ func TestHandleListAgentsMarksDiscoveredAndCountsSessions(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&agents); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(agents) != 6 {
-		t.Fatalf("catalog length = %d, want 6", len(agents))
+	if len(agents) != 7 {
+		t.Fatalf("catalog length = %d, want 7", len(agents))
 	}
 
 	var claude *AgentInfo

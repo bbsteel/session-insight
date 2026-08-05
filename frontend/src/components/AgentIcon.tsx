@@ -5,6 +5,8 @@ import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg'
 import openCodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg'
 const chrysIcon = '/icons/chrys-c.png'
 const codexBlossomIcon = '/icons/codex-blossom.svg'
+const hermesBlackIcon = '/icons/hermes-logo-black.svg'
+const hermesWhiteIcon = '/icons/hermes-logo-white.svg'
 import { resolveAgentStyle } from '../agentStyles'
 
 interface AgentIconProps {
@@ -33,6 +35,10 @@ function resolveIcon(agentType?: string): AgentIconPair | null {
   if (normalized.includes('codex')) return {
     light: { src: codexBlossomIcon },
     dark: { src: codexBlossomIcon },
+  }
+  if (normalized.includes('hermes')) return {
+    light: { src: hermesBlackIcon },
+    dark: { src: hermesWhiteIcon },
   }
   if (normalized.includes('copilot')) return {
     light: { src: githubCopilotIcon, color: '#24292f' },

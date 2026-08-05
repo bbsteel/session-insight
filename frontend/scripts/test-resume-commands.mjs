@@ -48,4 +48,10 @@ assert.equal(grok[1].mode, 'skip-permissions')
 assert.equal(grok[1].command.includes("'--always-approve'"), true)
 assert.equal(grok[1].command.includes("'--resume'"), true)
 
+const hermes = getResumeCommandOptions({ ...session, agent_type: 'hermes', resume_id: 'hermes-session-1' })
+assert.equal(hermes.length, 2)
+assert.equal(hermes[0].mode, 'standard')
+assert.equal(hermes[0].command.includes("'hermes' '--resume' 'hermes-session-1'"), true)
+assert.equal(hermes.some(option => option.mode === 'skip-permissions'), false)
+
 console.log('resume command tests passed')
