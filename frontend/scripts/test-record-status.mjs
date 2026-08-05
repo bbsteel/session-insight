@@ -14,6 +14,7 @@ import {
   sourceRoleHelpKey,
   presentFromSession,
   presentRecordStatus,
+  recordStatusLabel,
   impactLabelKey,
   warningCodeLabelKey,
   sourceRoleLabelKey,
@@ -76,6 +77,15 @@ const unknown = presentRecordStatus({
   warnings: [],
 })
 assert.equal(unknown.labelKey, 'record.status.unknown')
+// Shared label helper must pass {code} so the placeholder is not left literal.
+const fakeT = (key, vars) => {
+  if (key === 'record.status.unknown') return `unknown:${vars?.code ?? ''}`
+  if (key === 'record.header.degradedCount') return `degraded:${vars?.n ?? 0}`
+  return key
+}
+assert.equal(recordStatusLabel(unknown, fakeT), 'unknown:weird_future_state')
+assert.equal(recordStatusLabel(degraded, fakeT), 'degraded:3')
+assert.equal(recordStatusLabel(complete, fakeT), 'record.status.complete')
 
 // compact list status
 const compact = presentRecordStatus(null, {
@@ -138,6 +148,8 @@ assert.ok(!/\.\d{3,}/.test(local), 'no fractional seconds: ' + local)
 assert.equal(formatSourceSize(500), '500 B')
 assert.equal(formatSourceSize(4949339), '4833.3 KB')
 assert.equal(formatSourceSize(2048), '2 KB')
+assert.equal(formatSourceSize(-1), '')
+assert.equal(formatSourceSize(Number.NaN), '')
 
 // Bulk roles collapse by role (edit_cache + snapshot), not path heuristics.
 assert.equal(isCollapsibleSourceRole('edit_cache'), true)

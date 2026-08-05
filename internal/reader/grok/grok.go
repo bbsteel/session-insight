@@ -499,12 +499,23 @@ func extractUserQuery(text string) string {
 func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 	loc, err := r.findSession(id)
 	if err != nil {
-		return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
+		if os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
+		}
+		// findSession wraps "not found" without IsNotExist when the id is absent.
+		if strings.Contains(err.Error(), "not found") {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err)
 	}
 	sum, err := readSummary(loc.SummaryPath)
 	if err != nil {
-		return nil, readerr.New(readerr.SourceMissing, "source_missing",
-			fmt.Errorf("grok session not found %q: %w", id, err))
+		if os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing",
+				fmt.Errorf("grok session not found %q: %w", id, err))
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("grok session unreadable %q: %w", id, err))
 	}
 	// Cold GetSession must agree with ListSessions on lineage; build the
 	// index when list has not run yet.

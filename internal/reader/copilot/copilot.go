@@ -210,8 +210,12 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	wsPath := filepath.Join(r.sessionDir, id, "workspace.yaml")
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
-		return nil, readerr.New(readerr.SourceMissing, "source_missing",
-			fmt.Errorf("session not found: %s", id))
+		if os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing",
+				fmt.Errorf("session not found: %s", id))
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("read workspace.yaml: %w", err))
 	}
 
 	var ws workspaceYAML

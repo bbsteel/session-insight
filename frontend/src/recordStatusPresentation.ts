@@ -120,6 +120,20 @@ export function presentFromSession(session: SessionDetail): RecordStatusPresenta
   return presentRecordStatus(session.provenance, undefined, session.record_available)
 }
 
+/** Translate a record-status presentation label; supplies {code} for unknown states. */
+export function recordStatusLabel(
+  pres: RecordStatusPresentation,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  if (pres.state === 'degraded' && pres.warningCount > 0) {
+    return t('record.header.degradedCount', { n: pres.warningCount })
+  }
+  if (pres.labelKey === 'record.status.unknown') {
+    return t('record.status.unknown', { code: String(pres.state) })
+  }
+  return t(pres.labelKey)
+}
+
 export function impactLabelKey(impact: string): string {
   const known = [
     'metadata',
@@ -378,7 +392,7 @@ export function formatRecordTime(locale: string, value: string | Date | number |
  * Below 1024 bytes shows B; otherwise one decimal KB.
  */
 export function formatSourceSize(bytes: number | undefined | null): string {
-  if (bytes == null || !Number.isFinite(bytes)) return ''
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return ''
   if (bytes < 1024) return `${Math.round(bytes)} B`
   const kb = bytes / 1024
   // One decimal for readability; drop trailing .0

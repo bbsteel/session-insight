@@ -23,10 +23,14 @@ import (
 // Roles are stable cross-adapter values from model.SourceRole*; Chrys maps
 // its layout onto them and does not dump unknowns as "other".
 // The session directory itself is never listed (open-in-editor needs a file).
+//
+// The effective primary is always inventoried (even when missing/unreadable).
+// Optional paths are omitted when absent, but retained when Stat fails for
+// another reason (e.g. permission) so SourceUnreadable is visible.
 func chrysSourceInventory(sessionDir, effectivePath string) []model.SessionSourceFile {
 	var sources []model.SessionSourceFile
 	seen := map[string]struct{}{}
-	add := func(role, path string) {
+	add := func(role, path string, required bool) {
 		path = filepath.Clean(path)
 		if path == "" || path == "." || path == filepath.Clean(sessionDir) {
 			return
@@ -35,7 +39,15 @@ func chrysSourceInventory(sessionDir, effectivePath string) []model.SessionSourc
 			return
 		}
 		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			if os.IsNotExist(err) && !required {
+				return
+			}
+			seen[path] = struct{}{}
+			sources = append(sources, provenance.StatSource(role, path))
+			return
+		}
+		if !info.Mode().IsRegular() {
 			return
 		}
 		seen[path] = struct{}{}
@@ -47,23 +59,23 @@ func chrysSourceInventory(sessionDir, effectivePath string) []model.SessionSourc
 	bakPath := filepath.Join(sessionDir, "session.json.bak")
 	effective := filepath.Clean(effectivePath)
 
-	// Exactly one primary_transcript: the file SI actually read.
+	// Exactly one primary_transcript: the file SI actually read (always list).
 	if effective != "" {
-		add(model.SourceRolePrimaryTranscript, effective)
+		add(model.SourceRolePrimaryTranscript, effective, true)
 	}
 
 	// Non-winning durable primary stays listed with a precise role (not a
-	// second primary_transcript).
+	// second primary_transcript). Optional when simply absent.
 	if primaryPath != effective {
 		// Stale committed store when recovery won.
-		add(model.SourceRoleSnapshot, primaryPath)
+		add(model.SourceRoleSnapshot, primaryPath, false)
 	}
 	// Recovery sidecar when it did not win (when it won it is already primary).
 	if recoveryPath != effective {
-		add(model.SourceRoleRecovery, recoveryPath)
+		add(model.SourceRoleRecovery, recoveryPath, false)
 	}
 	// Backup of primary.
-	add(model.SourceRoleSnapshot, bakPath)
+	add(model.SourceRoleSnapshot, bakPath, false)
 
 	// Collaboration child transcripts.
 	addDirFiles(filepath.Join(sessionDir, "sub_agents", "sessions"), model.SourceRoleCollaboration, add, func(name string) bool {
@@ -81,7 +93,8 @@ func chrysSourceInventory(sessionDir, effectivePath string) []model.SessionSourc
 
 // addDirFiles lists regular files in dir (non-recursive), sorted by name.
 // accept may filter by name; nil accepts every regular file.
-func addDirFiles(dir, role string, add func(role, path string), accept func(name string) bool) {
+// Sidecar directories are optional: missing dirs produce no entries.
+func addDirFiles(dir, role string, add func(role, path string, required bool), accept func(name string) bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -98,6 +111,7 @@ func addDirFiles(dir, role string, add func(role, path string), accept func(name
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		add(role, filepath.Join(dir, name))
+		// Files discovered by ReadDir should still surface Stat failures.
+		add(role, filepath.Join(dir, name), true)
 	}
 }

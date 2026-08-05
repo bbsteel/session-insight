@@ -138,25 +138,28 @@ func (db *DB) UpsertProvenance(agentType, sessionID string, p model.SessionProve
 }
 
 func upsertProvenanceTx(tx *sql.Tx, agentType, sessionID string, p model.SessionProvenance, revision int64) error {
-	sourcesJSON, err := json.Marshal(p.Sources)
+	// Normalize nil slices/maps so json.Marshal never stores SQL null for these columns.
+	sources := p.Sources
+	if sources == nil {
+		sources = []model.SessionSourceFile{}
+	}
+	sourcesJSON, err := json.Marshal(sources)
 	if err != nil {
 		return fmt.Errorf("marshal sources: %w", err)
 	}
-	if sourcesJSON == nil {
-		sourcesJSON = []byte("[]")
+	warnings := p.Warnings
+	if warnings == nil {
+		warnings = []model.ParseWarning{}
 	}
-	warningsJSON, err := json.Marshal(p.Warnings)
+	warningsJSON, err := json.Marshal(warnings)
 	if err != nil {
 		return fmt.Errorf("marshal warnings: %w", err)
-	}
-	if warningsJSON == nil {
-		warningsJSON = []byte("[]")
 	}
 	summaryJSON, err := json.Marshal(p.WarningSummary)
 	if err != nil {
 		return fmt.Errorf("marshal warning summary: %w", err)
 	}
-	if summaryJSON == nil {
+	if len(summaryJSON) == 0 || string(summaryJSON) == "null" {
 		summaryJSON = []byte("{}")
 	}
 

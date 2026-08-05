@@ -552,8 +552,12 @@ func (r *ChrysReader) GetSession(id string) (*model.SessionDetail, error) {
 	sessDir := filepath.Join(r.sessionsDir, id)
 	sf, sourcePath, err := readEffectiveSession(sessDir)
 	if err != nil {
-		return nil, readerr.New(readerr.SourceMissing, "source_missing",
-			fmt.Errorf("chrys session not found %q: %w", id, err))
+		if os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing",
+				fmt.Errorf("chrys session not found %q: %w", id, err))
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("chrys session unreadable %q: %w", id, err))
 	}
 
 	session := buildSession(id, sf)

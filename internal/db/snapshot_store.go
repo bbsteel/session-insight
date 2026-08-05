@@ -145,7 +145,10 @@ func (db *DB) ReplaceSessionSnapshot(w SessionSnapshotWrite) error {
 
 	if w.Provenance != nil {
 		p := *w.Provenance
-		// On successful body capture, clear missing_since and set last_successful_at.
+		// Any successful snapshot write means the adapter read the source; clear
+		// the tombstone clock so a prior source_missing does not stick forever.
+		p.MissingSince = nil
+		// Replayable captures also refresh last_successful_at.
 		if p.State == model.RecordComplete || p.State == model.RecordDegraded {
 			if p.LastSuccessfulAt == nil {
 				t := p.CapturedAt
@@ -154,7 +157,6 @@ func (db *DB) ReplaceSessionSnapshot(w SessionSnapshotWrite) error {
 				}
 				p.LastSuccessfulAt = &t
 			}
-			p.MissingSince = nil
 		}
 		if err := upsertProvenanceTx(tx, w.AgentType, sess.ID, p, w.Revision); err != nil {
 			return err

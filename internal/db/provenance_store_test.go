@@ -152,9 +152,11 @@ func TestExplicitDeleteRemovesProvenanceNoTombstone(t *testing.T) {
 	now := time.Now().UTC()
 	sess := model.Session{ID: "s1", AgentType: "claude", CreatedAt: now, UpdatedAt: now}
 	prov := model.SessionProvenance{State: model.RecordComplete, CapturedAt: now, AdapterRevision: 1}
-	_ = db.ReplaceSessionSnapshot(SessionSnapshotWrite{
+	if err := db.ReplaceSessionSnapshot(SessionSnapshotWrite{
 		AgentType: "claude", Session: sess, Turns: nil, Provenance: &prov, Revision: 1,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.DeleteSessionData("claude", "s1"); err != nil {
 		t.Fatal(err)
 	}
@@ -219,9 +221,11 @@ func TestListProvenanceStatusNoPaths(t *testing.T) {
 		}},
 	}
 	sess := model.Session{ID: "s1", AgentType: "claude", CreatedAt: now, UpdatedAt: now}
-	_ = db.ReplaceSessionSnapshot(SessionSnapshotWrite{
+	if err := db.ReplaceSessionSnapshot(SessionSnapshotWrite{
 		AgentType: "claude", Session: sess, Provenance: &prov, Revision: 1,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	m, err := db.ListProvenanceStatusByAgent("claude")
 	if err != nil {
 		t.Fatal(err)

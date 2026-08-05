@@ -4,7 +4,7 @@ import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePat
 import { extractTerminalUrl } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
 import { sessionCapabilityHeaderHint, sessionTokenHeaderDisplay } from '../capabilityPresentation'
-import { presentFromSession, toneClass } from '../recordStatusPresentation'
+import { presentFromSession, recordStatusLabel, toneClass } from '../recordStatusPresentation'
 import AgentIcon from './AgentIcon'
 import SessionCapabilityPanel from './SessionCapabilityPanel'
 import RecordStatusPanel from './RecordStatusPanel'
@@ -113,6 +113,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [capPanelOpen, setCapPanelOpen] = useState(false)
   const [recordPanelOpen, setRecordPanelOpen] = useState(false)
   const [degradedBannerDismissed, setDegradedBannerDismissed] = useState(false)
+  useEffect(() => {
+    setDegradedBannerDismissed(false)
+    setRecordPanelOpen(false)
+  }, [sessionId])
   const [capCompareOpen, setCapCompareOpen] = useState(false)
   const [agentsCatalog, setAgentsCatalog] = useState<AgentInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -1417,7 +1421,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px' }}>
             <button
               type="button"
-              onClick={() => setCapPanelOpen(true)}
+              onClick={() => {
+                setCapPanelOpen(true)
+                if (agentsCatalog.length === 0) {
+                  void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
+                }
+              }}
               className="h-7 max-w-[11rem] rounded-md border border-[var(--border-default)] px-2 inline-flex items-center gap-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
               aria-label={t('capability.session.openButton')}
               data-testid="session-agent-capability-button"
@@ -1433,11 +1442,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 aria-label={t('record.pill.open')}
                 data-testid="session-record-status-button"
               >
-                <span className="truncate">
-                  {rec.state === 'degraded' && rec.warningCount > 0
-                    ? t('record.header.degradedCount', { n: rec.warningCount })
-                    : t(rec.labelKey)}
-                </span>
+                <span className="truncate">{recordStatusLabel(rec, t)}</span>
               </button>
             )}
           </header>
@@ -1446,8 +1451,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           <div className="text-center px-6 max-w-md" data-testid="record-empty-state">
             <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">MSG</div>
             <h3 className="text-body font-medium text-[var(--text-primary)]">
-              {emptyKey
-                ? t(rec!.labelKey)
+              {emptyKey && rec
+                ? recordStatusLabel(rec, t)
                 : session
                   ? t('replay.noReplay')
                   : t('replay.noSessions')}
@@ -1569,12 +1574,6 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           </button>
           {session && (() => {
             const rec = presentFromSession(session)
-            const recLabel =
-              rec.state === 'degraded' && rec.warningCount > 0
-                ? t('record.header.degradedCount', { n: rec.warningCount })
-                : rec.state === 'unknown' || !String(rec.labelKey).startsWith('record.status.')
-                  ? t('record.status.unknown', { code: String(rec.state) })
-                  : t(rec.labelKey)
             return (
               <button
                 type="button"
@@ -1583,7 +1582,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 aria-label={t('record.pill.open')}
                 data-testid="session-record-status-button"
               >
-                <span className="truncate">{recLabel}</span>
+                <span className="truncate">{recordStatusLabel(rec, t)}</span>
               </button>
             )
           })()}

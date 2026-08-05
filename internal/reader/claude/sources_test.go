@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 func TestSourceInventoryIncludesSubagentsAndTodos(t *testing.T) {
@@ -37,6 +39,16 @@ func TestSourceInventoryIncludesSubagentsAndTodos(t *testing.T) {
 	if err := os.WriteFile(todoPath, []byte(`[]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Negative fixtures: must not appear as tool_results.
+	for _, noise := range []string{
+		sessionID + "-notes.txt",
+		sessionID + "-agent-extra.txt",
+		"other-" + sessionID + "-agent-x.json",
+	} {
+		if err := os.WriteFile(filepath.Join(todoDir, noise), []byte(`[]`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	sources := sourceInventory(jsonl, root)
 	byRole := map[string][]string{}
@@ -57,5 +69,20 @@ func TestSourceInventoryIncludesSubagentsAndTodos(t *testing.T) {
 	}
 	if len(byRole["other"]) > 0 {
 		t.Fatalf("unexpected other: %v", byRole["other"])
+	}
+}
+
+func TestSourceInventoryMissingPrimary(t *testing.T) {
+	root := t.TempDir()
+	jsonl := filepath.Join(root, "projects", "p", "gone.jsonl")
+	sources := sourceInventory(jsonl, root)
+	if len(sources) != 1 {
+		t.Fatalf("sources=%+v", sources)
+	}
+	if sources[0].Role != model.SourceRolePrimaryTranscript || sources[0].Path != filepath.Clean(jsonl) {
+		t.Fatalf("source=%+v", sources[0])
+	}
+	if sources[0].State != model.SourceMissing {
+		t.Fatalf("state=%s want missing", sources[0].State)
 	}
 }

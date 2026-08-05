@@ -34,9 +34,8 @@ func (e *Error) Error() string {
 	if e == nil {
 		return "session read error"
 	}
-	if e.Err != nil {
-		return fmt.Sprintf("session read %s: %v", e.Kind, e.Err)
-	}
+	// Do not include e.Err in the public string: PathError and parser errors can
+	// carry absolute paths or session content. Keep Unwrap() for logs / errors.Is.
 	if e.ReasonCode != "" {
 		return fmt.Sprintf("session read %s (%s)", e.Kind, e.ReasonCode)
 	}

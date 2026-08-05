@@ -65,11 +65,22 @@ func AssertProvenanceDegradedOrUnsupported(t *testing.T, detail *model.SessionDe
 			t.Fatalf("validate: %v", filtered)
 		}
 	}
+	if len(p.Sources) == 0 {
+		t.Fatal("expected source inventory on non-complete fixture")
+	}
+	for _, s := range p.Sources {
+		if s.Path == "" || !provenance.IsKnownSourceRole(s.Role) {
+			t.Fatalf("bad source: %+v", s)
+		}
+	}
 	if p.State == model.RecordDegraded {
 		hasImpact := false
 		for _, w := range p.Warnings {
 			if w.AffectsCompleteness {
 				hasImpact = true
+				if len(w.Impacts) == 0 {
+					t.Fatalf("affects_completeness warning %q requires Impacts", w.Code)
+				}
 				for _, imp := range w.Impacts {
 					if !provenance.IsKnownImpact(imp) {
 						t.Fatalf("unknown impact %q", imp)

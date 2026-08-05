@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -94,8 +97,16 @@ var desktopEnvKeys = []string{
 // loadUserSystemdEnv returns KEY→value from `systemctl --user show-environment`.
 // That map is the graphical session's view of DISPLAY/KDE_*/bus — more reliable
 // than whatever incomplete env the SI process inherited.
+//
+// Bounded with a short deadline so a hung user manager cannot stall open-file
+// HTTP handlers. Skipped on platforms without systemd user sessions.
 func loadUserSystemdEnv() map[string]string {
-	out, err := exec.Command("systemctl", "--user", "show-environment").Output()
+	if runtimeGOOS == "windows" || runtimeGOOS == "darwin" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show-environment").Output()
 	if err != nil || len(out) == 0 {
 		return nil
 	}
@@ -116,6 +127,16 @@ func loadUserSystemdEnv() map[string]string {
 	return m
 }
 
+// desktopEnvCache avoids re-running systemctl for every editor candidate during
+// one open cascade (and briefly across nearby opens).
+var desktopEnvCache struct {
+	mu  sync.Mutex
+	env []string
+	at  time.Time
+}
+
+const desktopEnvCacheTTL = 5 * time.Second
+
 // unquoteSystemdEnvValue strips common systemctl show-environment quoting.
 func unquoteSystemdEnvValue(v string) string {
 	if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
@@ -134,7 +155,28 @@ func unquoteSystemdEnvValue(v string) string {
 // stale DBUS_SESSION_BUS_ADDRESS / KDE_FULL_SESSION and pop "KIO worker /
 // file protocol" errors even when the document still opens. We re-point at
 // the user's session bus, display, and Plasma session flags.
+//
+// Results are cached briefly so open cascades (many candidates) do not each
+// re-invoke systemctl.
 func desktopSessionEnv() []string {
+	desktopEnvCache.mu.Lock()
+	if desktopEnvCache.env != nil && time.Since(desktopEnvCache.at) < desktopEnvCacheTTL {
+		env := append([]string(nil), desktopEnvCache.env...)
+		desktopEnvCache.mu.Unlock()
+		return env
+	}
+	desktopEnvCache.mu.Unlock()
+
+	env := buildDesktopSessionEnv()
+
+	desktopEnvCache.mu.Lock()
+	desktopEnvCache.env = append([]string(nil), env...)
+	desktopEnvCache.at = time.Now()
+	desktopEnvCache.mu.Unlock()
+	return env
+}
+
+func buildDesktopSessionEnv() []string {
 	env := os.Environ()
 	put := func(key, val string) {
 		if key == "" {
@@ -429,9 +471,10 @@ func isFolderCapableEditor(bins []string) bool {
 // Used as the final fallback after named editors; argv is built without
 // strings.Fields so Windows `start` empty-title works with spaced paths.
 //
-// On Linux we prefer desktop-aware openers (dolphin, nautilus) launched in the
-// user session. xdg-open is last and often routes local paths through KIO.
-func platformDefaultOpen(goos, path string) error {
+// On Linux: directories prefer desktop file managers; regular files prefer
+// xdg-open (registered handler) so transcripts open as documents rather than
+// a folder browser on the containing directory.
+func platformDefaultOpen(goos, path string, isDir bool) error {
 	switch goos {
 	case "windows":
 		// FileProtocolHandler avoids cmd.exe metacharacter reinterpretation of
@@ -448,8 +491,11 @@ func platformDefaultOpen(goos, path string) error {
 		cmd.Stderr = nil
 		return startEditorCommand(cmd)
 	default:
-		// Prefer file managers; launch via the same GUI-aware path as editors.
-		for _, name := range []string{"dolphin", "nautilus", "nemo", "thunar", "pcmanfm"} {
+		names := []string{"xdg-open"}
+		if isDir {
+			names = []string{"dolphin", "nautilus", "nemo", "thunar", "pcmanfm", "xdg-open"}
+		}
+		for _, name := range names {
 			bin, err := lookPath(name)
 			if err != nil {
 				continue
@@ -457,10 +503,6 @@ func platformDefaultOpen(goos, path string) error {
 			if err := tryLaunchArgs([]string{bin, path}, bin); err == nil {
 				return nil
 			}
-		}
-		// Last resort only — may still surface KIO dialogs on some KDE setups.
-		if bin, err := lookPath("xdg-open"); err == nil {
-			return tryLaunchArgs([]string{bin, path}, bin)
 		}
 		return fmt.Errorf("no linux open helper found")
 	}
@@ -517,7 +559,7 @@ func (s *Server) openExistingPath(path string, line int, isDir bool) error {
 		}
 	}
 
-	if err := platformDefaultOpen(runtimeGOOS, path); err == nil {
+	if err := platformDefaultOpen(runtimeGOOS, path, isDir); err == nil {
 		return nil
 	} else {
 		errs = append(errs, "platform: "+err.Error())

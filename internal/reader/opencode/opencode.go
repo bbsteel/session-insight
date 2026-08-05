@@ -235,7 +235,12 @@ func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
 func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 	meta, err := r.readSessionMeta(id)
 	if err != nil {
-		return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
+		// readSessionMeta maps missing rows to a not-found error; other failures
+		// (locked DB, I/O) must not become source_missing tombstones.
+		if strings.Contains(err.Error(), "not found") {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err)
 	}
 
 	turns, modelName, modelProvider, billing := r.parseMessages(id)
@@ -273,7 +278,10 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 		FROM session WHERE id = ?
 	`, id).Scan(&directory, &title, &timeCreated, &timeUpdated, &timeArchived, &modelJSON)
 	if err != nil {
-		return model.Session{}, fmt.Errorf("openCode session not found: %s", id)
+		if err == sql.ErrNoRows {
+			return model.Session{}, fmt.Errorf("openCode session not found: %s", id)
+		}
+		return model.Session{}, fmt.Errorf("openCode session read: %w", err)
 	}
 
 	modelName := ""

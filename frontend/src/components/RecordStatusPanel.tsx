@@ -3,6 +3,7 @@ import type { SessionDetail } from '../types'
 import {
   formatRecordTime,
   formatSourceSize,
+  recordStatusLabel,
   impactLabelKey,
   isEditorFriendlySourcePath,
   partitionSourceFiles,
@@ -71,12 +72,7 @@ export default function RecordStatusPanel({
 
   if (!open) return null
 
-  const label =
-    pres.state === 'unknown' || !pres.labelKey.startsWith('record.status.')
-      ? t('record.status.unknown', { code: String(pres.state) })
-      : pres.state === 'degraded' && pres.warningCount > 0
-        ? t('record.header.degradedCount', { n: pres.warningCount })
-        : t(pres.labelKey)
+  const label = recordStatusLabel(pres, t)
 
   async function copyPath(path: string) {
     if (copyTimer.current) clearTimeout(copyTimer.current)
