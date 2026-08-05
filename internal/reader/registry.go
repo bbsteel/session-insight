@@ -57,6 +57,16 @@ func AgentDefinition(agentType string) (capability.AgentCapabilities, bool) {
 func Discover() []BaseSessionReader {
 	var readers []BaseSessionReader
 
+	hermesDBPath, ok := hermes.ResolveDBPath()
+	if ok {
+		reader, err := hermes.New(hermesDBPath)
+		if err != nil {
+			log.Printf("hermes reader init failed: %v", err)
+		} else {
+			readers = append(readers, reader)
+		}
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return readers
@@ -99,16 +109,6 @@ func Discover() []BaseSessionReader {
 		reader, err := opencode.New(dbPath)
 		if err != nil {
 			log.Printf("openCode reader init failed: %v", err)
-		} else {
-			readers = append(readers, reader)
-		}
-	}
-
-	hermesDBPath, ok := hermes.ResolveDBPath()
-	if ok {
-		reader, err := hermes.New(hermesDBPath)
-		if err != nil {
-			log.Printf("hermes reader init failed: %v", err)
 		} else {
 			readers = append(readers, reader)
 		}

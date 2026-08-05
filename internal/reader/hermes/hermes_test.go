@@ -182,6 +182,23 @@ func TestHermesInterruptedSessionAndEmptyReplay(t *testing.T) {
 	if len(events) == 0 || events[len(events)-1].Subtype != "in_progress" {
 		t.Fatalf("interrupted events=%+v", events)
 	}
+	staleAt := time.Now().Add(-(model.LiveWindow + time.Second))
+	for _, storePath := range []string{r.dbPath, r.dbPath + "-wal", r.dbPath + "-shm"} {
+		if _, err := os.Stat(storePath); err == nil {
+			if err := os.Chtimes(storePath, staleAt, staleAt); err != nil {
+				t.Fatalf("age Hermes store %q: %v", storePath, err)
+			}
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat Hermes store %q: %v", storePath, err)
+		}
+	}
+	live, err = r.SessionLive("hermes-interrupted-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live {
+		t.Fatal("stale unfinalized fixture should not be live")
+	}
 
 	path := filepath.Join(t.TempDir(), "empty.db")
 	db, err := sql.Open("sqlite3", path)

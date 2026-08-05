@@ -31,7 +31,7 @@ Reference material:
 - [Hermes session storage](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/session-storage.md)
 - [Hermes sessions and resume](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/sessions.md)
 - [Hermes delegation](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/delegation.md)
-- [Hermes tools](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/tools.md)
+- [Hermes tools](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/tools.md)
 
 ## Scenarios
 

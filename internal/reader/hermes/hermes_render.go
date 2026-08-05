@@ -107,7 +107,7 @@ func (r *HermesReader) renderMessages(row sessionRow, messages []hermesMessage) 
 	// ended_at is nullable while Hermes is actively serving a run. The final
 	// assistant finish_reason is the transcript-level close marker. As with
 	// other adapters, the store mtime bounds stale interrupted sessions.
-	if lastAssistantOpen && turnIndex >= 0 && r.schema.hasColumn("sessions", "ended_at") && !row.EndedAtSet {
+	if lastAssistantOpen && turnIndex >= 0 && !row.EndedAtSet {
 		if lastWrite, err := r.lastStoreWrite(); err == nil {
 			if event, ok := shared.TrailingInProgress(true, lastWrite, turnIndex); ok {
 				emit(event)

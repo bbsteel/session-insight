@@ -28,7 +28,8 @@ CREATE TABLE sessions (
     description TEXT,
     api_call_count INTEGER NOT NULL DEFAULT 0,
     profile_name TEXT,
-    archived INTEGER NOT NULL DEFAULT 0
+    archived INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (parent_session_id) REFERENCES sessions(id)
 );
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,7 +47,8 @@ CREATE TABLE messages (
     reasoning_content TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     compacted INTEGER NOT NULL DEFAULT 0,
-    display_kind TEXT
+    display_kind TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 CREATE TABLE session_model_usage (
     session_id TEXT NOT NULL,

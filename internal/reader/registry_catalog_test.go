@@ -95,6 +95,24 @@ func TestAgentDefinitionsStableOrder(t *testing.T) {
 	}
 }
 
+func TestDiscoverUsesHermesOverrideWithoutHome(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	if err := writeMinimalHermesDB(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERMES_STATE_DB", path)
+	t.Setenv("HERMES_DB", "")
+	t.Setenv("HERMES_HOME", "")
+	t.Setenv("HOME", "")
+
+	for _, source := range reader.Discover() {
+		if source.AgentType() == "hermes" {
+			return
+		}
+	}
+	t.Fatal("Discover did not initialize Hermes from HERMES_STATE_DB without HOME")
+}
+
 func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 	// Catalog AgentType/DisplayName must match what a constructed reader reports.
 	// Paths need not exist for identity methods.

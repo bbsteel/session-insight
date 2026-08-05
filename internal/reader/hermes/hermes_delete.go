@@ -2,7 +2,6 @@ package hermes
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +13,9 @@ import (
 // sessions are removed with their origin, while compression/rewind children
 // that are not delegated are orphaned so their transcripts remain resumable.
 func (r *HermesReader) DeleteSession(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("hermes session id is empty")
+	}
 	if _, err := r.readSessionRow(id); err != nil {
 		return err
 	}
@@ -94,7 +96,10 @@ func (r *HermesReader) DeleteSession(id string) error {
 	}
 	committed = true
 
-	return removeLegacyFiles(filepath.Join(filepath.Dir(r.dbPath), "sessions"), ids)
+	// The transaction is authoritative. Legacy transcript cleanup is best effort
+	// and must not report a committed deletion as failed.
+	_ = removeLegacyFiles(filepath.Join(filepath.Dir(r.dbPath), "sessions"), ids)
+	return nil
 }
 
 type deleteSessionRow struct {
@@ -168,19 +173,7 @@ func deleteTargets(db *sql.DB, schema schemaInfo, root string) (map[string]bool,
 }
 
 func isDelegateDeleteRow(row deleteSessionRow) bool {
-	if strings.EqualFold(row.Source, "tool") {
-		return true
-	}
-	var config map[string]any
-	if json.Unmarshal([]byte(row.ModelConfig), &config) != nil {
-		return false
-	}
-	for _, key := range []string{"_delegate_from", "delegate_from"} {
-		if value, ok := config[key].(string); ok && strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
+	return isDelegateConfig(row.Source, row.ModelConfig)
 }
 
 func sortedKeys(values map[string]bool) []string {
@@ -209,10 +202,12 @@ func removeLegacyFiles(dir string, ids []string) error {
 		return err
 	}
 	wanted := map[string]bool{}
+	sanitizedIDs := map[string]bool{}
 	for _, id := range ids {
 		if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
 			continue
 		}
+		sanitizedIDs[id] = true
 		for _, suffix := range []string{".json", ".jsonl"} {
 			wanted[id+suffix] = true
 		}
@@ -221,8 +216,8 @@ func removeLegacyFiles(dir string, ids []string) error {
 		name := entry.Name()
 		remove := wanted[name]
 		if !remove {
-			for _, id := range ids {
-				if strings.HasPrefix(name, "request_dump_"+id+"_") && strings.HasSuffix(name, ".json") {
+			for id := range sanitizedIDs {
+				if requestDumpMatchesSession(name, id) {
 					remove = true
 					break
 				}
@@ -235,4 +230,39 @@ func removeLegacyFiles(dir string, ids []string) error {
 		}
 	}
 	return nil
+}
+
+func requestDumpMatchesSession(name, id string) bool {
+	return id != "" && requestDumpSessionID(name) == id
+}
+
+func requestDumpSessionID(name string) string {
+	const prefix = "request_dump_"
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".json") {
+		return ""
+	}
+	stem := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".json")
+	parts := strings.Split(stem, "_")
+	if len(parts) < 2 {
+		return ""
+	}
+	// Canonical Hermes dumps end with YYYYMMDD_HHMMSS_microseconds. Recognize
+	// that complete suffix so underscores in a session ID remain unambiguous.
+	if len(parts) >= 4 && isDigits(parts[len(parts)-3], 8) && isDigits(parts[len(parts)-2], 6) && isDigits(parts[len(parts)-1], 6) {
+		return strings.Join(parts[:len(parts)-3], "_")
+	}
+	// Older/test dumps may use a single opaque suffix after the session ID.
+	return strings.Join(parts[:len(parts)-1], "_")
+}
+
+func isDigits(value string, width int) bool {
+	if len(value) != width {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }

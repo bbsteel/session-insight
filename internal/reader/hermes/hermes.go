@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -93,7 +94,8 @@ func New(dbPath string) (*HermesReader, error) {
 }
 
 func sqliteDSN(path, params string) string {
-	return "file:" + filepath.ToSlash(path) + "?" + params
+	escaped := (&url.URL{Path: filepath.ToSlash(path)}).EscapedPath()
+	return "file:" + escaped + "?" + params
 }
 
 func quoteIdentifier(name string) string {
@@ -234,13 +236,18 @@ func (r *HermesReader) ListSessions() ([]model.Session, error) {
 	if err := rows.Close(); err != nil {
 		return nil, fmt.Errorf("hermes close sessions: %w", err)
 	}
+	summaries, err := r.allSessionSummaries()
+	if err != nil {
+		return nil, err
+	}
+	previews, err := r.allSessionPreviews()
+	if err != nil {
+		return nil, err
+	}
 	var sessions []model.Session
 	for _, row := range parsedRows {
-		count, turns, preview, err := r.sessionSummary(row.ID)
-		if err != nil {
-			return nil, err
-		}
-		sessions = append(sessions, r.toSession(row, count, turns, preview))
+		summary := summaries[row.ID]
+		sessions = append(sessions, r.toSession(row, summary.Count, summary.Turns, previews[row.ID]))
 	}
 	if sessions == nil {
 		sessions = []model.Session{}
@@ -261,16 +268,23 @@ func (r *HermesReader) GetSession(id string) (*model.SessionDetail, error) {
 	turns := buildTurns(messages)
 	preview := firstUserPreview(messages)
 	session := r.toSession(row, len(messages), len(turns), preview)
+	billing, err := r.buildBilling(row)
+	if err != nil {
+		return nil, err
+	}
 	detail := &model.SessionDetail{
 		Session: session,
 		Turns:   turns,
-		Billing: r.buildBilling(row),
+		Billing: billing,
 	}
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
 	return detail, nil
 }
 
 func (r *HermesReader) readSessionRow(id string) (sessionRow, error) {
+	if strings.TrimSpace(id) == "" {
+		return sessionRow{}, fmt.Errorf("hermes session id is empty")
+	}
 	rows, err := r.querySessionRows(id)
 	if err != nil {
 		return sessionRow{}, fmt.Errorf("hermes query session %q: %w", id, err)
@@ -321,9 +335,9 @@ func (r *HermesReader) sessionSelect(alias string) string {
 }
 
 func (r *HermesReader) updatedAtExpr(alias string) string {
-	messageMax := "0"
+	messageMax := "NULL"
 	if r.schema.hasColumn("messages", "timestamp") && r.schema.hasColumn("messages", "session_id") {
-		messageMax = `(SELECT COALESCE(MAX(m."timestamp"), 0) FROM "messages" m WHERE m."session_id" = ` + alias + `."id"`
+		messageMax = `(SELECT MAX(m."timestamp") FROM "messages" m WHERE m."session_id" = ` + alias + `."id"`
 		if r.schema.hasColumn("messages", "active") {
 			messageMax += ` AND COALESCE(m."active", 1) = 1`
 		}
@@ -337,6 +351,91 @@ func (r *HermesReader) updatedAtExpr(alias string) string {
 		return `COALESCE(NULLIF(` + alias + `."last_activity_at", 0), ` + messageMax + `, ` + started + `, 0) AS __updated_at`
 	}
 	return `COALESCE(` + messageMax + `, ` + started + `, 0) AS __updated_at`
+}
+
+type sessionSummaryRow struct {
+	Count int
+	Turns int
+}
+
+func (r *HermesReader) allSessionSummaries() (map[string]sessionSummaryRow, error) {
+	out := map[string]sessionSummaryRow{}
+	if !r.schema.hasTable("messages") || !r.schema.hasColumn("messages", "session_id") {
+		return out, nil
+	}
+	turnsExpr := "0"
+	if r.schema.hasColumn("messages", "role") {
+		turnsExpr = `SUM(CASE WHEN LOWER(COALESCE("role", '')) = 'user' THEN 1 ELSE 0 END)`
+	}
+	query := `SELECT "session_id", COUNT(*), ` + turnsExpr + ` FROM "messages"`
+	if r.schema.hasColumn("messages", "active") {
+		query += ` WHERE COALESCE("active", 1) = 1`
+	}
+	query += ` GROUP BY "session_id"`
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("hermes query message summaries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var count, turns int64
+		if err := rows.Scan(&id, &count, &turns); err != nil {
+			return nil, fmt.Errorf("hermes scan message summary: %w", err)
+		}
+		if id != "" {
+			out[id] = sessionSummaryRow{Count: nativeIntOrZero(count), Turns: nativeIntOrZero(turns)}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("hermes iterate message summaries: %w", err)
+	}
+	return out, nil
+}
+
+func (r *HermesReader) allSessionPreviews() (map[string]string, error) {
+	out := map[string]string{}
+	if !r.schema.hasTable("messages") ||
+		!r.schema.hasColumn("messages", "session_id") ||
+		!r.schema.hasColumn("messages", "role") ||
+		!r.schema.hasColumn("messages", "content") {
+		return out, nil
+	}
+	ids := `SELECT DISTINCT "session_id" FROM "messages"`
+	if r.schema.hasColumn("messages", "active") {
+		ids += ` WHERE COALESCE("active", 1) = 1`
+	}
+	first := `SELECT first."content" FROM "messages" first WHERE first."session_id" = session_ids."session_id" AND LOWER(COALESCE(first."role", '')) = 'user'`
+	if r.schema.hasColumn("messages", "active") {
+		first += ` AND COALESCE(first."active", 1) = 1`
+	}
+	if r.schema.hasColumn("messages", "id") {
+		first += ` ORDER BY first."id" ASC`
+	}
+	first += ` LIMIT 1`
+	query := `SELECT session_ids."session_id", (` + first + `) FROM (` + ids + `) session_ids`
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("hermes query message previews: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var content any
+		if err := rows.Scan(&id, &content); err != nil {
+			return nil, fmt.Errorf("hermes scan message preview: %w", err)
+		}
+		if id != "" {
+			text := strings.TrimSpace(contentText(asString(content)))
+			if text != "" {
+				out[id] = shared.TruncateRunes(text, 200)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("hermes iterate message previews: %w", err)
+	}
+	return out, nil
 }
 
 func (r *HermesReader) sessionSummary(id string) (count, turns int, preview string, err error) {
@@ -683,7 +782,11 @@ func contentText(raw string) string {
 	if json.Unmarshal([]byte(raw), &value) != nil {
 		return raw
 	}
-	return flattenContent(value)
+	text := flattenContent(value)
+	if strings.TrimSpace(text) == "" {
+		return raw
+	}
+	return text
 }
 
 func flattenContent(value any) string {
@@ -719,10 +822,14 @@ func jsonMap(raw string) map[string]any {
 }
 
 func isDelegateSession(row sessionRow) bool {
-	if strings.EqualFold(row.Source, "tool") {
+	return isDelegateConfig(row.Source, row.ModelConfig)
+}
+
+func isDelegateConfig(source, modelConfig string) bool {
+	if strings.EqualFold(source, "tool") {
 		return true
 	}
-	config := jsonMap(row.ModelConfig)
+	config := jsonMap(modelConfig)
 	if config == nil {
 		return false
 	}
@@ -769,7 +876,7 @@ func parseToolInvocations(message hermesMessage) []toolInvocation {
 		values = []any{one}
 	}
 	var out []toolInvocation
-	for _, value := range values {
+	for index, value := range values {
 		object, ok := value.(map[string]any)
 		if !ok {
 			continue
@@ -796,7 +903,7 @@ func parseToolInvocations(message hermesMessage) []toolInvocation {
 			id = asString(object["call_id"])
 		}
 		if id == "" {
-			id = "msg-" + message.ID
+			id = fmt.Sprintf("msg-%s-%d", message.ID, index)
 		}
 		if name != "" {
 			out = append(out, toolInvocation{ID: id, Name: name, Input: input})
@@ -970,7 +1077,7 @@ func buildTurns(messages []hermesMessage) []model.TurnVM {
 				if text != "" {
 					text += "\n"
 				}
-				text += "[思考]\n" + strings.TrimSpace(reasoning)
+				text += strings.TrimSpace(reasoning)
 			}
 			if text != "" {
 				if turn.AssistantMessage != "" {
@@ -1036,8 +1143,11 @@ func applyToolResult(detail *model.ToolCallVM, result toolResult) {
 // buildBilling converts Hermes' session aggregate buckets into the canonical
 // exclusive token model. session_model_usage is retained as the per-model
 // breakdown when present.
-func (r *HermesReader) buildBilling(row sessionRow) *model.SessionBilling {
-	usageRows := r.readUsageRows(row.ID)
+func (r *HermesReader) buildBilling(row sessionRow) (*model.SessionBilling, error) {
+	usageRows, err := r.readUsageRows(row.ID)
+	if err != nil {
+		return nil, err
+	}
 	tokenEvidence := row.APICallCountSet && row.APICallCount > 0
 	tokenEvidence = tokenEvidence || row.InputTokens != 0 || row.OutputTokens != 0 || row.CacheReadTokens != 0 || row.CacheWriteTokens != 0 || row.ReasoningTokens != 0
 	for _, usage := range usageRows {
@@ -1045,10 +1155,10 @@ func (r *HermesReader) buildBilling(row sessionRow) *model.SessionBilling {
 	}
 	costEvidence := row.EstimatedCostSet || row.ActualCostSet || len(usageRows) > 0
 	if !tokenEvidence && !costEvidence {
-		return &model.SessionBilling{Precision: model.PrecisionMissing}
+		return &model.SessionBilling{Precision: model.PrecisionMissing}, nil
 	}
 
-	billing := &model.SessionBilling{Precision: model.PrecisionExact}
+	billing := &model.SessionBilling{Precision: billingPrecision(row)}
 	if row.Provider != "" || row.EstimatedCostSet || row.ActualCostSet || len(usageRows) > 0 {
 		billing.BillingUnit = "usd"
 	}
@@ -1067,7 +1177,23 @@ func (r *HermesReader) buildBilling(row sessionRow) *model.SessionBilling {
 	sort.SliceStable(billing.ByModel, func(i, j int) bool {
 		return billing.ByModel[i].Model < billing.ByModel[j].Model
 	})
-	return billing
+	return billing, nil
+}
+
+func billingPrecision(row sessionRow) string {
+	switch strings.ToLower(strings.TrimSpace(row.CostStatus)) {
+	case "exact":
+		return model.PrecisionExact
+	case "estimated":
+		return model.PrecisionEstimated
+	}
+	if row.ActualCostSet {
+		return model.PrecisionExact
+	}
+	if row.EstimatedCostSet {
+		return model.PrecisionEstimated
+	}
+	return model.PrecisionExact
 }
 
 func sessionTokenUsage(row sessionRow, evidence bool) model.TokenUsage {
@@ -1109,9 +1235,9 @@ type usageRow struct {
 	EstimatedCostSet, ActualCostSet bool
 }
 
-func (r *HermesReader) readUsageRows(sessionID string) []usageRow {
+func (r *HermesReader) readUsageRows(sessionID string) ([]usageRow, error) {
 	if !r.schema.hasTable("session_model_usage") || !r.schema.hasColumn("session_model_usage", "session_id") {
-		return nil
+		return nil, nil
 	}
 	parts := make([]string, 0, len(usageFields))
 	for _, field := range usageFields {
@@ -1123,14 +1249,14 @@ func (r *HermesReader) readUsageRows(sessionID string) []usageRow {
 	}
 	rows, err := r.db.Query("SELECT "+strings.Join(parts, ", ")+` FROM "session_model_usage" WHERE "session_id" = ?`, sessionID)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("hermes query usage %q: %w", sessionID, err)
 	}
 	defer rows.Close()
 	var out []usageRow
 	for rows.Next() {
 		values, err := scanValues(rows, len(usageFields))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("hermes scan usage %q: %w", sessionID, err)
 		}
 		u := usageRow{
 			Model:    asString(valueAt(values, usageFields, "model")),
@@ -1148,7 +1274,10 @@ func (r *HermesReader) readUsageRows(sessionID string) []usageRow {
 		u.ActualCost, u.ActualCostSet = asFloat64(valueAt(values, usageFields, "actual_cost_usd"))
 		out = append(out, u)
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("hermes iterate usage %q: %w", sessionID, err)
+	}
+	return out, nil
 }
 
 func (u usageRow) toModelUsage() model.ModelUsage {
