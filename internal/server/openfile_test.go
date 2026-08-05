@@ -262,7 +262,7 @@ func TestTryLaunchArgsPrefersSystemdUserRun(t *testing.T) {
 		launched = append([]string{cmd.Path}, cmd.Args[1:]...)
 		return nil
 	}
-	if err := tryLaunchArgs([]string{"kate", "-l", "1", "/tmp/x.jsonl"}, "/usr/bin/kate"); err != nil {
+	if err := tryLaunchArgs("/usr/bin/kate", []string{"-l", "1", "/tmp/x.jsonl"}); err != nil {
 		t.Fatal(err)
 	}
 	// First attempt should be systemd-run --user … --setenv=… -- /usr/bin/kate …

@@ -414,31 +414,33 @@ func buildEditorArgs(template, path string, line int) []string {
 	return args
 }
 
-// tryLaunchArgs starts an editor from an already-built argv. binOverride, when
-// non-empty, replaces argv[0] (used when we already resolved LookPath).
+// tryLaunchArgs starts an editor. bin must be a LookPath-resolved executable
+// path that never comes from the user-controlled file path (keeps CodeQL from
+// treating the open-file path as a command name). args are only the program
+// arguments (path, line flags, …) — not argv[0].
 //
 // On Linux, prefer systemd-run --user so the process joins the graphical user
 // session (fixes Kate cold-start KIO "file protocol" dialogs when SI itself
 // was started without a full desktop bus).
-func tryLaunchArgs(args []string, binOverride string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("empty editor command")
+func tryLaunchArgs(bin string, args []string) error {
+	if bin == "" {
+		return fmt.Errorf("empty editor binary")
 	}
-	bin := args[0]
-	if binOverride != "" {
-		bin = binOverride
+	// Reject a binary that looks like a path flag / empty; LookPath results are
+	// absolute or PATH-resolved names, never the session file path.
+	if strings.HasPrefix(bin, "-") {
+		return fmt.Errorf("invalid editor binary %q", bin)
 	}
-	rest := args[1:]
 
 	if runtimeGOOS != "windows" && runtimeGOOS != "darwin" {
-		if err := trySystemdUserRun(bin, rest); err == nil {
+		if err := trySystemdUserRun(bin, args); err == nil {
 			return nil
 		}
 		// errNoSystemdRun or launch failure: fall through to direct spawn with
 		// desktopSessionEnv so editors still start without a full user unit.
 	}
 
-	cmd := exec.Command(bin, rest...)
+	cmd := exec.Command(bin, args...)
 	cmd.Env = desktopSessionEnv()
 	// Detach from our stdio so chatty editors cannot block the API process.
 	cmd.Stdout = nil
@@ -446,11 +448,30 @@ func tryLaunchArgs(args []string, binOverride string) error {
 	return startEditorCommand(cmd)
 }
 
-// tryLaunchTemplate expands template and starts the process. PATH lookup is
-// deferred to exec.Command/Start so test doubles and unusual PATHs still work
-// the same way as a user shell.
+// tryLaunchTemplate expands template and starts the process.
+// The executable is resolved from the raw template's first field *before*
+// {path}/{line} substitution so a user file path can never become argv[0].
 func tryLaunchTemplate(template, path string, line int) error {
-	return tryLaunchArgs(buildEditorArgs(template, path, line), "")
+	fields := strings.Fields(template)
+	if len(fields) == 0 {
+		return fmt.Errorf("empty editor command")
+	}
+	binName := fields[0]
+	if strings.Contains(binName, "{path}") || strings.Contains(binName, "{line}") {
+		return fmt.Errorf("editor command must start with a fixed program name")
+	}
+	bin, err := lookPath(binName)
+	if err != nil {
+		// Fall back to the bare name so exec can still search PATH the same way
+		// a user shell would for unusual setups (tests inject lookPath).
+		bin = binName
+	}
+	args := buildEditorArgs(template, path, line)
+	if len(args) == 0 {
+		return fmt.Errorf("empty editor command")
+	}
+	// Drop the template program token; use the resolved binary exclusively.
+	return tryLaunchArgs(bin, args[1:])
 }
 
 // isFolderCapableEditor reports editors that open a directory as a workspace.
@@ -500,7 +521,7 @@ func platformDefaultOpen(goos, path string, isDir bool) error {
 			if err != nil {
 				continue
 			}
-			if err := tryLaunchArgs([]string{bin, path}, bin); err == nil {
+			if err := tryLaunchArgs(bin, []string{path}); err == nil {
 				return nil
 			}
 		}
@@ -534,9 +555,7 @@ func (s *Server) openExistingPath(path string, line int, isDir bool) error {
 			if c.DirTemplate == "" {
 				// VS Code / Cursor open folders when given a bare path.
 				if isFolderCapableEditor(c.Bins) {
-					// tryLaunchArgs overrides argv[0] with the resolved binary.
-					args := []string{bin, path}
-					if err := tryLaunchArgs(args, bin); err == nil {
+					if err := tryLaunchArgs(bin, []string{path}); err == nil {
 						return nil
 					} else {
 						errs = append(errs, c.Bins[0]+": "+err.Error())
@@ -551,8 +570,8 @@ func (s *Server) openExistingPath(path string, line int, isDir bool) error {
 		if len(args) == 0 {
 			continue
 		}
-		// Use the resolved binary path so Windows code.cmd / PATH variants work.
-		if err := tryLaunchArgs(args, bin); err == nil {
+		// bin is LookPath-resolved; args[1:] are flags + path only.
+		if err := tryLaunchArgs(bin, args[1:]); err == nil {
 			return nil
 		} else {
 			errs = append(errs, c.Bins[0]+": "+err.Error())
@@ -696,6 +715,12 @@ func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
 	resolved, info, err := resolveExisting(req.Path, req.Cwd)
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "open_file_failed", "file not found")
+		return
+	}
+	// Hardening for argv sinks: absolute existing path only; reject leading "-"
+	// so a hostile name is never interpreted as a program flag.
+	if !filepath.IsAbs(resolved) || strings.HasPrefix(filepath.Base(resolved), "-") {
+		writeAPIError(w, http.StatusBadRequest, "open_file_failed", "invalid path")
 		return
 	}
 	isDir := info.IsDir()
