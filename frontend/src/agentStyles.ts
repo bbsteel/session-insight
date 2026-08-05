@@ -13,6 +13,7 @@ const STYLES: Record<AgentKey, AgentStyle> = {
   opencode: { accent: '#f59e0b', userPrefix: '▸',  assistantPrefix: '◆' },
   chrys:    { accent: '#c084fc', userPrefix: '❯',  assistantPrefix: '◇' },
   grok:     { accent: '#111111', userPrefix: '›',  assistantPrefix: '✦' },
+  hermes:   { accent: '#0f766e', userPrefix: '❯',  assistantPrefix: '✦' },
 }
 
 // Deterministic palette for unknown agents (10 colors, wraps via char-code sum mod 10)

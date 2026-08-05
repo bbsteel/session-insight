@@ -13,6 +13,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/codex"
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
 	"github.com/bbsteel/session-insight/internal/reader/grok"
+	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 )
 
@@ -30,6 +31,7 @@ func AgentDefinitions() []capability.AgentCapabilities {
 		codex.Capabilities(),
 		copilot.Capabilities(),
 		grok.Capabilities(),
+		hermes.Capabilities(),
 		opencode.Capabilities(),
 	}
 	sort.Slice(defs, func(i, j int) bool {
@@ -97,6 +99,16 @@ func Discover() []BaseSessionReader {
 		reader, err := opencode.New(dbPath)
 		if err != nil {
 			log.Printf("openCode reader init failed: %v", err)
+		} else {
+			readers = append(readers, reader)
+		}
+	}
+
+	hermesDBPath, ok := hermes.ResolveDBPath()
+	if ok {
+		reader, err := hermes.New(hermesDBPath)
+		if err != nil {
+			log.Printf("hermes reader init failed: %v", err)
 		} else {
 			readers = append(readers, reader)
 		}

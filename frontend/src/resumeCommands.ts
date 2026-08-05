@@ -39,6 +39,7 @@ function agentResumeArgs(session: SessionSummary): AgentResumeArgs | null {
     standard: ['grok', '--resume', id],
     skipPermissions: ['grok', '--always-approve', '--resume', id],
   }
+  if (agent.includes('hermes')) return { standard: ['hermes', '--resume', id] }
   return null
 }
 

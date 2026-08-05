@@ -12,7 +12,7 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 
 ## Highlights
 
-- **Multi-agent session library** — auto-discover and index sessions from six coding agents, with live list refresh, accurate active-state detection, and live tail for running sessions
+- **Multi-agent session library** — auto-discover and index sessions from seven coding agents, with live list refresh, accurate active-state detection, and live tail for running sessions
 - **Agent capability transparency** — inspect each Agent's support for discovery, replay, realtime updates, tokens, tools, diffs, subtasks, resume, deletion, and termination, with session-level exact, estimated, or missing states
 - **Sub-agent collaboration** — when an Agent records nested work, open a horizontal collaboration dock with a zoomable timeline and jump from each launch or result back into the terminal evidence (Grok, Codex, Chrys, and Copilot)
 - **Terminal-native replay** — preserve ANSI output, formatted assistant text, tool calls, code, and errors; fold noisy details and follow active sessions as they grow
@@ -46,6 +46,7 @@ Session Insight auto-discovers sessions from the following agents:
 | [opencode](https://opencode.ai) | opencode SQLite database (auto-resolved) |
 | [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
 | [Grok](https://grok.com) | `~/.grok/sessions/` |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `~/.hermes/state.db` (or `HERMES_HOME`) |
 
 ## Download and Run
 
@@ -103,6 +104,7 @@ See [BUILD.md](BUILD.md) for the full Windows build guide (requires MSYS2 + ming
 | `PORT` | `8080` | HTTP port |
 | `SI_DATA_DIR` | `~/.session-insight` | Override the application database directory |
 | `CHRYS_SESSION_ROOT_DIR` | — | Override Chrys session root directory |
+| `HERMES_HOME` | `~/.hermes` | Override Hermes state directory; Session Insight reads `state.db` inside it |
 
 When `run.sh` is executed from a linked Git worktree, it uses an OS-assigned
 random loopback port on the first run and reuses the same port on subsequent

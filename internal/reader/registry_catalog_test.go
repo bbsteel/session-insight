@@ -16,6 +16,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/codex"
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
 	"github.com/bbsteel/session-insight/internal/reader/grok"
+	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -23,13 +24,13 @@ import (
 
 // expectedAgentTypes is the closed set of supported Agents for phase 1.
 var expectedAgentTypes = []string{
-	"chrys", "claude", "codex", "copilot", "grok", "opencode",
+	"chrys", "claude", "codex", "copilot", "grok", "hermes", "opencode",
 }
 
-func TestAgentDefinitionsHasSixAgents(t *testing.T) {
+func TestAgentDefinitionsHasSevenAgents(t *testing.T) {
 	defs := reader.AgentDefinitions()
-	if len(defs) != 6 {
-		t.Fatalf("catalog length = %d, want 6: %v", len(defs), agentTypes(defs))
+	if len(defs) != 7 {
+		t.Fatalf("catalog length = %d, want 7: %v", len(defs), agentTypes(defs))
 	}
 
 	got := agentTypes(defs)
@@ -112,6 +113,14 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opencode.New: %v", err)
 	}
+	hermesDB := filepath.Join(tmp, "hermes-identity.db")
+	if err := writeMinimalHermesDB(hermesDB); err != nil {
+		t.Fatalf("seed hermes db: %v", err)
+	}
+	hermesReader, err := hermes.New(hermesDB)
+	if err != nil {
+		t.Fatalf("hermes.New: %v", err)
+	}
 
 	pairs := []pair{
 		{claude.Capabilities(), claude.New(tmp)},
@@ -119,6 +128,7 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 		{copilot.Capabilities(), copilot.New(tmp)},
 		{chrys.Capabilities(), chrys.New(tmp)},
 		{grok.Capabilities(), grok.New(tmp)},
+		{hermes.Capabilities(), hermesReader},
 		{opencode.Capabilities(), ocReader},
 	}
 	for _, p := range pairs {
@@ -155,6 +165,15 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 		"grok":     grok.New(tmp),
 		"opencode": ocReader,
 	}
+	hermesDB := filepath.Join(tmp, "hermes-operation.db")
+	if err := writeMinimalHermesDB(hermesDB); err != nil {
+		t.Fatalf("seed hermes operation db: %v", err)
+	}
+	hermesReader, err := hermes.New(hermesDB)
+	if err != nil {
+		t.Fatalf("hermes.New: %v", err)
+	}
+	readers["hermes"] = hermesReader
 
 	for _, def := range reader.AgentDefinitions() {
 		r, ok := readers[def.AgentType]
@@ -189,7 +208,7 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 	}
 }
 
-// TestCatalogMatrixDump prints the six×ten matrix for evidence capture.
+// TestCatalogMatrixDump prints the seven×ten matrix for evidence capture.
 // Always asserts; also writes a human-readable dump when CAPABILITY_MATRIX_OUT is set.
 func TestCatalogMatrixDump(t *testing.T) {
 	var b strings.Builder
@@ -203,9 +222,9 @@ func TestCatalogMatrixDump(t *testing.T) {
 	matrix := b.String()
 	// Structural proof of catalog content.
 	lines := strings.Split(strings.TrimSpace(matrix), "\n")
-	// header + 6*10
-	if len(lines) != 1+60 {
-		t.Fatalf("matrix lines = %d, want 61", len(lines))
+	// header + 7*10
+	if len(lines) != 1+70 {
+		t.Fatalf("matrix lines = %d, want 71", len(lines))
 	}
 	if out := os.Getenv("CAPABILITY_MATRIX_OUT"); out != "" {
 		if err := os.WriteFile(out, []byte(matrix), 0o644); err != nil {
@@ -245,6 +264,19 @@ CREATE TABLE IF NOT EXISTS message (
   time_created integer NOT NULL DEFAULT 0,
   data text NOT NULL DEFAULT ''
 );
+`)
+	return err
+}
+
+func writeMinimalHermesDB(path string) error {
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS sessions (id text PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS messages (id integer PRIMARY KEY, session_id text, role text, content text);
 `)
 	return err
 }

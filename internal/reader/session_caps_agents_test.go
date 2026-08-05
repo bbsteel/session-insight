@@ -11,12 +11,13 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/codex"
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
 	"github.com/bbsteel/session-insight/internal/reader/grok"
+	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 )
 
 // Representative per-Agent resolution using each adapter's real static
 // Capabilities() declaration (Phase 1/3 catalog), without live storage.
-func TestResolveSixAgentsCatalogIntegration(t *testing.T) {
+func TestResolveSevenAgentsCatalogIntegration(t *testing.T) {
 	type agentCase struct {
 		name   string
 		static capability.AgentCapabilities
@@ -52,6 +53,13 @@ func TestResolveSixAgentsCatalogIntegration(t *testing.T) {
 			static: grok.Capabilities(),
 			// subtasks is exact once collaboration recognition is implemented.
 			unsupportedCaps: map[capability.CapabilityID]string{},
+		},
+		{
+			name:   "hermes",
+			static: hermes.Capabilities(),
+			unsupportedCaps: map[capability.CapabilityID]string{
+				capability.CapabilityTerminate: hermes.Capabilities().Capabilities[capability.CapabilityTerminate].ReasonCode,
+			},
 		},
 	}
 
