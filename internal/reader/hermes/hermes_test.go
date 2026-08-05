@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -206,6 +207,24 @@ func TestHermesInterruptedSessionAndEmptyReplay(t *testing.T) {
 	}
 	if events, err := empty.GetRenderEvents("missing"); err == nil || events != nil {
 		t.Fatalf("missing render events=%v err=%v", events, err)
+	}
+}
+
+func TestHermesNativeIntegerBounds(t *testing.T) {
+	const maxInt64Value = int64(1<<63 - 1)
+	const minInt64Value = -1 << 63
+
+	if _, ok := asNativeInt(maxInt64Value); ok != (strconv.IntSize == 64) {
+		t.Fatalf("max int64 conversion ok=%v on %d-bit host", ok, strconv.IntSize)
+	}
+	if _, ok := asNativeInt(minInt64Value); ok != (strconv.IntSize == 64) {
+		t.Fatalf("min int64 conversion ok=%v on %d-bit host", ok, strconv.IntSize)
+	}
+	if got := firstInt(map[string]any{"exit_code": maxInt64Value}, "exit_code"); got == 0 {
+		t.Fatal("out-of-range exit code must remain a failure signal")
+	}
+	if got := firstInt(map[string]any{"exit_code": minInt64Value}, "exit_code"); got == 0 {
+		t.Fatal("negative out-of-range exit code must remain a failure signal")
 	}
 }
 

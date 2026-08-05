@@ -911,10 +911,30 @@ func firstString(object map[string]any, keys ...string) string {
 func firstInt(object map[string]any, keys ...string) int {
 	for _, key := range keys {
 		if value, ok := asInt64(object[key]); ok {
-			return int(value)
+			if converted, ok := asNativeInt(value); ok {
+				return converted
+			}
+			// An out-of-range exit code is malformed input, but it must not
+			// wrap to zero and make a failed tool look successful.
+			return 1
 		}
 	}
 	return 0
+}
+
+// asNativeInt keeps JSON/SQLite int64 values from silently truncating on a
+// 32-bit build. Atoi applies the host's native int range and reports overflow.
+func asNativeInt(value int64) (int, bool) {
+	converted, err := strconv.Atoi(strconv.FormatInt(value, 10))
+	return converted, err == nil
+}
+
+func nativeIntOrZero(value int64) int {
+	converted, ok := asNativeInt(value)
+	if !ok {
+		return 0
+	}
+	return converted
 }
 
 func firstFloat(object map[string]any, keys ...string) float64 {
@@ -1042,7 +1062,7 @@ func (r *HermesReader) buildBilling(row sessionRow) *model.SessionBilling {
 		billing.ByModel = append(billing.ByModel, usage.toModelUsage())
 	}
 	if len(billing.ByModel) == 0 && row.Model != "" && tokenEvidence {
-		billing.ByModel = []model.ModelUsage{{Model: row.Model, Requests: int(row.APICallCount), Usage: billing.Totals}}
+		billing.ByModel = []model.ModelUsage{{Model: row.Model, Requests: nativeIntOrZero(row.APICallCount), Usage: billing.Totals}}
 	}
 	sort.SliceStable(billing.ByModel, func(i, j int) bool {
 		return billing.ByModel[i].Model < billing.ByModel[j].Model
@@ -1154,5 +1174,5 @@ func (u usageRow) toModelUsage() model.ModelUsage {
 	} else if u.EstimatedCostSet {
 		amount = u.EstimatedCost
 	}
-	return model.ModelUsage{Model: u.Model, Requests: int(u.Requests), BillingAmount: amount, Usage: tokens}
+	return model.ModelUsage{Model: u.Model, Requests: nativeIntOrZero(u.Requests), BillingAmount: amount, Usage: tokens}
 }
