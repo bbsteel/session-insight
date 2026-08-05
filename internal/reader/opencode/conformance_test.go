@@ -96,3 +96,83 @@ func TestOpenCodeConformance(t *testing.T) {
 		},
 	})
 }
+
+func TestOpenCodeProvenanceComplete(t *testing.T) {
+	dbPath, sessionID := writeOpenCodeBasicFixture(t)
+	r, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.db.Close() })
+	detail, err := r.GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceComplete(t, detail, Capabilities())
+}
+
+func TestOpenCodeProvenanceDegradedMalformedMessage(t *testing.T) {
+	dbPath, sessionID := writeOpenCodeBasicFixture(t)
+	database, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
+		"msg_bad", sessionID, 1, 1, "not-json",
+	); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.db.Close() })
+	detail, err := r.GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Provenance.State != "degraded" || len(detail.Provenance.Warnings) != 1 || detail.Provenance.Warnings[0].Code != "malformed_record_skipped" {
+		t.Fatalf("provenance=%+v", detail.Provenance)
+	}
+}
+
+func TestOpenCodeProvenanceMetadataOnlyEmptySession(t *testing.T) {
+	// Session row with no messages → no replayable body.
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "opencode.db")
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE session (id text PRIMARY KEY, directory text NOT NULL DEFAULT '', title text NOT NULL DEFAULT '', time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0, time_archived integer, model text, agent text)`,
+		`CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0, data text NOT NULL)`,
+		`CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0, data text NOT NULL)`,
+		`CREATE TABLE todo (session_id text NOT NULL, content text NOT NULL DEFAULT '', status text NOT NULL DEFAULT '', priority text NOT NULL DEFAULT '', position integer NOT NULL DEFAULT 0, time_created integer NOT NULL DEFAULT 0, time_updated integer NOT NULL DEFAULT 0, PRIMARY KEY(session_id, position))`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sid := "ses_empty"
+	if _, err := db.Exec(`INSERT INTO session (id, directory, title, time_created, time_updated) VALUES (?, ?, ?, ?, ?)`,
+		sid, "/tmp/p", "empty", 1700000000000, 1700000001000); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	r, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.db.Close() })
+	detail, err := r.GetSession(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.AssertProvenanceDegradedOrUnsupported(t, detail, Capabilities())
+}

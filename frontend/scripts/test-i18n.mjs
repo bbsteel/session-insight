@@ -17,6 +17,14 @@ assert.equal(translate('en', 'bookmark.noteWithValue', { note: 'Useful context' 
 assert.equal(translate('zh-CN', 'bookmark.noteTitle'), '收藏备注')
 assert.equal(translate('en', 'sidebar.bookmarksOnly', { count: 2 }), 'Show bookmarked sessions only (2)')
 assert.equal(translate('zh-CN', 'sidebar.bookmarksOnly', { count: 2 }), '只看收藏（2）')
+assert.equal(
+  translate('en', 'replay.openLink', { url: 'https://www.kimi.com/code/#pricing' }),
+  'Open link in new tab\nhttps://www.kimi.com/code/#pricing',
+)
+assert.equal(
+  translate('zh-CN', 'replay.openLink', { url: 'https://www.kimi.com/code/#pricing' }),
+  '在新 Tab 打开链接\nhttps://www.kimi.com/code/#pricing',
+)
 assert.equal(formatNumber('en', 12345), '12,345')
 const releaseEnglish = registerRuntimeTranslator((key, vars) => translate('en', key, vars))
 assert.equal(localize('settings.language'), 'Language')

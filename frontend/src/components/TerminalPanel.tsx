@@ -8,7 +8,7 @@ import { extractPathsAt, pathAtColumn } from '../filePathDetection'
 import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
-import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type UserHighlightRange } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, resolveMatcherTooltip, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type UserHighlightRange } from '../terminalControl'
 import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 import {
@@ -710,12 +710,17 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
 
       tooltipEl = document.createElement('div')
       tooltipEl.style.cssText = [
-        'position:fixed', 'padding:3px 10px',
+        'position:fixed', 'padding:4px 10px',
         'background:rgba(30,30,46,0.96)', 'color:#cdd6f4',
         'border:1px solid rgba(124,58,237,0.55)', 'border-radius:4px',
         'font-size:12px', 'font-family:system-ui,-apple-system,sans-serif',
         'pointer-events:none', 'z-index:9999', 'display:none',
-        'white-space:nowrap', 'box-shadow:0 2px 10px rgba(0,0,0,0.45)',
+        // pre-wrap keeps intentional newlines (action + full URL) and allows
+        // long http(s) destinations to wrap instead of overflowing the viewport.
+        'white-space:pre-wrap', 'word-break:break-all',
+        'max-width:min(560px, calc(100vw - 24px))',
+        'box-shadow:0 2px 10px rgba(0,0,0,0.45)',
+        'line-height:1.35',
       ].join(';')
       document.body.appendChild(tooltipEl)
 
@@ -1600,11 +1605,28 @@ const snapshotTerminal = () => {
       const showHoverFor = (bl: number, entry: InteractionEntry, clientX: number, clientY: number) => {
         showHoverDecoration(bl)
         if (tooltipEl) {
-          const tip = entry.matcher.tooltip ?? ''
+          const tip = resolveMatcherTooltip(entry.matcher.tooltip, entry.data)
           tooltipEl.textContent = tip
-          tooltipEl.style.display = tip ? 'block' : 'none'
-          tooltipEl.style.left = (clientX + 14) + 'px'
-          tooltipEl.style.top = (clientY - 38) + 'px'
+          if (!tip) {
+            tooltipEl.style.display = 'none'
+          } else {
+            // Place first so getBoundingClientRect reflects multi-line size
+            // (action label + full URL), then pin near the cursor without
+            // leaving the viewport.
+            tooltipEl.style.display = 'block'
+            tooltipEl.style.left = '0px'
+            tooltipEl.style.top = '0px'
+            const rect = tooltipEl.getBoundingClientRect()
+            let left = clientX + 14
+            let top = clientY - rect.height - 10
+            if (top < 4) top = clientY + 16
+            if (left + rect.width > window.innerWidth - 8) {
+              left = Math.max(8, window.innerWidth - rect.width - 8)
+            }
+            if (left < 4) left = 4
+            tooltipEl.style.left = left + 'px'
+            tooltipEl.style.top = top + 'px'
+          }
         }
         if (xtermScreen) xtermScreen.style.cursor = 'pointer'
       }

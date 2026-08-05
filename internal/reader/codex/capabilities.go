@@ -18,7 +18,7 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "codex",
 		DisplayName:     "Codex",
-		AdapterRevision: 1,
+		AdapterRevision: 2,
 		Capabilities: map[capability.CapabilityID]capability.CapabilityDeclaration{
 			capability.CapabilityDiscovery:   capability.Exact(),
 			capability.CapabilityReplay:      capability.Exact(),

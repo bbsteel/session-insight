@@ -7,6 +7,7 @@ import (
 
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/llm"
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
 )
 
@@ -78,6 +79,9 @@ type SessionSummary struct {
 	// Collaboration is the optional compact aggregate for root Sessions with
 	// an indexed collaboration graph (three counts + precision only).
 	Collaboration *CollaborationSummary `json:"collaboration_summary,omitempty"`
+	// RecordStatus is the compact list projection of record completeness.
+	// Absolute source paths and raw warnings must not appear here.
+	RecordStatus *model.RecordStatus `json:"record_status,omitempty"`
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
@@ -99,6 +103,8 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/collaboration", s.handleGetCollaboration)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	// Remove a source_missing tombstone from the SI index only (not agent source).
+	s.Mux.HandleFunc("DELETE /api/sessions/{id}/index", s.handleRemoveFromIndex)
 	s.Mux.HandleFunc("POST /api/sessions/{id}/stop", s.handleStopSession)
 	s.Mux.HandleFunc("PUT /api/sessions/{id}/bookmark", s.handleAddBookmark)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}/bookmark", s.handleRemoveBookmark)

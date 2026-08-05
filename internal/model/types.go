@@ -233,6 +233,15 @@ type SessionDetail struct {
 	Todos          []Todo            `json:"todos,omitempty"`
 	Billing        *SessionBilling   `json:"billing,omitempty"`
 	RollbackGroups []RollbackGroupVM `json:"rollback_groups,omitempty"`
+	// Provenance is the independent record-completeness / source inventory
+	// contract (v0.5.1). Nil means never snapshotted (API should report
+	// provenance unavailable, never fake complete).
+	Provenance *SessionProvenance `json:"provenance,omitempty"`
+	// RecordAvailable is false when the response is a metadata/provenance
+	// envelope without a usable body (source_missing, metadata_only, etc.).
+	// Omitted (true zero-value for JSON omitempty via pointer) for normal
+	// successful reads; handlers set *false for envelopes.
+	RecordAvailable *bool `json:"record_available,omitempty"`
 }
 
 type Todo struct {

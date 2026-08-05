@@ -18,6 +18,7 @@ package grok
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -28,6 +29,8 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/reader/provenance"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
 )
@@ -88,6 +91,9 @@ type sessionLoc struct {
 	SummaryPath string
 }
 
+// errSessionNotFound is a typed sentinel for missing Grok sessions (no string scrape).
+var errSessionNotFound = errors.New("grok session not found")
+
 func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 	if !validSessionID(id) {
 		return sessionLoc{}, fmt.Errorf("invalid grok session id: %q", id)
@@ -102,7 +108,10 @@ func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 	}
 	entries, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
-		return sessionLoc{}, fmt.Errorf("grok session not found %q: %w", id, err)
+		if os.IsNotExist(err) {
+			return sessionLoc{}, fmt.Errorf("%w: %s", errSessionNotFound, id)
+		}
+		return sessionLoc{}, err
 	}
 	for _, ent := range entries {
 		if !ent.IsDir() {
@@ -123,7 +132,14 @@ func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 			return loc, nil
 		}
 	}
-	return sessionLoc{}, fmt.Errorf("grok session not found %q", id)
+	return sessionLoc{}, fmt.Errorf("%w: %s", errSessionNotFound, id)
+}
+
+func (r *GrokReader) knownSessionLoc(id string) (sessionLoc, bool) {
+	r.locMu.RLock()
+	defer r.locMu.RUnlock()
+	loc, ok := r.locs[id]
+	return loc, ok
 }
 
 func readSummary(path string) (*summaryFile, error) {
@@ -153,19 +169,26 @@ func parseTS(s string) time.Time {
 }
 
 func (r *GrokReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+// ListSessionsDetailed walks the session tree and reports incompleteness when
+// project dirs or summary files fail for reasons other than absence.
+func (r *GrokReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	entries, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, true, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 
 	// One O(sessions+sidecars) lineage pass for the whole tree so each child
 	// gets IsSubagent / ParentSessionID without rescanning parents per child.
 	lineage := r.scanChildParentIndex(nil)
 
-	var sessions []model.Session
+	complete = true
 	locs := make(map[string]sessionLoc)
 	for _, proj := range entries {
 		if !proj.IsDir() {
@@ -174,6 +197,9 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 		projPath := filepath.Join(r.sessionsDir, proj.Name())
 		subs, err := os.ReadDir(projPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 		for _, sub := range subs {
@@ -187,6 +213,9 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 			sumPath := filepath.Join(projPath, id, "summary.json")
 			sum, err := readSummary(sumPath)
 			if err != nil {
+				if !os.IsNotExist(err) {
+					complete = false
+				}
 				continue
 			}
 			loc := sessionLoc{
@@ -207,7 +236,7 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 	r.locs = locs
 	r.locMu.Unlock()
 	r.storeLineage(lineage)
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile, lineage map[string]string) model.Session {
@@ -246,12 +275,22 @@ func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile, lineage map[
 		preview = shared.TruncateRunes(sum.SessionSummary, 200)
 	}
 
+	// Prefer git_root_dir when present so sessions opened from a subdirectory
+	// still group under the repository name. Pass it as the path to resolve,
+	// not as a repository slug: Grok stores an absolute filesystem path
+	// (often with a trailing slash), and treating that as a slug produced
+	// duplicate project-filter entries next to basename names from other agents.
+	projectPath := cwd
+	if root := strings.TrimSpace(sum.GitRootDir); root != "" {
+		projectPath = root
+	}
+
 	sess := model.Session{
 		ID:           loc.ID,
 		AgentType:    "grok",
 		CWD:          cwd,
 		Branch:       sum.HeadBranch,
-		Project:      shared.ResolveProject(cwd, sum.GitRootDir),
+		Project:      shared.ResolveProject(projectPath, ""),
 		Name:         name,
 		ModelName:    sum.CurrentModelID,
 		ResumeID:     loc.ID, // CLI accepts the session UUID
@@ -497,16 +536,33 @@ func extractUserQuery(text string) string {
 func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 	loc, err := r.findSession(id)
 	if err != nil {
-		return nil, err
+		var sources []model.SessionSourceFile
+		if known, ok := r.knownSessionLoc(id); ok {
+			sources = sourceInventory(known.Dir, known.SummaryPath)
+		}
+		if errors.Is(err, errSessionNotFound) || os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing", err).WithSources(sources)
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 	sum, err := readSummary(loc.SummaryPath)
 	if err != nil {
-		return nil, fmt.Errorf("grok session not found %q: %w", id, err)
+		sources := sourceInventory(loc.Dir, loc.SummaryPath)
+		if os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing",
+				fmt.Errorf("grok session not found %q: %w", id, err)).WithSources(sources)
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("grok session unreadable %q: %w", id, err)).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 	// Cold GetSession must agree with ListSessions on lineage; build the
 	// index when list has not run yet.
 	session := r.buildSession(loc, sum, r.ensureLineage())
-	turns, billing := buildTurnsAndBilling(loc.Dir, sum.CurrentModelID)
+	turns, billing, skipped := buildTurnsAndBilling(loc.Dir, sum.CurrentModelID)
 	session.TurnCount = len(turns)
 	msgCount := 0
 	for _, t := range turns {
@@ -525,6 +581,21 @@ func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 		Billing: billing,
 	}
 	detail.AnomalySummary = shared.RunAnomalyDetection(detail.Turns)
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:        time.Now().UTC(),
+		AdapterRevision:   Capabilities().AdapterRevision,
+		Sources:           sourceInventory(loc.Dir, loc.SummaryPath),
+		Warnings:          warnings,
+		HasReplayableBody: len(filtered) > 0,
+	})
+	detail.Provenance = &p
 	return detail, nil
 }
 
@@ -582,18 +653,19 @@ func (r *GrokReader) lastContentWrite(dir string) time.Time {
 
 // ---- turn / billing from updates (or chat fallback) ----
 
-func buildTurnsAndBilling(dir, modelName string) ([]model.TurnVM, *model.SessionBilling) {
+func buildTurnsAndBilling(dir, modelName string) ([]model.TurnVM, *model.SessionBilling, int) {
 	updatesPath := filepath.Join(dir, "updates.jsonl")
 	if _, err := os.Stat(updatesPath); err == nil {
 		return turnsFromUpdates(updatesPath, modelName)
 	}
-	return turnsFromChat(filepath.Join(dir, "chat_history.jsonl"), modelName), nil
+	turns, skipped := turnsFromChat(filepath.Join(dir, "chat_history.jsonl"), modelName)
+	return turns, nil, skipped
 }
 
-func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBilling) {
+func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBilling, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil
+		return nil, nil, 0
 	}
 	defer f.Close()
 
@@ -603,6 +675,7 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 		billing    = &model.SessionBilling{Precision: model.PrecisionMissing}
 		modelUsage = map[string]*model.ModelUsage{}
 		hasUsage   bool
+		skipped    int
 	)
 
 	flush := func() {
@@ -617,10 +690,12 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 	for sc.Scan() {
 		var line rawUpdateLine
 		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			skipped++
 			continue
 		}
 		var u rawUpdate
 		if json.Unmarshal(line.Params.Update, &u) != nil {
+			skipped++
 			continue
 		}
 		ts := tsFromUnix(line.Timestamp)
@@ -723,7 +798,7 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 	flush()
 
 	if !hasUsage {
-		return turns, &model.SessionBilling{Precision: model.PrecisionMissing}
+		return turns, &model.SessionBilling{Precision: model.PrecisionMissing}, skipped
 	}
 	billing.Precision = model.PrecisionExact
 	for _, mu := range modelUsage {
@@ -732,18 +807,19 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 	sort.Slice(billing.ByModel, func(i, j int) bool {
 		return billing.ByModel[i].Model < billing.ByModel[j].Model
 	})
-	return turns, billing
+	return turns, billing, skipped
 }
 
-func turnsFromChat(path, modelName string) []model.TurnVM {
+func turnsFromChat(path, modelName string) ([]model.TurnVM, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	defer f.Close()
 
 	var turns []model.TurnVM
 	var current *model.TurnVM
+	var skipped int
 	flush := func() {
 		if current != nil {
 			turns = append(turns, *current)
@@ -756,6 +832,7 @@ func turnsFromChat(path, modelName string) []model.TurnVM {
 	for sc.Scan() {
 		var msg chatMsg
 		if json.Unmarshal(sc.Bytes(), &msg) != nil {
+			skipped++
 			continue
 		}
 		switch msg.Type {
@@ -807,7 +884,7 @@ func turnsFromChat(path, modelName string) []model.TurnVM {
 		}
 	}
 	flush()
-	return turns
+	return turns, skipped
 }
 
 func maxInt(a, b int) int {

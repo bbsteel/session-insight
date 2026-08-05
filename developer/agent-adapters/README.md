@@ -29,9 +29,12 @@ Keep each Agent implementation under:
 internal/reader/<agent>/
 ├── <agent>.go
 ├── <agent>_test.go
+├── sources.go                 # required: session source inventory (provenance)
+├── sources_test.go            # recommended: inventory role/path tests
 ├── <agent>_delete.go          # when applicable
 ├── <agent>_delete_test.go
 ├── <agent>_render.go          # split as implementation size requires
+├── capabilities.go
 └── testdata/
     ├── basic/
     ├── tools/
@@ -49,6 +52,9 @@ Answer and record:
 
 - Where are sessions stored, and can SI discover the path automatically?
 - Does the Agent use JSONL, JSON, SQLite, or a multi-file layout?
+- **Which concrete files belong to one session** (primary transcript, sidecars,
+  subagent files, sqlite, todos, recovery, caches)? Which paths are global
+  shared stores that must **not** appear on a single session’s source list?
 - Is the session ID stable, and which ID does the native resume command use?
 - How do append writes, rewrites, and transactional commits occur?
 - What observable differences distinguish a normal finish from an interrupted session?
@@ -60,6 +66,61 @@ Answer and record:
 - Which secrets, identities, or private content may appear in fixtures?
 
 Do not infer an `exact` fact from file timestamps, model names, or UI copy.
+
+### 1b. Own the session source inventory (`sources.go`) — required
+
+Every adapter **must** ship a package-local `sources.go` that builds the
+provenance source list for one session. `GetSession` (and any metadata-only
+failure path that still returns provenance) must use that inventory. Do not
+inline a one-off `AttachWithWarnings(primaryPath)` unless the agent truly has
+a single file **and** that fact is still documented in `sources.go`.
+
+#### Stable roles (`model.SourceRole*`)
+
+Roles are cross-adapter semantic labels, **not** filenames:
+
+| Role | Use for |
+|------|---------|
+| `primary_transcript` | File (or store) SI actually used as the main body for this snapshot |
+| `metadata` | Session meta / summary / workspace / system prompt sidecars |
+| `events` | Event / bracket streams separate from the main transcript |
+| `updates` | Secondary update/compact streams when not the primary |
+| `tool_results` | Tool/todo/sqlite stores the adapter reads for tools |
+| `collaboration` | Subagent / child-agent transcript files |
+| `recovery` | Crash / in-flight recovery sidecars |
+| `snapshot` | Turn/session checkpoints or backups |
+| `edit_cache` | File-edit mutation/hunk caches (UI may collapse this role) |
+| `other` | **Last resort only** — never a dump for files you already understand |
+
+#### Rules
+
+1. **Agent-owned logic only.** Inventory lives in `internal/reader/<agent>/sources.go`.
+   Shared packages and the frontend must not guess paths from `agent_type`.
+2. **Only files this agent cares about.** Explicit paths or documented globs.
+   Do not “scan the whole session directory and label leftovers `other`”.
+3. **Prefer a precise role over `other`.** If a layout needs a new stable role,
+   add it to `model` + validation + i18n; do not invent one-off role strings.
+4. **Real files, not directories.** Never put a session directory on the list as
+   the open target; “open in editor” and path copy need files (or a real db path).
+5. **No global shared stores on a single session** unless that store *is* the
+   session (e.g. OpenCode’s shared sqlite is the primary store — list the db file,
+   not every table).
+6. **UI groups by role.** Collapse/expand (e.g. `edit_cache`) is role-based, not
+   path-based and not agent-type switches in the frontend.
+7. **Tests.** Conformance or `sources_test.go` must assert primary is a file,
+   expected roles appear for fixtures, and `other` is not used for known layout
+   paths.
+
+#### Reference implementations
+
+| Agent | `sources.go` focuses on |
+|-------|-------------------------|
+| claude | `*.jsonl` + `subagents/` + `todos/` |
+| codex | single `rollout-*.jsonl` per session |
+| copilot | `workspace.yaml` + `events.jsonl` + `session.db*` |
+| chrys | `session.json` / recovery / snapshots / collab / `mutations` |
+| grok | `summary` + `updates` / `chat_history` + `events` + hunk/rewind sidecars |
+| opencode | shared `opencode.db` (+ wal/shm) |
 
 ### 2. Establish the minimum replay path
 
@@ -144,6 +205,9 @@ A new Agent adapter is complete only when every applicable item is satisfied:
 - [ ] Interrupted sessions, absent fields, and empty sessions are not misreported.
 - [ ] Applicable operating-system differences are covered; unverified platforms are explicit in declarations or the PR.
 - [ ] The registry, API, and UI contain no duplicate hand-written capability matrix.
+- [ ] Session detail provenance is emitted on the same read path as body/metadata (sources, warnings, adapter_revision); use `readerr` for structured failures and `provenance.Build` for state — never scrape error strings or invent frontend agent→status tables.
+- [ ] Package-local `sources.go` lists **only** files this agent cares about, with precise `SourceRole*` values (not a directory dump, not habitual `other`); UI must not guess paths by `agent_type`.
+- [ ] Shared provenance conformance covers at least one complete fixture and one degraded/metadata_only/parser_unsupported fixture with source inventory and impact assertions.
 - [ ] `go test ./internal/reader/...` and all tests in the affected scope pass.
 - [ ] The PR lists verified capabilities, known gaps, and fixture provenance.
 
@@ -154,14 +218,16 @@ Add support for <AgentName> by following
 developer/agent-adapters/README.md.
 
 Research the local persistence format and cross-platform paths first. Then
-implement the reader, capability declarations, and sanitized fixtures. Use the
-shared conformance suite to prove every declaration. Conservatively mark
-capabilities without evidence as unsupported, and use not_applicable only when
-the concept does not exist for the Agent.
+implement the reader, capability declarations, sanitized fixtures, and a
+package-local sources.go that maps this agent’s real files to stable
+SourceRole* values (see §1b). Use the shared conformance suite to prove every
+declaration. Conservatively mark capabilities without evidence as unsupported,
+and use not_applicable only when the concept does not exist for the Agent.
 
 Do not maintain a separate capability matrix in frontend code or documentation.
-Run all validation required by the guide, and list capability evidence,
-unverified platforms, and known gaps in the PR.
+Do not invent source paths in the UI from agent_type. Run all validation
+required by the guide, and list capability evidence, unverified platforms, and
+known gaps in the PR.
 ```
 
 Maintainers should still be able to ask only for "support this Agent." This directory expands that request into a stable, reviewable engineering workflow.

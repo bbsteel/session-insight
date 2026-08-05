@@ -99,6 +99,13 @@ export async function fetchSession(id: string): Promise<SessionDetail> {
   return readJson<SessionDetail>(res, 'session')
 }
 
+/** Remove a source_missing tombstone from the SI index (not agent source delete). */
+export async function removeSessionFromIndex(session: Pick<SessionSummary, 'id' | 'agent_type'>): Promise<void> {
+  const params = new URLSearchParams({ agent: session.agent_type })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/index?${params.toString()}`, { method: 'DELETE' })
+  if (!res.ok) throw await responseError(res, 'request_failed')
+}
+
 // ---- Collaboration detail (frozen Wave 2 contract) ----
 
 /**

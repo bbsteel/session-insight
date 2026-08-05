@@ -99,6 +99,8 @@ export interface SessionSummary {
   bookmark_note?: string
   created_at: string
   updated_at: string
+  /** Compact record completeness; omit paths. Absent = unavailable. */
+  record_status?: RecordStatus
 }
 
 export interface TokenUsage {
@@ -156,6 +158,65 @@ export interface SearchResult {
   name: string
   updated_at: string
   match: string
+  /** True when hit comes from a source_missing tombstone (historical index). */
+  source_missing?: boolean
+  stale?: boolean
+}
+
+/** Mutually exclusive record completeness states (independent of capability). */
+export type RecordCompletenessState =
+  | 'complete'
+  | 'degraded'
+  | 'metadata_only'
+  | 'source_missing'
+  | 'parser_unsupported'
+
+export type SourceFileState = 'present' | 'missing' | 'unreadable' | 'unsupported'
+
+export interface SessionSourceFile {
+  role: string
+  path: string
+  state: SourceFileState | string
+  updated_at?: string
+  size_bytes?: number
+}
+
+export interface ParseWarning {
+  code: string
+  severity: string
+  affects_completeness: boolean
+  impacts?: string[]
+  count: number
+  source_role?: string
+  first_record?: number
+}
+
+export interface WarningSummary {
+  total: number
+  info?: number
+  warning?: number
+  error?: number
+  impact_counts?: Record<string, number>
+}
+
+export interface SessionProvenance {
+  state: RecordCompletenessState | string
+  reason_code?: string
+  captured_at: string
+  source_updated_at?: string
+  adapter_revision: number
+  sources: SessionSourceFile[]
+  warning_summary: WarningSummary
+  warnings: ParseWarning[]
+  last_successful_at?: string
+  missing_since?: string
+}
+
+/** Compact list projection — no absolute paths. */
+export interface RecordStatus {
+  state: RecordCompletenessState | string
+  warning_count: number
+  captured_at: string
 }
 
 export interface MiniMapPosition {
@@ -202,4 +263,8 @@ export interface SessionDetail {
   /** Phase 4 resolved Agent capabilities for this session (optional for degrade path). */
   agent_capabilities?: SessionCapabilities
   resume_id?: string
+  /** Independent record completeness / source inventory (v0.5.1). */
+  provenance?: SessionProvenance
+  /** False for metadata/source-missing envelopes without replayable body. */
+  record_available?: boolean
 }
