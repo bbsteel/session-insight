@@ -25,9 +25,10 @@ const kindKeys: Record<string, string> = {
 
 // DeepInsightSection is the second analysis layer (根因分析): it explains why
 // the local findings occurred, using a configured model, only when the user
-// asks. It never auto-generates and refuses live sessions (whose bill is still
-// moving). Generation state lives in insightStore so switching away mid-run
-// keeps the analysis going and coming back re-attaches to its progress.
+// asks. It never auto-generates. Live sessions are allowed; the run is a
+// point-in-time snapshot (UI notes that data/bill may still change). Generation
+// state lives in insightStore so switching away mid-run keeps the analysis
+// going and coming back re-attaches to its progress.
 export default function DeepInsightSection({ sessionId, agentType, isLive, findingsCount, onJumpToTurn }: Props) {
   const { locale, t } = useI18n()
   const [loaded, setLoaded] = useState(false)
@@ -78,7 +79,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
       <div className="flex items-center gap-3 mb-2 flex-wrap">
         <h3 className="text-body font-semibold text-[var(--text-primary)]">{t('insight.title')}</h3>
         {/* Launch control + model picker sit right next to the title. */}
-        {!busy && !isLive && !providerMissing && providers.length > 0 && (
+        {!busy && !providerMissing && providers.length > 0 && (
           <select
             value={providerId}
             onChange={e => setProviderId(Number(e.target.value))}
@@ -95,8 +96,6 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
         )}
         {busy ? (
           <button onClick={() => cancel(sessionId)} className={btnCls}>{t('common.cancel')}</button>
-        ) : isLive ? (
-          <span className="text-nav text-[var(--text-muted)]">{t('insight.afterSession')}</span>
         ) : providerMissing ? (
           <button onClick={() => window.dispatchEvent(new Event('si-open-ai-settings'))} className={btnCls}>
             {t('insight.configure')}
@@ -134,9 +133,17 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
         </div>
       )}
 
+      {isLive && !busy && (
+        <div className="mb-2 rounded-md border border-dashed border-[var(--border-default)] px-3 py-2 text-helper text-[var(--text-secondary)]">
+          {t('insight.liveSnapshot')}
+        </div>
+      )}
+
       {blocked && (
         <div className="rounded-md border border-dashed border-[var(--border-default)] p-3 text-helper text-[var(--text-secondary)]">
-          {blocked === 'session_active' && t('insight.blocked.active')}
+          {/* session_active is no longer returned by current servers; keep a soft
+              fallback for older backends so the blocked card is never blank. */}
+          {blocked === 'session_active' && t('insight.liveSnapshot')}
           {blocked === 'session_changing' && t('insight.blocked.changing')}
           {blocked === 'no_findings' && t('insight.blocked.noFindings')}
           {blocked === 'not_found' && t('insight.blocked.notFound')}
@@ -180,7 +187,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
 
       {loaded && !result && !busy && !preview && !blocked && !error && (
         <div className="text-nav text-[var(--text-muted)]">
-          {t(isLive ? 'insight.liveEmpty' : 'insight.empty')}
+          {t('insight.empty')}
         </div>
       )}
     </div>

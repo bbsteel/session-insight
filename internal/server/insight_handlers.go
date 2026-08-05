@@ -125,8 +125,9 @@ func liveRevision(rd reader.BaseSessionReader, id string, detail *model.SessionD
 
 // buildInsightSnapshot binds the reader that actually reads the session, then
 // reads detail + reader-specific evidence at a stable revision, retrying when
-// the session changes mid-read. Returns (nil, httpStatus, message) on failure:
-// 404 not found, 409 session_active (live), 409 session_changing (unstable).
+// the session changes mid-read. Live (active) sessions are allowed: analysis
+// is always a point-in-time snapshot. Returns (nil, httpStatus, message) on
+// failure: 404 not found, 409 session_changing (unstable across retries).
 func (s *Server) buildInsightSnapshot(id string) (*insightSnapshot, int, string) {
 	var bound reader.BaseSessionReader
 	for _, rd := range s.Readers {
@@ -144,11 +145,6 @@ func (s *Server) buildInsightSnapshot(id string) (*insightSnapshot, int, string)
 		detail, err := bound.GetSession(id)
 		if err != nil || detail == nil {
 			return nil, http.StatusNotFound, "session not found"
-		}
-		// Active sessions are excluded on both UI and API: their data and bill
-		// are still changing, so analyzing them repeatedly wastes money.
-		if model.IsSessionLive(detail.UpdatedAt) {
-			return nil, http.StatusConflict, "session_active"
 		}
 		revBefore := liveRevision(bound, id, detail)
 

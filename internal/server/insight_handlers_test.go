@@ -127,14 +127,27 @@ func TestInsightSessionNotFound(t *testing.T) {
 	}
 }
 
-func TestInsightActiveSessionRejected(t *testing.T) {
+func TestInsightActiveSessionAllowed(t *testing.T) {
+	// Live sessions may still be analyzed: the handler takes a point-in-time
+	// snapshot rather than waiting for the session to end.
 	detail := findingDetail()
 	detail.UpdatedAt = time.Now() // live now
 	s := newInsightServer(t, detail)
 	addProvider(t, s, "http://unused")
-	w := postInsight(t, s, `{"confirm_target":true}`)
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "session_active") {
-		t.Errorf("active session must be 409 session_active, got %d: %s", w.Code, w.Body.String())
+	// Unconfirmed target → 200 preview (proves we did not 409 session_active).
+	w := postInsight(t, s, `{"locale":"en"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("active session should allow analysis (preview), got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "session_active") {
+		t.Fatalf("active session must not return session_active: %s", w.Body.String())
+	}
+	var pv sendPreview
+	if err := json.Unmarshal(w.Body.Bytes(), &pv); err != nil {
+		t.Fatal(err)
+	}
+	if !pv.NeedsConfirmation || pv.FactCount == 0 {
+		t.Fatalf("expected send preview for live session, got %+v", pv)
 	}
 }
 
