@@ -438,38 +438,6 @@ func (r *HermesReader) allSessionPreviews() (map[string]string, error) {
 	return out, nil
 }
 
-func (r *HermesReader) sessionSummary(id string) (count, turns int, preview string, err error) {
-	query := `SELECT "role", "content" FROM "messages" WHERE "session_id" = ?`
-	if r.schema.hasColumn("messages", "active") {
-		query += ` AND COALESCE("active", 1) = 1`
-	}
-	query += ` ORDER BY "id" ASC`
-	rows, err := r.db.Query(query, id)
-	if err != nil {
-		return 0, 0, "", fmt.Errorf("hermes query message summary %q: %w", id, err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var role, content any
-		if err := rows.Scan(&role, &content); err != nil {
-			return 0, 0, "", err
-		}
-		count++
-		roleName := strings.ToLower(asString(role))
-		text := strings.TrimSpace(contentText(asString(content)))
-		if roleName == "user" {
-			turns++
-			if preview == "" && text != "" {
-				preview = shared.TruncateRunes(text, 200)
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return 0, 0, "", err
-	}
-	return count, turns, preview, nil
-}
-
 func (r *HermesReader) readMessages(sessionID string) ([]hermesMessage, error) {
 	parts := make([]string, 0, len(messageFields))
 	for _, field := range messageFields {

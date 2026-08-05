@@ -141,13 +141,14 @@ func TestHermesDelegationAndRequestDumpPredicates(t *testing.T) {
 	}
 	for _, tc := range cases {
 		name := tc.name
-		if name == "exact short id" {
+		switch name {
+		case "exact short id":
 			name = "request_dump_a_1.json"
-		} else if name == "short id does not prefix longer id" {
+		case "short id does not prefix longer id":
 			name = "request_dump_a_b_1.json"
-		} else if name == "exact underscored id" {
+		case "exact underscored id":
 			name = "request_dump_a_b_1.json"
-		} else {
+		default:
 			name = "session_a_1.json"
 		}
 		if got := requestDumpMatchesSession(name, tc.id); got != tc.want {
