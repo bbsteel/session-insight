@@ -205,6 +205,19 @@ func TestHermesBillingPrecisionAndUsageErrors(t *testing.T) {
 	if detail.Billing == nil || detail.Billing.Precision != model.PrecisionExact {
 		t.Fatalf("exact billing=%+v", detail.Billing)
 	}
+	if _, err := db.Exec(`UPDATE sessions SET estimated_cost_usd = NULL, actual_cost_usd = NULL, cost_status = NULL WHERE id = 'hermes-rich-001'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE session_model_usage SET estimated_cost_usd = 3.75, actual_cost_usd = NULL, cost_status = NULL WHERE session_id = 'hermes-rich-001'`); err != nil {
+		t.Fatal(err)
+	}
+	detail, err = r.GetSession("hermes-rich-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Billing == nil || detail.Billing.Precision != model.PrecisionEstimated {
+		t.Fatalf("usage-only estimated billing=%+v", detail.Billing)
+	}
 	if _, err := db.Exec(`DROP TABLE session_model_usage`); err != nil {
 		t.Fatal(err)
 	}

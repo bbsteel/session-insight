@@ -1126,7 +1126,7 @@ func (r *HermesReader) buildBilling(row sessionRow) (*model.SessionBilling, erro
 		return &model.SessionBilling{Precision: model.PrecisionMissing}, nil
 	}
 
-	billing := &model.SessionBilling{Precision: billingPrecision(row)}
+	billing := &model.SessionBilling{Precision: billingPrecision(row, usageRows)}
 	if row.Provider != "" || row.EstimatedCostSet || row.ActualCostSet || len(usageRows) > 0 {
 		billing.BillingUnit = "usd"
 	}
@@ -1148,20 +1148,47 @@ func (r *HermesReader) buildBilling(row sessionRow) (*model.SessionBilling, erro
 	return billing, nil
 }
 
-func billingPrecision(row sessionRow) string {
-	switch strings.ToLower(strings.TrimSpace(row.CostStatus)) {
-	case "exact":
+func billingPrecision(row sessionRow, usageRows []usageRow) string {
+	estimated := false
+	if precision := costStatusPrecision(row.CostStatus); precision == model.PrecisionExact {
 		return model.PrecisionExact
-	case "estimated":
-		return model.PrecisionEstimated
+	} else if precision == model.PrecisionEstimated {
+		estimated = true
 	}
 	if row.ActualCostSet {
 		return model.PrecisionExact
 	}
 	if row.EstimatedCostSet {
+		estimated = true
+	}
+	for _, usage := range usageRows {
+		if precision := costStatusPrecision(usage.CostStatus); precision == model.PrecisionExact {
+			return model.PrecisionExact
+		} else if precision == model.PrecisionEstimated {
+			estimated = true
+		}
+		if usage.ActualCostSet {
+			return model.PrecisionExact
+		}
+		if usage.EstimatedCostSet {
+			estimated = true
+		}
+	}
+	if estimated {
 		return model.PrecisionEstimated
 	}
 	return model.PrecisionExact
+}
+
+func costStatusPrecision(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "exact":
+		return model.PrecisionExact
+	case "estimated":
+		return model.PrecisionEstimated
+	default:
+		return ""
+	}
 }
 
 func sessionTokenUsage(row sessionRow, evidence bool) model.TokenUsage {
@@ -1192,6 +1219,7 @@ func sessionTokenUsage(row sessionRow, evidence bool) model.TokenUsage {
 
 type usageRow struct {
 	Model, Provider, Mode, Task     string
+	CostStatus                      string
 	Requests                        int64
 	Input, Output                   int64
 	CacheRead, CacheWrite           int64
@@ -1227,10 +1255,11 @@ func (r *HermesReader) readUsageRows(sessionID string) ([]usageRow, error) {
 			return nil, fmt.Errorf("hermes scan usage %q: %w", sessionID, err)
 		}
 		u := usageRow{
-			Model:    asString(valueAt(values, usageFields, "model")),
-			Provider: asString(valueAt(values, usageFields, "provider")),
-			Mode:     asString(valueAt(values, usageFields, "mode")),
-			Task:     asString(valueAt(values, usageFields, "task")),
+			Model:      asString(valueAt(values, usageFields, "model")),
+			Provider:   asString(valueAt(values, usageFields, "provider")),
+			Mode:       asString(valueAt(values, usageFields, "mode")),
+			Task:       asString(valueAt(values, usageFields, "task")),
+			CostStatus: asString(valueAt(values, usageFields, "cost_status")),
 		}
 		u.Requests, u.RequestsSet = asInt64(valueAt(values, usageFields, "api_call_count"))
 		u.Input, u.InputSet = asInt64(valueAt(values, usageFields, "input_tokens"))
