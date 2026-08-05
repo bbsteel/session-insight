@@ -8,8 +8,11 @@ import (
 
 // ResolveProject derives a display project name for a session.
 //
-// If repo is non-empty (Copilot sessions carry the actual repository slug),
-// it is returned directly. Otherwise the project is inferred from cwd:
+// If repo is a non-empty repository slug (e.g. Copilot's "owner/repo"), it is
+// returned directly. Absolute filesystem paths are not slugs — they are
+// resolved the same way as cwd (Grok's git_root_dir is such a path).
+//
+// Path resolution order:
 //
 //  1. Known worktree manager layouts are checked first, since the directory
 //     name at the git-root level would be a branch or generated id, not the
@@ -17,35 +20,118 @@ import (
 //  2. The directory tree is walked upward looking for a .git entry.
 //     A .git directory terminates the walk immediately.
 //     A .git file (linked worktree) is followed back to the main repo root.
-//  3. If no git root is found, the last path component of cwd is used.
+//  3. If no git root is found, the last path component of the path is used.
 func ResolveProject(cwd, repo string) string {
+	cwd = strings.TrimSpace(cwd)
+	repo = strings.TrimSpace(repo)
+
 	if repo != "" {
+		if isFilesystemPath(repo) {
+			// Prefer the explicit root path when callers pass one (e.g. Grok
+			// git_root_dir) so sessions opened from a subdirectory still group
+			// under the repository basename rather than the leaf cwd.
+			return projectNameFromPath(repo)
+		}
 		return repo
 	}
 	if cwd == "" {
 		return ""
 	}
+	return projectNameFromPath(cwd)
+}
 
-	cleaned := filepath.Clean(cwd)
+// isFilesystemPath reports whether s looks like a local path rather than a
+// remote repository slug such as "owner/repo".
+//
+// Detection is OS-agnostic so a Linux build still treats Windows drive/UNC
+// paths from session metadata as paths (not slugs), and vice versa.
+func isFilesystemPath(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// Unix absolute paths (including trailing-slash forms Grok stores).
+	if strings.HasPrefix(s, "/") {
+		return true
+	}
+	// Home-relative shorthand occasionally appears in session metadata.
+	if strings.HasPrefix(s, "~/") || s == "~" {
+		return true
+	}
+	// Windows drive paths: C:\... or C:/... (independent of build GOOS).
+	if len(s) >= 3 && isDriveLetter(s[0]) && s[1] == ':' && (s[2] == '\\' || s[2] == '/') {
+		return true
+	}
+	// Windows UNC: \\server\share or //server/share
+	if strings.HasPrefix(s, `\\`) || strings.HasPrefix(s, "//") {
+		return true
+	}
+	// Host-native absolute paths (covers any remaining platform forms).
+	return filepath.IsAbs(s)
+}
+
+func isDriveLetter(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
+// projectNameFromPath reduces a workspace path to a short display project name.
+func projectNameFromPath(path string) string {
+	path = expandHome(path)
+	// Normalize separators for layout detection and basename so Windows paths
+	// from session metadata still yield a short name on a Unix build.
+	slashPath := strings.ReplaceAll(path, `\`, "/")
+	cleaned := filepath.Clean(slashPath)
 
 	if p := detectWorktreeLayout(cleaned); p != "" {
 		return p
 	}
 
-	// A stale session may point at a workspace that no longer exists. Do not
-	// walk upward from that missing path: an unrelated ancestor repository
-	// (for example /tmp/.git in a sandbox) would otherwise claim the session.
-	if _, err := os.Stat(cleaned); err == nil {
-		if root := gitRootOf(cleaned); root != "" {
-			return filepath.Base(root)
+	// Prefer host-native path for filesystem probes (home expansion, real
+	// local workspaces). Windows-shaped paths usually miss on non-Windows
+	// hosts and fall through to basename below.
+	probe := filepath.Clean(path)
+	if _, err := os.Stat(probe); err == nil {
+		if root := gitRootOf(probe); root != "" {
+			return portableBase(root)
 		}
 	}
 
-	base := filepath.Base(cleaned)
-	if base == "." || base == string(filepath.Separator) {
+	base := portableBase(cleaned)
+	if base == "." || base == string(filepath.Separator) || base == "" {
 		return ""
 	}
 	return base
+}
+
+// portableBase returns the last path element using both / and \ separators so
+// session metadata recorded on another OS still maps to a short project name.
+func portableBase(path string) string {
+	s := strings.ReplaceAll(path, `\`, "/")
+	s = strings.TrimRight(s, "/")
+	if s == "" {
+		return ""
+	}
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+// expandHome resolves a leading "~" or "~/" against the current user's home
+// so os.Stat / git walks do not treat "~" as a relative path under cwd.
+func expandHome(path string) string {
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return home
+		}
+		return path
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return home + path[1:]
+		}
+	}
+	return path
 }
 
 // detectWorktreeLayout recognises path conventions used by worktree managers
