@@ -117,7 +117,7 @@ export default function RecordStatusPanel({
     setRemoving(true)
     setError(null)
     try {
-      await removeSessionFromIndex(session.id)
+      await removeSessionFromIndex(session)
       setConfirmRemove(false)
       onRemovedFromIndex?.()
       onClose()

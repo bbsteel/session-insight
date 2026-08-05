@@ -86,3 +86,25 @@ func TestSourceInventoryMissingPrimary(t *testing.T) {
 		t.Fatalf("state=%s want missing", sources[0].State)
 	}
 }
+
+func TestListSessionsDetailedReportsUnreadableProject(t *testing.T) {
+	projectsRoot := t.TempDir()
+	projectDir := filepath.Join(projectsRoot, "unreadable")
+	if err := os.Mkdir(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(projectDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(projectDir, 0o700) })
+	if _, err := os.ReadDir(projectDir); err == nil {
+		t.Skip("filesystem/user can still read mode-000 directory")
+	}
+	_, complete, err := New(projectsRoot).ListSessionsDetailed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complete {
+		t.Fatal("unreadable project directory must make inventory incomplete")
+	}
+}

@@ -271,11 +271,16 @@ func (s *Server) handleRemoveFromIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing session id", http.StatusBadRequest)
 		return
 	}
+	agentType := strings.TrimSpace(r.URL.Query().Get("agent"))
+	if agentType == "" {
+		http.Error(w, "missing agent type", http.StatusBadRequest)
+		return
+	}
 	if s.DB == nil {
 		http.Error(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
-	sess, ok, err := s.DB.FindSessionRowByID(id)
+	sess, ok, err := s.DB.GetSessionRow(agentType, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -205,8 +206,21 @@ func TestRemoveFromIndexOnlySourceMissing(t *testing.T) {
 	_ = database.ReplaceSessionSnapshot(db.SessionSnapshotWrite{
 		AgentType: "claude", Session: sess, Provenance: &prov, Revision: 1,
 	})
+	other := sess
+	other.AgentType = "codex"
+	_ = database.ReplaceSessionSnapshot(db.SessionSnapshotWrite{
+		AgentType: "codex", Session: other, Provenance: &prov, Revision: 1,
+	})
 	s := New(database, nil)
-	req := httptest.NewRequest("DELETE", "/api/sessions/t1/index", nil)
+
+	missingAgent := httptest.NewRequest("DELETE", "/api/sessions/t1/index", nil)
+	missingAgentW := httptest.NewRecorder()
+	s.Mux.ServeHTTP(missingAgentW, missingAgent)
+	if missingAgentW.Code != http.StatusBadRequest {
+		t.Fatalf("missing agent status=%d body=%s", missingAgentW.Code, missingAgentW.Body.String())
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/sessions/t1/index?agent=claude", nil)
 	w := httptest.NewRecorder()
 	s.Mux.ServeHTTP(w, req)
 	if w.Code != 204 {
@@ -215,6 +229,9 @@ func TestRemoveFromIndexOnlySourceMissing(t *testing.T) {
 	_, ok, _ := database.GetSessionRow("claude", "t1")
 	if ok {
 		t.Fatal("expected full index removal")
+	}
+	if _, ok, err := database.GetSessionRow("codex", "t1"); err != nil || !ok {
+		t.Fatalf("same-id codex row must remain: ok=%v err=%v", ok, err)
 	}
 }
 

@@ -214,17 +214,17 @@ func upsertProvenanceTx(tx *sql.Tx, agentType, sessionID string, p model.Session
 // re-read on the next cycle. Only call when discovery reported a complete
 // inventory. Returns the number of sessions newly or re-marked missing.
 func (db *DB) MarkSessionsSourceMissing(agentType string, missingIDs []string, now time.Time) (int, error) {
-	return db.markSessionsSourceMissing(agentType, missingIDs, now, 0, nil)
+	return db.markSessionsSourceMissing(agentType, missingIDs, now, nil)
 }
 
 // MarkSessionSourceMissingWithFacts is the single-session variant that seeds
-// adapter revision and source inventory when no prior provenance row exists
+// adapter revision, source inventory, and warnings when no prior provenance row exists
 // (source vanished between discovery and first detail read).
-func (db *DB) MarkSessionSourceMissingWithFacts(agentType, sessionID string, now time.Time, adapterRev int, sources []model.SessionSourceFile) (int, error) {
-	return db.markSessionsSourceMissing(agentType, []string{sessionID}, now, adapterRev, sources)
+func (db *DB) MarkSessionSourceMissingWithFacts(agentType, sessionID string, now time.Time, facts model.SessionProvenance) (int, error) {
+	return db.markSessionsSourceMissing(agentType, []string{sessionID}, now, &facts)
 }
 
-func (db *DB) markSessionsSourceMissing(agentType string, missingIDs []string, now time.Time, seedRev int, seedSources []model.SessionSourceFile) (int, error) {
+func (db *DB) markSessionsSourceMissing(agentType string, missingIDs []string, now time.Time, seed *model.SessionProvenance) (int, error) {
 	if len(missingIDs) == 0 {
 		return 0, nil
 	}
@@ -267,6 +267,10 @@ func (db *DB) markSessionsSourceMissing(agentType string, missingIDs []string, n
 			missingSince = prevMissing.String
 		}
 
+		seedRev := 0
+		if seed != nil {
+			seedRev = seed.AdapterRevision
+		}
 		rev := seedRev
 		if rev <= 0 && adapterRev.Valid && adapterRev.Int64 > 0 {
 			rev = int(adapterRev.Int64)
@@ -277,17 +281,13 @@ func (db *DB) markSessionsSourceMissing(agentType string, missingIDs []string, n
 		srcJSON := "[]"
 		if sourcesJSON.Valid && sourcesJSON.String != "" {
 			srcJSON = sourcesJSON.String
-			// Re-stat known paths: only primary_transcript is forced missing by
-			// discovery omission; auxiliary files may still be present (e.g. shared DB).
+			// Re-stat every known path. Discovery omission identifies a session,
+			// not a particular file: OpenCode, for example, stores every session
+			// in one shared primary_transcript database that remains present when
+			// one session row disappears.
 			var sources []model.SessionSourceFile
 			if json.Unmarshal([]byte(srcJSON), &sources) == nil {
 				for i := range sources {
-					if sources[i].Role == model.SourceRolePrimaryTranscript {
-						sources[i].State = model.SourceMissing
-						sources[i].UpdatedAt = nil
-						sources[i].SizeBytes = nil
-						continue
-					}
 					if sources[i].Path != "" {
 						sources[i] = restatSourceFile(sources[i])
 					}
@@ -296,18 +296,26 @@ func (db *DB) markSessionsSourceMissing(agentType string, missingIDs []string, n
 					srcJSON = string(b)
 				}
 			}
-		} else if len(seedSources) > 0 {
-			if b, e := json.Marshal(seedSources); e == nil {
+		} else if seed != nil && len(seed.Sources) > 0 {
+			if b, e := json.Marshal(seed.Sources); e == nil {
 				srcJSON = string(b)
 			}
 		}
 		warnJSON := "[]"
 		if warningsJSON.Valid && warningsJSON.String != "" {
 			warnJSON = warningsJSON.String
+		} else if seed != nil && len(seed.Warnings) > 0 {
+			if b, e := json.Marshal(seed.Warnings); e == nil {
+				warnJSON = string(b)
+			}
 		}
 		sumJSON := "{}"
 		if summaryJSON.Valid && summaryJSON.String != "" {
 			sumJSON = summaryJSON.String
+		} else if seed != nil {
+			if b, e := json.Marshal(seed.WarningSummary); e == nil {
+				sumJSON = string(b)
+			}
 		}
 		lastOK := prevLastOK
 

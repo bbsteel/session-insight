@@ -1,11 +1,13 @@
 package codex
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
+	"github.com/bbsteel/session-insight/internal/reader/readerr"
 )
 
 // Minimal Codex rollout under sessions/YYYY/MM/DD/rollout-....jsonl
@@ -89,5 +91,29 @@ func TestCodexProvenanceMetadataOnly(t *testing.T) {
 	adaptertest.AssertProvenanceDegradedOrUnsupported(t, detail, Capabilities())
 	if detail.Provenance.State != "metadata_only" {
 		t.Fatalf("state=%s", detail.Provenance.State)
+	}
+}
+
+func TestCodexFirstMissingRetainsDiscoveredSourcePath(t *testing.T) {
+	dir, sessionID := writeCodexBasicFixture(t)
+	r := New(dir)
+	sessions, complete, err := r.ListSessionsDetailed()
+	if err != nil || !complete || len(sessions) != 1 {
+		t.Fatalf("list complete=%v sessions=%d err=%v", complete, len(sessions), err)
+	}
+	knownPath := r.knownSessionFile(sessionID)
+	if knownPath == "" {
+		t.Fatal("missing discovered path")
+	}
+	if err := os.Remove(knownPath); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = r.ReadIndexSnapshot(context.Background(), sessions[0])
+	if err == nil {
+		t.Fatal("expected source missing error")
+	}
+	sre, ok := readerr.As(err)
+	if !ok || len(sre.Sources) != 1 || sre.Sources[0].Path != knownPath || sre.Sources[0].State != "missing" {
+		t.Fatalf("read error facts=%+v", sre)
 	}
 }

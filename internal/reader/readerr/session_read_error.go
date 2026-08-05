@@ -80,3 +80,19 @@ func (e *Error) WithWarnings(warnings []model.ParseWarning) *Error {
 	e.Warnings = warnings
 	return e
 }
+
+// SourceUnreadableWarning returns the stable, localizable warning fact used by
+// adapters when a known source cannot be read or parsed at all.
+func SourceUnreadableWarning(sourceRole string, impacts ...string) model.ParseWarning {
+	if len(impacts) == 0 {
+		impacts = []string{model.ImpactReplay}
+	}
+	return model.ParseWarning{
+		Code:                model.WarnSourceUnreadable,
+		Severity:            model.WarningSeverityError,
+		AffectsCompleteness: true,
+		Impacts:             impacts,
+		Count:               1,
+		SourceRole:          sourceRole,
+	}
+}

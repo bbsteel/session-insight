@@ -111,6 +111,36 @@ func TestOpenCodeProvenanceComplete(t *testing.T) {
 	adaptertest.AssertProvenanceComplete(t, detail, Capabilities())
 }
 
+func TestOpenCodeProvenanceDegradedMalformedMessage(t *testing.T) {
+	dbPath, sessionID := writeOpenCodeBasicFixture(t)
+	database, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`,
+		"msg_bad", sessionID, 1, 1, "not-json",
+	); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.db.Close() })
+	detail, err := r.GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Provenance.State != "degraded" || len(detail.Provenance.Warnings) != 1 || detail.Provenance.Warnings[0].Code != "malformed_record_skipped" {
+		t.Fatalf("provenance=%+v", detail.Provenance)
+	}
+}
+
 func TestOpenCodeProvenanceMetadataOnlyEmptySession(t *testing.T) {
 	// Session row with no messages → no replayable body.
 	dir := t.TempDir()

@@ -135,6 +135,13 @@ func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 	return sessionLoc{}, fmt.Errorf("%w: %s", errSessionNotFound, id)
 }
 
+func (r *GrokReader) knownSessionLoc(id string) (sessionLoc, bool) {
+	r.locMu.RLock()
+	defer r.locMu.RUnlock()
+	loc, ok := r.locs[id]
+	return loc, ok
+}
+
 func readSummary(path string) (*summaryFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -519,10 +526,16 @@ func extractUserQuery(text string) string {
 func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 	loc, err := r.findSession(id)
 	if err != nil {
-		if errors.Is(err, errSessionNotFound) || os.IsNotExist(err) {
-			return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
+		var sources []model.SessionSourceFile
+		if known, ok := r.knownSessionLoc(id); ok {
+			sources = sourceInventory(known.Dir, known.SummaryPath)
 		}
-		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err)
+		if errors.Is(err, errSessionNotFound) || os.IsNotExist(err) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing", err).WithSources(sources)
+		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 	sum, err := readSummary(loc.SummaryPath)
 	if err != nil {
@@ -532,12 +545,14 @@ func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 				fmt.Errorf("grok session not found %q: %w", id, err)).WithSources(sources)
 		}
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("grok session unreadable %q: %w", id, err)).WithSources(sources)
+			fmt.Errorf("grok session unreadable %q: %w", id, err)).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 	// Cold GetSession must agree with ListSessions on lineage; build the
 	// index when list has not run yet.
 	session := r.buildSession(loc, sum, r.ensureLineage())
-	turns, billing := buildTurnsAndBilling(loc.Dir, sum.CurrentModelID)
+	turns, billing, skipped := buildTurnsAndBilling(loc.Dir, sum.CurrentModelID)
 	session.TurnCount = len(turns)
 	msgCount := 0
 	for _, t := range turns {
@@ -556,10 +571,18 @@ func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 		Billing: billing,
 	}
 	detail.AnomalySummary = shared.RunAnomalyDetection(detail.Turns)
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
 	p := provenance.Build(provenance.Input{
 		CapturedAt:        time.Now().UTC(),
 		AdapterRevision:   Capabilities().AdapterRevision,
 		Sources:           sourceInventory(loc.Dir, loc.SummaryPath),
+		Warnings:          warnings,
 		HasReplayableBody: len(filtered) > 0,
 	})
 	detail.Provenance = &p
@@ -620,18 +643,19 @@ func (r *GrokReader) lastContentWrite(dir string) time.Time {
 
 // ---- turn / billing from updates (or chat fallback) ----
 
-func buildTurnsAndBilling(dir, modelName string) ([]model.TurnVM, *model.SessionBilling) {
+func buildTurnsAndBilling(dir, modelName string) ([]model.TurnVM, *model.SessionBilling, int) {
 	updatesPath := filepath.Join(dir, "updates.jsonl")
 	if _, err := os.Stat(updatesPath); err == nil {
 		return turnsFromUpdates(updatesPath, modelName)
 	}
-	return turnsFromChat(filepath.Join(dir, "chat_history.jsonl"), modelName), nil
+	turns, skipped := turnsFromChat(filepath.Join(dir, "chat_history.jsonl"), modelName)
+	return turns, nil, skipped
 }
 
-func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBilling) {
+func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBilling, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil
+		return nil, nil, 0
 	}
 	defer f.Close()
 
@@ -641,6 +665,7 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 		billing    = &model.SessionBilling{Precision: model.PrecisionMissing}
 		modelUsage = map[string]*model.ModelUsage{}
 		hasUsage   bool
+		skipped    int
 	)
 
 	flush := func() {
@@ -655,10 +680,12 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 	for sc.Scan() {
 		var line rawUpdateLine
 		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			skipped++
 			continue
 		}
 		var u rawUpdate
 		if json.Unmarshal(line.Params.Update, &u) != nil {
+			skipped++
 			continue
 		}
 		ts := tsFromUnix(line.Timestamp)
@@ -761,7 +788,7 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 	flush()
 
 	if !hasUsage {
-		return turns, &model.SessionBilling{Precision: model.PrecisionMissing}
+		return turns, &model.SessionBilling{Precision: model.PrecisionMissing}, skipped
 	}
 	billing.Precision = model.PrecisionExact
 	for _, mu := range modelUsage {
@@ -770,18 +797,19 @@ func turnsFromUpdates(path, modelName string) ([]model.TurnVM, *model.SessionBil
 	sort.Slice(billing.ByModel, func(i, j int) bool {
 		return billing.ByModel[i].Model < billing.ByModel[j].Model
 	})
-	return turns, billing
+	return turns, billing, skipped
 }
 
-func turnsFromChat(path, modelName string) []model.TurnVM {
+func turnsFromChat(path, modelName string) ([]model.TurnVM, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	defer f.Close()
 
 	var turns []model.TurnVM
 	var current *model.TurnVM
+	var skipped int
 	flush := func() {
 		if current != nil {
 			turns = append(turns, *current)
@@ -794,6 +822,7 @@ func turnsFromChat(path, modelName string) []model.TurnVM {
 	for sc.Scan() {
 		var msg chatMsg
 		if json.Unmarshal(sc.Bytes(), &msg) != nil {
+			skipped++
 			continue
 		}
 		switch msg.Type {
@@ -845,7 +874,7 @@ func turnsFromChat(path, modelName string) []model.TurnVM {
 		}
 	}
 	flush()
-	return turns
+	return turns, skipped
 }
 
 func maxInt(a, b int) int {

@@ -22,7 +22,7 @@ func sourceInventory(sessionDir, sessionID string) []model.SessionSourceFile {
 	dir := filepath.Join(sessionDir, sessionID)
 	var sources []model.SessionSourceFile
 	seen := map[string]struct{}{}
-	add := func(role, path string) {
+	add := func(role, path string, required bool) {
 		path = filepath.Clean(path)
 		if path == "" {
 			return
@@ -31,19 +31,27 @@ func sourceInventory(sessionDir, sessionID string) []model.SessionSourceFile {
 			return
 		}
 		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			if os.IsNotExist(err) && !required {
+				return
+			}
+			seen[path] = struct{}{}
+			sources = append(sources, provenance.StatSource(role, path))
+			return
+		}
+		if !info.Mode().IsRegular() {
 			return
 		}
 		seen[path] = struct{}{}
 		sources = append(sources, provenance.StatSource(role, path))
 	}
 
-	add(model.SourceRoleMetadata, filepath.Join(dir, "workspace.yaml"))
-	add(model.SourceRolePrimaryTranscript, filepath.Join(dir, "events.jsonl"))
-	add(model.SourceRoleToolResults, filepath.Join(dir, "session.db"))
+	add(model.SourceRoleMetadata, filepath.Join(dir, "workspace.yaml"), true)
+	add(model.SourceRolePrimaryTranscript, filepath.Join(dir, "events.jsonl"), true)
+	add(model.SourceRoleToolResults, filepath.Join(dir, "session.db"), false)
 	// WAL/SHM are operational sidecars of the same sqlite store.
 	for _, name := range []string{"session.db-wal", "session.db-shm"} {
-		add(model.SourceRoleToolResults, filepath.Join(dir, name))
+		add(model.SourceRoleToolResults, filepath.Join(dir, name), false)
 	}
 
 	return sources

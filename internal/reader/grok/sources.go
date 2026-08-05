@@ -32,7 +32,7 @@ import (
 func sourceInventory(sessionDir, summaryPath string) []model.SessionSourceFile {
 	var sources []model.SessionSourceFile
 	seen := map[string]struct{}{}
-	add := func(role, path string) {
+	add := func(role, path string, required bool) {
 		path = filepath.Clean(path)
 		if path == "" || path == "." || path == filepath.Clean(sessionDir) {
 			return
@@ -41,7 +41,15 @@ func sourceInventory(sessionDir, summaryPath string) []model.SessionSourceFile {
 			return
 		}
 		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			if os.IsNotExist(err) && !required {
+				return
+			}
+			seen[path] = struct{}{}
+			sources = append(sources, provenance.StatSource(role, path))
+			return
+		}
+		if !info.Mode().IsRegular() {
 			return
 		}
 		if strings.HasSuffix(filepath.Base(path), ".lock") {
@@ -53,9 +61,9 @@ func sourceInventory(sessionDir, summaryPath string) []model.SessionSourceFile {
 
 	// Session identity + run context (all useful to SI / operators).
 	if summaryPath != "" {
-		add(model.SourceRoleMetadata, summaryPath)
+		add(model.SourceRoleMetadata, summaryPath, true)
 	} else {
-		add(model.SourceRoleMetadata, filepath.Join(sessionDir, "summary.json"))
+		add(model.SourceRoleMetadata, filepath.Join(sessionDir, "summary.json"), true)
 	}
 	for _, name := range []string{
 		"system_prompt.txt",
@@ -64,7 +72,7 @@ func sourceInventory(sessionDir, summaryPath string) []model.SessionSourceFile {
 		"resources_state.json",
 		"announcement_state.json",
 	} {
-		add(model.SourceRoleMetadata, filepath.Join(sessionDir, name))
+		add(model.SourceRoleMetadata, filepath.Join(sessionDir, name), false)
 	}
 
 	updatesPath := filepath.Join(sessionDir, "updates.jsonl")
@@ -73,14 +81,14 @@ func sourceInventory(sessionDir, summaryPath string) []model.SessionSourceFile {
 
 	// Same preference as turn parsing: updates primary when present.
 	if _, err := os.Stat(updatesPath); err == nil {
-		add(model.SourceRolePrimaryTranscript, updatesPath)
-		add(model.SourceRoleUpdates, chatPath)
+		add(model.SourceRolePrimaryTranscript, updatesPath, true)
+		add(model.SourceRoleUpdates, chatPath, false)
 	} else {
-		add(model.SourceRolePrimaryTranscript, chatPath)
+		add(model.SourceRolePrimaryTranscript, chatPath, true)
 	}
-	add(model.SourceRoleEvents, eventsPath)
-	add(model.SourceRoleSnapshot, filepath.Join(sessionDir, "rewind_points.jsonl"))
-	add(model.SourceRoleEditCache, filepath.Join(sessionDir, "hunk_records.jsonl"))
+	add(model.SourceRoleEvents, eventsPath, false)
+	add(model.SourceRoleSnapshot, filepath.Join(sessionDir, "rewind_points.jsonl"), false)
+	add(model.SourceRoleEditCache, filepath.Join(sessionDir, "hunk_records.jsonl"), false)
 
 	// Child agents discovered under subagents/ (collaboration package).
 	subRoot := filepath.Join(sessionDir, "subagents")
@@ -94,11 +102,11 @@ func sourceInventory(sessionDir, summaryPath string) []model.SessionSourceFile {
 		sort.Strings(names)
 		for _, name := range names {
 			childDir := filepath.Join(subRoot, name)
-			add(model.SourceRoleCollaboration, filepath.Join(childDir, "meta.json"))
-			add(model.SourceRoleCollaboration, filepath.Join(childDir, "summary.json"))
+			add(model.SourceRoleCollaboration, filepath.Join(childDir, "meta.json"), false)
+			add(model.SourceRoleCollaboration, filepath.Join(childDir, "summary.json"), false)
 			// Child may have its own streams; list if present.
-			add(model.SourceRoleCollaboration, filepath.Join(childDir, "updates.jsonl"))
-			add(model.SourceRoleCollaboration, filepath.Join(childDir, "chat_history.jsonl"))
+			add(model.SourceRoleCollaboration, filepath.Join(childDir, "updates.jsonl"), false)
+			add(model.SourceRoleCollaboration, filepath.Join(childDir, "chat_history.jsonl"), false)
 		}
 	}
 

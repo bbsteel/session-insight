@@ -228,22 +228,26 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 				fmt.Errorf("session not found: %s", id)).WithSources(sources)
 		}
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("read workspace.yaml: %w", err)).WithSources(sources)
+			fmt.Errorf("read workspace.yaml: %w", err)).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 
 	var ws workspaceYAML
 	if err := yaml.Unmarshal(data, &ws); err != nil {
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("invalid workspace.yaml: %w", err))
+			fmt.Errorf("invalid workspace.yaml: %w", err)).
+			WithSources(sourceInventory(r.sessionDir, id)).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRoleMetadata, model.ImpactMetadata, model.ImpactReplay)})
 	}
 
 	session := toSession(ws)
 
 	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
-	turns, modelName, err := parseEventsJSONL(eventsPath)
+	turns, modelName, skipped, err := parseEventsJSONL(eventsPath)
 	if err != nil {
 		detail := &model.SessionDetail{Session: session, Turns: []model.TurnVM{}}
-		detail.Provenance = r.attachProvenance(id, false, true)
+		detail.Provenance = r.attachProvenance(id, false, true, skipped)
 		return detail, nil
 	}
 
@@ -263,7 +267,7 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 
 	// Anomaly detection
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
-	detail.Provenance = r.attachProvenance(id, len(turns) > 0, false)
+	detail.Provenance = r.attachProvenance(id, len(turns) > 0, false, skipped)
 
 	// MissingShutdown check (copilot-specific: session.shutdown event).
 	// The same event carries the session bill (tokenDetails / modelMetrics /
@@ -287,12 +291,18 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	return detail, nil
 }
 
-func (r *CopilotReader) attachProvenance(sessionID string, hasBody, eventsMissing bool) *model.SessionProvenance {
+func (r *CopilotReader) attachProvenance(sessionID string, hasBody, eventsMissing bool, malformed int) *model.SessionProvenance {
 	var warnings []model.ParseWarning
 	if eventsMissing {
 		warnings = append(warnings, provenance.Warning(
 			model.WarnSidecarMissing, model.WarningSeverityWarning, true,
 			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, 1,
+		))
+	}
+	if malformed > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, malformed,
 		))
 	}
 	p := provenance.Build(provenance.Input{
@@ -393,15 +403,16 @@ func nestedMap(data map[string]any, key string) map[string]any {
 	return nil
 }
 
-func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
+func parseEventsJSONL(path string) ([]model.TurnVM, string, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer f.Close()
 
 	var turns []model.TurnVM
 	var foundModel string
+	var skipped int
 	var toolStarts = make(map[string]string) // toolCallId -> toolName
 	var currentTurn *model.TurnVM
 	var turnStartTimestamp string
@@ -411,6 +422,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 	for scanner.Scan() {
 		var evt jsonlEvent
 		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			skipped++
 			continue
 		}
 
@@ -524,7 +536,7 @@ func parseEventsJSONL(path string) ([]model.TurnVM, string, error) {
 		turns = append(turns, *currentTurn)
 	}
 
-	return turns, foundModel, scanner.Err()
+	return turns, foundModel, skipped, scanner.Err()
 }
 
 func extractString(data map[string]any, key string) (string, bool) {

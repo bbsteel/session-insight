@@ -2,6 +2,8 @@ package db
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -112,6 +114,9 @@ func TestSourceMissingTombstoneChainAndRestore(t *testing.T) {
 	if got.State != model.RecordSourceMissing || got.MissingSince == nil {
 		t.Fatalf("tombstone: %+v", got)
 	}
+	if _, exists, err := db.GetWatermark("claude", "s1"); err != nil || exists {
+		t.Fatalf("tombstone must invalidate watermark: exists=%v err=%v", exists, err)
+	}
 	// FTS/turn content retained
 	results, err := db.SearchTurns("keep-me", 10)
 	if err != nil {
@@ -144,6 +149,69 @@ func TestSourceMissingTombstoneChainAndRestore(t *testing.T) {
 	restored, _, _ := db.GetProvenance("claude", "s1")
 	if restored.State != model.RecordComplete || restored.MissingSince != nil {
 		t.Fatalf("restore: %+v", restored)
+	}
+}
+
+func TestSourceMissingRestatsSharedPrimarySource(t *testing.T) {
+	database := openTestDB(t)
+	now := time.Now().UTC()
+	sharedDB := filepath.Join(t.TempDir(), "opencode.db")
+	if err := os.WriteFile(sharedDB, []byte("shared"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prov := model.SessionProvenance{
+		State: model.RecordComplete, CapturedAt: now, AdapterRevision: 3,
+		Sources: []model.SessionSourceFile{{
+			Role: model.SourceRolePrimaryTranscript, Path: sharedDB, State: model.SourcePresent,
+		}},
+	}
+	sess := model.Session{ID: "shared-id", AgentType: "opencode", CreatedAt: now, UpdatedAt: now}
+	if err := database.ReplaceSessionSnapshot(SessionSnapshotWrite{
+		AgentType: "opencode", Session: sess, Provenance: &prov, Revision: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.MarkSessionsSourceMissing("opencode", []string{sess.ID}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := database.GetProvenance("opencode", sess.ID)
+	if err != nil || !ok || len(got.Sources) != 1 {
+		t.Fatalf("provenance ok=%v err=%v sources=%+v", ok, err, got)
+	}
+	if got.Sources[0].State != model.SourcePresent {
+		t.Fatalf("shared primary source state=%s, want present", got.Sources[0].State)
+	}
+}
+
+func TestFirstMissingSeedsAllStructuredFacts(t *testing.T) {
+	database := openTestDB(t)
+	now := time.Now().UTC()
+	sess := model.Session{ID: "first-missing", AgentType: "codex", CreatedAt: now, UpdatedAt: now}
+	if err := database.UpsertSessionMeta("codex", sess.ID, "", "", "", "", "", "", "", 0, 0, now, now); err != nil {
+		t.Fatal(err)
+	}
+	missingPath := filepath.Join(t.TempDir(), "gone.jsonl")
+	facts := model.SessionProvenance{
+		State: model.RecordSourceMissing, ReasonCode: "source_missing", CapturedAt: now,
+		AdapterRevision: 2,
+		Sources: []model.SessionSourceFile{{
+			Role: model.SourceRolePrimaryTranscript, Path: missingPath, State: model.SourceMissing,
+		}},
+		Warnings: []model.ParseWarning{{
+			Code: model.WarnSourceUnreadable, Severity: model.WarningSeverityError,
+			AffectsCompleteness: true, Impacts: []string{model.ImpactReplay}, Count: 1,
+		}},
+		WarningSummary: model.WarningSummary{Total: 1, Error: 1},
+	}
+	if _, err := database.MarkSessionSourceMissingWithFacts("codex", sess.ID, now, facts); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := database.GetProvenance("codex", sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("provenance ok=%v err=%v", ok, err)
+	}
+	if got.AdapterRevision != 2 || len(got.Sources) != 1 || len(got.Warnings) != 1 || got.WarningSummary.Total != 1 {
+		t.Fatalf("structured facts lost: %+v", got)
 	}
 }
 

@@ -70,3 +70,17 @@ func TestGrokProvenanceMetadataOnly(t *testing.T) {
 		t.Fatal("expected source inventory")
 	}
 }
+
+func TestGrokProvenanceDegradedMalformedUpdate(t *testing.T) {
+	root := t.TempDir()
+	sessionID := "cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee"
+	updates := "not-json\n" + sampleUpdatesClosed()
+	writeSession(t, root, "%2Ftmp%2Fdemo", sessionID, summaryFile{}, updates, sampleEventsClosed())
+	detail, err := New(root).GetSession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Provenance.State != "degraded" || len(detail.Provenance.Warnings) != 1 || detail.Provenance.Warnings[0].Code != "malformed_record_skipped" {
+		t.Fatalf("provenance=%+v", detail.Provenance)
+	}
+}

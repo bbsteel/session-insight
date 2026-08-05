@@ -52,3 +52,41 @@ func TestUpdateSessionResumeID(t *testing.T) {
 		t.Fatalf("idempotent update: changed=%v err=%v", changed, err)
 	}
 }
+
+func TestV30MigrationInvalidatesExistingWatermarks(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO index_watermarks(agent_type, session_id, revision, indexed_at)
+		VALUES ('claude', 'legacy', 42, '2026-08-05T00:00:00Z')`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`DELETE FROM schema_migrations WHERE version = 30`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`DROP TABLE session_provenance`); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var count int
+	if err := reopened.Conn().QueryRow(`SELECT COUNT(*) FROM index_watermarks`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("v30 migration retained %d watermark(s)", count)
+	}
+}

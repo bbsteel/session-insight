@@ -131,6 +131,31 @@ func TestIndexerScanFailureDoesNotMassMissing(t *testing.T) {
 	}
 }
 
+func TestIndexerIncompleteInventoryDoesNotTombstoneOmissions(t *testing.T) {
+	database := openIndexerDB(t)
+	now := time.Now().UTC()
+	sess := model.Session{ID: "s1", AgentType: "fake", CreatedAt: now, UpdatedAt: now}
+	prov := model.SessionProvenance{State: model.RecordComplete, CapturedAt: now, AdapterRevision: 1}
+	detail := &model.SessionDetail{Session: sess, Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "x"}}, Provenance: &prov}
+	fr := &fakeReader{
+		agent: "fake", sessions: []model.Session{sess},
+		details: map[string]*model.SessionDetail{"s1": detail},
+	}
+	ix := New(database, []reader.BaseSessionReader{fr})
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fr.sessions = nil
+	fr.incomplete = true
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := database.GetProvenance("fake", "s1")
+	if err != nil || !ok || got.State != model.RecordComplete {
+		t.Fatalf("incomplete inventory changed record: ok=%v err=%v provenance=%+v", ok, err, got)
+	}
+}
+
 func TestHandleReadFailureUsesCatalogAdapterRevision(t *testing.T) {
 	// claude catalog declares AdapterRevision >= 2 after provenance wiring.
 	database := openIndexerDB(t)

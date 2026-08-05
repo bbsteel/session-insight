@@ -179,14 +179,26 @@ func (r *ClaudeReader) ListSessionsDetailed() (sessions []model.Session, complet
 		path, id string
 	}
 	var jobs []fileJob
+	complete = true
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == "memory" {
 			continue
 		}
 		projDir := filepath.Join(r.projectsDir, entry.Name())
-		jsonlFiles, _ := filepath.Glob(filepath.Join(projDir, "*.jsonl"))
-		for _, jf := range jsonlFiles {
-			jobs = append(jobs, fileJob{jf, strings.TrimSuffix(filepath.Base(jf), ".jsonl")})
+		projectEntries, readErr := os.ReadDir(projDir)
+		if readErr != nil {
+			// filepath.Glob deliberately suppresses directory I/O failures. That
+			// would make an unreadable project look like an authoritative empty
+			// inventory and allow false source_missing tombstones.
+			complete = false
+			continue
+		}
+		for _, projectEntry := range projectEntries {
+			if projectEntry.IsDir() || !strings.HasSuffix(projectEntry.Name(), ".jsonl") {
+				continue
+			}
+			jf := filepath.Join(projDir, projectEntry.Name())
+			jobs = append(jobs, fileJob{jf, strings.TrimSuffix(projectEntry.Name(), ".jsonl")})
 		}
 	}
 
@@ -208,7 +220,7 @@ func (r *ClaudeReader) ListSessionsDetailed() (sessions []model.Session, complet
 				return
 			}
 			// Existing file that failed meta parse → inventory incomplete.
-			if _, err := os.Stat(j.path); err == nil {
+			if _, err := os.Stat(j.path); err == nil || !os.IsNotExist(err) {
 				results <- jobResult{skip: true}
 			}
 		}(job)
@@ -217,7 +229,6 @@ func (r *ClaudeReader) ListSessionsDetailed() (sessions []model.Session, complet
 	close(results)
 
 	sessions = make([]model.Session, 0, len(jobs))
-	complete = true
 	for r := range results {
 		if r.ok {
 			sessions = append(sessions, r.sess)
@@ -416,15 +427,20 @@ func resolveSessionName(aiTitle, lastPrompt, firstUserMsg string, createdAt time
 func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	jsonlPath := r.findSessionFile(id)
 	if jsonlPath == "" {
-		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+		readErr := readerr.New(readerr.SourceMissing, "source_missing",
 			fmt.Errorf("claude session not found: %s", id))
+		if known := r.knownSessionFile(id); known != "" {
+			readErr.WithSources(sourceInventory(known, r.claudeRoot()))
+		}
+		return nil, readErr
 	}
 
 	session, ok := readSessionMeta(jsonlPath, id)
 	if !ok {
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
 			fmt.Errorf("failed to read session: %s", id)).
-			WithSources(sourceInventory(jsonlPath, r.claudeRoot()))
+			WithSources(sourceInventory(jsonlPath, r.claudeRoot())).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRolePrimaryTranscript)})
 	}
 
 	turns, modelName, skipped, err := parseClaudeEvents(jsonlPath)
@@ -491,6 +507,12 @@ func (r *ClaudeReader) findSessionFile(sessionID string) string {
 		}
 	}
 	return ""
+}
+
+func (r *ClaudeReader) knownSessionFile(sessionID string) string {
+	r.pathsMu.RLock()
+	defer r.pathsMu.RUnlock()
+	return r.paths[sessionID]
 }
 
 // ---- Event parsing ----

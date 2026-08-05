@@ -469,7 +469,17 @@ func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType strin
 		); err != nil {
 			return false, err
 		}
-		if _, markErr := ix.db.MarkSessionSourceMissingWithFacts(agentType, sess.ID, now, adapterRev, sre.Sources); markErr != nil {
+		facts := provenance.Build(provenance.Input{
+			StateOverride:     model.RecordSourceMissing,
+			ReasonCode:        reason,
+			CapturedAt:        now,
+			AdapterRevision:   adapterRev,
+			Sources:           sre.Sources,
+			Warnings:          sre.Warnings,
+			HasReplayableBody: false,
+			MissingSince:      &now,
+		})
+		if _, markErr := ix.db.MarkSessionSourceMissingWithFacts(agentType, sess.ID, now, facts); markErr != nil {
 			return false, markErr
 		}
 		return true, nil

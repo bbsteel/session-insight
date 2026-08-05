@@ -572,7 +572,9 @@ func (r *ChrysReader) GetSession(id string) (*model.SessionDetail, error) {
 				fmt.Errorf("chrys session not found %q: %w", id, err)).WithSources(sources)
 		}
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("chrys session unreadable %q: %w", id, err)).WithSources(sources)
+			fmt.Errorf("chrys session unreadable %q: %w", id, err)).
+			WithSources(sources).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRolePrimaryTranscript)})
 	}
 
 	session := buildSession(id, sf)

@@ -63,13 +63,37 @@ func TestIndexDetailFromEvents(t *testing.T) {
 		{Type: "TextChunk", TurnIndex: 0, Text: "answer"},
 		{Type: "ToolInvocation", TurnIndex: 0, ToolName: "exec"},
 		{Type: "ToolResult", TurnIndex: 0, ExitCode: 1, Stderr: "failed"},
-	}, "")
+	}, "", 0)
 	if len(detail.Turns) != 1 {
 		t.Fatalf("turns=%d, want 1", len(detail.Turns))
 	}
 	turn := detail.Turns[0]
 	if turn.UserMessage != "question" || turn.AssistantMessage != "answer" || turn.ToolCallCount != 1 || turn.ErrorCount != 1 {
 		t.Fatalf("unexpected index turn: %#v", turn)
+	}
+}
+
+func TestIndexSnapshotDegradesWhenRenderParserSkipsMalformedRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	fixture := strings.Join([]string{
+		`{"timestamp":"2026-06-20T01:00:00Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`not-json`,
+		`{"timestamp":"2026-06-20T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-06-20T01:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"world"}}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	events, skipped, err := codexToRenderEventsDetailed(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := indexDetailFromEvents(model.Session{ID: "session"}, events, path, skipped)
+	if detail.Provenance == nil || detail.Provenance.State != model.RecordDegraded {
+		t.Fatalf("provenance=%+v", detail.Provenance)
+	}
+	if len(detail.Provenance.Warnings) != 1 || detail.Provenance.Warnings[0].Code != model.WarnMalformedRecordSkipped {
+		t.Fatalf("warnings=%+v", detail.Provenance.Warnings)
 	}
 }
 
