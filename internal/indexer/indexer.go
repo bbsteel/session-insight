@@ -163,9 +163,10 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 	cycleStarted := time.Now()
 	// Pre-count sessions so the UI can show a stable percentage.
 	type agentSessions struct {
-		reader   reader.BaseSessionReader
-		sessions []model.Session
-		listErr  error
+		reader            reader.BaseSessionReader
+		sessions          []model.Session
+		inventoryComplete bool
+		listErr           error
 	}
 	planned := make([]agentSessions, 0, len(ix.readers))
 	total := 0
@@ -180,15 +181,25 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 			return ctx.Err()
 		}
 		listStarted := time.Now()
-		sessions, err := r.ListSessions()
+		var sessions []model.Session
+		inventoryComplete := false
+		var err error
+		if dl, ok := r.(reader.DetailedSessionLister); ok {
+			sessions, inventoryComplete, err = dl.ListSessionsDetailed()
+		} else {
+			// Without a completeness signal, refuse omission tombstones.
+			sessions, err = r.ListSessions()
+			inventoryComplete = false
+		}
 		listElapsed := time.Since(listStarted)
 		if err != nil {
 			log.Printf("[indexer] %s: ListSessions failed after %s: %v", r.AgentType(), listElapsed.Round(time.Millisecond), err)
 			planned = append(planned, agentSessions{reader: r, listErr: err})
 			continue
 		}
-		log.Printf("[indexer] %s: listed %d session(s) in %s", r.AgentType(), len(sessions), listElapsed.Round(time.Millisecond))
-		planned = append(planned, agentSessions{reader: r, sessions: sessions})
+		log.Printf("[indexer] %s: listed %d session(s) in %s (inventory_complete=%v)",
+			r.AgentType(), len(sessions), listElapsed.Round(time.Millisecond), inventoryComplete)
+		planned = append(planned, agentSessions{reader: r, sessions: sessions, inventoryComplete: inventoryComplete})
 		total += len(sessions)
 	}
 
@@ -216,7 +227,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 			errs = append(errs, fmt.Sprintf("%s: %v", item.reader.AgentType(), item.listErr))
 			continue
 		}
-		n, err := ix.indexReaderSessions(ctx, item.reader, item.sessions, func() {
+		n, err := ix.indexReaderSessions(ctx, item.reader, item.sessions, item.inventoryComplete, func() {
 			done++
 			ix.setProgress(Progress{
 				State:   "running",
@@ -260,6 +271,7 @@ func (ix *Indexer) indexReaderSessions(
 	ctx context.Context,
 	r reader.BaseSessionReader,
 	sessions []model.Session,
+	inventoryComplete bool,
 	onEach func(),
 ) (int, error) {
 	changed := 0
@@ -286,14 +298,17 @@ func (ix *Indexer) indexReaderSessions(
 		}
 	}
 
-	// Successful discovery: sessions present last cycle but absent this round
-	// become recoverable source_missing tombstones (keep metadata + FTS).
-	// Do not hard-delete — only explicit SI delete removes index rows.
-	// listErr path never reaches here, so scan/permission failure cannot
-	// mass-mark source_missing. Context cancellation returns above.
-	tombstoned, err := ix.tombstoneMissingSessions(r.AgentType(), knownIDs)
-	if err != nil {
-		log.Printf("[indexer] %s: source-missing tombstone error: %v", r.AgentType(), err)
+	// Omission tombstones only when discovery reported a complete inventory.
+	// Incomplete lists (skipped unreadable entries) must not mark live sessions missing.
+	tombstoned := 0
+	if inventoryComplete {
+		var err error
+		tombstoned, err = ix.tombstoneMissingSessions(r.AgentType(), knownIDs)
+		if err != nil {
+			log.Printf("[indexer] %s: source-missing tombstone error: %v", r.AgentType(), err)
+		}
+	} else {
+		log.Printf("[indexer] %s: skip omission tombstones (incomplete inventory)", r.AgentType())
 	}
 	if len(sessionErrs) > 0 {
 		return changed + tombstoned, fmt.Errorf("session errors: %s", strings.Join(sessionErrs, "; "))
@@ -431,7 +446,7 @@ func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType strin
 		return false, fmt.Errorf("get session: %w", err)
 	}
 	now := time.Now().UTC()
-	adapterRev := 1
+	adapterRev := 0
 	if def, ok := reader.AgentDefinition(agentType); ok && def.AdapterRevision > 0 {
 		adapterRev = def.AdapterRevision
 	} else if def, ok := reader.AgentDefinition(r.AgentType()); ok && def.AdapterRevision > 0 {
@@ -443,7 +458,8 @@ func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType strin
 	switch sre.Kind {
 	case reader.ReadSourceMissing:
 		// Ensure session meta exists before tombstone (MarkSessionsSourceMissing
-		// only updates rows already in sessions).
+		// only updates rows already in sessions). Seed adapter rev + sources so
+		// first-time missing (no prior provenance row) does not invent rev=1.
 		if err := ix.db.UpsertSessionMetaWithHistoryLineageAndProvider(
 			agentType, sess.ID, sess.CWD, sess.Repository, sess.Branch,
 			sess.Project, sess.Name, sess.ModelName, sess.ModelProvider, sess.ResumeID,
@@ -453,7 +469,7 @@ func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType strin
 		); err != nil {
 			return false, err
 		}
-		if _, markErr := ix.db.MarkSessionsSourceMissing(agentType, []string{sess.ID}, now); markErr != nil {
+		if _, markErr := ix.db.MarkSessionSourceMissingWithFacts(agentType, sess.ID, now, adapterRev, sre.Sources); markErr != nil {
 			return false, markErr
 		}
 		return true, nil
@@ -494,6 +510,13 @@ func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType strin
 		return false, err
 	}
 	if err := ix.db.UpsertProvenance(agentType, sess.ID, prov, sess.UpdatedAt.UnixNano()); err != nil {
+		return false, err
+	}
+	// Non-replayable failures must not leave prior FTS hits unmarked.
+	if err := ix.db.ClearSessionSearchIndex(agentType, sess.ID); err != nil {
+		return false, err
+	}
+	if err := ix.db.ClearSessionWatermark(agentType, sess.ID); err != nil {
 		return false, err
 	}
 	return true, nil

@@ -15,7 +15,7 @@ func TestGoalModeObjectiveIsRenderedAsUserPrompt(t *testing.T) {
 	}, "\n") + "\n"
 
 	path := writeCodexFixture(t, fixture)
-	parsed, _, _ := parseCodexEvents(path)
+	parsed, _, _, _ := parseCodexEvents(path)
 	if len(parsed.Active) != 1 || parsed.Active[0].UserMessage != "Ship language selection" {
 		t.Fatalf("goal turn user message = %#v, want extracted objective", parsed.Active)
 	}
@@ -45,7 +45,7 @@ func TestGoalModeDoesNotReplaceAnActualUserPrompt(t *testing.T) {
 	}, "\n") + "\n"
 
 	path := writeCodexFixture(t, fixture)
-	parsed, _, _ := parseCodexEvents(path)
+	parsed, _, _, _ := parseCodexEvents(path)
 	if len(parsed.Active) != 1 || parsed.Active[0].UserMessage != "Show status" {
 		t.Fatalf("goal turn user message = %#v, want actual user prompt", parsed.Active)
 	}

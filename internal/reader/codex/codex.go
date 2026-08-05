@@ -332,9 +332,16 @@ func parseTimestamp(ts string) time.Time {
 // ---- ListSessions ----
 
 func (r *CodexReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+func (r *CodexReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	var files []string
-	err := filepath.WalkDir(r.sessionsDir, func(path string, d os.DirEntry, err error) error {
+	walkIncomplete := false
+	err = filepath.WalkDir(r.sessionsDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
+			walkIncomplete = true
 			return nil
 		}
 		if !d.IsDir() && strings.HasSuffix(d.Name(), ".jsonl") {
@@ -343,12 +350,13 @@ func (r *CodexReader) ListSessions() ([]model.Session, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	type result struct {
 		session model.Session
 		ok      bool
+		skip    bool
 	}
 	results := make(chan result, len(files))
 	sem := make(chan struct{}, 20)
@@ -360,17 +368,25 @@ func (r *CodexReader) ListSessions() ([]model.Session, error) {
 		go func(path string) {
 			defer func() { <-sem; wg.Done() }()
 			if sess, ok := readSessionMeta(path); ok {
-				results <- result{sess, true}
+				results <- result{session: sess, ok: true}
+				return
+			}
+			if _, err := os.Stat(path); err == nil {
+				results <- result{skip: true}
 			}
 		}(f)
 	}
 	wg.Wait()
 	close(results)
 
-	var sessions []model.Session
+	complete = !walkIncomplete
 	paths := make(map[string]string, len(files))
-	for r := range results {
-		sessions = append(sessions, r.session)
+	for res := range results {
+		if res.ok {
+			sessions = append(sessions, res.session)
+		} else if res.skip {
+			complete = false
+		}
 	}
 	for _, path := range files {
 		paths[strings.TrimSuffix(filepath.Base(path), ".jsonl")] = path
@@ -383,7 +399,7 @@ func (r *CodexReader) ListSessions() ([]model.Session, error) {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
 
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func readSessionMeta(jsonlPath string) (model.Session, bool) {
@@ -585,10 +601,11 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	session, ok := readSessionMeta(jsonlPath)
 	if !ok {
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("failed to read codex session: %s", id))
+			fmt.Errorf("failed to read codex session: %s", id)).
+			WithSources(sourceInventory(jsonlPath))
 	}
 
-	parsed, modelName, modelProvider := parseCodexEvents(jsonlPath)
+	parsed, modelName, modelProvider, skipped := parseCodexEvents(jsonlPath)
 	if modelName != "" {
 		session.ModelName = modelName
 	}
@@ -604,10 +621,18 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: parsed.Active, RollbackGroups: parsed.RollbackGroups}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(parsed.Active)
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
 	p := provenance.Build(provenance.Input{
 		CapturedAt:        time.Now().UTC(),
 		AdapterRevision:   Capabilities().AdapterRevision,
 		Sources:           sourceInventory(jsonlPath),
+		Warnings:          warnings,
 		HasReplayableBody: len(parsed.Active) > 0,
 	})
 	detail.Provenance = &p
@@ -661,10 +686,10 @@ type codexRollbackAttempt struct {
 	removed   []*codexTurnAttempt
 }
 
-func parseCodexEvents(path string) (codexParsedTurns, string, string) {
+func parseCodexEvents(path string) (codexParsedTurns, string, string, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return codexParsedTurns{}, "", ""
+		return codexParsedTurns{}, "", "", 0
 	}
 	defer f.Close()
 
@@ -678,6 +703,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 		turnStartTS   string
 		pendingGoal   string
 		lastGoal      string
+		skipped       int
 	)
 
 	scanner := bufio.NewScanner(f)
@@ -686,6 +712,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 	for scanner.Scan() {
 		var evt codexEvent
 		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil {
+			skipped++
 			continue
 		}
 
@@ -975,7 +1002,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string) {
 		}
 	}
 
-	return result, foundModel, foundProvider
+	return result, foundModel, foundProvider, skipped
 }
 
 // ---- RenderEvent adapter ----

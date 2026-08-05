@@ -165,9 +165,14 @@ func (m *claudeMessage) contentBlocks() []claudeContentBlock {
 // ---- ListSessions ----
 
 func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+func (r *ClaudeReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	entries, err := os.ReadDir(r.projectsDir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	type fileJob struct {
@@ -185,7 +190,12 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 		}
 	}
 
-	results := make(chan model.Session, len(jobs))
+	type jobResult struct {
+		sess model.Session
+		ok   bool
+		skip bool // file exists but meta unreadable
+	}
+	results := make(chan jobResult, len(jobs))
 	sem := make(chan struct{}, 20)
 	var wg sync.WaitGroup
 	for _, job := range jobs {
@@ -194,16 +204,26 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 		go func(j fileJob) {
 			defer func() { <-sem; wg.Done() }()
 			if sess, ok := readSessionMeta(j.path, j.id); ok {
-				results <- sess
+				results <- jobResult{sess: sess, ok: true}
+				return
+			}
+			// Existing file that failed meta parse → inventory incomplete.
+			if _, err := os.Stat(j.path); err == nil {
+				results <- jobResult{skip: true}
 			}
 		}(job)
 	}
 	wg.Wait()
 	close(results)
 
-	sessions := make([]model.Session, 0, len(results))
-	for s := range results {
-		sessions = append(sessions, s)
+	sessions = make([]model.Session, 0, len(jobs))
+	complete = true
+	for r := range results {
+		if r.ok {
+			sessions = append(sessions, r.sess)
+		} else if r.skip {
+			complete = false
+		}
 	}
 	paths := make(map[string]string, len(jobs))
 	for _, job := range jobs {
@@ -217,7 +237,7 @@ func (r *ClaudeReader) ListSessions() ([]model.Session, error) {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
 
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func readSessionMeta(jsonlPath, sessionID string) (model.Session, bool) {
@@ -403,7 +423,8 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	session, ok := readSessionMeta(jsonlPath, id)
 	if !ok {
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("failed to read session: %s", id))
+			fmt.Errorf("failed to read session: %s", id)).
+			WithSources(sourceInventory(jsonlPath, r.claudeRoot()))
 	}
 
 	turns, modelName, skipped, err := parseClaudeEvents(jsonlPath)

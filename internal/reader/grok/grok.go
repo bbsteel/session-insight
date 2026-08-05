@@ -18,6 +18,7 @@ package grok
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -90,6 +91,9 @@ type sessionLoc struct {
 	SummaryPath string
 }
 
+// errSessionNotFound is a typed sentinel for missing Grok sessions (no string scrape).
+var errSessionNotFound = errors.New("grok session not found")
+
 func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 	if !validSessionID(id) {
 		return sessionLoc{}, fmt.Errorf("invalid grok session id: %q", id)
@@ -104,7 +108,10 @@ func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 	}
 	entries, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
-		return sessionLoc{}, fmt.Errorf("grok session not found %q: %w", id, err)
+		if os.IsNotExist(err) {
+			return sessionLoc{}, fmt.Errorf("%w: %s", errSessionNotFound, id)
+		}
+		return sessionLoc{}, err
 	}
 	for _, ent := range entries {
 		if !ent.IsDir() {
@@ -125,7 +132,7 @@ func (r *GrokReader) findSession(id string) (sessionLoc, error) {
 			return loc, nil
 		}
 	}
-	return sessionLoc{}, fmt.Errorf("grok session not found %q", id)
+	return sessionLoc{}, fmt.Errorf("%w: %s", errSessionNotFound, id)
 }
 
 func readSummary(path string) (*summaryFile, error) {
@@ -155,19 +162,26 @@ func parseTS(s string) time.Time {
 }
 
 func (r *GrokReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+// ListSessionsDetailed walks the session tree and reports incompleteness when
+// project dirs or summary files fail for reasons other than absence.
+func (r *GrokReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	entries, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, true, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 
 	// One O(sessions+sidecars) lineage pass for the whole tree so each child
 	// gets IsSubagent / ParentSessionID without rescanning parents per child.
 	lineage := r.scanChildParentIndex(nil)
 
-	var sessions []model.Session
+	complete = true
 	locs := make(map[string]sessionLoc)
 	for _, proj := range entries {
 		if !proj.IsDir() {
@@ -176,6 +190,9 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 		projPath := filepath.Join(r.sessionsDir, proj.Name())
 		subs, err := os.ReadDir(projPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 		for _, sub := range subs {
@@ -189,6 +206,9 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 			sumPath := filepath.Join(projPath, id, "summary.json")
 			sum, err := readSummary(sumPath)
 			if err != nil {
+				if !os.IsNotExist(err) {
+					complete = false
+				}
 				continue
 			}
 			loc := sessionLoc{
@@ -209,7 +229,7 @@ func (r *GrokReader) ListSessions() ([]model.Session, error) {
 	r.locs = locs
 	r.locMu.Unlock()
 	r.storeLineage(lineage)
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile, lineage map[string]string) model.Session {
@@ -499,23 +519,20 @@ func extractUserQuery(text string) string {
 func (r *GrokReader) GetSession(id string) (*model.SessionDetail, error) {
 	loc, err := r.findSession(id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
-		}
-		// findSession wraps "not found" without IsNotExist when the id is absent.
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, errSessionNotFound) || os.IsNotExist(err) {
 			return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
 		}
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err)
 	}
 	sum, err := readSummary(loc.SummaryPath)
 	if err != nil {
+		sources := sourceInventory(loc.Dir, loc.SummaryPath)
 		if os.IsNotExist(err) {
 			return nil, readerr.New(readerr.SourceMissing, "source_missing",
-				fmt.Errorf("grok session not found %q: %w", id, err))
+				fmt.Errorf("grok session not found %q: %w", id, err)).WithSources(sources)
 		}
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("grok session unreadable %q: %w", id, err))
+			fmt.Errorf("grok session unreadable %q: %w", id, err)).WithSources(sources)
 	}
 	// Cold GetSession must agree with ListSessions on lineage; build the
 	// index when list has not run yet.

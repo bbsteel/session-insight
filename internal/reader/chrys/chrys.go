@@ -465,20 +465,34 @@ func readEffectiveSession(sessionDir string) (sf *sessionFile, sourcePath string
 // ---- ListSessions ----
 
 func (r *ChrysReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+// ListSessionsDetailed reports whether any candidate session directory was
+// skipped for a reason other than a clean empty/aborted dir (no session file).
+func (r *ChrysReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	entries, err := os.ReadDir(r.sessionsDir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	var sessions []model.Session
+	complete = true
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		id := entry.Name()
-		sf, _, err := readEffectiveSession(filepath.Join(r.sessionsDir, id))
-		if err != nil {
-			continue // directories without any session file (aborted/empty sessions)
+		sessDir := filepath.Join(r.sessionsDir, id)
+		sf, _, readErr := readEffectiveSession(sessDir)
+		if readErr != nil {
+			// Empty/aborted dirs (no session files) are expected and do not
+			// make the inventory incomplete. Permission/I/O failures do.
+			if os.IsNotExist(readErr) {
+				continue
+			}
+			complete = false
+			continue
 		}
 		sessions = append(sessions, buildSession(id, sf))
 	}
@@ -486,7 +500,7 @@ func (r *ChrysReader) ListSessions() ([]model.Session, error) {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func buildSession(id string, sf *sessionFile) model.Session {
@@ -552,12 +566,13 @@ func (r *ChrysReader) GetSession(id string) (*model.SessionDetail, error) {
 	sessDir := filepath.Join(r.sessionsDir, id)
 	sf, sourcePath, err := readEffectiveSession(sessDir)
 	if err != nil {
+		sources := chrysSourceInventory(sessDir, "")
 		if os.IsNotExist(err) {
 			return nil, readerr.New(readerr.SourceMissing, "source_missing",
-				fmt.Errorf("chrys session not found %q: %w", id, err))
+				fmt.Errorf("chrys session not found %q: %w", id, err)).WithSources(sources)
 		}
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("chrys session unreadable %q: %w", id, err))
+			fmt.Errorf("chrys session unreadable %q: %w", id, err)).WithSources(sources)
 	}
 
 	session := buildSession(id, sf)

@@ -3,6 +3,7 @@ package opencode
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -159,6 +160,20 @@ type toolInfo struct {
 // ---- ListSessions ----
 
 func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+// ListSessionsDetailed is a full SQL inventory (authoritative when the query succeeds).
+func (r *OpenCodeReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
+	sessions, err = r.listSessions()
+	if err != nil {
+		return nil, false, err
+	}
+	return sessions, true, nil
+}
+
+func (r *OpenCodeReader) listSessions() ([]model.Session, error) {
 	rows, err := r.db.Query(`
 		SELECT s.id, s.directory, s.title,
 		       s.time_created, s.time_updated, s.time_archived,
@@ -235,12 +250,11 @@ func (r *OpenCodeReader) ListSessions() ([]model.Session, error) {
 func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 	meta, err := r.readSessionMeta(id)
 	if err != nil {
-		// readSessionMeta maps missing rows to a not-found error; other failures
-		// (locked DB, I/O) must not become source_missing tombstones.
-		if strings.Contains(err.Error(), "not found") {
-			return nil, readerr.New(readerr.SourceMissing, "source_missing", err)
+		sources := sourceInventory(r.dbPath)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, readerr.New(readerr.SourceMissing, "source_missing", err).WithSources(sources)
 		}
-		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err)
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err).WithSources(sources)
 	}
 
 	turns, modelName, modelProvider, billing := r.parseMessages(id)
@@ -278,8 +292,8 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 		FROM session WHERE id = ?
 	`, id).Scan(&directory, &title, &timeCreated, &timeUpdated, &timeArchived, &modelJSON)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return model.Session{}, fmt.Errorf("openCode session not found: %s", id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.Session{}, fmt.Errorf("openCode session not found: %s: %w", id, sql.ErrNoRows)
 		}
 		return model.Session{}, fmt.Errorf("openCode session read: %w", err)
 	}

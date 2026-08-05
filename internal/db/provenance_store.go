@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
@@ -192,7 +193,8 @@ func upsertProvenanceTx(tx *sql.Tx, agentType, sessionID string, p model.Session
 			sources_json = excluded.sources_json,
 			warnings_json = excluded.warnings_json,
 			warning_summary_json = excluded.warning_summary_json,
-			last_successful_at = excluded.last_successful_at,
+			-- Keep the last successful capture when the new write has none (e.g. metadata_only failure).
+			last_successful_at = COALESCE(excluded.last_successful_at, session_provenance.last_successful_at),
 			missing_since = excluded.missing_since,
 			revision = excluded.revision`,
 		agentType, sessionID,
@@ -207,10 +209,22 @@ func upsertProvenanceTx(tx *sql.Tx, agentType, sessionID string, p model.Session
 }
 
 // MarkSessionsSourceMissing sets source_missing tombstones for sessions that
-// disappeared from a successful agent discovery pass. Keeps sessions, FTS, and
-// watermarks. Only call when ListSessions for that agent succeeded.
-// Returns the number of sessions newly or re-marked missing.
+// disappeared from a complete agent discovery pass. Keeps sessions and FTS
+// (historical search) but invalidates watermarks so a restored source is
+// re-read on the next cycle. Only call when discovery reported a complete
+// inventory. Returns the number of sessions newly or re-marked missing.
 func (db *DB) MarkSessionsSourceMissing(agentType string, missingIDs []string, now time.Time) (int, error) {
+	return db.markSessionsSourceMissing(agentType, missingIDs, now, 0, nil)
+}
+
+// MarkSessionSourceMissingWithFacts is the single-session variant that seeds
+// adapter revision and source inventory when no prior provenance row exists
+// (source vanished between discovery and first detail read).
+func (db *DB) MarkSessionSourceMissingWithFacts(agentType, sessionID string, now time.Time, adapterRev int, sources []model.SessionSourceFile) (int, error) {
+	return db.markSessionsSourceMissing(agentType, []string{sessionID}, now, adapterRev, sources)
+}
+
+func (db *DB) markSessionsSourceMissing(agentType string, missingIDs []string, now time.Time, seedRev int, seedSources []model.SessionSourceFile) (int, error) {
 	if len(missingIDs) == 0 {
 		return 0, nil
 	}
@@ -253,22 +267,38 @@ func (db *DB) MarkSessionsSourceMissing(agentType string, missingIDs []string, n
 			missingSince = prevMissing.String
 		}
 
-		rev := 1
-		if adapterRev.Valid && adapterRev.Int64 > 0 {
+		rev := seedRev
+		if rev <= 0 && adapterRev.Valid && adapterRev.Int64 > 0 {
 			rev = int(adapterRev.Int64)
+		}
+		if rev <= 0 {
+			rev = 0 // unknown — never invent a fake adapter revision
 		}
 		srcJSON := "[]"
 		if sourcesJSON.Valid && sourcesJSON.String != "" {
 			srcJSON = sourcesJSON.String
-			// Mark all sources missing in inventory when possible.
+			// Re-stat known paths: only primary_transcript is forced missing by
+			// discovery omission; auxiliary files may still be present (e.g. shared DB).
 			var sources []model.SessionSourceFile
 			if json.Unmarshal([]byte(srcJSON), &sources) == nil {
 				for i := range sources {
-					sources[i].State = model.SourceMissing
+					if sources[i].Role == model.SourceRolePrimaryTranscript {
+						sources[i].State = model.SourceMissing
+						sources[i].UpdatedAt = nil
+						sources[i].SizeBytes = nil
+						continue
+					}
+					if sources[i].Path != "" {
+						sources[i] = restatSourceFile(sources[i])
+					}
 				}
 				if b, e := json.Marshal(sources); e == nil {
 					srcJSON = string(b)
 				}
+			}
+		} else if len(seedSources) > 0 {
+			if b, e := json.Marshal(seedSources); e == nil {
+				srcJSON = string(b)
 			}
 		}
 		warnJSON := "[]"
@@ -280,7 +310,6 @@ func (db *DB) MarkSessionsSourceMissing(agentType string, missingIDs []string, n
 			sumJSON = summaryJSON.String
 		}
 		lastOK := prevLastOK
-		// If we never stored last_successful_at but had a non-missing state, use now-ish leave null.
 
 		_, err = tx.Exec(`
 			INSERT INTO session_provenance(
@@ -293,6 +322,10 @@ func (db *DB) MarkSessionsSourceMissing(agentType string, missingIDs []string, n
 				reason_code = excluded.reason_code,
 				captured_at = excluded.captured_at,
 				sources_json = excluded.sources_json,
+				adapter_revision = CASE
+					WHEN excluded.adapter_revision > 0 THEN excluded.adapter_revision
+					ELSE session_provenance.adapter_revision
+				END,
 				missing_since = excluded.missing_since,
 				last_successful_at = COALESCE(session_provenance.last_successful_at, excluded.last_successful_at)`,
 			agentType, id,
@@ -303,12 +336,63 @@ func (db *DB) MarkSessionsSourceMissing(agentType string, missingIDs []string, n
 		if err != nil {
 			return 0, fmt.Errorf("mark source missing %s: %w", id, err)
 		}
+		// Invalidate watermark so a restored source with the same UpdatedAt is re-read.
+		if _, err := tx.Exec(
+			`DELETE FROM index_watermarks WHERE agent_type = ? AND session_id = ?`,
+			agentType, id,
+		); err != nil {
+			return 0, fmt.Errorf("clear watermark for missing %s: %w", id, err)
+		}
 		changed++
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return changed, nil
+}
+
+// restatSourceFile refreshes presence/size for an inventoried path without
+// forcing missing (used for auxiliary files when discovery omits a session).
+func restatSourceFile(s model.SessionSourceFile) model.SessionSourceFile {
+	if s.Path == "" {
+		return s
+	}
+	info, err := os.Stat(s.Path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			s.State = model.SourceMissing
+		} else {
+			s.State = model.SourceUnreadable
+		}
+		s.UpdatedAt = nil
+		s.SizeBytes = nil
+		return s
+	}
+	s.State = model.SourcePresent
+	mt := info.ModTime().UTC()
+	s.UpdatedAt = &mt
+	sz := info.Size()
+	s.SizeBytes = &sz
+	return s
+}
+
+// ClearSessionSearchIndex drops FTS/turn rows for a non-replayable session so
+// search cannot surface unmarked historical hits after a metadata-only failure.
+func (db *DB) ClearSessionSearchIndex(agentType, sessionID string) error {
+	_, err := db.conn.Exec(
+		`DELETE FROM turn_texts WHERE agent_type = ? AND session_id = ?`,
+		agentType, sessionID,
+	)
+	return err
+}
+
+// ClearSessionWatermark removes the index watermark for one session.
+func (db *DB) ClearSessionWatermark(agentType, sessionID string) error {
+	_, err := db.conn.Exec(
+		`DELETE FROM index_watermarks WHERE agent_type = ? AND session_id = ?`,
+		agentType, sessionID,
+	)
+	return err
 }
 
 func nullStringValue(ns sql.NullString) any {

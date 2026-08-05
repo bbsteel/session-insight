@@ -297,7 +297,8 @@ func (s *Server) handleRemoveFromIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.bumpListRev()
+	// Broadcast so every client (including the actor) drops the row from the sidebar.
+	s.NotifySessionsChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1011,12 +1012,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Mark historical index hits for source_missing tombstones.
+	// Mark historical index hits for non-replayable provenance states.
 	staleKeys := map[string]bool{}
 	if s.DB != nil && len(results) > 0 {
 		if statuses, err := s.DB.ListProvenanceStatusByAgent(""); err == nil {
 			for k, st := range statuses {
-				if st != nil && st.State == model.RecordSourceMissing {
+				if st == nil {
+					continue
+				}
+				switch st.State {
+				case model.RecordSourceMissing, model.RecordMetadataOnly, model.RecordParserUnsupported:
 					staleKeys[k] = true
 				}
 			}

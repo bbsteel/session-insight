@@ -62,3 +62,21 @@ func As(err error) (*Error, bool) {
 func New(kind Kind, reason string, err error) *Error {
 	return &Error{Kind: kind, ReasonCode: reason, Err: err}
 }
+
+// WithSources attaches a source inventory (e.g. known primary path as missing).
+func (e *Error) WithSources(sources []model.SessionSourceFile) *Error {
+	if e == nil {
+		return e
+	}
+	e.Sources = sources
+	return e
+}
+
+// WithWarnings attaches parse warnings for the failure path.
+func (e *Error) WithWarnings(warnings []model.ParseWarning) *Error {
+	if e == nil {
+		return e
+	}
+	e.Warnings = warnings
+	return e
+}

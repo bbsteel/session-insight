@@ -106,12 +106,17 @@ func scanPreviewText(eventsPath string) string {
 }
 
 func (r *CopilotReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := r.ListSessionsDetailed()
+	return sessions, err
+}
+
+func (r *CopilotReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	entries, err := os.ReadDir(r.sessionDir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	var sessions []model.Session
+	complete = true
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -120,17 +125,24 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 		// Only list sessions that have events.jsonl
 		eventsPath := filepath.Join(r.sessionDir, entry.Name(), "events.jsonl")
 		if _, err := os.Stat(eventsPath); err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 
 		wsPath := filepath.Join(r.sessionDir, entry.Name(), "workspace.yaml")
 		data, err := os.ReadFile(wsPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 
 		var ws workspaceYAML
 		if err := yaml.Unmarshal(data, &ws); err != nil {
+			complete = false
 			continue
 		}
 
@@ -172,7 +184,7 @@ func (r *CopilotReader) ListSessions() ([]model.Session, error) {
 		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
 	})
 
-	return sessions, nil
+	return sessions, complete, nil
 }
 
 func toSession(ws workspaceYAML) model.Session {
@@ -210,12 +222,13 @@ func (r *CopilotReader) GetSession(id string) (*model.SessionDetail, error) {
 	wsPath := filepath.Join(r.sessionDir, id, "workspace.yaml")
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
+		sources := sourceInventory(r.sessionDir, id)
 		if os.IsNotExist(err) {
 			return nil, readerr.New(readerr.SourceMissing, "source_missing",
-				fmt.Errorf("session not found: %s", id))
+				fmt.Errorf("session not found: %s", id)).WithSources(sources)
 		}
 		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
-			fmt.Errorf("read workspace.yaml: %w", err))
+			fmt.Errorf("read workspace.yaml: %w", err)).WithSources(sources)
 	}
 
 	var ws workspaceYAML

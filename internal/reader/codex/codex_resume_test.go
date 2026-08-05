@@ -59,7 +59,7 @@ func TestReadSessionMetaPrefersTurnContextModel(t *testing.T) {
 		t.Fatalf("model name = %q, want gpt-5.5", session.ModelName)
 	}
 
-	_, modelName, provider := parseCodexEvents(path)
+	_, modelName, provider, _ := parseCodexEvents(path)
 	if modelName != "gpt-5.5" || provider != "openai" {
 		t.Fatalf("parseCodexEvents model/provider = %q/%q, want gpt-5.5/openai", modelName, provider)
 	}

@@ -820,6 +820,12 @@ func migrate(conn *sql.DB) error {
 		`); err != nil {
 			return fmt.Errorf("v30 session_provenance: %w", err)
 		}
+		// Force a full re-index so every existing session gets a provenance row.
+		// Leaving watermarks intact would let matching-revision shortcuts skip
+		// the first provenance capture after upgrade.
+		if _, err := conn.Exec(`DELETE FROM index_watermarks`); err != nil {
+			return fmt.Errorf("v30 clear index_watermarks: %w", err)
+		}
 	}
 
 	_, err = conn.Exec(

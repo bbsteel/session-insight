@@ -29,15 +29,20 @@ func (m *mockReader) AgentType() string { return m.agentType }
 func (m *mockReader) DisplayName() string { return m.agentType }
 
 func (m *mockReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := m.ListSessionsDetailed()
+	return sessions, err
+}
+
+func (m *mockReader) ListSessionsDetailed() ([]model.Session, bool, error) {
 	if m.listCalls != nil {
 		atomic.AddInt32(m.listCalls, 1)
 	}
 	if m.listErr != nil {
-		return nil, m.listErr
+		return nil, false, m.listErr
 	}
 	result := make([]model.Session, len(m.sessions))
 	copy(result, m.sessions)
-	return result, nil
+	return result, true, nil
 }
 
 func TestIndexer_AgentFilteredCycleSkipsOtherReaders(t *testing.T) {

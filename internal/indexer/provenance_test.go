@@ -1,3 +1,5 @@
+//go:build sqlite_fts5
+
 package indexer
 
 import (
@@ -15,17 +17,23 @@ type fakeReader struct {
 	agent    string
 	sessions []model.Session
 	listErr  error
-	details  map[string]*model.SessionDetail
-	getErr   map[string]error
+	// incomplete when true reports Complete=false (no omission tombstones).
+	incomplete bool
+	details    map[string]*model.SessionDetail
+	getErr     map[string]error
 }
 
 func (f *fakeReader) AgentType() string   { return f.agent }
 func (f *fakeReader) DisplayName() string { return f.agent }
 func (f *fakeReader) ListSessions() ([]model.Session, error) {
+	sessions, _, err := f.ListSessionsDetailed()
+	return sessions, err
+}
+func (f *fakeReader) ListSessionsDetailed() ([]model.Session, bool, error) {
 	if f.listErr != nil {
-		return nil, f.listErr
+		return nil, false, f.listErr
 	}
-	return f.sessions, nil
+	return f.sessions, !f.incomplete, nil
 }
 func (f *fakeReader) GetSession(id string) (*model.SessionDetail, error) {
 	if err, ok := f.getErr[id]; ok {
