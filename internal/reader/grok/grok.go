@@ -275,12 +275,22 @@ func (r *GrokReader) buildSession(loc sessionLoc, sum *summaryFile, lineage map[
 		preview = shared.TruncateRunes(sum.SessionSummary, 200)
 	}
 
+	// Prefer git_root_dir when present so sessions opened from a subdirectory
+	// still group under the repository name. Pass it as the path to resolve,
+	// not as a repository slug: Grok stores an absolute filesystem path
+	// (often with a trailing slash), and treating that as a slug produced
+	// duplicate project-filter entries next to basename names from other agents.
+	projectPath := cwd
+	if root := strings.TrimSpace(sum.GitRootDir); root != "" {
+		projectPath = root
+	}
+
 	sess := model.Session{
 		ID:           loc.ID,
 		AgentType:    "grok",
 		CWD:          cwd,
 		Branch:       sum.HeadBranch,
-		Project:      shared.ResolveProject(cwd, sum.GitRootDir),
+		Project:      shared.ResolveProject(projectPath, ""),
 		Name:         name,
 		ModelName:    sum.CurrentModelID,
 		ResumeID:     loc.ID, // CLI accepts the session UUID

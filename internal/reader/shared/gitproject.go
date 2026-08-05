@@ -8,8 +8,11 @@ import (
 
 // ResolveProject derives a display project name for a session.
 //
-// If repo is non-empty (Copilot sessions carry the actual repository slug),
-// it is returned directly. Otherwise the project is inferred from cwd:
+// If repo is a non-empty repository slug (e.g. Copilot's "owner/repo"), it is
+// returned directly. Absolute filesystem paths are not slugs — they are
+// resolved the same way as cwd (Grok's git_root_dir is such a path).
+//
+// Path resolution order:
 //
 //  1. Known worktree manager layouts are checked first, since the directory
 //     name at the git-root level would be a branch or generated id, not the
@@ -17,16 +20,45 @@ import (
 //  2. The directory tree is walked upward looking for a .git entry.
 //     A .git directory terminates the walk immediately.
 //     A .git file (linked worktree) is followed back to the main repo root.
-//  3. If no git root is found, the last path component of cwd is used.
+//  3. If no git root is found, the last path component of the path is used.
 func ResolveProject(cwd, repo string) string {
 	if repo != "" {
+		if isFilesystemPath(repo) {
+			// Prefer the explicit root path when callers pass one (e.g. Grok
+			// git_root_dir) so sessions opened from a subdirectory still group
+			// under the repository basename rather than the leaf cwd.
+			return projectNameFromPath(repo)
+		}
 		return repo
 	}
 	if cwd == "" {
 		return ""
 	}
+	return projectNameFromPath(cwd)
+}
 
-	cleaned := filepath.Clean(cwd)
+// isFilesystemPath reports whether s looks like a local path rather than a
+// remote repository slug such as "owner/repo".
+func isFilesystemPath(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// Unix absolute paths (including trailing-slash forms Grok stores).
+	if strings.HasPrefix(s, "/") {
+		return true
+	}
+	// Home-relative shorthand occasionally appears in session metadata.
+	if strings.HasPrefix(s, "~/") || s == "~" {
+		return true
+	}
+	// filepath.IsAbs covers Windows drive paths (C:\...) when relevant.
+	return filepath.IsAbs(s)
+}
+
+// projectNameFromPath reduces a workspace path to a short display project name.
+func projectNameFromPath(path string) string {
+	cleaned := filepath.Clean(path)
 
 	if p := detectWorktreeLayout(cleaned); p != "" {
 		return p
