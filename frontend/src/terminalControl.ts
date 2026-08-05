@@ -15,12 +15,22 @@ export interface TerminalActivateMeta {
 
 export interface TerminalLineMatcher<T = unknown> {
   match: (text: string) => T | null
-  tooltip?: string
+  /** Static label, or a formatter that receives the matcher's match data (e.g. full URL). */
+  tooltip?: string | ((data: T) => string)
   // Optional async confirmation (e.g. does the detected path actually exist).
   // Rows failing validation lose their hover affordance and click handling;
   // results are cached per buffer row until the next rewrite.
   validate?: (lineText: string) => Promise<boolean>
   onActivate: (bufLine: number, data: T, matchIndex: number, meta?: TerminalActivateMeta) => void
+}
+
+/** Resolve a matcher tooltip for hover display. */
+export function resolveMatcherTooltip<T>(
+  tooltip: TerminalLineMatcher<T>['tooltip'],
+  data: T,
+): string {
+  if (tooltip == null) return ''
+  return typeof tooltip === 'function' ? tooltip(data) : tooltip
 }
 
 export interface TerminalControl {

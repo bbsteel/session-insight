@@ -342,8 +342,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         // Rendered Markdown links retain their destination in parentheses;
         // open only http(s) URLs in a new tab. URL matching comes before the
         // file matcher because URL path fragments are not local files.
+        // Tooltip includes the full destination so truncated terminal rows
+        // still show where a click will navigate.
         match: (text: string) => extractTerminalUrl(text),
-        tooltip: t('replay.openLink'),
+        tooltip: (url) => t('replay.openLink', { url: typeof url === 'string' ? url : String(url) }),
         onActivate: (_bufLine: number, url: unknown) => {
           if (typeof url === 'string') window.open(url, '_blank', 'noopener,noreferrer')
         },

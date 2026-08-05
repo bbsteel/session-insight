@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { extractTerminalUrl } from '/tmp/session-insight-terminal-url/terminalUrlDetection.js'
+import { resolveMatcherTooltip } from '/tmp/session-insight-terminal-url/terminalControl.js'
 
 assert.equal(
   extractTerminalUrl('• PR：Fix session analysis provider return (https://github.com/bbsteel/session-insight/pull/87)'),
@@ -18,4 +19,14 @@ assert.equal(extractTerminalUrl('See https://example.test/?q=!'), 'https://examp
 assert.equal(extractTerminalUrl('See https://example.test/path!'), 'https://example.test/path!')
 assert.equal(extractTerminalUrl('no external link'), null)
 assert.equal(extractTerminalUrl('javascript:alert(1)'), null)
+
+assert.equal(resolveMatcherTooltip(undefined, null), '')
+assert.equal(resolveMatcherTooltip('Open link in new tab', 'https://example.test'), 'Open link in new tab')
+assert.equal(
+  resolveMatcherTooltip(
+    (url) => `Open link in new tab\n${url}`,
+    'https://www.kimi.com/code/#pricing',
+  ),
+  'Open link in new tab\nhttps://www.kimi.com/code/#pricing',
+)
 console.log('terminal URL detection tests passed')
