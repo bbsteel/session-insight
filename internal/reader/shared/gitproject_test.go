@@ -16,6 +16,18 @@ func TestResolveProjectSlugUnchanged(t *testing.T) {
 	}
 }
 
+func TestResolveProjectTrimsWhitespace(t *testing.T) {
+	if got := ResolveProject("  ", "  "); got != "" {
+		t.Fatalf("whitespace-only: got %q", got)
+	}
+	if got := ResolveProject("", "  owner/repo  "); got != "owner/repo" {
+		t.Fatalf("trimmed slug: got %q", got)
+	}
+	if got := ResolveProject("", "  /tmp/nonexistent/workspace/foo/  "); got != "foo" {
+		t.Fatalf("trimmed path: got %q", got)
+	}
+}
+
 func TestResolveProjectAbsoluteRepoPathIsBasename(t *testing.T) {
 	// Grok stores git_root_dir as an absolute path, often with a trailing slash.
 	// That must become a short project name, not appear as a second filter entry.
@@ -83,6 +95,12 @@ func TestIsFilesystemPath(t *testing.T) {
 		{"/home/deck/projects/foo/", true},
 		{"/home/deck/projects/foo", true},
 		{"~/projects/foo", true},
+		{"~", true},
+		// Windows forms must be recognized even on a Unix build.
+		{`C:\Users\me\repo`, true},
+		{"C:/Users/me/repo", true},
+		{`\\server\share\repo`, true},
+		{"//server/share/repo", true},
 		{"owner/repo", false},
 		{"bbsteel/session-insight", false},
 		{"", false},
@@ -92,5 +110,30 @@ func TestIsFilesystemPath(t *testing.T) {
 		if got := isFilesystemPath(c.in); got != c.want {
 			t.Errorf("isFilesystemPath(%q) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestResolveProjectWindowsPathBasename(t *testing.T) {
+	// Even on Unix, Windows absolute paths must not be returned as slugs.
+	if got := ResolveProject("", `C:\Users\me\projects\session-insight\`); got != "session-insight" {
+		t.Fatalf("windows path: got %q", got)
+	}
+	if got := ResolveProject("", "C:/Users/me/projects/lego-lookup"); got != "lego-lookup" {
+		t.Fatalf("windows slash path: got %q", got)
+	}
+}
+
+func TestResolveProjectExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home dir")
+	}
+	// Missing path under home: basename only (no cwd-relative "~" lookup).
+	if got := ResolveProject("", "~/nonexistent-si-project-xyz/sub"); got != "sub" {
+		t.Fatalf("expand ~ missing path: got %q", got)
+	}
+	// Real home path should resolve like an absolute path.
+	if got := ResolveProject("", "~"); got != filepath.Base(home) {
+		t.Fatalf("expand ~ alone: got %q, want %q", got, filepath.Base(home))
 	}
 }
