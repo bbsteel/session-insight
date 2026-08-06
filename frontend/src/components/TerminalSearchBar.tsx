@@ -8,9 +8,9 @@ import { useI18n } from '../i18n'
 
 const OPTS_KEY = 'session-insight-terminal-search-opts'
 const MIN_BESIDE_PANEL_WIDTH = 360
-// Debounce typing so each keystroke does not re-scan a multi-10k-line buffer
-// and rebuild match decorations. Enter/step still runs immediately.
-const SEARCH_DEBOUNCE_MS = 180
+// Debounce typing so each keystroke does not start a new buffer walk.
+// Enter/step still runs immediately.
+const SEARCH_DEBOUNCE_MS = 200
 
 function loadOpts(): TerminalSearchOptions {
   try {
@@ -21,12 +21,13 @@ function loadOpts(): TerminalSearchOptions {
         caseSensitive: !!o.caseSensitive,
         wholeWord: !!o.wholeWord,
         regex: !!o.regex,
-        // Deliberately not persisted: highlight-all always starts on.
-        highlightAll: true,
+        // Deliberately not persisted: highlight-all defaults off so long
+        // sessions stay responsive (selection still marks the active hit).
+        highlightAll: false,
       }
     }
   } catch { /* corrupted storage → defaults */ }
-  return { caseSensitive: false, wholeWord: false, regex: false, highlightAll: true }
+  return { caseSensitive: false, wholeWord: false, regex: false, highlightAll: false }
 }
 
 function isInvalidRegex(query: string, regexOn: boolean): boolean {
@@ -167,7 +168,15 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
       <button onClick={() => toggle('regex')} title={t('terminalSearch.regex')} aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
       <button onClick={() => toggle('highlightAll')} title={t('terminalSearch.highlightAll')} aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>{t('terminalSearch.highlightAllShort')}</button>
       <span className={`min-w-[52px] flex-none text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
-        {invalidRegex ? t('terminalSearch.invalidRegex') : query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : t('terminalSearch.noResults')) : ''}
+        {invalidRegex
+          ? t('terminalSearch.invalidRegex')
+          : query
+            ? (result && result.count > 0
+              // index can be -1 while the async counter is still scanning or
+              // when the active hit cannot be mapped precisely.
+              ? (result.index >= 0 ? `${result.index + 1}/${result.count}` : `${result.count}`)
+              : (result && result.count === 0 ? t('terminalSearch.noResults') : ''))
+            : ''}
       </span>
       <button
         onClick={() => step(-1)}
