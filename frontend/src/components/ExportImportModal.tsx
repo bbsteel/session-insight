@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   APIError,
   deleteImportBundle,
@@ -150,13 +151,19 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
   const checkboxCls = 'h-3.5 w-3.5 accent-[var(--accent-blue)]'
   const allSelected = sessions.length > 0 && selected.size === sessions.length
 
-  return (
-    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={onClose}>
+  // Portal to document.body: Sidebar sits under a transform wrapper in App.tsx
+  // (mobile drawer translate-x), which makes position:fixed resolve against the
+  // sidebar column and clips this dialog. DeleteSessionDialog uses the same portal pattern.
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={t('sidebar.exportImport')}
-        className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(560px,94vw)] h-[min(680px,88vh)] flex flex-col"
+        className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(560px,94vw)] max-h-[min(680px,88vh)] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex flex-shrink-0 items-center justify-between px-4 py-2.5 border-b border-[var(--border-default)]">
@@ -285,6 +292,7 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
           </section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
