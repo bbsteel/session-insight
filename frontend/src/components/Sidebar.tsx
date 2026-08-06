@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { addBookmark, fetchAgents, fetchSearch, fetchSessions, fetchVersion, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
-import type { AgentInfo, SessionSummary } from '../types'
+import { addBookmark, fetchAgents, fetchResumePlan, fetchSearch, fetchSessions, fetchVersion, removeBookmark, updateBookmarkNote, watchSessionsChanged } from '../api'
+import type { AgentInfo, ResumePlan, SessionSummary } from '../types'
 import { applyBookmarkChange, type BookmarkChange } from '../bookmarkState'
 import AgentFilter from './AgentFilter'
 import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
@@ -14,11 +14,11 @@ import StarIcon from './StarIcon'
 import { InfoIcon } from './icons'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
-import { getResumeCommandOptions, getResumePreferenceKey, isWindowsSession, type ResumeCommandMode, type ResumeShell } from '../resumeCommands'
 import { modelMeta } from '../modelMeta'
 import { formatDate, formatNumber, useI18n } from '../i18n'
 import { openOnModifiedClick, openSessionInNewTab } from '../sessionLink'
 import { copySessionIdToClipboard, sessionCopyId } from '../copySessionId'
+import { preloadedResumePlanForCopy, presentSidebarResume } from '../resumePresentation'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 
@@ -58,10 +58,6 @@ function sessionMatchesModelFilter(s: Pick<SessionSummary, 'model_name' | 'model
   if (filter.startsWith('provider\x00')) return sessionModelProviderKey(s) === filter
   if (filter.startsWith('model\x00')) return sessionModelKey(s) === filter
   return sessionModelProviderKey(s) === filter || sessionModelKey(s) === filter
-}
-
-function hostIsWindows(): boolean {
-  return /Windows/i.test(navigator.userAgent) || /Win/i.test(navigator.platform)
 }
 
 interface ContextMenuState {
@@ -143,12 +139,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [contextResumePlan, setContextResumePlan] = useState<ResumePlan | null>(null)
   const [noteEditorSession, setNoteEditorSession] = useState<SessionSummary | null>(null)
   const [notePopover, setNotePopover] = useState<{ session: BookmarkNoteTarget; anchor: BookmarkNoteAnchor } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   // 活跃会话点「复制恢复命令」不直接复制，先弹窗确认——对同一会话开第二个
   // CLI 实例可能与正在写入的进程双写冲突。
-  const [resumeConfirm, setResumeConfirm] = useState<{ session: SessionSummary; shell: ResumeShell; mode: ResumeCommandMode } | null>(null)
+  const [resumeConfirm, setResumeConfirm] = useState<{ session: SessionSummary; unsafe: boolean; plan: ResumePlan | null } | null>(null)
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   )
@@ -192,6 +189,24 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [isMobile, onClose, contextMenu])
+
+  useEffect(() => {
+    const session = contextMenu?.session
+    if (!session) {
+      setContextResumePlan(null)
+      return
+    }
+    let cancelled = false
+    setContextResumePlan(null)
+    void fetchResumePlan(session.id, session.agent_type)
+      .then(plan => {
+        if (!cancelled) setContextResumePlan(plan)
+      })
+      .catch(() => {
+        if (!cancelled) setContextResumePlan(null)
+      })
+    return () => { cancelled = true }
+  }, [contextMenu])
 
   // Load all sessions once on mount — agent/search filters are client-side
   useEffect(() => {
@@ -357,13 +372,16 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [showToast, t])
 
-  const copyResumeCmd = useCallback(async (session: SessionSummary, shell: ResumeShell, mode: ResumeCommandMode) => {
-    const option = getResumeCommandOptions(session).find(item => item.shell === shell && item.mode === mode)
-    if (!option) return
+  const copyResumeCmd = useCallback(async (session: SessionSummary, unsafe: boolean, preloadedPlan: ResumePlan | null = null) => {
     try {
-      await navigator.clipboard.writeText(option.command)
-      writeStorage(getResumePreferenceKey(session), shell)
-      showToast(t('sidebar.copiedResume', { shell: shell === 'powershell' ? 'PowerShell' : 'Git Bash' }))
+      const plan = preloadedResumePlanForCopy(preloadedPlan, unsafe)
+        ?? await fetchResumePlan(session.id, session.agent_type, unsafe)
+      if (!plan.command) {
+        showToast(t('sidebar.resumeUnsupported'))
+        return
+      }
+      await navigator.clipboard.writeText(plan.command)
+      showToast(t('sidebar.copiedResume'))
     } catch {
       showToast(t('sidebar.copyFailed'))
     }
@@ -636,101 +654,127 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     const metadata = parts.join(' · ')
     const relativeTime = formatRelativeTime(session.updated_at, now, locale)
 
+    const openSession = (e: React.MouseEvent) => {
+      if (!openOnModifiedClick(e, session.agent_type, session.id)) onSelect(session.id, session.agent_type)
+    }
+
     return (
-      <div className="group relative">
-        <button
-          data-session-id={session.id}
-          data-agent-type={session.agent_type}
-          onClick={(e) => { if (!openOnModifiedClick(e, session.agent_type, session.id)) onSelect(session.id, session.agent_type) }}
-          onAuxClick={(e) => { openOnModifiedClick(e, session.agent_type, session.id) }}
-          onContextMenu={(e) => openContextMenu(e, session)}
-          title={t('sidebar.openMenu')}
-          className={`relative w-full text-left pl-2.5 pr-24 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
-            selected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-          }`}
-          style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
-        >
-          {selected && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-[var(--accent-blue)]" />}
-          <div className="flex items-start gap-1.5">
-            <AgentIcon agentType={session.agent_type} size={20} className="mt-0.5" />
-            <div className="min-w-0 flex-1">
+      <div
+        className={`group relative rounded-md transition-colors duration-fast ${
+          selected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+        }`}
+        style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
+      >
+        {selected && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-[var(--accent-blue)]" />}
+        <div className="flex items-start gap-1.5 pl-2.5 pr-2">
+          <AgentIcon agentType={session.agent_type} size={20} className="mt-0.5 flex-shrink-0" />
+          <div className="min-w-0 flex-1">
+            {/* Title row: full remaining width for long names. */}
+            <button
+              type="button"
+              data-session-id={session.id}
+              data-agent-type={session.agent_type}
+              onClick={openSession}
+              onAuxClick={(e) => { openOnModifiedClick(e, session.agent_type, session.id) }}
+              onContextMenu={(e) => openContextMenu(e, session)}
+              title={t('sidebar.openMenu')}
+              className="w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] rounded-sm"
+            >
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
                 {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title={t('sidebar.live')} aria-label={t('sidebar.live')} />}
-                <span className="truncate">{getSessionName(session)}</span>
+                <span className="truncate" title={getSessionName(session)}>{getSessionName(session)}</span>
               </div>
-              <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
+            </button>
+            {/* Metadata + actions on one flex line → shared vertical center (no absolute offset). */}
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={openSession}
+                onAuxClick={(e) => { openOnModifiedClick(e, session.agent_type, session.id) }}
+                onContextMenu={(e) => openContextMenu(e, session)}
+                title={t('sidebar.openMenu')}
+                className="min-w-0 flex-1 text-left text-helper text-[var(--text-secondary)] flex items-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] rounded-sm"
+              >
                 <span className="truncate min-w-0">{metadata}</span>
-                <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at} title={formatDate(locale, session.updated_at, { dateStyle: 'medium', timeStyle: 'short' })}>
+                {/* min-w-0 + truncate: at ~160px sidebar, time yields space instead of colliding with actions */}
+                <time className="ml-auto min-w-0 shrink truncate tabular-nums" dateTime={session.updated_at} title={formatDate(locale, session.updated_at, { dateStyle: 'medium', timeStyle: 'short' })}>
                   {relativeTime}
                 </time>
+              </button>
+              {/*
+                Hover-revealed controls stay in layout so the row does not jump, but pointer-events
+                stay off until group-hover/focus (or always-on mobile) so invisible buttons do not
+                steal clicks meant for row selection. Bookmarked star/note remain interactive.
+              */}
+              <div className="flex flex-shrink-0 items-center gap-0.5" data-testid="session-row-actions">
+                {session.bookmarked && session.bookmark_note?.trim() && (
+                  <InstantTooltip
+                    text={t('bookmark.noteWithValue', { note: session.bookmark_note.trim() })}
+                    placement="top"
+                    className="flex h-5 w-5 items-center justify-center text-[var(--text-secondary)]"
+                  >
+                    <button
+                      type="button"
+                      onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
+                      className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                      aria-label={t('replay.editBookmarkNote')}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M5 3.75h10.5L20 8.25v12H5z" />
+                        <path d="M15.5 3.75v4.5H20" />
+                        <path d="M8.5 13h7M8.5 16.5h5" />
+                      </svg>
+                    </button>
+                  </InstantTooltip>
+                )}
+                <InstantTooltip
+                  text={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
+                  placement="top"
+                >
+                  <button
+                    type="button"
+                    onClick={event => { void bookmarkFromRow(event, session) }}
+                    className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                      session.bookmarked
+                        ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
+                        : 'text-[var(--text-muted)] opacity-0 pointer-events-none hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-md:opacity-100 max-md:pointer-events-auto'
+                    }`}
+                    aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
+                  >
+                    <StarIcon size={14} filled={session.bookmarked} strokeWidth={1.75} />
+                  </button>
+                </InstantTooltip>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); openSessionInNewTab(session.agent_type, session.id) }}
+                  tabIndex={-1}
+                  className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-md:opacity-100 max-md:pointer-events-auto transition-opacity duration-fast"
+                  aria-hidden="true"
+                  title={t('session.openInNewTab')}
+                  data-testid="session-open-new-tab"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); copyId(session) }}
+                  tabIndex={-1}
+                  className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-md:opacity-100 max-md:pointer-events-auto transition-opacity duration-fast"
+                  aria-hidden="true"
+                  title={t('sidebar.copySessionId')}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
-        </button>
-        <div className="absolute right-1 top-1.5 flex items-center gap-0.5">
-          {session.bookmarked && session.bookmark_note?.trim() && (
-            <InstantTooltip
-              text={t('bookmark.noteWithValue', { note: session.bookmark_note.trim() })}
-              placement="top"
-              className="flex h-5 w-5 items-center justify-center text-[var(--text-secondary)]"
-            >
-              <button
-                type="button"
-                onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
-                className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                aria-label={t('replay.editBookmarkNote')}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M5 3.75h10.5L20 8.25v12H5z" />
-                  <path d="M15.5 3.75v4.5H20" />
-                  <path d="M8.5 13h7M8.5 16.5h5" />
-                </svg>
-              </button>
-            </InstantTooltip>
-          )}
-          <InstantTooltip
-            text={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
-            placement="top"
-          >
-            <button
-              type="button"
-              onClick={event => { void bookmarkFromRow(event, session) }}
-              className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                session.bookmarked
-                  ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
-                  : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
-              }`}
-              aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
-            >
-              <StarIcon size={14} filled={session.bookmarked} strokeWidth={1.75} />
-            </button>
-          </InstantTooltip>
-          <button
-            onClick={(e) => { e.stopPropagation(); openSessionInNewTab(session.agent_type, session.id) }}
-            tabIndex={-1}
-            className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
-            aria-hidden="true"
-            title={t('session.openInNewTab')}
-            data-testid="session-open-new-tab"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); copyId(session) }}
-            tabIndex={-1}
-            className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
-            aria-hidden="true"
-            title={t('sidebar.copySessionId')}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
-          </button>
         </div>
       </div>
     )
@@ -1002,14 +1046,9 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </button>
             {(() => {
               const session = contextMenu.session
-              const stored = readStorage(getResumePreferenceKey(session))
-              const preferred = stored === 'powershell' || stored === 'git-bash' ? stored : null
-              const options = getResumeCommandOptions(session, preferred)
-              const isLive = isSessionLive(contextMenu.session, now)
-              const windows = isWindowsSession(session, hostIsWindows())
-              const visibleOptions = windows ? options : options.filter(option => option.shell === 'git-bash')
-              const disabled = visibleOptions.length === 0
-              if (disabled) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={t('sidebar.resumeUnsupported')}>{t('sidebar.copyResume')}</button>
+              const plan = contextResumePlan
+              const resume = presentSidebarResume(plan, isSessionLive(contextMenu.session, now))
+              if (!plan || !resume.command) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={plan ? t('sidebar.resumeUnsupported') : undefined}>{t('sidebar.copyResume')}</button>
               const rollbackInfo = (session.rolled_back_turn_count ?? 0) > 0
                 ? t('sidebar.rollbackInfo', { count: session.rolled_back_turn_count ?? 0, turn: session.turn_count })
                 : ''
@@ -1019,28 +1058,30 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                     ↩ {rollbackInfo}
                   </div>
                 )}
-                {visibleOptions.map(option => {
-                const shellLabel = windows ? option.shell === 'powershell' ? 'PowerShell' : 'Git Bash' : ''
-                const reason = option.reason === 'last-used' ? t('sidebar.lastUsed') : windows && option.reason === 'recommended' ? t('sidebar.recommended') : ''
-                const dangerous = option.mode === 'skip-permissions'
-                return (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
+                  title={rollbackInfo || undefined}
+                  onClick={() => {
+                    if (resume.isLive) setResumeConfirm({ session, unsafe: false, plan })
+                    else void copyResumeCmd(session, false, plan)
+                    setContextMenu(null)
+                  }}
+                >
+                  {t('sidebar.copyResume')}
+                </button>
+                {resume.supportsUnsafe && (
                   <button
-                    key={`${option.shell}:${option.mode}`}
                     className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
-                    title={dangerous ? t('sidebar.unsafeHint', { rollback: rollbackInfo ? `; ${rollbackInfo}` : '' }) : rollbackInfo || undefined}
+                    title={t('sidebar.unsafeHint', { rollback: rollbackInfo ? `; ${rollbackInfo}` : '' })}
                     onClick={() => {
-                      if (isLive) setResumeConfirm({ session, shell: option.shell, mode: option.mode })
-                      else void copyResumeCmd(session, option.shell, option.mode)
+                      if (resume.isLive) setResumeConfirm({ session, unsafe: true, plan })
+                      else void copyResumeCmd(session, true, plan)
                       setContextMenu(null)
                     }}
                   >
-                    {dangerous ? t('sidebar.copyResumeUnsafe') : t('sidebar.copyResume')}
-                    {(shellLabel || dangerous) && (
-                      <> ({[shellLabel, reason].filter(Boolean).join(', ')}{(shellLabel || reason) && dangerous ? ', ' : ''}{dangerous && <span className="text-[var(--error)]">{t('sidebar.unsafe')}</span>})</>
-                    )}
+                    {t('sidebar.copyResumeUnsafe')} (<span className="text-[var(--error)]">{t('sidebar.unsafe')}</span>)
                   </button>
-                )
-                })}
+                )}
               </>
             })()}
             {deletableAgents.has(contextMenu.session.agent_type) && (
@@ -1123,7 +1164,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 onClick={() => {
                   const target = resumeConfirm
                   setResumeConfirm(null)
-                  void copyResumeCmd(target.session, target.shell, target.mode)
+                  void copyResumeCmd(target.session, target.unsafe, target.plan)
                 }}
                 className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white hover:opacity-90 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >

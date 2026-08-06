@@ -47,6 +47,8 @@ const (
 	CodeStaticMissingForbidden = "static_missing_forbidden"
 	CodeReasonRequired         = "reason_required"
 	CodeTerminateEstimated     = "terminate_estimated"
+	CodeResumeCommandMissing   = "resume_command_missing"
+	CodeResumeCommandInvalid   = "resume_command_invalid"
 )
 
 // ValidateStatic checks a static Agent capability declaration against the
@@ -129,7 +131,48 @@ func ValidateStatic(ac AgentCapabilities) ValidationErrors {
 		errs = append(errs, validateDeclaration(id, decl)...)
 	}
 
+	resume := ac.Capabilities[CapabilityResume]
+	resumeSupported := resume.State == CapabilityExact || resume.State == CapabilityEstimated
+	if resumeSupported && ac.ResumeCommand == nil {
+		errs = append(errs, ValidationError{
+			Field: "resume_command", Code: CodeResumeCommandMissing,
+			Message: "supported resume capability requires an adapter-owned command declaration",
+		})
+	}
+	if ac.ResumeCommand != nil {
+		if !resumeSupported {
+			errs = append(errs, ValidationError{
+				Field: "resume_command", Code: CodeResumeCommandInvalid,
+				Message: "resume command cannot be declared when resume is unsupported",
+			})
+		}
+		errs = append(errs, validateResumeCommand(*ac.ResumeCommand)...)
+	}
+
 	return sortErrors(errs)
+}
+
+func validateResumeCommand(cmd ResumeCommandDeclaration) ValidationErrors {
+	var errs ValidationErrors
+	if strings.TrimSpace(cmd.Executable) == "" {
+		errs = append(errs, ValidationError{Field: "resume_command.executable", Code: CodeResumeCommandInvalid, Message: "executable must be non-empty"})
+	}
+	validateArgs := func(field string, args []string) {
+		count := 0
+		for _, arg := range args {
+			if arg == "{id}" {
+				count++
+			}
+		}
+		if count != 1 {
+			errs = append(errs, ValidationError{Field: field, Code: CodeResumeCommandInvalid, Message: "arguments must contain exactly one {id} token"})
+		}
+	}
+	validateArgs("resume_command.standard_args", cmd.StandardArgs)
+	if cmd.UnsafeArgs != nil {
+		validateArgs("resume_command.unsafe_args", cmd.UnsafeArgs)
+	}
+	return errs
 }
 
 func validateDeclaration(id CapabilityID, decl CapabilityDeclaration) ValidationErrors {

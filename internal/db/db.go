@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 30
+const currentSchemaVersion = 31
 
 type DB struct {
 	conn *sql.DB
@@ -251,6 +251,27 @@ func migrate(conn *sql.DB) error {
 	    session_id TEXT NOT NULL,
 	    title      TEXT NOT NULL,
 	    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	    PRIMARY KEY (agent_type, session_id)
+	);
+
+	-- Terminal bindings let Resume report and revisit the exact terminal target
+	-- that SessionInsight launched. They are observations, not ownership of the
+	-- Agent process or terminal lifecycle.
+	CREATE TABLE IF NOT EXISTS terminal_bindings (
+	    agent_type       TEXT    NOT NULL,
+	    session_id       TEXT    NOT NULL,
+	    terminal_id      TEXT    NOT NULL,
+	    terminal_name    TEXT    NOT NULL,
+	    instance_id      TEXT    NOT NULL DEFAULT '',
+	    window_id        TEXT    NOT NULL DEFAULT '',
+	    tab_id           TEXT    NOT NULL DEFAULT '',
+	    terminal_pid     INTEGER NOT NULL DEFAULT 0,
+	    agent_pid        INTEGER NOT NULL DEFAULT 0,
+	    confidence       TEXT    NOT NULL DEFAULT 'unknown',
+	    focusable        INTEGER NOT NULL DEFAULT 0,
+	    state            TEXT    NOT NULL DEFAULT 'launching',
+	    launched_at      TEXT    NOT NULL,
+	    last_verified_at TEXT    NOT NULL DEFAULT '',
 	    PRIMARY KEY (agent_type, session_id)
 	);
 	`
@@ -797,7 +818,16 @@ func migrate(conn *sql.DB) error {
 	// Version 30: session_provenance — independent record-completeness snapshots
 	// persisted with the session index so list/detail/source-missing fallbacks
 	// do not require a successful re-parse of agent source files.
-	if maxVersion < 30 {
+	var provenanceTable string
+	err = conn.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_provenance'`,
+	).Scan(&provenanceTable)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("v30 inspect session_provenance: %w", err)
+	}
+	// A later version row cannot prove that this physical table survived an
+	// interrupted migration. Keep v30 self-healing when newer schemas exist.
+	if maxVersion < 30 || provenanceTable == "" {
 		if _, err := conn.Exec(`
 			CREATE TABLE IF NOT EXISTS session_provenance (
 				agent_type           TEXT NOT NULL,
@@ -827,6 +857,10 @@ func migrate(conn *sql.DB) error {
 			return fmt.Errorf("v30 clear index_watermarks: %w", err)
 		}
 	}
+
+	// Version 31: terminal bindings for direct Resume and terminal handoff.
+	// CREATE TABLE IF NOT EXISTS above makes this self-healing even when an
+	// interrupted migration wrote a version row before the physical table.
 
 	_, err = conn.Exec(
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)`,

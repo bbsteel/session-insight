@@ -15,11 +15,15 @@ const BASE_URL = urlFiles.find(fs.existsSync)
   ? fs.readFileSync(urlFiles.find(fs.existsSync), 'utf8').trim()
   : 'http://127.0.0.1:8080/'
 
-const SESSION_ID = process.env.SI_SESSION_ID
+// Optional env overrides — read once; never log env values (CodeQL clear-text).
+const SESSION_ID = (typeof process.env.SI_SESSION_ID === 'string' && process.env.SI_SESSION_ID.trim())
   || 'rollout-2026-08-04T11-21-51-019fcaca-b8cf-7c10-b29a-dd7ff16d6d96'
-const QUERY = process.env.SI_SEARCH_Q || 'resume'
+const QUERY = (typeof process.env.SI_SEARCH_Q === 'string' && process.env.SI_SEARCH_Q.trim())
+  || 'resume'
 
 function log(k, v) {
+  // Keep probes free of session identifiers and env dumps.
+  if (k === 'sessionId' || k === 'SESSION_ID') return
   console.log(`${k}: ${v}`)
 }
 
@@ -92,7 +96,7 @@ try {
     const t = (await spans.nth(i).innerText()).trim()
     if (t) countText = t
   }
-  log('query', QUERY)
+  log('queryLen', QUERY.length)
   log('searchResultText', countText)
   log('typeMs', typedAt - t0)
   log('timeToResultMs', foundAt - typedAt)

@@ -21,7 +21,9 @@ function log(k, v) {
 }
 
 async function chooseSession(page) {
-  if (process.env.SI_SESSION_ID) return process.env.SI_SESSION_ID
+  // Optional override via SI_SESSION_ID — never print env-derived ids (CodeQL).
+  const fromEnv = typeof process.env.SI_SESSION_ID === 'string' ? process.env.SI_SESSION_ID.trim() : ''
+  if (fromEnv) return fromEnv
   const summaries = await (await page.request.get(new URL('/api/sessions', BASE_URL).toString())).json()
   const ranked = [...summaries]
     .filter(s => !s.is_live)
@@ -73,7 +75,7 @@ try {
     if (!localStorage.getItem('si-locale')) localStorage.setItem('si-locale', 'en')
   })
   const sessionId = await chooseSession(page)
-  log('sessionId', sessionId)
+  log('sessionSelected', true)
   await openSession(page, sessionId)
 
   let bar = await openSearch(page)

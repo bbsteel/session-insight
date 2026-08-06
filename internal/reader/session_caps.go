@@ -179,7 +179,7 @@ func resolveResume(decl capability.CapabilityDeclaration, detail *model.SessionD
 	// Match frontend resumeCommands: resume_id || id for Agents whose CLI
 	// accepts the session UUID (Claude, Grok, OpenCode, Chrys, …). Only Codex
 	// forbids falling back to the storage/file id (rollout filename stem).
-	if resumeCLIIdentity(detail, canonicalAgentType) == "" {
+	if ResumeCLIIdentity(detail, canonicalAgentType) == "" {
 		return capability.Missing(capability.ReasonResumeIDMissing)
 	}
 	return capability.SessionFromStatic(decl)
@@ -191,7 +191,7 @@ func resolveResume(decl capability.CapabilityDeclaration, detail *model.SessionD
 //
 // canonicalAgentType is the static declaration AgentType (preferred when
 // detail.AgentType is empty — ResolveSessionCapabilities allows that).
-func resumeCLIIdentity(detail *model.SessionDetail, canonicalAgentType string) string {
+func ResumeCLIIdentity(detail *model.SessionDetail, canonicalAgentType string) string {
 	if detail == nil {
 		return ""
 	}
@@ -258,7 +258,7 @@ func resolveActions(
 	res := status[capability.CapabilityResume]
 	switch res.State {
 	case capability.CapabilityExact, capability.CapabilityEstimated:
-		if resumeCLIIdentity(detail, canonicalAgentType) != "" {
+		if ResumeCLIIdentity(detail, canonicalAgentType) != "" {
 			actions[capability.CapabilityResume] = capability.ActionAvailableStatus()
 		} else {
 			actions[capability.CapabilityResume] = capability.ActionUnavailableStatus(capability.ReasonResumeIDMissing)

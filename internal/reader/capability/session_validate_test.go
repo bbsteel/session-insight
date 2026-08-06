@@ -29,6 +29,7 @@ func fullStatic() AgentCapabilities {
 	}
 	return AgentCapabilities{
 		AgentType: "claude", DisplayName: "Claude Code", AdapterRevision: 1, Capabilities: caps,
+		ResumeCommand: &ResumeCommandDeclaration{Executable: "claude", StandardArgs: []string{"--resume", "{id}"}},
 	}
 }
 

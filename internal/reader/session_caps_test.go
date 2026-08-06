@@ -67,6 +67,9 @@ func fullExactStatic(agentType string) capability.AgentCapabilities {
 		DisplayName:     agentType,
 		AdapterRevision: 1,
 		Capabilities:    caps,
+		ResumeCommand: &capability.ResumeCommandDeclaration{
+			Executable: agentType, StandardArgs: []string{"resume", "{id}"},
+		},
 	}
 }
 
@@ -109,6 +112,7 @@ func TestResolveStaticExactRemainsExact(t *testing.T) {
 func TestResolveStaticUnsupportedPreserved(t *testing.T) {
 	static := fullExactStatic("copilot")
 	static.Capabilities[capability.CapabilityResume] = capability.Unsupported(capability.ReasonAdapterNotImplemented)
+	static.ResumeCommand = nil
 	d := detailBase("copilot", "s1")
 	d.ResumeID = "" // even if empty, must not become missing
 	d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
