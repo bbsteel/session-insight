@@ -13,7 +13,7 @@ func TestCodexACPCommandUsesPinnedRegistryPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"npx", "-y", "@agentclientprotocol/codex-acp@1.1.7"}
+	want := []string{"npx", "-y", "@agentclientprotocol/codex-acp@1.1.9"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("acpCommand(codex) = %q, want %q", got, want)
 	}
