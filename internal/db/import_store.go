@@ -113,6 +113,10 @@ func (db *DB) DeleteImportRecordsByBundle(bundleID string) ([]string, error) {
 		}
 		ids = append(ids, id)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("list bundle sessions: %w", err)
+	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}

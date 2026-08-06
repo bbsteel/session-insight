@@ -104,7 +104,10 @@ func BuildExport(readers []reader.BaseSessionReader, database *db.DB, sels []Sel
 		}
 
 		var rawFiles map[string][]byte
-		if opts.IncludeRaw && detail.Provenance != nil && homeDir != "" {
+		// Raw source files are not covered by RedactSession heuristics. When
+		// redaction is requested, skip attaching them rather than shipping
+		// unredacted transcripts alongside a redacted detail payload.
+		if opts.IncludeRaw && !opts.Redact && detail.Provenance != nil && homeDir != "" {
 			entry.RawDir = rawDirName(detail.AgentType, detail.ID)
 			rawFiles = collectRawFiles(detail.Provenance.Sources, homeDir, &rawTotal)
 			if len(rawFiles) == 0 {

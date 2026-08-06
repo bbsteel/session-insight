@@ -52,12 +52,18 @@ func Extract(r io.Reader, destRoot string) (bundleID string, m *Manifest, err er
 		return "", nil, err
 	}
 	// Every declared session payload must physically exist under sessions/.
-	// Validate already rejected absolute / ".." names; resolveArchivePath
-	// re-checks the Zip Slip boundary before Stat.
+	// Validate already rejected absolute / ".." names in se.File.
 	for _, se := range manifest.Sessions {
-		sessionPath, err := resolveArchivePath(tmp, path.Join("sessions", se.File))
-		if err != nil {
-			return "", nil, fmt.Errorf("%w: session file %q: %v", ErrInvalidBundle, se.File, err)
+		// Join only the fixed "sessions" segment with a single validated leaf
+		// (Validate → confinedName). Refuse multi-segment leaves here so the
+		// Stat path cannot carry archive-controlled separators.
+		if se.File == "" || strings.ContainsAny(se.File, `/\`) || se.File == ".." || strings.Contains(se.File, "..") {
+			return "", nil, fmt.Errorf("%w: session file %q escapes sessions/", ErrInvalidBundle, se.File)
+		}
+		sessionPath := filepath.Join(tmp, "sessions", filepath.Base(se.File))
+		// Zip Slip / path-injection boundary (must stay inline for CodeQL).
+		if !strings.HasPrefix(sessionPath, filepath.Clean(tmp)+string(os.PathSeparator)) {
+			return "", nil, fmt.Errorf("%w: session file %q escapes extract root", ErrInvalidBundle, se.File)
 		}
 		if _, err := os.Stat(sessionPath); err != nil {
 			return "", nil, fmt.Errorf("%w: session file %q missing from archive", ErrInvalidBundle, se.File)
@@ -77,12 +83,20 @@ func Extract(r io.Reader, destRoot string) (bundleID string, m *Manifest, err er
 // extractTarGz writes every regular file in the archive under dest,
 // rejecting absolute paths and ".." traversal and enforcing the global
 // decompressed-size cap.
+//
+// Zip Slip / path-injection: every filesystem sink is preceded in-function
+// by strings.HasPrefix(path, filepath.Clean(dest)+sep). CodeQL's go/zipslip
+// and go/path-injection queries only treat that pattern as a sanitizer when
+// it dominates the sink in the same function (a helper return is not enough).
 func extractTarGz(r io.Reader, dest string) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("%w: not a gzip stream: %v", ErrInvalidBundle, err)
 	}
 	defer gz.Close()
+
+	destClean := filepath.Clean(dest)
+	destPrefix := destClean + string(os.PathSeparator)
 
 	tr := tar.NewReader(gz)
 	var total int64
@@ -95,16 +109,30 @@ func extractTarGz(r io.Reader, dest string) error {
 			return fmt.Errorf("%w: tar read: %v", ErrInvalidBundle, err)
 		}
 
-		// Resolve the entry under dest with an explicit Zip-Slip boundary
-		// check (filepath.Clean(dest)+sep prefix). Do this before any
-		// filesystem operation so analyzers can see the sanitizer.
-		target, err := resolveArchivePath(dest, hdr.Name)
+		rel, err := normalizeArchiveRel(hdr.Name)
 		if err != nil {
+			return fmt.Errorf("%w: unsafe archive path %q", ErrInvalidBundle, hdr.Name)
+		}
+
+		// Build the target segment-by-segment so no full untrusted string is
+		// joined in one shot; then re-check the dest prefix (CodeQL sanitizer).
+		target := destClean
+		for _, part := range strings.Split(rel, "/") {
+			// normalizeArchiveRel already rejected empty/".."; defend in depth.
+			if part == "" || part == "." || part == ".." {
+				return fmt.Errorf("%w: unsafe archive path %q", ErrInvalidBundle, hdr.Name)
+			}
+			target = filepath.Join(target, part)
+		}
+		if !strings.HasPrefix(target, destPrefix) {
 			return fmt.Errorf("%w: unsafe archive path %q", ErrInvalidBundle, hdr.Name)
 		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
+			if !strings.HasPrefix(target, destPrefix) {
+				return fmt.Errorf("%w: unsafe archive path %q", ErrInvalidBundle, hdr.Name)
+			}
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return fmt.Errorf("extract dir %s: %w", hdr.Name, err)
 			}
@@ -113,8 +141,15 @@ func extractTarGz(r io.Reader, dest string) error {
 			if total > maxExtractedBytes {
 				return fmt.Errorf("%w: bundle exceeds %d GiB decompressed cap", ErrInvalidBundle, maxExtractedBytes>>30)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			dir := filepath.Dir(target)
+			if !strings.HasPrefix(dir, destPrefix) && dir != destClean {
+				return fmt.Errorf("%w: unsafe archive path %q", ErrInvalidBundle, hdr.Name)
+			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return fmt.Errorf("extract %s: %w", hdr.Name, err)
+			}
+			if !strings.HasPrefix(target, destPrefix) {
+				return fmt.Errorf("%w: unsafe archive path %q", ErrInvalidBundle, hdr.Name)
 			}
 			// Fixed mode 0o644 — ignore archive-provided mode bits.
 			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
@@ -140,30 +175,25 @@ func extractTarGz(r io.Reader, dest string) error {
 	}
 }
 
-// resolveArchivePath maps a tar entry name onto a path strictly under dest.
-// It rejects absolute paths, ".." segments, and any name that would resolve
-// outside dest (classic Zip Slip). The HasPrefix check after Join is the
-// boundary guard CodeQL's go/zipslip query expects.
-func resolveArchivePath(dest, name string) (string, error) {
+// normalizeArchiveRel returns a cleaned, relative, layout-allowed path using
+// forward slashes (no leading "/", no ".." segments). It does not join with
+// a destination root — callers must still apply the dest-prefix check before
+// any filesystem operation.
+func normalizeArchiveRel(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("empty path")
 	}
-	// Tar names use forward slashes; normalize then Clean in slash-space so
-	// Windows separators cannot smuggle alternate forms.
 	slashName := strings.ReplaceAll(name, "\\", "/")
 	if path.IsAbs(slashName) || strings.HasPrefix(slashName, "/") {
 		return "", fmt.Errorf("absolute path")
 	}
-	// Drop a single leading "./" if present; path.Clean alone would keep it
-	// as a non-escaping relative form, but we want a stable join key.
 	slashName = strings.TrimPrefix(slashName, "./")
 	cleaned := path.Clean(slashName)
-	// path.Clean turns "foo/../../etc" into "../etc" — reject any ".." left.
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
 		return "", fmt.Errorf("path traversal")
 	}
 	for _, part := range strings.Split(cleaned, "/") {
-		if part == ".." || part == "" {
+		if part == "" || part == ".." {
 			return "", fmt.Errorf("path traversal")
 		}
 	}
@@ -173,16 +203,7 @@ func resolveArchivePath(dest, name string) (string, error) {
 		!strings.HasPrefix(cleaned, "raw/") {
 		return "", fmt.Errorf("path outside allowed layout")
 	}
-
-	target := filepath.Join(dest, filepath.FromSlash(cleaned))
-	// Zip Slip boundary: target must stay under dest after Join/Clean.
-	// See https://github.com/securego/gosec/blob/master/rules/zip-slip.md
-	// and CodeQL go/zipslip.
-	destPrefix := filepath.Clean(dest) + string(os.PathSeparator)
-	if !strings.HasPrefix(target, destPrefix) {
-		return "", fmt.Errorf("path escapes destination")
-	}
-	return target, nil
+	return cleaned, nil
 }
 
 func readManifest(path string) (*Manifest, error) {

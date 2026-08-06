@@ -98,28 +98,36 @@ func runPackExport(args []string, database *db.DB, siVersion string) error {
 		return errors.New("export: none of the requested sessions could be read")
 	}
 
-	openFlags := os.O_WRONLY | os.O_CREATE
-	if *force {
-		openFlags |= os.O_TRUNC
-	} else {
-		openFlags |= os.O_EXCL
+	// Write to a sibling temp file first so --force never truncates an
+	// existing pack before serialization succeeds; owner-only mode because
+	// bundles may hold unredacted session content.
+	outPath := *out
+	if _, err := os.Stat(outPath); err == nil && !*force {
+		return fmt.Errorf("export: %s already exists (pass --force to overwrite)", outPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("export: stat %s: %w", outPath, err)
 	}
-	f, err := os.OpenFile(*out, openFlags, 0o644)
+	tmpPath := outPath + ".tmp-" + fmt.Sprintf("%d", os.Getpid())
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		if os.IsExist(err) {
-			return fmt.Errorf("export: %s already exists (pass --force to overwrite)", *out)
-		}
-		return fmt.Errorf("export: create %s: %w", *out, err)
+		return fmt.Errorf("export: create temp %s: %w", tmpPath, err)
 	}
-	if err := bundle.WriteBundle(f, res.Manifest, res.Payloads); err != nil {
-		f.Close()
-		return fmt.Errorf("export: write bundle: %w", err)
+	writeErr := bundle.WriteBundle(f, res.Manifest, res.Payloads)
+	closeErr := f.Close()
+	if writeErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export: write bundle: %w", writeErr)
 	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("export: close %s: %w", *out, err)
+	if closeErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export: close temp: %w", closeErr)
+	}
+	if err := os.Rename(tmpPath, outPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export: rename to %s: %w", outPath, err)
 	}
 
-	summary := fmt.Sprintf("wrote %s: %d session(s)", *out, len(res.Payloads))
+	summary := fmt.Sprintf("wrote %s: %d session(s)", outPath, len(res.Payloads))
 	if res.Manifest.CaseLabel != "" {
 		summary += fmt.Sprintf(", case %q", res.Manifest.CaseLabel)
 	}

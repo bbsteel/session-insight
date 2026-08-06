@@ -49,33 +49,36 @@ func RedactSession(d *model.SessionDetail, evs []model.RenderEvent, homeDir stri
 
 // DeepCopyDetail returns an independent copy of d (JSON round trip), for
 // callers that must redact without mutating their live session data.
+// On marshal/unmarshal failure it returns an empty shell — never the original
+// pointer — so a subsequent RedactSession cannot mutate live reader state.
 func DeepCopyDetail(d *model.SessionDetail) *model.SessionDetail {
 	if d == nil {
 		return nil
 	}
 	data, err := json.Marshal(d)
 	if err != nil {
-		return d
+		return &model.SessionDetail{}
 	}
 	var out model.SessionDetail
 	if err := json.Unmarshal(data, &out); err != nil {
-		return d
+		return &model.SessionDetail{}
 	}
 	return &out
 }
 
 // DeepCopyEvents returns an independent copy of evs (JSON round trip).
+// On failure it returns an empty slice, never the caller's backing array.
 func DeepCopyEvents(evs []model.RenderEvent) []model.RenderEvent {
 	if evs == nil {
 		return nil
 	}
 	data, err := json.Marshal(evs)
 	if err != nil {
-		return evs
+		return []model.RenderEvent{}
 	}
 	var out []model.RenderEvent
 	if err := json.Unmarshal(data, &out); err != nil {
-		return evs
+		return []model.RenderEvent{}
 	}
 	return out
 }

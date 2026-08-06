@@ -163,18 +163,14 @@ func TestExtractRejectsPathTraversal(t *testing.T) {
 	}
 }
 
-func TestResolveArchivePathBoundary(t *testing.T) {
-	dest := t.TempDir()
-	ok, err := resolveArchivePath(dest, "sessions/claude-sess-1.json")
-	if err != nil {
-		t.Fatalf("safe path rejected: %v", err)
+func TestNormalizeArchiveRel(t *testing.T) {
+	ok, err := normalizeArchiveRel("sessions/claude-sess-1.json")
+	if err != nil || ok != "sessions/claude-sess-1.json" {
+		t.Fatalf("safe path: got %q, %v", ok, err)
 	}
-	if !strings.HasPrefix(ok, filepath.Clean(dest)+string(os.PathSeparator)) {
-		t.Fatalf("resolved path %q not under dest", ok)
-	}
-	for _, bad := range []string{"../x", "foo/../../x", "/abs", "other/file.json", ""} {
-		if _, err := resolveArchivePath(dest, bad); err == nil {
-			t.Errorf("resolveArchivePath(%q) accepted", bad)
+	for _, bad := range []string{"../x", "foo/../../x", "/abs", "other/file.json", "", "sessions/../../etc/passwd"} {
+		if _, err := normalizeArchiveRel(bad); err == nil {
+			t.Errorf("normalizeArchiveRel(%q) accepted", bad)
 		}
 	}
 }
