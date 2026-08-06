@@ -21,8 +21,8 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 - **Search and organization** — search metadata, prompts, assistant replies, skills, tool inputs, and errors across sessions while background indexing reports progress; narrow results by project or agent and keep bookmarks with notes
 - **Tool, diff, and code inspection** — filter tool calls and jump to their source turn; inspect inline or side-by-side diffs; open referenced files in the structured code reader or your editor
 - **Usage analytics** — inspect prompt, output, and cache tokens, cost estimates, tool usage, errors, anomalies, continuation pressure, and per-turn trends
-- **Session lifecycle tools** — export sessions, copy shell-specific resume commands, and safely delete sessions with running-process protection and supported force-stop flows
-- **Optional AI assistance** — generate summaries, titles, and handoff prompts through a configured OpenAI-compatible API or local ACP agent
+- **Session lifecycle tools** — export Markdown or portable `.sibundle` packs for offline migration, resume sessions in place (or copy a shell command), and safely delete with running-process protection and supported force-stop flows
+- **Optional AI assistance** — generate summaries, titles, and handoff prompts on historical or live sessions through a configured OpenAI-compatible API or local ACP agent
 - **Desktop personalization** — use light or dark themes, recognizable agent icons, a custom user avatar, resizable panels, and independent UI/terminal font and size controls
 
 ## More Screenshots
