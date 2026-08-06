@@ -151,6 +151,50 @@ func TestInsightActiveSessionAllowed(t *testing.T) {
 	}
 }
 
+// mutatingRevReader always advances LiveRevision between the pre- and post-
+// snapshot checks so buildInsightSnapshot cannot stabilize.
+type mutatingRevReader struct {
+	insightReader
+	rev int64
+}
+
+func (r *mutatingRevReader) LiveRevision(id string) (int64, error) {
+	r.rev++
+	return r.rev, nil
+}
+
+func TestInsightSessionChangingWhenRevisionMoves(t *testing.T) {
+	detail := findingDetail()
+	detail.UpdatedAt = time.Now()
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	s := New(database, []reader.BaseSessionReader{&mutatingRevReader{insightReader: insightReader{detail: detail}}})
+	addProvider(t, s, "http://unused")
+	w := postInsight(t, s, `{"locale":"en"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "session_changing") {
+		t.Fatalf("mid-snapshot mutation must be 409 session_changing, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDetachSessionDetailIsIndependent(t *testing.T) {
+	src := findingDetail()
+	src.Turns[0].UserMessage = "original"
+	cp := detachSessionDetail(src)
+	if cp == nil || cp == src {
+		t.Fatal("detach must return a distinct non-nil copy")
+	}
+	src.Turns[0].UserMessage = "mutated"
+	if cp.Turns[0].UserMessage != "original" {
+		t.Fatalf("detached detail must not observe source mutation, got %q", cp.Turns[0].UserMessage)
+	}
+	if len(cp.Turns) != len(src.Turns) {
+		t.Fatalf("turn count mismatch: got %d want %d", len(cp.Turns), len(src.Turns))
+	}
+}
+
 func TestInsightNoFindings(t *testing.T) {
 	old := time.Now().Add(-time.Hour)
 	detail := &model.SessionDetail{

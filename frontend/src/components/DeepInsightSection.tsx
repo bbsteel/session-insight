@@ -141,9 +141,9 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
 
       {blocked && (
         <div className="rounded-md border border-dashed border-[var(--border-default)] p-3 text-helper text-[var(--text-secondary)]">
-          {/* session_active is no longer returned by current servers; keep a soft
-              fallback for older backends so the blocked card is never blank. */}
-          {blocked === 'session_active' && t('insight.liveSnapshot')}
+          {/* session_active is no longer returned by current servers; keep a
+              legacy-backend fallback so the blocked card is never blank. */}
+          {blocked === 'session_active' && t('insight.blocked.legacyActive')}
           {blocked === 'session_changing' && t('insight.blocked.changing')}
           {blocked === 'no_findings' && t('insight.blocked.noFindings')}
           {blocked === 'not_found' && t('insight.blocked.notFound')}
