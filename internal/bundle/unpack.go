@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -50,14 +51,21 @@ func Extract(r io.Reader, destRoot string) (bundleID string, m *Manifest, err er
 	if err := Validate(manifest); err != nil {
 		return "", nil, err
 	}
-	// Every declared session payload must physically exist.
+	// Every declared session payload must physically exist under sessions/.
+	// Validate already rejected absolute / ".." names; resolveArchivePath
+	// re-checks the Zip Slip boundary before Stat.
 	for _, se := range manifest.Sessions {
-		if _, err := os.Stat(filepath.Join(tmp, "sessions", se.File)); err != nil {
+		sessionPath, err := resolveArchivePath(tmp, path.Join("sessions", se.File))
+		if err != nil {
+			return "", nil, fmt.Errorf("%w: session file %q: %v", ErrInvalidBundle, se.File, err)
+		}
+		if _, err := os.Stat(sessionPath); err != nil {
 			return "", nil, fmt.Errorf("%w: session file %q missing from archive", ErrInvalidBundle, se.File)
 		}
 	}
 
 	bundleID = newBundleID(time.Now())
+	// bundleID is generated locally (timestamp + random hex); never from the archive.
 	final := filepath.Join(destRoot, bundleID)
 	if err := os.Rename(tmp, final); err != nil {
 		return "", nil, fmt.Errorf("commit bundle: %w", err)
@@ -86,11 +94,15 @@ func extractTarGz(r io.Reader, dest string) error {
 		if err != nil {
 			return fmt.Errorf("%w: tar read: %v", ErrInvalidBundle, err)
 		}
-		name := filepath.FromSlash(hdr.Name)
-		if !safeRelPath(name) {
+
+		// Resolve the entry under dest with an explicit Zip-Slip boundary
+		// check (filepath.Clean(dest)+sep prefix). Do this before any
+		// filesystem operation so analyzers can see the sanitizer.
+		target, err := resolveArchivePath(dest, hdr.Name)
+		if err != nil {
 			return fmt.Errorf("%w: unsafe archive path %q", ErrInvalidBundle, hdr.Name)
 		}
-		target := filepath.Join(dest, name)
+
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
@@ -104,39 +116,73 @@ func extractTarGz(r io.Reader, dest string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("extract %s: %w", hdr.Name, err)
 			}
+			// Fixed mode 0o644 — ignore archive-provided mode bits.
 			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 			if err != nil {
 				return fmt.Errorf("extract %s: %w", hdr.Name, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil {
-				f.Close()
+			// Bound the copy by declared size so a lying header cannot
+			// stream past the remaining cap for this entry alone.
+			written, err := io.Copy(f, io.LimitReader(tr, hdr.Size+1))
+			if closeErr := f.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
 				return fmt.Errorf("extract %s: %w", hdr.Name, err)
 			}
-			if err := f.Close(); err != nil {
-				return fmt.Errorf("extract %s: %w", hdr.Name, err)
+			if written > hdr.Size {
+				return fmt.Errorf("%w: entry %q larger than declared size", ErrInvalidBundle, hdr.Name)
 			}
 		default:
-			// Symlinks, devices, etc. have no place in a session bundle.
+			// Symlinks, hard links, devices, etc. have no place in a session bundle.
 			return fmt.Errorf("%w: unsupported tar entry type %d for %q", ErrInvalidBundle, hdr.Typeflag, hdr.Name)
 		}
 	}
 }
 
-// safeRelPath reports whether name is a relative path with no traversal.
-func safeRelPath(name string) bool {
-	if name == "" || filepath.IsAbs(name) {
-		return false
+// resolveArchivePath maps a tar entry name onto a path strictly under dest.
+// It rejects absolute paths, ".." segments, and any name that would resolve
+// outside dest (classic Zip Slip). The HasPrefix check after Join is the
+// boundary guard CodeQL's go/zipslip query expects.
+func resolveArchivePath(dest, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("empty path")
 	}
-	clean := filepath.Clean(name)
-	if clean != name {
-		return false
+	// Tar names use forward slashes; normalize then Clean in slash-space so
+	// Windows separators cannot smuggle alternate forms.
+	slashName := strings.ReplaceAll(name, "\\", "/")
+	if path.IsAbs(slashName) || strings.HasPrefix(slashName, "/") {
+		return "", fmt.Errorf("absolute path")
 	}
-	for _, part := range strings.Split(name, string(filepath.Separator)) {
-		if part == ".." {
-			return false
+	// Drop a single leading "./" if present; path.Clean alone would keep it
+	// as a non-escaping relative form, but we want a stable join key.
+	slashName = strings.TrimPrefix(slashName, "./")
+	cleaned := path.Clean(slashName)
+	// path.Clean turns "foo/../../etc" into "../etc" — reject any ".." left.
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
+		return "", fmt.Errorf("path traversal")
+	}
+	for _, part := range strings.Split(cleaned, "/") {
+		if part == ".." || part == "" {
+			return "", fmt.Errorf("path traversal")
 		}
 	}
-	return true
+	// Only allow the known bundle layout prefixes.
+	if cleaned != "manifest.json" &&
+		!strings.HasPrefix(cleaned, "sessions/") &&
+		!strings.HasPrefix(cleaned, "raw/") {
+		return "", fmt.Errorf("path outside allowed layout")
+	}
+
+	target := filepath.Join(dest, filepath.FromSlash(cleaned))
+	// Zip Slip boundary: target must stay under dest after Join/Clean.
+	// See https://github.com/securego/gosec/blob/master/rules/zip-slip.md
+	// and CodeQL go/zipslip.
+	destPrefix := filepath.Clean(dest) + string(os.PathSeparator)
+	if !strings.HasPrefix(target, destPrefix) {
+		return "", fmt.Errorf("path escapes destination")
+	}
+	return target, nil
 }
 
 func readManifest(path string) (*Manifest, error) {

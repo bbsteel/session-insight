@@ -122,29 +122,60 @@ func TestExtractRejectsNewerFormatVersion(t *testing.T) {
 }
 
 func TestExtractRejectsPathTraversal(t *testing.T) {
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	body := []byte("pwned")
-	if err := tw.WriteHeader(&tar.Header{Name: "../escape.txt", Mode: 0o644, Size: int64(len(body))}); err != nil {
-		t.Fatal(err)
+	// Entries that must never be written under (or outside) dest.
+	// Absolute and ".." forms are Zip Slip; outside-layout is also rejected.
+	badNames := []string{
+		"../escape.txt",
+		"sessions/../../escape.txt",
+		"/etc/passwd",
+		"raw/../../etc/passwd",
+		"not-in-layout.txt",
+		`sessions\..\..\escape.txt`,
 	}
-	if _, err := tw.Write(body); err != nil {
-		t.Fatal(err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
+	for _, name := range badNames {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			tw := tar.NewWriter(gz)
+			body := []byte("pwned")
+			if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tw.Write(body); err != nil {
+				t.Fatal(err)
+			}
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := gz.Close(); err != nil {
+				t.Fatal(err)
+			}
 
-	dest := t.TempDir()
-	if _, _, err := Extract(&buf, dest); !errors.Is(err, ErrInvalidBundle) {
-		t.Fatalf("err = %v, want ErrInvalidBundle", err)
+			dest := t.TempDir()
+			if _, _, err := Extract(&buf, dest); !errors.Is(err, ErrInvalidBundle) {
+				t.Fatalf("err = %v, want ErrInvalidBundle", err)
+			}
+			// Nothing outside dest, and no leftover extract dirs with the payload.
+			if _, err := os.Stat(filepath.Join(filepath.Dir(dest), "escape.txt")); err == nil {
+				t.Error("traversal file written outside dest")
+			}
+		})
 	}
-	if _, err := os.Stat(filepath.Join(dest, "..", "escape.txt")); err == nil {
-		t.Error("traversal file written outside dest")
+}
+
+func TestResolveArchivePathBoundary(t *testing.T) {
+	dest := t.TempDir()
+	ok, err := resolveArchivePath(dest, "sessions/claude-sess-1.json")
+	if err != nil {
+		t.Fatalf("safe path rejected: %v", err)
+	}
+	if !strings.HasPrefix(ok, filepath.Clean(dest)+string(os.PathSeparator)) {
+		t.Fatalf("resolved path %q not under dest", ok)
+	}
+	for _, bad := range []string{"../x", "foo/../../x", "/abs", "other/file.json", ""} {
+		if _, err := resolveArchivePath(dest, bad); err == nil {
+			t.Errorf("resolveArchivePath(%q) accepted", bad)
+		}
 	}
 }
 
