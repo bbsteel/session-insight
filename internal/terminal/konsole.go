@@ -71,7 +71,7 @@ func launchKonsole(ctx context.Context, path string, command Command) (Binding, 
 
 func focusKonsole(ctx context.Context, binding Binding) (FocusResult, error) {
 	if binding.InstanceID == "" || binding.WindowID == "" || binding.TabID == "" {
-		return FocusResult{}, fmt.Errorf("Konsole binding has no exact tab handle")
+		return FocusResult{}, fmt.Errorf("konsole binding has no exact tab handle")
 	}
 	focusCtx, cancel := context.WithTimeout(ctx, konsoleDiscoveryTimeout)
 	defer cancel()
@@ -169,9 +169,9 @@ func konsoleCall(ctx context.Context, service, object, method string, args ...st
 	callArgs = append(callArgs, args...)
 	if out, err := exec.CommandContext(ctx, qdbus, callArgs...).CombinedOutput(); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return fmt.Errorf("Konsole D-Bus %s: %w", method, ctxErr)
+			return fmt.Errorf("konsole D-Bus %s: %w", method, ctxErr)
 		}
-		return fmt.Errorf("Konsole D-Bus %s: %s", method, strings.TrimSpace(string(out)))
+		return fmt.Errorf("konsole D-Bus %s: %s", method, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

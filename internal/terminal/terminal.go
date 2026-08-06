@@ -165,7 +165,7 @@ func linuxTerminalArgs(id string, command Command) ([]string, string, error) {
 func (l *SystemLauncher) launchWindows(ctx context.Context, command Command) (Binding, error) {
 	wt, err := exec.LookPath("wt.exe")
 	if err != nil {
-		return Binding{}, errors.New("Windows Terminal was not found")
+		return Binding{}, errors.New("windows terminal was not found")
 	}
 	args := []string{"-w", "0", "new-tab", "-d", command.CWD, "--", command.Executable}
 	args = append(args, command.Args...)
