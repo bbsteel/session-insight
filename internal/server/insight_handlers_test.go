@@ -127,14 +127,71 @@ func TestInsightSessionNotFound(t *testing.T) {
 	}
 }
 
-func TestInsightActiveSessionRejected(t *testing.T) {
+func TestInsightActiveSessionAllowed(t *testing.T) {
+	// Live sessions may still be analyzed: the handler takes a point-in-time
+	// snapshot rather than waiting for the session to end.
 	detail := findingDetail()
 	detail.UpdatedAt = time.Now() // live now
 	s := newInsightServer(t, detail)
 	addProvider(t, s, "http://unused")
-	w := postInsight(t, s, `{"confirm_target":true}`)
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "session_active") {
-		t.Errorf("active session must be 409 session_active, got %d: %s", w.Code, w.Body.String())
+	// Unconfirmed target → 200 preview (proves we did not 409 session_active).
+	w := postInsight(t, s, `{"locale":"en"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("active session should allow analysis (preview), got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "session_active") {
+		t.Fatalf("active session must not return session_active: %s", w.Body.String())
+	}
+	var pv sendPreview
+	if err := json.Unmarshal(w.Body.Bytes(), &pv); err != nil {
+		t.Fatal(err)
+	}
+	if !pv.NeedsConfirmation || pv.FactCount == 0 {
+		t.Fatalf("expected send preview for live session, got %+v", pv)
+	}
+}
+
+// mutatingRevReader always advances LiveRevision between the pre- and post-
+// snapshot checks so buildInsightSnapshot cannot stabilize.
+type mutatingRevReader struct {
+	insightReader
+	rev int64
+}
+
+func (r *mutatingRevReader) LiveRevision(id string) (int64, error) {
+	r.rev++
+	return r.rev, nil
+}
+
+func TestInsightSessionChangingWhenRevisionMoves(t *testing.T) {
+	detail := findingDetail()
+	detail.UpdatedAt = time.Now()
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	s := New(database, []reader.BaseSessionReader{&mutatingRevReader{insightReader: insightReader{detail: detail}}})
+	addProvider(t, s, "http://unused")
+	w := postInsight(t, s, `{"locale":"en"}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "session_changing") {
+		t.Fatalf("mid-snapshot mutation must be 409 session_changing, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDetachSessionDetailIsIndependent(t *testing.T) {
+	src := findingDetail()
+	src.Turns[0].UserMessage = "original"
+	cp := detachSessionDetail(src)
+	if cp == nil || cp == src {
+		t.Fatal("detach must return a distinct non-nil copy")
+	}
+	src.Turns[0].UserMessage = "mutated"
+	if cp.Turns[0].UserMessage != "original" {
+		t.Fatalf("detached detail must not observe source mutation, got %q", cp.Turns[0].UserMessage)
+	}
+	if len(cp.Turns) != len(src.Turns) {
+		t.Fatalf("turn count mismatch: got %d want %d", len(cp.Turns), len(src.Turns))
 	}
 }
 

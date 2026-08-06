@@ -111,22 +111,58 @@ type insightSnapshot struct {
 	revision int64
 }
 
-// liveRevision returns a cheap change marker for a session (mtime+size for
-// readers that expose it), used to detect a session mutating mid-snapshot.
-// Falls back to the detail's updated_at when the reader has no live revision.
+// liveRevision returns a cheap change marker for a session, used to detect a
+// session mutating mid-snapshot. Prefer the reader's LiveRevision (mtime/size)
+// so a detached SessionDetail cannot freeze the marker. When that capability is
+// missing, re-read GetSession for a fresh UpdatedAt; the detail argument is a
+// last-resort fallback only.
 func liveRevision(rd reader.BaseSessionReader, id string, detail *model.SessionDetail) int64 {
 	if p, ok := rd.(reader.LiveRevisionProvider); ok {
 		if rev, err := p.LiveRevision(id); err == nil {
 			return rev
 		}
 	}
-	return detail.UpdatedAt.UnixNano()
+	if d, err := rd.GetSession(id); err == nil && d != nil {
+		return d.UpdatedAt.UnixNano()
+	}
+	if detail != nil {
+		return detail.UpdatedAt.UnixNano()
+	}
+	return 0
+}
+
+// detachSessionDetail returns an independent deep copy of d so later mutation
+// of reader-owned state cannot splice turns into analytics/evidence mid-build.
+// Live sessions make this essential: analysis is a point-in-time snapshot.
+func detachSessionDetail(d *model.SessionDetail) *model.SessionDetail {
+	if d == nil {
+		return nil
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		cp := *d
+		if d.Turns != nil {
+			cp.Turns = append([]model.TurnVM(nil), d.Turns...)
+		}
+		return &cp
+	}
+	var out model.SessionDetail
+	if err := json.Unmarshal(raw, &out); err != nil {
+		cp := *d
+		if d.Turns != nil {
+			cp.Turns = append([]model.TurnVM(nil), d.Turns...)
+		}
+		return &cp
+	}
+	return &out
 }
 
 // buildInsightSnapshot binds the reader that actually reads the session, then
 // reads detail + reader-specific evidence at a stable revision, retrying when
-// the session changes mid-read. Returns (nil, httpStatus, message) on failure:
-// 404 not found, 409 session_active (live), 409 session_changing (unstable).
+// the session changes mid-read. Live (active) sessions are allowed: analysis
+// is always a point-in-time snapshot (detached SessionDetail + revision
+// bracket). Returns (nil, httpStatus, message) on failure: 404 not found,
+// 409 session_changing (unstable across retries).
 func (s *Server) buildInsightSnapshot(id string) (*insightSnapshot, int, string) {
 	var bound reader.BaseSessionReader
 	for _, rd := range s.Readers {
@@ -145,11 +181,9 @@ func (s *Server) buildInsightSnapshot(id string) (*insightSnapshot, int, string)
 		if err != nil || detail == nil {
 			return nil, http.StatusNotFound, "session not found"
 		}
-		// Active sessions are excluded on both UI and API: their data and bill
-		// are still changing, so analyzing them repeatedly wastes money.
-		if model.IsSessionLive(detail.UpdatedAt) {
-			return nil, http.StatusConflict, "session_active"
-		}
+		// Freeze the payload used for findings/evidence so concurrent live
+		// writes cannot splice into the model input mid-build.
+		detail = detachSessionDetail(detail)
 		revBefore := liveRevision(bound, id, detail)
 
 		res := analytics.Compute(detail)

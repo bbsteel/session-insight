@@ -740,7 +740,8 @@ export async function revokeInsightTargets(): Promise<void> {
 }
 
 // Reasons the server refuses to start an insight generation, surfaced so the
-// UI can explain rather than show a raw status code.
+// UI can explain rather than show a raw status code. session_active is retained
+// for older backends; current servers allow live sessions (point-in-time snapshot).
 export class InsightBlockedError extends Error {
   constructor(public reason: 'session_active' | 'session_changing' | 'no_findings' | 'not_found', message: string) {
     super(message)
