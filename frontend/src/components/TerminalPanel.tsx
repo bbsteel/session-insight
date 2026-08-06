@@ -1892,8 +1892,19 @@ const snapshotTerminal = () => {
       let lastSearchOpts: TerminalSearchOptions = {
         caseSensitive: false, wholeWord: false, regex: false, highlightAll: false,
       }
+      // Stable n/m for the current query. Count is computed once per query+opts;
+      // stepping only adjusts index so the counter does not thrash.
+      let lastCountKey = ''
+      let lastKnownCount = 0
+      let lastKnownIndex = -1
       let searchChromeGen = 0
       let searchChromeTimer: ReturnType<typeof setTimeout> | null = null
+      const countKeyOf = (query: string, o: Pick<TerminalSearchOptions, 'caseSensitive' | 'wholeWord' | 'regex'>) =>
+        `${query}\0${o.caseSensitive}|${o.wholeWord}|${o.regex}`
+      // Runtime clearDecorations(retainCachedSearchTerm) — typings omit the arg.
+      const clearSearchDecorations = (retainCachedTerm: boolean) => {
+        ;(searchAddon as { clearDecorations(retain?: boolean): void }).clearDecorations(retainCachedTerm)
+      }
       const cancelSearchChrome = () => {
         searchChromeGen++
         if (searchChromeTimer !== null) {
@@ -1903,6 +1914,8 @@ const snapshotTerminal = () => {
       }
       cancelSearchChromeRef = cancelSearchChrome
       const reportSearchResults = (index: number, count: number) => {
+        lastKnownIndex = index
+        lastKnownCount = count
         searchResultsCb?.(index, count)
       }
       // After a decoration-free navigate, rebuild all-match highlights without
@@ -1911,37 +1924,50 @@ const snapshotTerminal = () => {
       const runHighlightPass = (query: string, o: TerminalSearchOptions) => {
         if (!query || disposed) return
         try {
-          searchAddon.clearDecorations()
+          // Must drop cached term so findNext re-selects the current hit.
+          clearSearchDecorations(false)
           searchAddon.findNext(query, decorationSearchOpts(o))
         } catch { /* invalid regex */ }
       }
-      const runCountPass = (query: string, o: TerminalSearchOptions, gen: number) => {
+      const runCountPass = (query: string, o: TerminalSearchOptions, gen: number, key: string) => {
         void countTerminalMatches(term, query, baseSearchOpts(o), {
           maxCount: 9999,
-          linesPerSlice: 400,
-          isCancelled: () => disposed || gen !== searchChromeGen || lastSearchQuery !== query,
-          onProgress: (r) => {
-            if (disposed || gen !== searchChromeGen || lastSearchQuery !== query) return
-            reportSearchResults(r.index, r.count)
-          },
+          linesPerSlice: 500,
+          isCancelled: () => disposed || gen !== searchChromeGen || lastSearchQuery !== query || lastCountKey !== key,
+          // No per-slice onProgress: short terms (e.g. "AV") yield thousands of
+          // hits and would thrash the n/m display for seconds.
         }).then((r) => {
-          if (disposed || gen !== searchChromeGen || lastSearchQuery !== query) return
-          reportSearchResults(r.index, r.count)
+          if (disposed || gen !== searchChromeGen || lastSearchQuery !== query || lastCountKey !== key) return
+          // Prefer selection-mapped index; if unknown keep prior step index.
+          const index = r.index >= 0 ? r.index : (lastKnownIndex >= 0 ? lastKnownIndex : 0)
+          reportSearchResults(index, r.count)
         })
       }
-      const scheduleSearchChrome = (query: string, o: TerminalSearchOptions) => {
+      /** Decorations and/or a one-shot count after navigate. Never wipe the
+       *  addon search-term cache when only dropping markers — that broke Enter
+       *  stepping (same match re-selected forever). */
+      const scheduleSearchChrome = (
+        query: string,
+        o: TerminalSearchOptions,
+        chrome: { recount: boolean },
+      ) => {
         cancelSearchChrome()
         const gen = searchChromeGen
+        const key = countKeyOf(query, o)
         // Defer so the current frame paints the selection before heavy work.
         searchChromeTimer = setTimeout(() => {
           searchChromeTimer = null
           if (disposed || gen !== searchChromeGen || lastSearchQuery !== query) return
           if (o.highlightAll) {
             runHighlightPass(query, o)
-            // Decoration path fires onDidChangeResults (capped at highlightLimit).
-          } else {
-            searchAddon.clearDecorations()
-            runCountPass(query, o, gen)
+            // Decorations path fires onDidChangeResults (capped at highlightLimit).
+          }
+          // HL off: do NOT clearDecorations here. Even retainCachedTerm=true still
+          // tears down result-tracker state and was observed to leave Enter unable
+          // to move the real selection while the n/m counter kept incrementing.
+          if (chrome.recount) {
+            lastCountKey = key
+            runCountPass(query, o, gen, key)
           }
         }, 0)
       }
@@ -1949,7 +1975,7 @@ const snapshotTerminal = () => {
         // Only surface addon counts while highlight-all decorations are active;
         // otherwise the async counter owns n/m.
         if (lastSearchOpts.highlightAll) {
-          searchResultsCb?.(r.resultIndex, r.resultCount)
+          reportSearchResults(r.resultIndex, r.resultCount)
         }
       })
       disposeSearchResultsRef = disposeSearchResults
@@ -1982,7 +2008,7 @@ const snapshotTerminal = () => {
             try {
               // Navigation-only — never pay for all-match decorations here.
               cancelSearchChrome()
-              searchAddon.clearDecorations()
+              clearSearchDecorations(false)
               const found = searchAddon.findNext(query, baseSearchOpts({
                 caseSensitive: false,
                 wholeWord: false,
@@ -1990,6 +2016,7 @@ const snapshotTerminal = () => {
               }))
               const selection = term.getSelectionPosition()
               if (found && selection) {
+                openAtTop = false
                 const line = selection.start.y
                 term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2)))
                 flashLines(line, 1)
@@ -2026,25 +2053,56 @@ const snapshotTerminal = () => {
           searchNext: (query, opts) => {
             invalidateSearchOnOptionChange(opts)
             applyHighlightAllClass(opts.highlightAll)
+            const key = countKeyOf(query, opts)
+            const isNewQuery = key !== lastCountKey
             lastSearchQuery = query
             lastSearchOpts = opts
             try {
-              // Always navigate without decorations — O(distance to next match),
-              // not O(buffer × highlightLimit) DOM work.
+              const before = term.getSelectionPosition()
+              // Always navigate without decorations — O(distance to next match).
               const found = searchAddon.findNext(query, baseSearchOpts(opts))
               if (!found) {
                 cancelSearchChrome()
-                searchAddon.clearDecorations()
+                clearSearchDecorations(false)
+                lastCountKey = ''
                 reportSearchResults(-1, 0)
                 return false
               }
-              // Drop leftover all-match markers without wiping the addon search
-              // term cache (needed so the next Enter advances). Runtime accepts
-              // retainCachedSearchTerm; typings only expose the 0-arg form.
-              if (!opts.highlightAll) {
-                ;(searchAddon as { clearDecorations(retain?: boolean): void }).clearDecorations(true)
+              const after = term.getSelectionPosition()
+              // Leave open-at-top mode so search scrolls are not yanked back to 0
+              // by the onScroll stick-to-top handler.
+              if (after) {
+                openAtTop = false
+                const row = after.start.y
+                term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
               }
-              scheduleSearchChrome(query, opts)
+              // Require a real post-find selection. (!before || !after) was true
+              // whenever selection was missing, so n/m advanced with no jump.
+              const moved = !!after && (
+                !before
+                || before.start.y !== after.start.y
+                || before.start.x !== after.start.x
+                || before.end.y !== after.end.y
+                || before.end.x !== after.end.x
+              )
+              if (isNewQuery) {
+                lastCountKey = key
+                lastKnownIndex = 0
+                lastKnownCount = 0
+                searchResultsCb?.(-1, -1)
+                scheduleSearchChrome(query, opts, { recount: true })
+              } else {
+                // Stepping: only advance n when the selection actually moved.
+                if (moved && lastKnownCount > 0) {
+                  const nextIdx = lastKnownIndex < 0 ? 0 : (lastKnownIndex + 1) % lastKnownCount
+                  reportSearchResults(nextIdx, lastKnownCount)
+                } else if (lastKnownCount > 0) {
+                  reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
+                }
+                if (opts.highlightAll) {
+                  scheduleSearchChrome(query, opts, { recount: false })
+                }
+              }
               return true
             } catch {
               return false // invalid regex mid-typing
@@ -2053,20 +2111,54 @@ const snapshotTerminal = () => {
           searchPrev: (query, opts) => {
             invalidateSearchOnOptionChange(opts)
             applyHighlightAllClass(opts.highlightAll)
+            const key = countKeyOf(query, opts)
+            const isNewQuery = key !== lastCountKey
             lastSearchQuery = query
             lastSearchOpts = opts
             try {
+              const before = term.getSelectionPosition()
               const found = searchAddon.findPrevious(query, baseSearchOpts(opts))
               if (!found) {
                 cancelSearchChrome()
-                searchAddon.clearDecorations()
+                clearSearchDecorations(false)
+                lastCountKey = ''
                 reportSearchResults(-1, 0)
                 return false
               }
-              if (!opts.highlightAll) {
-                ;(searchAddon as { clearDecorations(retain?: boolean): void }).clearDecorations(true)
+              const after = term.getSelectionPosition()
+              if (after) {
+                openAtTop = false
+                const row = after.start.y
+                term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
               }
-              scheduleSearchChrome(query, opts)
+              // Require a real post-find selection. (!before || !after) was true
+              // whenever selection was missing, so n/m advanced with no jump.
+              const moved = !!after && (
+                !before
+                || before.start.y !== after.start.y
+                || before.start.x !== after.start.x
+                || before.end.y !== after.end.y
+                || before.end.x !== after.end.x
+              )
+              if (isNewQuery) {
+                lastCountKey = key
+                lastKnownIndex = 0
+                lastKnownCount = 0
+                searchResultsCb?.(-1, -1)
+                scheduleSearchChrome(query, opts, { recount: true })
+              } else {
+                if (moved && lastKnownCount > 0) {
+                  const prevIdx = lastKnownIndex < 0
+                    ? lastKnownCount - 1
+                    : (lastKnownIndex - 1 + lastKnownCount) % lastKnownCount
+                  reportSearchResults(prevIdx, lastKnownCount)
+                } else if (lastKnownCount > 0) {
+                  reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
+                }
+                if (opts.highlightAll) {
+                  scheduleSearchChrome(query, opts, { recount: false })
+                }
+              }
               return true
             } catch {
               return false
@@ -2075,7 +2167,8 @@ const snapshotTerminal = () => {
           searchClear: () => {
             cancelSearchChrome()
             lastSearchQuery = ''
-            searchAddon.clearDecorations()
+            lastCountKey = ''
+            clearSearchDecorations(false)
             term.clearSelection() // the active match is selection-backed
             reportSearchResults(-1, 0)
           },
@@ -2085,12 +2178,16 @@ const snapshotTerminal = () => {
             if (!lastSearchQuery) return
             if (on) {
               // Rebuild decorations for the current query without advancing.
-              scheduleSearchChrome(lastSearchQuery, lastSearchOpts)
+              scheduleSearchChrome(lastSearchQuery, lastSearchOpts, { recount: false })
             } else {
               // Keep cached term so ↑/↓ still step; drop markers only.
-              ;(searchAddon as { clearDecorations(retain?: boolean): void }).clearDecorations(true)
+              clearSearchDecorations(true)
+              // Re-count with uncapped async counter if we only had the
+              // decoration-capped total from HL-on.
+              const key = countKeyOf(lastSearchQuery, lastSearchOpts)
+              lastCountKey = key
               const gen = ++searchChromeGen
-              runCountPass(lastSearchQuery, lastSearchOpts, gen)
+              runCountPass(lastSearchQuery, lastSearchOpts, gen, key)
             }
           },
           refreshContent: async () => {

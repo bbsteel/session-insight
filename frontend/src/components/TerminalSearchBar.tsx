@@ -79,7 +79,10 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
   useEffect(() => {
     const ctrl = controlRef.current
     ctrl?.setSearchResultsListener((index, count) => {
-      setResult(count >= 0 ? { index, count } : null)
+      // count < 0 → still counting (show blank, not "No results")
+      // count === 0 → confirmed no matches
+      // count > 0 → n/m available
+      setResult(count < 0 ? null : { index, count })
     })
     return () => {
       ctrl?.setSearchResultsListener(null)
@@ -171,11 +174,11 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
         {invalidRegex
           ? t('terminalSearch.invalidRegex')
           : query
-            ? (result && result.count > 0
-              // index can be -1 while the async counter is still scanning or
-              // when the active hit cannot be mapped precisely.
-              ? (result.index >= 0 ? `${result.index + 1}/${result.count}` : `${result.count}`)
-              : (result && result.count === 0 ? t('terminalSearch.noResults') : ''))
+            ? (result
+              ? (result.count > 0
+                ? (result.index >= 0 ? `${result.index + 1}/${result.count}` : `${result.count}`)
+                : t('terminalSearch.noResults'))
+              : '') // null = counting or not yet reported
             : ''}
       </span>
       <button
