@@ -1,0 +1,169 @@
+// Time-sliced match counting over an xterm buffer. Used when all-match
+// decorations are off so Ctrl+F can report n/m without building DOM markers.
+
+import type { Terminal } from '@xterm/xterm'
+
+export interface TerminalSearchCountOptions {
+  caseSensitive: boolean
+  wholeWord: boolean
+  regex: boolean
+}
+
+export interface TerminalSearchCountResult {
+  /** 0-based index of the active (selected) match, or -1 if unknown. */
+  index: number
+  count: number
+  capped: boolean
+}
+
+const NON_WORD_CHARS = ' ~!@#$%^&*()+`-=[]{}|\\;:"\',./<>?'
+
+function isWholeWord(line: string, index: number, len: number): boolean {
+  const beforeOk = index === 0 || NON_WORD_CHARS.includes(line[index - 1]!)
+  const afterOk = index + len >= line.length || NON_WORD_CHARS.includes(line[index + len]!)
+  return beforeOk && afterOk
+}
+
+/** Text of an unwrapped line including continuation wrap rows; null if row is a wrap tail. */
+export function unwrappedLineText(term: Terminal, row: number): { text: string; rowCount: number } | null {
+  const first = term.buffer.active.getLine(row)
+  if (!first || first.isWrapped) return null
+  let text = first.translateToString(true)
+  let rowCount = 1
+  for (;;) {
+    const next = term.buffer.active.getLine(row + rowCount)
+    if (!next?.isWrapped) break
+    text += next.translateToString(true)
+    rowCount++
+  }
+  return { text, rowCount }
+}
+
+/** String offsets of each match in a single unwrapped line. */
+export function matchOffsetsInLine(
+  line: string,
+  term: string,
+  opts: TerminalSearchCountOptions,
+): number[] {
+  if (!term) return []
+  const out: number[] = []
+  if (opts.regex) {
+    let re: RegExp
+    try {
+      re = new RegExp(term, opts.caseSensitive ? 'g' : 'gi')
+    } catch {
+      return []
+    }
+    let m: RegExpExecArray | null
+    while ((m = re.exec(line)) !== null) {
+      if (!m[0]) {
+        re.lastIndex++
+        continue
+      }
+      if (!opts.wholeWord || isWholeWord(line, m.index, m[0].length)) out.push(m.index)
+    }
+    return out
+  }
+  const hay = opts.caseSensitive ? line : line.toLowerCase()
+  const needle = opts.caseSensitive ? term : term.toLowerCase()
+  let from = 0
+  while (from <= hay.length - needle.length) {
+    const i = hay.indexOf(needle, from)
+    if (i < 0) break
+    if (!opts.wholeWord || isWholeWord(hay, i, needle.length)) out.push(i)
+    from = i + Math.max(1, needle.length)
+  }
+  return out
+}
+
+/**
+ * Map a string offset in an unwrapped line to a buffer (row, col). Wide chars
+ * are approximated as one cell — good enough for selection index matching.
+ */
+export function offsetToBufferPos(
+  startRow: number,
+  offset: number,
+  cols: number,
+): { row: number; col: number } {
+  const row = startRow + Math.floor(offset / cols)
+  const col = offset % cols
+  return { row, col }
+}
+
+/**
+ * Count matches in the active buffer, yielding every `linesPerSlice` rows so
+ * the UI stays responsive. `onProgress` may fire multiple times.
+ */
+export async function countTerminalMatches(
+  term: Terminal,
+  query: string,
+  opts: TerminalSearchCountOptions,
+  options: {
+    maxCount?: number
+    linesPerSlice?: number
+    isCancelled?: () => boolean
+    onProgress?: (result: TerminalSearchCountResult) => void
+  } = {},
+): Promise<TerminalSearchCountResult> {
+  const maxCount = options.maxCount ?? 9999
+  const linesPerSlice = options.linesPerSlice ?? 300
+  const isCancelled = options.isCancelled ?? (() => false)
+  const cols = Math.max(1, term.cols)
+  const length = term.buffer.active.length
+  const sel = term.getSelectionPosition()
+  let count = 0
+  let index = -1
+  let capped = false
+  let rowsVisited = 0
+
+  for (let y = 0; y < length; ) {
+    if (isCancelled()) return { index, count, capped: true }
+
+    const sliceRows = linesPerSlice
+    const sliceStartVisited = rowsVisited
+    while (y < length && rowsVisited - sliceStartVisited < sliceRows) {
+      const block = unwrappedLineText(term, y)
+      if (!block) {
+        y++
+        rowsVisited++
+        continue
+      }
+      const offsets = matchOffsetsInLine(block.text, query, opts)
+      for (const off of offsets) {
+        const pos = offsetToBufferPos(y, off, cols)
+        if (sel && index < 0) {
+          if (pos.row === sel.start.y && pos.col === sel.start.x) {
+            index = count
+          } else if (
+            pos.row < sel.start.y
+            || (pos.row === sel.start.y && pos.col < sel.start.x)
+          ) {
+            // still before selection
+          } else if (
+            pos.row === sel.start.y
+            && Math.abs(pos.col - sel.start.x) <= Math.max(1, query.length)
+          ) {
+            // near selection on same row (wide-char / wrap mapping drift)
+            index = count
+          }
+        }
+        count++
+        if (count >= maxCount) {
+          capped = true
+          const result = { index, count, capped }
+          options.onProgress?.(result)
+          return result
+        }
+      }
+      y += block.rowCount
+      rowsVisited += block.rowCount
+    }
+
+    options.onProgress?.({ index, count, capped })
+    if (y < length) {
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+    }
+  }
+
+  return { index, count, capped }
+}

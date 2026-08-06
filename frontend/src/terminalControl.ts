@@ -85,9 +85,16 @@ export interface TerminalControl {
   refreshContent: () => Promise<'appended' | 'rewritten' | 'unchanged'>
   // In-terminal search (xterm addon-search). Searches the composed buffer,
   // so content inside collapsed tool groups is not matched until expanded.
+  // Navigation is always decoration-free (fast on multi-10k-line buffers);
+  // all-match highlights and n/m counting are deferred/async.
   searchNext: (query: string, opts: TerminalSearchOptions) => boolean
   searchPrev: (query: string, opts: TerminalSearchOptions) => boolean
   searchClear: () => void
+  /**
+   * Toggle all-match highlights. When turning on with an active query, rebuilds
+   * decorations asynchronously; when off, drops decorations and keeps selection.
+   */
+  setSearchHighlightAll: (on: boolean) => void
   setSearchResultsListener: (cb: ((index: number, count: number) => void) | null) => void
 }
 
@@ -95,8 +102,8 @@ export interface TerminalSearchOptions {
   caseSensitive: boolean
   wholeWord: boolean
   regex: boolean
-  // Off = only the active match is highlighted; decorations stay enabled
-  // underneath (transparent) so the n/m counter keeps working.
+  // On = paint all matches (capped) via addon decorations. Off = selection-only
+  // active match; n/m comes from a time-sliced counter (no DOM markers).
   highlightAll: boolean
 }
 

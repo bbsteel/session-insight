@@ -8,6 +8,9 @@ import { useI18n } from '../i18n'
 
 const OPTS_KEY = 'session-insight-terminal-search-opts'
 const MIN_BESIDE_PANEL_WIDTH = 360
+// Debounce typing so each keystroke does not start a new buffer walk.
+// Enter/step still runs immediately.
+const SEARCH_DEBOUNCE_MS = 200
 
 function loadOpts(): TerminalSearchOptions {
   try {
@@ -18,12 +21,13 @@ function loadOpts(): TerminalSearchOptions {
         caseSensitive: !!o.caseSensitive,
         wholeWord: !!o.wholeWord,
         regex: !!o.regex,
-        // Deliberately not persisted: highlight-all always starts on.
-        highlightAll: true,
+        // Deliberately not persisted: highlight-all defaults off so long
+        // sessions stay responsive (selection still marks the active hit).
+        highlightAll: false,
       }
     }
   } catch { /* corrupted storage → defaults */ }
-  return { caseSensitive: false, wholeWord: false, regex: false, highlightAll: true }
+  return { caseSensitive: false, wholeWord: false, regex: false, highlightAll: false }
 }
 
 function isInvalidRegex(query: string, regexOn: boolean): boolean {
@@ -75,7 +79,10 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
   useEffect(() => {
     const ctrl = controlRef.current
     ctrl?.setSearchResultsListener((index, count) => {
-      setResult(count >= 0 ? { index, count } : null)
+      // count < 0 → still counting (show blank, not "No results")
+      // count === 0 → confirmed no matches
+      // count > 0 → n/m available
+      setResult(count < 0 ? null : { index, count })
     })
     return () => {
       ctrl?.setSearchResultsListener(null)
@@ -87,9 +94,16 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
     localStorage.setItem(OPTS_KEY, JSON.stringify(opts))
   }, [opts])
 
+  // Highlight-all is CSS-only: do not re-scan / re-decorate the buffer.
+  useEffect(() => {
+    controlRef.current?.setSearchHighlightAll(opts.highlightAll)
+  }, [opts.highlightAll, controlRef])
+
   const invalidRegex = isInvalidRegex(query, opts.regex)
 
-  // Incremental search on typing / option change; re-run after fold rewrites.
+  // Incremental search on typing / match-option change; re-run after fold rewrites.
+  // Debounce query typing; option toggles and fold refresh use the same path so
+  // a pending typed query still lands with the latest options.
   useEffect(() => {
     const ctrl = controlRef.current
     if (!ctrl) return
@@ -98,8 +112,13 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
       setResult(null)
       return
     }
-    ctrl.searchNext(query, opts)
-  }, [query, opts, refreshToken, controlRef])
+    const handle = window.setTimeout(() => {
+      ctrl.searchNext(query, optsRef.current)
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(handle)
+    // highlightAll intentionally omitted — handled by setSearchHighlightAll above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- optsRef carries latest full opts
+  }, [query, opts.caseSensitive, opts.wholeWord, opts.regex, refreshToken, controlRef])
 
   const step = (dir: 1 | -1) => {
     const ctrl = controlRef.current
@@ -152,7 +171,15 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
       <button onClick={() => toggle('regex')} title={t('terminalSearch.regex')} aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
       <button onClick={() => toggle('highlightAll')} title={t('terminalSearch.highlightAll')} aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>{t('terminalSearch.highlightAllShort')}</button>
       <span className={`min-w-[52px] flex-none text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
-        {invalidRegex ? t('terminalSearch.invalidRegex') : query ? (result && result.count > 0 ? `${result.index + 1}/${result.count}` : t('terminalSearch.noResults')) : ''}
+        {invalidRegex
+          ? t('terminalSearch.invalidRegex')
+          : query
+            ? (result
+              ? (result.count > 0
+                ? (result.index >= 0 ? `${result.index + 1}/${result.count}` : `${result.count}`)
+                : t('terminalSearch.noResults'))
+              : '') // null = counting or not yet reported
+            : ''}
       </span>
       <button
         onClick={() => step(-1)}
