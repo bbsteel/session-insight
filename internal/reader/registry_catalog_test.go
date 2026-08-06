@@ -17,6 +17,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
 	"github.com/bbsteel/session-insight/internal/reader/grok"
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
+	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -24,13 +25,13 @@ import (
 
 // expectedAgentTypes is the closed set of supported Agents for phase 1.
 var expectedAgentTypes = []string{
-	"chrys", "claude", "codex", "copilot", "grok", "hermes", "opencode",
+	"chrys", "claude", "codex", "copilot", "grok", "hermes", "imported", "opencode",
 }
 
 func TestAgentDefinitionsHasSevenAgents(t *testing.T) {
 	defs := reader.AgentDefinitions()
-	if len(defs) != 7 {
-		t.Fatalf("catalog length = %d, want 7: %v", len(defs), agentTypes(defs))
+	if len(defs) != 8 {
+		t.Fatalf("catalog length = %d, want 8: %v", len(defs), agentTypes(defs))
 	}
 
 	got := agentTypes(defs)
@@ -189,6 +190,7 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 		{chrys.Capabilities(), chrys.New(tmp)},
 		{grok.Capabilities(), grok.New(tmp)},
 		{hermes.Capabilities(), hermesReader},
+		{imported.Capabilities(), imported.New(tmp)},
 		{opencode.Capabilities(), ocReader},
 	}
 	for _, p := range pairs {
@@ -223,6 +225,7 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 		"copilot":  copilot.New(tmp),
 		"chrys":    chrys.New(tmp),
 		"grok":     grok.New(tmp),
+		"imported": imported.New(tmp),
 		"opencode": ocReader,
 	}
 	hermesDB := filepath.Join(tmp, "hermes-operation.db")
@@ -282,9 +285,9 @@ func TestCatalogMatrixDump(t *testing.T) {
 	matrix := b.String()
 	// Structural proof of catalog content.
 	lines := strings.Split(strings.TrimSpace(matrix), "\n")
-	// header + 7*10
-	if len(lines) != 1+70 {
-		t.Fatalf("matrix lines = %d, want 71", len(lines))
+	// header + 8*10
+	if len(lines) != 1+80 {
+		t.Fatalf("matrix lines = %d, want 81", len(lines))
 	}
 	if out := os.Getenv("CAPABILITY_MATRIX_OUT"); out != "" {
 		if err := os.WriteFile(out, []byte(matrix), 0o644); err != nil {

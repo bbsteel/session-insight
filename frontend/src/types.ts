@@ -143,6 +143,14 @@ export interface SessionSummary {
   updated_at: string
   /** Compact record completeness; omit paths. Absent = unavailable. */
   record_status?: RecordStatus
+  /** True for sessions imported from a portable bundle (read-only copy). */
+  imported?: boolean
+  /** Hostname of the machine the bundle was exported from. */
+  origin_host?: string
+  /** Agent type on the origin machine (agent_type is the local imported id). */
+  original_agent_type?: string
+  /** Optional case label carried by the bundle. */
+  case_label?: string
 }
 
 export interface TokenUsage {
@@ -281,6 +289,17 @@ export interface PositionsResponse {
   positions: MiniMapPosition[]
 }
 
+/** Provenance of a session imported from a portable bundle (SessionDetail.import_info). */
+export interface ImportInfo {
+  original_agent_type: string
+  original_session_id: string
+  origin_host: string
+  bundle_id: string
+  case_label?: string
+  redacted?: boolean
+  imported_at: string
+}
+
 export interface SessionDetail {
   id: string
   agent_type: string
@@ -309,4 +328,6 @@ export interface SessionDetail {
   provenance?: SessionProvenance
   /** False for metadata/source-missing envelopes without replayable body. */
   record_available?: boolean
+  /** Present for sessions imported from a portable bundle. */
+  import_info?: ImportInfo
 }

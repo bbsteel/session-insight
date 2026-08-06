@@ -9,11 +9,13 @@ import ModelFilter, { type ModelEntry } from './ModelFilter'
 import AgentIcon from './AgentIcon'
 import BookmarkNoteEditor, { type BookmarkNoteAnchor, type BookmarkNoteTarget } from './BookmarkNoteEditor'
 import DeleteSessionDialog from './DeleteSessionDialog'
+import ExportImportModal from './ExportImportModal'
 import InstantTooltip from './InstantTooltip'
 import StarIcon from './StarIcon'
 import { InfoIcon } from './icons'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
+import { importedBadgeText } from '../importPresentation'
 import { modelMeta } from '../modelMeta'
 import { formatDate, formatNumber, useI18n } from '../i18n'
 import { openOnModifiedClick, openSessionInNewTab } from '../sessionLink'
@@ -90,6 +92,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   // 文本，内容匹配交给已有的 /api/search；null 表示无内容搜索结果可用，
   // 过滤时只按本地元数据字段匹配。
   const [contentHits, setContentHits] = useState<Set<string> | null>(null)
+  const [showExportImport, setShowExportImport] = useState(false)
   const [version, setVersion] = useState('')
 
   // 版本号只取一次（进程生命周期内不变），失败时 footer 留空不打扰。
@@ -475,6 +478,15 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
 
   const hasActiveFilters = Boolean(query || agentFilter || projectFilter || modelFilter || bookmarksOnly)
 
+  // Prefer the focused sidebar session for export pre-check (only if still in the filtered list).
+  const exportPreferred = useMemo(() => {
+    if (!selectedId) return null
+    const match = filtered.find(
+      s => s.id === selectedId && (!selectedAgentType || s.agent_type === selectedAgentType),
+    )
+    return match ? { id: match.id, agent_type: match.agent_type } : null
+  }, [filtered, selectedId, selectedAgentType])
+
   // A global-search result can be hidden by the sidebar's current filters and
   // by virtual scrolling. Reveal it, then move keyboard focus to its row.
   useEffect(() => {
@@ -639,6 +651,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     const branch = session.branch || ''
 
     const parts: string[] = []
+    if (session.imported) parts.push(importedBadgeText(t, session.origin_host))
     if (repo) {
       const shortRepo = repo.split('/').slice(-2).join('/')
       parts.push(shortRepo)
@@ -651,6 +664,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
     const live = isSessionLive(session, now)
     if (live) parts.push(t('sidebar.live'))
+    if (session.imported && session.case_label) parts.push(session.case_label)
     const metadata = parts.join(' · ')
     const relativeTime = formatRelativeTime(session.updated_at, now, locale)
 
@@ -825,7 +839,21 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </span>
           )}
         </div>
-        {isMobile && onClose && (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowExportImport(true)}
+            aria-label={t('sidebar.exportImport')}
+            title={t('sidebar.exportImport')}
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v12" />
+              <polyline points="7 10 12 15 17 10" />
+              <path d="M4 21h16" />
+            </svg>
+          </button>
+          {isMobile && onClose && (
           <button
             onClick={onClose}
             aria-label={t('sidebar.close')}
@@ -836,7 +864,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Filter Bar */}
@@ -1124,6 +1153,16 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           session={deleteTarget}
           onClose={() => setDeleteTarget(null)}
           onDeleted={handleSessionDeleted}
+        />
+      )}
+
+      {/* Export/import bundle dialog — offers the currently filtered list.
+          Prefer the focused row when it is in the filter; never pre-select all. */}
+      {showExportImport && (
+        <ExportImportModal
+          sessions={filtered}
+          preferred={exportPreferred}
+          onClose={() => setShowExportImport(false)}
         />
       )}
 

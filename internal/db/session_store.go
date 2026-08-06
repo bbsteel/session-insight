@@ -200,6 +200,8 @@ func (db *DB) DeleteSessionData(agentType, sessionID string) error {
 		`DELETE FROM session_title_overrides WHERE agent_type = ? AND session_id = ?`,
 		// Explicit SI delete removes provenance; do not leave a tombstone.
 		`DELETE FROM session_provenance WHERE agent_type = ? AND session_id = ?`,
+		// Imported copies carry an import record tied to the session row.
+		`DELETE FROM import_records WHERE agent_type = ? AND session_id = ?`,
 		// Cascades to the root's collaboration invocations and delegations.
 		`DELETE FROM collaboration_roots WHERE root_agent_type = ? AND root_session_id = ?`,
 	}

@@ -33,7 +33,7 @@ import UserMessagePanel from './UserMessagePanel'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysContainingTarget, foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
-import { isSessionLive, LIVE_WINDOW_MS } from '../sidebarRows'
+import { isSessionLive, LIVE_WINDOW_MS, getAgentLabel } from '../sidebarRows'
 import { getNavOpenPref } from '../navPrefs'
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 import { openOnModifiedClick } from '../sessionLink'
@@ -1678,6 +1678,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           {isSessionLive(session, now) && (
             <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" aria-label={t('replay.active')}>
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.active')}
+            </span>
+          )}
+          {session.import_info && (
+            <span
+              className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-blue)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-blue)]"
+              title={t('replay.importedReadOnly')}
+            >
+              {t('replay.importedFrom', { agent: getAgentLabel(session.import_info.original_agent_type), host: session.import_info.origin_host })}
             </span>
           )}
           <span data-testid="session-token-header">{modelName} · {tokenHeaderText} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}</span>

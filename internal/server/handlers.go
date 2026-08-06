@@ -73,6 +73,14 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		recordStatuses = nil
 	}
 
+	// Import provenance for migrated sessions. Same degrade-to-omitted
+	// contract as collaboration summaries on failure.
+	importSummaries, err := s.DB.ImportSummaries()
+	if err != nil {
+		log.Printf("GET /api/sessions: ImportSummaries: %v", err)
+		importSummaries = nil
+	}
+
 	overrides := s.titleOverrides()
 	sessions := make([]SessionSummary, 0, len(list))
 	for _, sess := range list {
@@ -102,6 +110,12 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if st, ok := recordStatuses[sess.AgentType+"\x00"+sess.ID]; ok {
 			summary.RecordStatus = st
+		}
+		if rec, ok := importSummaries[sess.AgentType+"\x00"+sess.ID]; ok {
+			summary.Imported = true
+			summary.OriginHost = rec.OriginHost
+			summary.OriginalAgentType = rec.OriginalAgentType
+			summary.CaseLabel = rec.CaseLabel
 		}
 		sessions = append(sessions, summary)
 	}

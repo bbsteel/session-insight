@@ -242,6 +242,22 @@ type SessionDetail struct {
 	// Omitted (true zero-value for JSON omitempty via pointer) for normal
 	// successful reads; handlers set *false for envelopes.
 	RecordAvailable *bool `json:"record_available,omitempty"`
+	// ImportInfo is set only on sessions that arrived via a session-migration
+	// bundle (agent_type "imported"). Live readers leave it nil.
+	ImportInfo *ImportInfo `json:"import_info,omitempty"`
+}
+
+// ImportInfo records where an imported session copy came from. The bundle is
+// the source of truth; this is the per-session projection used by the
+// imported reader and API surfaces.
+type ImportInfo struct {
+	OriginalAgentType string    `json:"original_agent_type,omitempty"`
+	OriginalSessionID string    `json:"original_session_id,omitempty"`
+	OriginHost        string    `json:"origin_host,omitempty"`
+	BundleID          string    `json:"bundle_id,omitempty"`
+	CaseLabel         string    `json:"case_label,omitempty"`
+	Redacted          bool      `json:"redacted,omitempty"`
+	ImportedAt        time.Time `json:"imported_at"`
 }
 
 type Todo struct {

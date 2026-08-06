@@ -14,6 +14,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
 	"github.com/bbsteel/session-insight/internal/reader/grok"
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
+	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 )
 
@@ -32,6 +33,7 @@ func AgentDefinitions() []capability.AgentCapabilities {
 		copilot.Capabilities(),
 		grok.Capabilities(),
 		hermes.Capabilities(),
+		imported.Capabilities(),
 		opencode.Capabilities(),
 	}
 	sort.Slice(defs, func(i, j int) bool {
