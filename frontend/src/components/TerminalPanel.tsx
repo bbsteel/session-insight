@@ -261,7 +261,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
-    const searchAddon = new SearchAddon()
+    // Cap match decorations: each hit is a DOM marker. On 20k-line sessions
+    // the default 1000 freezes typing; 250 keeps the overview useful without
+    // thrashing the main thread on common short terms.
+    const searchAddon = new SearchAddon({ highlightLimit: 250 })
     term.loadAddon(searchAddon)
     termRef.current = term
 
@@ -1850,14 +1853,20 @@ const snapshotTerminal = () => {
       // visual styling lives in app.css on the addon's decoration classes
       // (the DOM renderer ignores decoration background options). "Highlight
       // all" off = container class that blanks the all-match layer via CSS.
+      // Overview ruler stays yellow whenever decorations exist; the CSS class
+      // is the sole on/off for the all-match layer so toggling highlightAll
+      // never forces a full buffer re-scan.
+      const applyHighlightAllClass = (on: boolean) => {
+        container.classList.toggle('si-search-active-only', !on)
+      }
       const buildSearchOptions = (o: { caseSensitive: boolean; wholeWord: boolean; regex: boolean; highlightAll: boolean }) => {
-        container.classList.toggle('si-search-active-only', !o.highlightAll)
+        applyHighlightAllClass(o.highlightAll)
         return {
           caseSensitive: o.caseSensitive,
           wholeWord: o.wholeWord,
           regex: o.regex,
           decorations: {
-            matchOverviewRuler: o.highlightAll ? '#facc15' : '#00000000',
+            matchOverviewRuler: '#facc15',
             // The inline outline this sets is the only DOM marker of the
             // active match in addon-search 0.16 (see app.css); the visible
             // outline itself is suppressed there in favor of a background.
@@ -1869,9 +1878,10 @@ const snapshotTerminal = () => {
       // addon-search 0.16 overwrites lastSearchOptions before diffing them,
       // so an option change alone never refreshes the all-match highlight;
       // clearing the cached term forces the next find to re-highlight.
+      // highlightAll is deliberately excluded: it is CSS-only.
       let lastSearchOptsKey = ''
       const invalidateSearchOnOptionChange = (o: { caseSensitive: boolean; wholeWord: boolean; regex: boolean; highlightAll: boolean }) => {
-        const key = `${o.caseSensitive}|${o.wholeWord}|${o.regex}|${o.highlightAll}`
+        const key = `${o.caseSensitive}|${o.wholeWord}|${o.regex}`
         if (key !== lastSearchOptsKey) {
           lastSearchOptsKey = key
           searchAddon.clearDecorations()
@@ -1965,6 +1975,9 @@ const snapshotTerminal = () => {
           searchClear: () => {
             searchAddon.clearDecorations()
             term.clearSelection() // the active match is selection-backed
+          },
+          setSearchHighlightAll: (on) => {
+            applyHighlightAllClass(on)
           },
           refreshContent: async () => {
             if (!hasWrittenOnce || currentCols === 0) return 'unchanged'

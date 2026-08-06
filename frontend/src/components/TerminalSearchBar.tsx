@@ -8,6 +8,9 @@ import { useI18n } from '../i18n'
 
 const OPTS_KEY = 'session-insight-terminal-search-opts'
 const MIN_BESIDE_PANEL_WIDTH = 360
+// Debounce typing so each keystroke does not re-scan a multi-10k-line buffer
+// and rebuild match decorations. Enter/step still runs immediately.
+const SEARCH_DEBOUNCE_MS = 180
 
 function loadOpts(): TerminalSearchOptions {
   try {
@@ -87,9 +90,16 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
     localStorage.setItem(OPTS_KEY, JSON.stringify(opts))
   }, [opts])
 
+  // Highlight-all is CSS-only: do not re-scan / re-decorate the buffer.
+  useEffect(() => {
+    controlRef.current?.setSearchHighlightAll(opts.highlightAll)
+  }, [opts.highlightAll, controlRef])
+
   const invalidRegex = isInvalidRegex(query, opts.regex)
 
-  // Incremental search on typing / option change; re-run after fold rewrites.
+  // Incremental search on typing / match-option change; re-run after fold rewrites.
+  // Debounce query typing; option toggles and fold refresh use the same path so
+  // a pending typed query still lands with the latest options.
   useEffect(() => {
     const ctrl = controlRef.current
     if (!ctrl) return
@@ -98,8 +108,13 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
       setResult(null)
       return
     }
-    ctrl.searchNext(query, opts)
-  }, [query, opts, refreshToken, controlRef])
+    const handle = window.setTimeout(() => {
+      ctrl.searchNext(query, optsRef.current)
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(handle)
+    // highlightAll intentionally omitted — handled by setSearchHighlightAll above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- optsRef carries latest full opts
+  }, [query, opts.caseSensitive, opts.wholeWord, opts.regex, refreshToken, controlRef])
 
   const step = (dir: 1 | -1) => {
     const ctrl = controlRef.current

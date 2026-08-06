@@ -88,6 +88,8 @@ export interface TerminalControl {
   searchNext: (query: string, opts: TerminalSearchOptions) => boolean
   searchPrev: (query: string, opts: TerminalSearchOptions) => boolean
   searchClear: () => void
+  /** Toggle all-match highlight layer without re-scanning the buffer. */
+  setSearchHighlightAll: (on: boolean) => void
   setSearchResultsListener: (cb: ((index: number, count: number) => void) | null) => void
 }
 
