@@ -22,6 +22,22 @@ type fakeTerminalLauncher struct {
 	focuses  int
 }
 
+type blockingTerminalLauncher struct {
+	binding terminal.Binding
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *blockingTerminalLauncher) Launch(_ context.Context, _ terminal.Command) (terminal.Binding, error) {
+	close(f.started)
+	<-f.release
+	return f.binding, nil
+}
+
+func (f *blockingTerminalLauncher) Focus(_ context.Context, _ terminal.Binding) (terminal.FocusResult, error) {
+	return terminal.FocusResult{}, nil
+}
+
 func (f *fakeTerminalLauncher) Launch(_ context.Context, command terminal.Command) (terminal.Binding, error) {
 	f.launches++
 	f.command = command
@@ -132,6 +148,108 @@ func TestResumeRefusesAlreadyRunningSession(t *testing.T) {
 	srv.Mux.ServeHTTP(w, req)
 	if w.Code != http.StatusConflict || launcher.launches != 0 || !strings.Contains(w.Body.String(), "session_running") {
 		t.Fatalf("status=%d launches=%d body=%s", w.Code, launcher.launches, w.Body.String())
+	}
+}
+
+func TestResumeRejectsDuplicateLaunchWhileFirstIsInFlight(t *testing.T) {
+	rd := stoppedClaudeReader(t.TempDir())
+	launcher := &blockingTerminalLauncher{
+		binding: terminal.Binding{TerminalID: "konsole", Confidence: terminal.ConfidenceInstance, LaunchedAt: time.Now().UTC()},
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	srv := New(nil, []reader.BaseSessionReader{rd})
+	srv.terminalLauncher = launcher
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s1/resume?agent=claude", strings.NewReader(`{}`))
+		w := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(w, req)
+		firstDone <- w
+	}()
+	<-launcher.started
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/s1/resume?agent=claude", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "resume_in_progress") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	close(launcher.release)
+	first := <-firstDone
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status=%d body=%s", first.Code, first.Body.String())
+	}
+}
+
+func TestFocusRejectsNonFocusableTerminalBinding(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	rd := stoppedClaudeReader(t.TempDir())
+	if err := database.UpsertTerminalBinding(db.TerminalBindingRecord{
+		AgentType: "claude", SessionID: "s1", TerminalID: "konsole", TerminalName: "Konsole",
+		Confidence: terminal.ConfidenceInstance, State: "active", LaunchedAt: time.Now().UTC(), Focusable: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(database, []reader.BaseSessionReader{rd})
+	srv.terminalLauncher = &fakeTerminalLauncher{}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/s1/terminal/focus?agent=claude", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "terminal_not_focusable") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestTerminalStatusThrottlesVerificationPersistence(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	rd := stoppedClaudeReader(t.TempDir())
+	live := true
+	rd.live = &live
+	verifiedAt := time.Now().UTC().Add(-time.Second)
+	if err := database.UpsertTerminalBinding(db.TerminalBindingRecord{
+		AgentType: "claude", SessionID: "s1", TerminalID: "konsole", TerminalName: "Konsole",
+		Confidence: terminal.ConfidenceExact, State: "active", LaunchedAt: verifiedAt.Add(-time.Minute),
+		LastVerifiedAt: verifiedAt, Focusable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(database, []reader.BaseSessionReader{rd})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/s1/terminal?agent=claude", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	record, ok, err := database.GetTerminalBinding("claude", "s1")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if !record.LastVerifiedAt.Equal(verifiedAt) {
+		t.Fatalf("last_verified_at=%s want unchanged %s", record.LastVerifiedAt, verifiedAt)
+	}
+
+	record.LastVerifiedAt = time.Now().UTC().Add(-terminalVerificationPersistInterval - time.Second)
+	if err := database.UpsertTerminalBinding(record); err != nil {
+		t.Fatal(err)
+	}
+	before := record.LastVerifiedAt
+	w = httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	record, ok, err = database.GetTerminalBinding("claude", "s1")
+	if err != nil || !ok || !record.LastVerifiedAt.After(before) {
+		t.Fatalf("ok=%v err=%v last_verified_at=%s want after %s", ok, err, record.LastVerifiedAt, before)
 	}
 }
 

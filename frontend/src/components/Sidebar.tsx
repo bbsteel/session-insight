@@ -18,6 +18,7 @@ import { modelMeta } from '../modelMeta'
 import { formatDate, formatNumber, useI18n } from '../i18n'
 import { openOnModifiedClick, openSessionInNewTab } from '../sessionLink'
 import { copySessionIdToClipboard, sessionCopyId } from '../copySessionId'
+import { preloadedResumePlanForCopy, presentSidebarResume } from '../resumePresentation'
 
 const SIDEBAR_WIDTH_KEY = 'sidebar-width'
 
@@ -144,7 +145,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   // 活跃会话点「复制恢复命令」不直接复制，先弹窗确认——对同一会话开第二个
   // CLI 实例可能与正在写入的进程双写冲突。
-  const [resumeConfirm, setResumeConfirm] = useState<{ session: SessionSummary; unsafe: boolean } | null>(null)
+  const [resumeConfirm, setResumeConfirm] = useState<{ session: SessionSummary; unsafe: boolean; plan: ResumePlan | null } | null>(null)
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   )
@@ -371,9 +372,10 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [showToast, t])
 
-  const copyResumeCmd = useCallback(async (session: SessionSummary, unsafe: boolean) => {
+  const copyResumeCmd = useCallback(async (session: SessionSummary, unsafe: boolean, preloadedPlan: ResumePlan | null = null) => {
     try {
-      const plan = await fetchResumePlan(session.id, session.agent_type, unsafe)
+      const plan = preloadedResumePlanForCopy(preloadedPlan, unsafe)
+        ?? await fetchResumePlan(session.id, session.agent_type, unsafe)
       if (!plan.command) {
         showToast(t('sidebar.resumeUnsupported'))
         return
@@ -1019,8 +1021,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             {(() => {
               const session = contextMenu.session
               const plan = contextResumePlan
-              const isLive = plan?.liveness.is_live ?? isSessionLive(contextMenu.session, now)
-              if (!plan || !plan.command) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={plan ? t('sidebar.resumeUnsupported') : undefined}>{t('sidebar.copyResume')}</button>
+              const resume = presentSidebarResume(plan, isSessionLive(contextMenu.session, now))
+              if (!plan || !resume.command) return <button className="w-full text-left px-3 py-1.5 text-[var(--text-muted)] cursor-not-allowed" disabled title={plan ? t('sidebar.resumeUnsupported') : undefined}>{t('sidebar.copyResume')}</button>
               const rollbackInfo = (session.rolled_back_turn_count ?? 0) > 0
                 ? t('sidebar.rollbackInfo', { count: session.rolled_back_turn_count ?? 0, turn: session.turn_count })
                 : ''
@@ -1034,20 +1036,20 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
                   title={rollbackInfo || undefined}
                   onClick={() => {
-                    if (isLive) setResumeConfirm({ session, unsafe: false })
-                    else void copyResumeCmd(session, false)
+                    if (resume.isLive) setResumeConfirm({ session, unsafe: false, plan })
+                    else void copyResumeCmd(session, false, plan)
                     setContextMenu(null)
                   }}
                 >
                   {t('sidebar.copyResume')}
                 </button>
-                {plan.supports_unsafe && (
+                {resume.supportsUnsafe && (
                   <button
                     className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast"
                     title={t('sidebar.unsafeHint', { rollback: rollbackInfo ? `; ${rollbackInfo}` : '' })}
                     onClick={() => {
-                      if (isLive) setResumeConfirm({ session, unsafe: true })
-                      else void copyResumeCmd(session, true)
+                      if (resume.isLive) setResumeConfirm({ session, unsafe: true, plan })
+                      else void copyResumeCmd(session, true, plan)
                       setContextMenu(null)
                     }}
                   >
@@ -1136,7 +1138,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 onClick={() => {
                   const target = resumeConfirm
                   setResumeConfirm(null)
-                  void copyResumeCmd(target.session, target.unsafe)
+                  void copyResumeCmd(target.session, target.unsafe, target.plan)
                 }}
                 className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white hover:opacity-90 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >

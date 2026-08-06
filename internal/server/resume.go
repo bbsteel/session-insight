@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,7 +19,10 @@ import (
 	"github.com/bbsteel/session-insight/internal/terminal"
 )
 
-const resumeVerificationGrace = 15 * time.Second
+const (
+	resumeVerificationGrace             = 15 * time.Second
+	terminalVerificationPersistInterval = 5 * time.Second
+)
 
 type resumePlanResponse struct {
 	Status         string                           `json:"status"`
@@ -276,16 +280,27 @@ func (s *Server) resolveTerminalStatus(runtime sessionRuntime) terminalStatusRes
 		state = "launching"
 	}
 	now := time.Now().UTC()
+	stateChanged := record.State != state
+	pidChanged := false
+	verificationDue := false
 	if live {
-		record.LastVerifiedAt = now
 		if finder, ok := runtime.reader.(reader.SessionProcessFinder); ok {
 			if pids, err := finder.SessionProcesses(runtime.detail.ID); err == nil && len(pids) > 0 {
+				pidChanged = record.AgentPID != pids[0]
 				record.AgentPID = pids[0]
 			}
 		}
+		verificationDue = record.LastVerifiedAt.IsZero() || now.Sub(record.LastVerifiedAt) >= terminalVerificationPersistInterval
+		if stateChanged || pidChanged || verificationDue {
+			record.LastVerifiedAt = now
+		}
 	}
 	record.State = state
-	_ = s.DB.UpsertTerminalBinding(record)
+	if stateChanged || pidChanged || verificationDue {
+		if err := s.DB.UpsertTerminalBinding(record); err != nil {
+			log.Printf("resolve terminal status %s/%s: persist binding: %v", runtime.detail.AgentType, runtime.detail.ID, err)
+		}
+	}
 	status := terminalStatusFromRecord(record, live, quality)
 	return status
 }

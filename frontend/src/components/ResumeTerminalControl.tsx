@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { APIError, fetchResumePlan, fetchSessionTerminal, focusSessionTerminal, resumeSession } from '../api'
 import type { ResumePlan, SessionDetail, SessionTerminalStatus } from '../types'
 import { useI18n } from '../i18n'
+import { presentResumeControl } from '../resumePresentation'
 
 interface Props {
   session: SessionDetail
@@ -25,6 +26,7 @@ export default function ResumeTerminalControl({ session }: Props) {
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 })
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
 
   const positionMenu = useCallback(() => {
     const rect = rootRef.current?.getBoundingClientRect()
@@ -35,6 +37,12 @@ export default function ResumeTerminalControl({ session }: Props) {
     positionMenu()
     setMenuOpen(true)
   }, [positionMenu])
+
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    setMenuOpen(false)
+    setConfirmUnsafe(false)
+    if (restoreFocus) window.requestAnimationFrame(() => menuButtonRef.current?.focus())
+  }, [])
 
   const refresh = useCallback(async () => {
     const next = await fetchResumePlan(session.id, session.agent_type)
@@ -77,30 +85,36 @@ export default function ResumeTerminalControl({ session }: Props) {
 
   useEffect(() => {
     if (!menuOpen) return
-    const close = (event: MouseEvent) => {
+    const closeOutside = (event: MouseEvent) => {
       const target = event.target as Node
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
-        setMenuOpen(false)
-        setConfirmUnsafe(false)
+        closeMenu(true)
       }
     }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closeMenu(true)
+    }
     const reposition = () => positionMenu()
-    document.addEventListener('mousedown', close)
+    document.addEventListener('mousedown', closeOutside)
+    document.addEventListener('keydown', closeOnEscape)
     window.addEventListener('resize', reposition)
     window.addEventListener('scroll', reposition, true)
     return () => {
-      document.removeEventListener('mousedown', close)
+      document.removeEventListener('mousedown', closeOutside)
+      document.removeEventListener('keydown', closeOnEscape)
       window.removeEventListener('resize', reposition)
       window.removeEventListener('scroll', reposition, true)
     }
-  }, [menuOpen, positionMenu])
+  }, [closeMenu, menuOpen, positionMenu])
 
   const launch = async (unsafe: boolean) => {
     setBusy(true)
     setError('')
     setFeedback(t('resume.starting'))
-    setMenuOpen(false)
-    setConfirmUnsafe(false)
+    closeMenu(false)
     try {
       const result = await resumeSession(session.id, session.agent_type, unsafe)
       setTerminal(result.terminal)
@@ -133,31 +147,17 @@ export default function ResumeTerminalControl({ session }: Props) {
       if (!current.command) throw new Error('command unavailable')
       await navigator.clipboard.writeText(current.command)
       setFeedback(t('resume.commandCopied'))
-      setMenuOpen(false)
+      closeMenu(false)
     } catch (err) {
       setError(errorMessage(err, t))
     }
   }
 
-  const state = terminal?.state ?? (plan?.status === 'session_running' ? 'active_unknown' : 'none')
-  const active = state === 'active' || state === 'active_unknown'
-  const canFocus = state === 'active' && terminal?.focusable
-  const ready = plan?.status === 'ready'
-  const primaryLabel = busy
-    ? t('resume.working')
-    : state === 'launching'
-      ? t('resume.starting')
-      : canFocus
-        ? terminalLabel(terminal, t) || t('resume.returnTerminal')
-        : active
-          ? terminal?.terminal_name
-            ? t('resume.runningIn', { terminal: terminal.terminal_name })
-            : t('resume.runningUnknown')
-          : ready
-            ? t('resume.continue')
-            : plan?.status === 'cwd_unavailable'
-              ? t('resume.workspaceMissing')
-              : t('resume.unavailable')
+  const presentation = presentResumeControl(plan, terminal, busy)
+  const { state, active, canFocus, ready } = presentation
+  const primaryLabel = presentation.preferTerminalLabel && terminal
+    ? terminalLabel(terminal, t) || t(presentation.primaryLabelKey, presentation.primaryLabelVars)
+    : t(presentation.primaryLabelKey, presentation.primaryLabelVars)
 
   const primary = () => {
     if (canFocus) void focus()
@@ -183,9 +183,10 @@ export default function ResumeTerminalControl({ session }: Props) {
         <span className="truncate">{primaryLabel}</span>
       </button>
       <button
+        ref={menuButtonRef}
         type="button"
         onClick={() => {
-          if (menuOpen) setMenuOpen(false)
+          if (menuOpen) closeMenu(false)
           else openMenu()
           setConfirmUnsafe(false)
         }}

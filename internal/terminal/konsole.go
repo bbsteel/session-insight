@@ -16,8 +16,15 @@ type konsoleSnapshot struct {
 	sessions map[string]bool
 }
 
+const (
+	konsoleDiscoveryTimeout = 2500 * time.Millisecond
+	konsolePollInterval     = 100 * time.Millisecond
+)
+
 func launchKonsole(ctx context.Context, path string, command Command) (Binding, error) {
-	before := snapshotKonsole(ctx)
+	scanCtx, cancel := context.WithTimeout(ctx, konsoleDiscoveryTimeout)
+	defer cancel()
+	before := snapshotKonsole(scanCtx)
 	args := []string{"--workdir", command.CWD}
 	if len(before) > 0 {
 		args = append(args, "--new-tab", "--force-reuse")
@@ -38,9 +45,8 @@ func launchKonsole(ctx context.Context, path string, command Command) (Binding, 
 		TerminalID: "konsole", TerminalName: "Konsole", TerminalPID: pid,
 		Confidence: ConfidenceInstance, LaunchedAt: time.Now(),
 	}
-	deadline := time.Now().Add(2500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		after := snapshotKonsole(ctx)
+	for scanCtx.Err() == nil {
+		after := snapshotKonsole(scanCtx)
 		if service, windowID, tabID, ok := newKonsoleSession(before, after); ok {
 			binding.InstanceID = service
 			binding.WindowID = windowID
@@ -48,11 +54,17 @@ func launchKonsole(ctx context.Context, path string, command Command) (Binding, 
 			binding.Confidence = ConfidenceExact
 			binding.Focusable = true
 			if command.Title != "" {
-				_ = konsoleCall(ctx, service, "/Sessions/"+tabID, "org.kde.konsole.Session.setTitle", "1", command.Title)
+				_ = konsoleCall(scanCtx, service, "/Sessions/"+tabID, "org.kde.konsole.Session.setTitle", "1", command.Title)
 			}
 			return binding, nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		timer := time.NewTimer(konsolePollInterval)
+		select {
+		case <-scanCtx.Done():
+			timer.Stop()
+			return binding, nil
+		case <-timer.C:
+		}
 	}
 	return binding, nil
 }
@@ -61,14 +73,16 @@ func focusKonsole(ctx context.Context, binding Binding) (FocusResult, error) {
 	if binding.InstanceID == "" || binding.WindowID == "" || binding.TabID == "" {
 		return FocusResult{}, fmt.Errorf("Konsole binding has no exact tab handle")
 	}
-	if err := konsoleCall(ctx, binding.InstanceID, binding.WindowID, "org.kde.konsole.Window.setCurrentSession", binding.TabID); err != nil {
+	focusCtx, cancel := context.WithTimeout(ctx, konsoleDiscoveryTimeout)
+	defer cancel()
+	if err := konsoleCall(focusCtx, binding.InstanceID, binding.WindowID, "org.kde.konsole.Window.setCurrentSession", binding.TabID); err != nil {
 		return FocusResult{}, err
 	}
 	result := FocusResult{TabSelected: true}
 	// QWidget activation is exported by some Konsole/Qt builds. Wayland may
 	// still refuse foreground focus; report that distinction to the caller.
-	if err := konsoleCall(ctx, binding.InstanceID, binding.WindowID, "org.qtproject.Qt.QWidget.raise"); err == nil {
-		if err := konsoleCall(ctx, binding.InstanceID, binding.WindowID, "org.qtproject.Qt.QWidget.activateWindow"); err == nil {
+	if err := konsoleCall(focusCtx, binding.InstanceID, binding.WindowID, "org.qtproject.Qt.QWidget.raise"); err == nil {
+		if err := konsoleCall(focusCtx, binding.InstanceID, binding.WindowID, "org.qtproject.Qt.QWidget.activateWindow"); err == nil {
 			result.Foreground = true
 		}
 	}
@@ -154,6 +168,9 @@ func konsoleCall(ctx context.Context, service, object, method string, args ...st
 	callArgs := []string{service, object, method}
 	callArgs = append(callArgs, args...)
 	if out, err := exec.CommandContext(ctx, qdbus, callArgs...).CombinedOutput(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("Konsole D-Bus %s: %w", method, ctxErr)
+		}
 		return fmt.Errorf("Konsole D-Bus %s: %s", method, strings.TrimSpace(string(out)))
 	}
 	return nil
