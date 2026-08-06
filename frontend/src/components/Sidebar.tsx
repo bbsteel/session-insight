@@ -678,10 +678,16 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 className="min-w-0 flex-1 text-left text-helper text-[var(--text-secondary)] flex items-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] rounded-sm"
               >
                 <span className="truncate min-w-0">{metadata}</span>
-                <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at} title={formatDate(locale, session.updated_at, { dateStyle: 'medium', timeStyle: 'short' })}>
+                {/* min-w-0 + truncate: at ~160px sidebar, time yields space instead of colliding with actions */}
+                <time className="ml-auto min-w-0 shrink truncate tabular-nums" dateTime={session.updated_at} title={formatDate(locale, session.updated_at, { dateStyle: 'medium', timeStyle: 'short' })}>
                   {relativeTime}
                 </time>
               </button>
+              {/*
+                Hover-revealed controls stay in layout so the row does not jump, but pointer-events
+                stay off until group-hover/focus (or always-on mobile) so invisible buttons do not
+                steal clicks meant for row selection. Bookmarked star/note remain interactive.
+              */}
               <div className="flex flex-shrink-0 items-center gap-0.5" data-testid="session-row-actions">
                 {session.bookmarked && session.bookmark_note?.trim() && (
                   <InstantTooltip
@@ -713,7 +719,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                     className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                       session.bookmarked
                         ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
-                        : 'text-[var(--text-muted)] opacity-0 hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100'
+                        : 'text-[var(--text-muted)] opacity-0 pointer-events-none hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-md:opacity-100 max-md:pointer-events-auto'
                     }`}
                     aria-label={session.bookmarked ? t('replay.removeBookmark') : t('replay.bookmark')}
                   >
@@ -724,7 +730,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   type="button"
                   onClick={(e) => { e.stopPropagation(); openSessionInNewTab(session.agent_type, session.id) }}
                   tabIndex={-1}
-                  className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
+                  className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-md:opacity-100 max-md:pointer-events-auto transition-opacity duration-fast"
                   aria-hidden="true"
                   title={t('session.openInNewTab')}
                   data-testid="session-open-new-tab"
@@ -739,7 +745,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   type="button"
                   onClick={(e) => { e.stopPropagation(); copyId(session) }}
                   tabIndex={-1}
-                  className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 transition-opacity duration-fast"
+                  className="w-5 h-5 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-md:opacity-100 max-md:pointer-events-auto transition-opacity duration-fast"
                   aria-hidden="true"
                   title={t('sidebar.copySessionId')}
                 >
