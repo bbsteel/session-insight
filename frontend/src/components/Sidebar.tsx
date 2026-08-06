@@ -645,7 +645,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           onAuxClick={(e) => { openOnModifiedClick(e, session.agent_type, session.id) }}
           onContextMenu={(e) => openContextMenu(e, session)}
           title={t('sidebar.openMenu')}
-          className={`relative w-full text-left pl-2.5 pr-24 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
+          className={`relative w-full text-left pl-2.5 pr-2.5 rounded-md cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] ${
             selected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
           }`}
           style={{ paddingTop: '0.375rem', paddingBottom: '0.375rem' }}
@@ -654,11 +654,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           <div className="flex items-start gap-1.5">
             <AgentIcon agentType={session.agent_type} size={20} className="mt-0.5" />
             <div className="min-w-0 flex-1">
-              <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
+              {/* Title uses full row width; action buttons sit on the metadata row. */}
+              <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5 pr-1">
                 {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title={t('sidebar.live')} aria-label={t('sidebar.live')} />}
-                <span className="truncate">{getSessionName(session)}</span>
+                <span className="truncate" title={getSessionName(session)}>{getSessionName(session)}</span>
               </div>
-              <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2">
+              {/* Reserve right space for bookmark / open / copy controls on this row only. */}
+              <div className="text-helper text-[var(--text-secondary)] mt-0.5 flex items-center gap-2 pr-24">
                 <span className="truncate min-w-0">{metadata}</span>
                 <time className="ml-auto flex-shrink-0 tabular-nums" dateTime={session.updated_at} title={formatDate(locale, session.updated_at, { dateStyle: 'medium', timeStyle: 'short' })}>
                   {relativeTime}
@@ -667,7 +669,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             </div>
           </div>
         </button>
-        <div className="absolute right-1 top-1.5 flex items-center gap-0.5">
+        <div className="absolute right-1 bottom-1.5 flex items-center gap-0.5">
           {session.bookmarked && session.bookmark_note?.trim() && (
             <InstantTooltip
               text={t('bookmark.noteWithValue', { note: session.bookmark_note.trim() })}
