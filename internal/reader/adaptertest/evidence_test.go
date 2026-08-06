@@ -19,6 +19,7 @@ func baseDecl(agent string) capability.AgentCapabilities {
 	caps[capability.CapabilityTerminate] = capability.Unsupported("x")
 	return capability.AgentCapabilities{
 		AgentType: agent, DisplayName: "Agent", AdapterRevision: 1, Capabilities: caps,
+		ResumeCommand: &capability.ResumeCommandDeclaration{Executable: agent, StandardArgs: []string{"resume", "{id}"}},
 	}
 }
 
@@ -43,6 +44,7 @@ func TestCheckCoverageRejectsUnsanitized(t *testing.T) {
 		}
 		decl.Capabilities[id] = capability.Unsupported("n/a")
 	}
+	decl.ResumeCommand = nil
 	err := CheckCoverage(decl, []EvidenceCase{{
 		Scenario: "bad", Sanitized: false, Synthetic: true,
 		Covers:    []capability.CapabilityID{capability.CapabilityTokens},
@@ -62,6 +64,7 @@ func TestCheckCoverageRejectsUnknownCapability(t *testing.T) {
 		}
 		decl.Capabilities[id] = capability.Unsupported("n/a")
 	}
+	decl.ResumeCommand = nil
 	err := CheckCoverage(decl, []EvidenceCase{{
 		Scenario: "x", Sanitized: true, Synthetic: true,
 		Covers:    []capability.CapabilityID{"not_a_real_cap"},

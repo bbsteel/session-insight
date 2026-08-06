@@ -81,6 +81,48 @@ func TestAgentDefinitionLookup(t *testing.T) {
 	}
 }
 
+func TestResumeCommandDeclarationsBuildNativeIdentity(t *testing.T) {
+	tests := []struct {
+		agent      string
+		executable string
+		standard   []string
+		unsafe     []string
+		model      string
+	}{
+		{agent: "claude", executable: "claude", standard: []string{"--resume", "native-id", "--model", "recorded-model"}, unsafe: []string{"--dangerously-skip-permissions", "--resume", "native-id", "--model", "recorded-model"}, model: "recorded-model"},
+		{agent: "codex", executable: "codex", standard: []string{"resume", "native-id", "-m", "recorded-model"}, unsafe: []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "native-id", "-m", "recorded-model"}, model: "recorded-model"},
+		{agent: "opencode", executable: "opencode", standard: []string{"-s", "native-id"}, unsafe: []string{"--auto", "-s", "native-id"}},
+		{agent: "chrys", executable: "chrys", standard: []string{"-s", "native-id"}},
+		{agent: "grok", executable: "grok", standard: []string{"--resume", "native-id"}, unsafe: []string{"--always-approve", "--resume", "native-id"}},
+		{agent: "hermes", executable: "hermes", standard: []string{"--resume", "native-id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			definition, ok := reader.AgentDefinition(tt.agent)
+			if !ok || definition.ResumeCommand == nil {
+				t.Fatalf("missing resume declaration for %s", tt.agent)
+			}
+			if definition.ResumeCommand.Executable != tt.executable {
+				t.Fatalf("executable=%q want %q", definition.ResumeCommand.Executable, tt.executable)
+			}
+			standard, ok := definition.ResumeCommand.BuildResumeArgs("native-id", tt.model, false)
+			if !ok || strings.Join(standard, "\x00") != strings.Join(tt.standard, "\x00") {
+				t.Fatalf("standard=%q want %q", standard, tt.standard)
+			}
+			unsafe, supported := definition.ResumeCommand.BuildResumeArgs("native-id", tt.model, true)
+			if len(tt.unsafe) == 0 {
+				if supported {
+					t.Fatalf("unexpected unsafe args %q", unsafe)
+				}
+				return
+			}
+			if !supported || strings.Join(unsafe, "\x00") != strings.Join(tt.unsafe, "\x00") {
+				t.Fatalf("unsafe=%q want %q", unsafe, tt.unsafe)
+			}
+		})
+	}
+}
+
 func TestAgentDefinitionsStableOrder(t *testing.T) {
 	a := agentTypes(reader.AgentDefinitions())
 	b := agentTypes(reader.AgentDefinitions())

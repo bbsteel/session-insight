@@ -21,7 +21,12 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "grok",
 		DisplayName:     "Grok",
-		AdapterRevision: 3,
+		AdapterRevision: 4,
+		ResumeCommand: &capability.ResumeCommandDeclaration{
+			Executable:   "grok",
+			StandardArgs: []string{"--resume", "{id}"},
+			UnsafeArgs:   []string{"--always-approve", "--resume", "{id}"},
+		},
 		Capabilities: map[capability.CapabilityID]capability.CapabilityDeclaration{
 			capability.CapabilityDiscovery:   capability.Exact(),
 			capability.CapabilityReplay:      capability.Exact(),

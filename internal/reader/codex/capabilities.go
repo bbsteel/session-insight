@@ -18,7 +18,13 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "codex",
 		DisplayName:     "Codex",
-		AdapterRevision: 2,
+		AdapterRevision: 3,
+		ResumeCommand: &capability.ResumeCommandDeclaration{
+			Executable:   "codex",
+			StandardArgs: []string{"resume", "{id}"},
+			UnsafeArgs:   []string{"--dangerously-bypass-approvals-and-sandbox", "resume", "{id}"},
+			ModelFlag:    "-m",
+		},
 		Capabilities: map[capability.CapabilityID]capability.CapabilityDeclaration{
 			capability.CapabilityDiscovery:   capability.Exact(),
 			capability.CapabilityReplay:      capability.Exact(),

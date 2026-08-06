@@ -1,4 +1,4 @@
-import type { AgentInfo, EditCall, PositionsResponse, SearchResult, SessionDetail, SessionSummary } from './types'
+import type { AgentInfo, EditCall, PositionsResponse, ResumePlan, ResumeResult, SearchResult, SessionDetail, SessionSummary, SessionTerminalStatus, TerminalFocusResult } from './types'
 import type { CollaborationGraphDTO, FactEvidenceDTO } from './collaboration/types.js'
 import { localize } from './i18nRuntime.js'
 
@@ -104,6 +104,39 @@ export async function removeSessionFromIndex(session: Pick<SessionSummary, 'id' 
   const params = new URLSearchParams({ agent: session.agent_type })
   const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/index?${params.toString()}`, { method: 'DELETE' })
   if (!res.ok) throw await responseError(res, 'request_failed')
+}
+
+export async function fetchResumePlan(id: string, agent: string, unsafe = false): Promise<ResumePlan> {
+  const params = new URLSearchParams({ agent })
+  if (unsafe) params.set('unsafe', '1')
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/resume?${params}`)
+  if (!res.ok) throw await responseError(res, 'resume_plan_failed')
+  return readJson<ResumePlan>(res, 'resume plan')
+}
+
+export async function resumeSession(id: string, agent: string, skipPermissions = false): Promise<ResumeResult> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/resume?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skip_permissions: skipPermissions }),
+  })
+  if (!res.ok) throw await responseError(res, 'resume_failed')
+  return readJson<ResumeResult>(res, 'resume result')
+}
+
+export async function fetchSessionTerminal(id: string, agent: string): Promise<SessionTerminalStatus> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/terminal?${params}`)
+  if (!res.ok) throw await responseError(res, 'terminal_status_failed')
+  return readJson<SessionTerminalStatus>(res, 'terminal status')
+}
+
+export async function focusSessionTerminal(id: string, agent: string): Promise<TerminalFocusResult> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/terminal/focus?${params}`, { method: 'POST' })
+  if (!res.ok) throw await responseError(res, 'terminal_focus_failed')
+  return readJson<TerminalFocusResult>(res, 'terminal focus')
 }
 
 // ---- Collaboration detail (frozen Wave 2 contract) ----

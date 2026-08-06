@@ -60,6 +60,48 @@ export interface SessionCapabilities {
   liveness: SessionLivenessStatus
 }
 
+export type TerminalBindingState = 'none' | 'launching' | 'active' | 'active_unknown' | 'stopped' | string
+
+export interface SessionTerminalStatus {
+  state: TerminalBindingState
+  session_live: boolean
+  liveness_state: CapabilityState
+  terminal_id?: string
+  terminal_name?: string
+  instance_id?: string
+  window_id?: string
+  tab_id?: string
+  terminal_pid?: number
+  agent_pid?: number
+  confidence: 'exact' | 'instance' | 'unknown' | string
+  focusable: boolean
+  launched_at?: string
+  last_verified_at?: string
+}
+
+export interface ResumePlan {
+  status: string
+  agent_type: string
+  session_id: string
+  cwd: string
+  command?: string
+  supports_unsafe: boolean
+  liveness: SessionLivenessStatus
+  terminal: SessionTerminalStatus
+}
+
+export interface ResumeResult {
+  launched: boolean
+  status: string
+  command: string
+  terminal: SessionTerminalStatus
+}
+
+export interface TerminalFocusResult {
+  tab_selected: boolean
+  foreground: boolean
+}
+
 export interface AgentInfo {
   type: string
   display_name: string

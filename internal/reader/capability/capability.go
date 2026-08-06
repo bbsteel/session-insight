@@ -118,6 +118,49 @@ type AgentCapabilities struct {
 	// Capabilities maps each baseline ID to its declaration. Validation
 	// requires exactly the ten baseline IDs, each once.
 	Capabilities map[CapabilityID]CapabilityDeclaration `json:"capabilities"`
+	// ResumeCommand is the adapter-owned executable contract for resume. It is
+	// internal runtime metadata rather than a second user-facing capability
+	// matrix, so GET /api/agents continues to expose only Capabilities.
+	ResumeCommand *ResumeCommandDeclaration `json:"-"`
+}
+
+// ResumeCommandDeclaration describes one Agent's native resume invocation.
+// The server substitutes the exact "{id}" token without invoking a shell.
+// UnsafeArgs is nil when the Agent has no skip-permissions variant.
+type ResumeCommandDeclaration struct {
+	Executable   string
+	StandardArgs []string
+	UnsafeArgs   []string
+	ModelFlag    string
+}
+
+// BuildResumeArgs substitutes the native session identity and appends the
+// recorded model where the adapter declares a model flag.
+func (d ResumeCommandDeclaration) BuildResumeArgs(id, model string, unsafe bool) ([]string, bool) {
+	tmpl := d.StandardArgs
+	if unsafe {
+		if d.UnsafeArgs == nil {
+			return nil, false
+		}
+		tmpl = d.UnsafeArgs
+	}
+	args := make([]string, len(tmpl), len(tmpl)+2)
+	foundID := false
+	for i, arg := range tmpl {
+		if arg == "{id}" {
+			args[i] = id
+			foundID = true
+		} else {
+			args[i] = arg
+		}
+	}
+	if !foundID || id == "" {
+		return nil, false
+	}
+	if d.ModelFlag != "" && model != "" {
+		args = append(args, d.ModelFlag, model)
+	}
+	return args, true
 }
 
 // Decl is a short constructor for a CapabilityDeclaration.
