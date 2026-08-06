@@ -55,6 +55,13 @@ type Server struct {
 	terminalLauncher terminal.Launcher
 	resumeMu         sync.Mutex
 	resumeInFlight   map[string]bool
+
+	// importRoot is the directory imported session bundles live under
+	// (<SI_DATA_DIR>/imports). Empty means the import endpoints are disabled.
+	importRoot string
+	// kickIndex requests a re-index of one agent type after import/delete.
+	// Nil in tests that never wire the indexer.
+	kickIndex func(agentType string)
 }
 
 // SetIndexStatus wires the indexer progress provider (call before Serve).
@@ -88,6 +95,12 @@ type SessionSummary struct {
 	// RecordStatus is the compact list projection of record completeness.
 	// Absolute source paths and raw warnings must not appear here.
 	RecordStatus *model.RecordStatus `json:"record_status,omitempty"`
+	// Import markers are set only for sessions that arrived via a bundle
+	// (agent_type "imported"); live sessions omit them.
+	Imported          bool   `json:"imported,omitempty"`
+	OriginHost        string `json:"origin_host,omitempty"`
+	OriginalAgentType string `json:"original_agent_type,omitempty"`
+	CaseLabel         string `json:"case_label,omitempty"`
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
@@ -152,4 +165,10 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("PUT /api/sessions/{id}/title", s.handleSetTitle)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}/title", s.handleRemoveTitle)
 	s.Mux.HandleFunc("POST /api/insight/targets/revoke", s.handleRevokeInsightTargets)
+
+	// Session migration (export/import bundle).
+	s.Mux.HandleFunc("POST /api/sessions/export-bundle", s.handleExportBundle)
+	s.Mux.HandleFunc("POST /api/sessions/import-bundle", s.handleImportBundle)
+	s.Mux.HandleFunc("GET /api/imports", s.handleListImportBundles)
+	s.Mux.HandleFunc("DELETE /api/imports/{bundle}", s.handleDeleteImportBundle)
 }

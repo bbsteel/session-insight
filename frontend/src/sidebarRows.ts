@@ -10,6 +10,7 @@ export function getAgentLabel(agent: string): string {
   if (agent.toLowerCase().includes('claude')) return 'Claude Code'
   if (agent.toLowerCase().includes('codex')) return 'Codex'
   if (agent.toLowerCase().includes('opencode')) return 'OpenCode'
+  if (agent.toLowerCase().includes('imported')) return 'Imported'
   return agent
 }
 

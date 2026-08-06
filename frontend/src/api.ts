@@ -877,6 +877,62 @@ export function watchSessionsChanged(
   return () => es.close()
 }
 
+// ---- Session migration (export/import bundle) ----
+
+export interface ExportBundleRequest {
+  sessions: { agent_type: string; id: string }[]
+  include_raw: boolean
+  redact: boolean
+  case_label: string
+}
+
+// POSTs a JSON export request and resolves with the streamed .sibundle file
+// body; callers hand the Blob to an object-URL anchor to trigger the download.
+export async function exportBundle(req: ExportBundleRequest): Promise<Blob> {
+  const res = await fetch('/api/sessions/export-bundle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw await responseError(res, 'request_failed')
+  return res.blob()
+}
+
+export interface ImportBundleResult {
+  bundle_id: string
+  imported: number
+  case_label: string
+  origin_host: string
+  sessions: { agent_type: string; id: string }[]
+}
+
+export async function importBundle(file: File): Promise<ImportBundleResult> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/sessions/import-bundle', { method: 'POST', body: form })
+  if (!res.ok) throw await responseError(res, 'request_failed')
+  return readJson<ImportBundleResult>(res, 'import result')
+}
+
+export interface ImportBundleSummary {
+  bundle_id: string
+  origin_host: string
+  case_label: string
+  session_count: number
+  imported_at: string
+}
+
+export async function listImportBundles(): Promise<ImportBundleSummary[]> {
+  const res = await fetch('/api/imports')
+  if (!res.ok) throw await responseError(res, 'request_failed')
+  return readJson<ImportBundleSummary[]>(res, 'import bundles')
+}
+
+export async function deleteImportBundle(bundleId: string): Promise<void> {
+  const res = await fetch(`/api/imports/${encodeURIComponent(bundleId)}`, { method: 'DELETE' })
+  if (!res.ok) throw await responseError(res, 'request_failed')
+}
+
 async function readJson<T>(res: Response, label: string): Promise<T> {
   const contentType = res.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {

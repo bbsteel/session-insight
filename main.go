@@ -19,6 +19,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/indexer"
 	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/server"
 	"github.com/bbsteel/session-insight/internal/watch"
 )
@@ -80,6 +81,12 @@ func main() {
 		log.Printf("index maintenance complete")
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "pack" {
+		if err := runPackCLI(os.Args[2:], dataDir, database, version); err != nil {
+			log.Fatalf("pack: %v", err)
+		}
+		return
+	}
 
 	readers := reader.Discover()
 	log.Printf("Discovered %d agent reader(s)", len(readers))
@@ -87,11 +94,18 @@ func main() {
 		log.Printf("  - %s", r.AgentType())
 	}
 
+	// Imported bundle sessions: read-only snapshots under the data dir.
+	// Appended last so live readers win bare-id probes in the API loop.
+	importRoot := filepath.Join(dataDir, "imports")
+	readers = append(readers, imported.New(importRoot))
+
 	idx := indexer.New(database, readers)
 	srv := server.New(database, readers)
 	srv.Version = version
 	srv.Commit = commit
 	srv.SetIndexStatus(indexStatusAdapter{idx})
+	srv.SetImportRoot(importRoot)
+	srv.SetIndexKicker(idx.KickAgent)
 
 	// 索引轮产生实际变更后才通知：SSE 发出时数据已落库，侧栏重拉读到的
 	// 就是新数据（/api/sessions 直接从 SQLite 出），也不会跟索引轮抢 CPU。

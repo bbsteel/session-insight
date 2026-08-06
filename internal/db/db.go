@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 31
+const currentSchemaVersion = 32
 
 type DB struct {
 	conn *sql.DB
@@ -861,6 +861,38 @@ func migrate(conn *sql.DB) error {
 	// Version 31: terminal bindings for direct Resume and terminal handoff.
 	// CREATE TABLE IF NOT EXISTS above makes this self-healing even when an
 	// interrupted migration wrote a version row before the physical table.
+
+	// Version 32: import_records — per-session provenance for sessions that
+	// arrived via a session-migration bundle (agent_type "imported"). Same
+	// self-healing shape as v30: a version row cannot prove the physical
+	// table exists, so gate on sqlite_master. No watermark clear: imported
+	// sessions are indexed by the normal indexer pass.
+	var importTable string
+	err = conn.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_records'`,
+	).Scan(&importTable)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("v32 inspect import_records: %w", err)
+	}
+	if maxVersion < 32 || importTable == "" {
+		if _, err := conn.Exec(`
+			CREATE TABLE IF NOT EXISTS import_records (
+				agent_type           TEXT NOT NULL,
+				session_id           TEXT NOT NULL,
+				bundle_id            TEXT NOT NULL,
+				origin_host          TEXT NOT NULL DEFAULT '',
+				original_agent_type  TEXT NOT NULL DEFAULT '',
+				original_session_id  TEXT NOT NULL DEFAULT '',
+				case_label           TEXT NOT NULL DEFAULT '',
+				redacted             INTEGER NOT NULL DEFAULT 0,
+				imported_at          TEXT NOT NULL DEFAULT (datetime('now')),
+				PRIMARY KEY (agent_type, session_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_import_records_bundle ON import_records(bundle_id);
+		`); err != nil {
+			return fmt.Errorf("v32 import_records: %w", err)
+		}
+	}
 
 	_, err = conn.Exec(
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)`,
