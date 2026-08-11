@@ -934,9 +934,50 @@ func toolKind(name string) string {
 	}
 }
 
+// Hermes wraps MCP tool results in an <untrusted_tool_result> envelope: an
+// opening tag carrying the tool name, a fixed security preamble paragraph,
+// the raw payload, and a closing tag. The envelope makes the stored content
+// invalid JSON as a whole, so it must be stripped before the payload can be
+// parsed — otherwise the UI shows the raw JSON text with literal \n and
+// \uXXXX escapes.
+const (
+	untrustedOpenPrefix = "<untrusted_tool_result"
+	untrustedCloseTag   = "</untrusted_tool_result>"
+	untrustedPreamble   = "The following content was retrieved from an external source."
+)
+
+// unwrapUntrustedResult strips the envelope and returns the inner payload.
+// The second return value reports whether an envelope was present. Content
+// without an envelope is returned unchanged.
+func unwrapUntrustedResult(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, untrustedOpenPrefix) {
+		return raw, false
+	}
+	openEnd := strings.Index(trimmed, ">")
+	if openEnd < 0 {
+		return raw, false
+	}
+	body := trimmed[openEnd+1:]
+	if i := strings.LastIndex(body, untrustedCloseTag); i >= 0 {
+		body = body[:i]
+	}
+	body = strings.TrimSpace(body)
+	if strings.HasPrefix(body, untrustedPreamble) {
+		// The preamble is a single paragraph; the payload follows the first
+		// blank line.
+		if i := strings.Index(body, "\n\n"); i >= 0 {
+			return strings.TrimSpace(body[i+2:]), true
+		}
+		return "", true
+	}
+	return body, true
+}
+
 func parseToolResult(message hermesMessage) toolResult {
 	result := toolResult{CallID: message.ToolCallID, Name: message.ToolName, ToolKind: toolKind(message.ToolName)}
-	object := jsonMap(message.Content)
+	content, wrapped := unwrapUntrustedResult(message.Content)
+	object := jsonMap(content)
 	if object != nil {
 		result.Stdout = firstString(object, "stdout", "output", "result")
 		result.Stderr = firstString(object, "stderr", "error")
@@ -951,9 +992,22 @@ func parseToolResult(message hermesMessage) toolResult {
 		if result.Stderr == "" {
 			result.Stderr = firstString(object, "message")
 		}
+		if wrapped && result.Stdout == "" {
+			// Envelope-wrapped JSON payloads use tool-specific key shapes
+			// (browser_navigate stores url/title/snapshot, ...). When none of
+			// the canonical output keys match, fall back to the pretty-printed
+			// payload so the reply stays readable instead of vanishing.
+			if pretty, err := json.MarshalIndent(object, "", "  "); err == nil {
+				result.Stdout = string(pretty)
+			}
+		}
 	} else {
-		result.Stdout = contentText(message.Content)
+		result.Stdout = contentText(content)
 	}
+	// Compressed/binary payloads relayed by upstream tools (gzipped HTTP
+	// bodies, archives) decode into pages of mojibake; collapse them.
+	result.Stdout = shared.CollapseBinarySpans(result.Stdout)
+	result.Stderr = shared.CollapseBinarySpans(result.Stderr)
 	disposition := strings.ToLower(message.EffectDisposition)
 	if strings.Contains(disposition, "reject") {
 		result.Rejected = true
