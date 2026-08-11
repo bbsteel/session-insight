@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 32
+const currentSchemaVersion = 33
 
 type DB struct {
 	conn *sql.DB
@@ -894,11 +894,97 @@ func migrate(conn *sql.DB) error {
 		}
 	}
 
+	// Version 33: normalize path-form session.project values left over from
+	// pre-ResolveProject adapter bugs (notably Grok git_root_dir stored as
+	// an absolute path with trailing slash). The reader already emits short
+	// names, but the indexer skipped re-upsert when the content watermark
+	// matched, so the project filter kept showing path duplicates next to
+	// basenames. One-shot rewrite; ongoing fixes use RefreshSessionListMetadata.
+	if maxVersion < 33 {
+		if err := normalizePathFormProjects(conn); err != nil {
+			return fmt.Errorf("v33 normalize path-form projects: %w", err)
+		}
+	}
+
 	_, err = conn.Exec(
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)`,
 		currentSchemaVersion,
 	)
 	return err
+}
+
+// normalizePathFormProjects rewrites sessions.project values that look like
+// absolute filesystem paths into their last path component. Repository slugs
+// (owner/repo) and already-short names are left alone.
+func normalizePathFormProjects(conn *sql.DB) error {
+	rows, err := conn.Query(`
+		SELECT agent_type, id, project FROM sessions
+		 WHERE project LIKE '/%'
+		    OR project LIKE '~/%'
+		    OR project = '~'
+		    OR project LIKE '_:\%'
+		    OR project LIKE '_:/%'
+		    OR project LIKE '\\%'
+		    OR project LIKE '//%'`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type hit struct {
+		agent, id, project string
+	}
+	var hits []hit
+	for rows.Next() {
+		var h hit
+		if err := rows.Scan(&h.agent, &h.id, &h.project); err != nil {
+			return err
+		}
+		hits = append(hits, h)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	updated := 0
+	for _, h := range hits {
+		base := pathFormProjectBasename(h.project)
+		if base == "" || base == h.project {
+			continue
+		}
+		res, err := conn.Exec(
+			`UPDATE sessions SET project = ? WHERE agent_type = ? AND id = ? AND project = ?`,
+			base, h.agent, h.id, h.project,
+		)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		updated += int(n)
+	}
+	if updated > 0 {
+		log.Printf("[migrate] v33: normalized %d path-form project name(s)", updated)
+	}
+	return nil
+}
+
+// pathFormProjectBasename returns the last component of a filesystem-looking
+// project string. Separators / and \ are both accepted so Windows-shaped
+// values recorded on another host still reduce to a short name.
+func pathFormProjectBasename(project string) string {
+	s := strings.TrimSpace(project)
+	if s == "" {
+		return ""
+	}
+	s = strings.ReplaceAll(s, `\`, "/")
+	s = strings.TrimRight(s, "/")
+	if s == "" {
+		return ""
+	}
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
 }
 
 // hasInsightColumn reports whether the ai_generations rows from a

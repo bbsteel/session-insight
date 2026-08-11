@@ -191,11 +191,11 @@ func TestIndexer_UnchangedSkip(t *testing.T) {
 	mr := &mockReader{
 		agentType: "test",
 		sessions: []model.Session{
-			{ID: "s1", UpdatedAt: time.Unix(0, 100)},
+			{ID: "s1", UpdatedAt: time.Unix(0, 100), Project: "session-insight"},
 		},
 		details: map[string]*model.SessionDetail{
 			"s1": {
-				Session: model.Session{ID: "s1", UpdatedAt: time.Unix(0, 100)},
+				Session: model.Session{ID: "s1", UpdatedAt: time.Unix(0, 100), Project: "session-insight"},
 				Turns: []model.TurnVM{
 					{TurnIndex: 0, UserMessage: "hello world"},
 				},
@@ -212,10 +212,11 @@ func TestIndexer_UnchangedSkip(t *testing.T) {
 	if n := atomic.LoadInt32(&getSessionCalls); n != 1 {
 		t.Fatalf("expected 1 GetSession call after first run, got %d", n)
 	}
-	if _, err := database.Conn().Exec(`UPDATE sessions SET resume_id='parent-id' WHERE agent_type='test' AND id='s1'`); err != nil {
+	if _, err := database.Conn().Exec(`UPDATE sessions SET resume_id='parent-id', project='/home/deck/projects/session-insight/' WHERE agent_type='test' AND id='s1'`); err != nil {
 		t.Fatal(err)
 	}
 	mr.sessions[0].ResumeID = "child-id"
+	mr.sessions[0].Project = "session-insight"
 
 	if err := ix.RunOnce(context.Background()); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
@@ -227,6 +228,9 @@ func TestIndexer_UnchangedSkip(t *testing.T) {
 	summaries, err := database.ListSessionSummaries("test")
 	if err != nil || len(summaries) != 1 || summaries[0].ResumeID != "child-id" {
 		t.Fatalf("resume id metadata sync failed: summaries=%+v err=%v", summaries, err)
+	}
+	if summaries[0].Project != "session-insight" {
+		t.Fatalf("project metadata sync failed: got %q, want session-insight", summaries[0].Project)
 	}
 }
 
