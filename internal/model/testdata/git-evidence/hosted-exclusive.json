@@ -1,0 +1,97 @@
+{
+  "root_agent_type": "codex",
+  "root_session_id": "session-root-1",
+  "repositories": [
+    {
+      "root_agent_type": "codex",
+      "root_session_id": "session-root-1",
+      "repository_entry_key": "repo-entry-hosted-1",
+      "revision": 12,
+      "assessment": {
+        "state": "exact",
+        "reasons": []
+      },
+      "provisional": false,
+      "repository": {
+        "repository_entry_key": "repo-entry-hosted-1",
+        "worktree_root": "/workspace/project",
+        "common_root_id": "repo-common-4f0e",
+        "worktree_id": "worktree-a822",
+        "branch": "feat/git-evidence",
+        "head_sha": "2222222222222222222222222222222222222222",
+        "assessment": {
+          "state": "exact",
+          "reasons": []
+        }
+      },
+      "files": [
+        {
+          "ordinal": 0,
+          "key": "hosted:sha256:rename-1",
+          "layer": "hosted_change",
+          "display_path": "internal/new.go",
+          "old_display_path": "internal/old.go",
+          "path_encoding": "utf8",
+          "status": "renamed",
+          "old_mode": "100644",
+          "new_mode": "100644",
+          "binary": false,
+          "submodule": false,
+          "status_assessment": {
+            "state": "exact",
+            "reasons": []
+          },
+          "patch_assessment": {
+            "state": "exact",
+            "reasons": []
+          },
+          "evidence": []
+        }
+      ],
+      "candidate_commits": [],
+      "change_requests": [
+        {
+          "ordinal": 0,
+          "link_id": "cr-link-1",
+          "root_agent_type": "codex",
+          "root_session_id": "session-root-1",
+          "source_agent_type": "codex",
+          "source_session_id": "session-root-1",
+          "collaboration_revision": 3,
+          "repository_entry_key": "repo-entry-hosted-1",
+          "change": {
+            "provider": "github",
+            "host_id": "host-github-public",
+            "target_repository": {
+              "host_id": "host-github-public",
+              "immutable_id": "R_kgDOExample",
+              "slug": "acme/widgets"
+            },
+            "provider_object_id": "PR_kwDOExample42"
+          },
+          "content_version_key": "github:PR_kwDOExample42:manifest-7",
+          "relationship": "exclusive",
+          "method": "explicit",
+          "assessment": {
+            "state": "exact",
+            "reasons": []
+          },
+          "confirmation_source": "user",
+          "confirmation_revision": "confirmation-1",
+          "evidence": []
+        }
+      ],
+      "authority": "hosted_change",
+      "authority_selection": {
+        "link_id": "cr-link-1",
+        "content_version_key": "github:PR_kwDOExample42:manifest-7",
+        "root_agent_type": "codex",
+        "root_session_id": "session-root-1",
+        "repository_entry_key": "repo-entry-hosted-1",
+        "coverage": "complete_delivery"
+      },
+      "stale": false,
+      "generated_at": "2026-08-11T09:00:00Z"
+    }
+  ]
+}
