@@ -184,21 +184,34 @@ func TestInjectionLookingWorktreePathIsData(t *testing.T) {
 }
 
 func TestMalformedNestedGitEntryDoesNotFallBackToParent(t *testing.T) {
-	parent := t.TempDir()
-	outer := createRepository(t, parent, "outer")
-	nested := filepath.Join(outer, "nested")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(nested, ".git"), []byte("gitdir: /definitely/missing/session-insight-gitdir\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	resolution, err := defaultResolver(t).Resolve(context.Background(), nested)
-	if err == nil {
-		t.Fatalf("malformed nested worktree silently resolved to parent: %+v", resolution)
-	}
-	if resolution.Repository != nil || resolution.Assessment.ReasonCode != model.ReasonGitCommandFailed {
-		t.Fatalf("malformed nested worktree degradation = %+v", resolution)
+	for _, entryKind := range []string{"file", "directory"} {
+		t.Run(entryKind, func(t *testing.T) {
+			parent := t.TempDir()
+			outer := createRepository(t, parent, "outer")
+			nested := filepath.Join(outer, "nested")
+			if err := os.MkdirAll(nested, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			entry := filepath.Join(nested, ".git")
+			if entryKind == "file" {
+				if err := os.WriteFile(entry, []byte("gitdir: /definitely/missing/session-insight-gitdir\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Mkdir(entry, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			resolution, err := defaultResolver(t).Resolve(context.Background(), nested)
+			if err == nil {
+				t.Fatalf("malformed nested worktree silently resolved to parent: %+v", resolution)
+			}
+			wantReason := model.ReasonGitCommandFailed
+			if entryKind == "directory" {
+				wantReason = model.ReasonNotAGitRepository
+			}
+			if resolution.Repository != nil || resolution.Assessment.ReasonCode != wantReason {
+				t.Fatalf("malformed nested worktree degradation = %+v", resolution)
+			}
+		})
 	}
 }
 

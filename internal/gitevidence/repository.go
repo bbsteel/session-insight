@@ -96,7 +96,12 @@ func (resolver *Resolver) Resolve(ctx context.Context, start string) (Resolution
 		typed := &Error{Code: ErrorInvalidWorkingDir, Cause: err}
 		return resolutionForError(typed), typed
 	}
-	if !hasGitEntry(canonicalStart) {
+	hasRepository, malformedShadow := inspectGitEntries(canonicalStart)
+	if malformedShadow {
+		typed := &Error{Code: ErrorNotRepository, Operation: OperationInsideWorktree}
+		return resolutionForError(typed), typed
+	}
+	if !hasRepository {
 		return unavailable(model.ReasonNotAGitRepository), nil
 	}
 
@@ -221,23 +226,28 @@ func canonicalDirectory(path string) (string, error) {
 	return filepath.Clean(canonical), nil
 }
 
-func hasGitEntry(start string) bool {
+func inspectGitEntries(start string) (hasRepository, malformedShadow bool) {
 	current := start
+	malformedDirectory := false
 	for {
 		entry := filepath.Join(current, ".git")
 		if info, err := os.Lstat(entry); err == nil {
-			// A real worktree admin directory always has HEAD and objects.
-			// Ignore unrelated empty .git directories in ancestors (some test
-			// and sandbox roots use that name as a marker), while preserving
-			// files/symlinks for Git to validate so a malformed nested worktree
-			// never falls through to a different parent repository.
 			if !info.IsDir() || looksLikeGitDirectory(entry) {
-				return true
+				// Files and symlinks are valid worktree shapes whose target Git
+				// must validate. A malformed directory below a real parent entry
+				// is instead an explicit shadowing boundary.
+				if malformedDirectory {
+					return false, true
+				}
+				return true, false
 			}
+			malformedDirectory = true
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return false
+			// Some sandboxes use an empty .git directory as a filesystem
+			// marker. Without a real parent repository it is simply non-Git.
+			return false, false
 		}
 		current = parent
 	}
