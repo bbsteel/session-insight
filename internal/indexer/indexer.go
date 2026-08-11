@@ -362,9 +362,10 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		}
 		collabCurrentKnown = true
 		if collabCurrent {
-			// Turn content is unchanged, but lightweight metadata may need a
-			// migration backfill (notably Codex resume_id).
-			return ix.db.UpdateSessionResumeID(agentType, sess.ID, sess.ResumeID)
+			// Turn content is unchanged, but list-derived metadata may still
+			// need a backfill when adapter logic improves without touching
+			// session files (project basename normalization, Codex resume_id).
+			return ix.db.RefreshSessionListMetadata(agentType, sess)
 		}
 	}
 

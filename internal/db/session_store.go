@@ -87,6 +87,43 @@ func (db *DB) UpdateSessionResumeID(agentType, sessionID, resumeID string) (bool
 	return rows > 0, nil
 }
 
+// RefreshSessionListMetadata synchronizes list-derived display fields without
+// rebuilding the turn index. Call this when the session content revision is
+// unchanged but adapter logic may have improved metadata — for example
+// project-name normalization (Grok full paths → basenames) or Codex resume_id
+// backfill.
+//
+// Empty project and empty resumeID leave the stored values alone so partial
+// list projections (notably imported sessions, which omit Project on list)
+// cannot wipe previously known metadata.
+func (db *DB) RefreshSessionListMetadata(agentType string, sess model.Session) (bool, error) {
+	project := sess.Project
+	resumeID := sess.ResumeID
+	result, err := db.conn.Exec(
+		`UPDATE sessions SET
+		     project = CASE WHEN ? != '' THEN ? ELSE project END,
+		     resume_id = CASE WHEN ? != '' THEN ? ELSE resume_id END
+		 WHERE agent_type = ? AND id = ?
+		   AND (
+		     (? != '' AND project <> ?)
+		     OR (? != '' AND resume_id <> ?)
+		   )`,
+		project, project,
+		resumeID, resumeID,
+		agentType, sess.ID,
+		project, project,
+		resumeID, resumeID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("refresh session list metadata: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("list metadata rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
 // rootSessionPredicate is the single canonical root-list filter (frozen
 // collaboration contract decision): adapters report child lineage faithfully
 // and never pre-filter children, and every root-only surface — list queries,
