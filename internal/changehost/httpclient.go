@@ -22,9 +22,16 @@ const (
 	defaultConnectTimeout   = 5 * time.Second
 	defaultMaxResponseBytes = int64(8 << 20)
 	defaultMaxConcurrent    = 4
+	maximumRequestTimeout   = 2 * time.Minute
+	maximumConnectTimeout   = 30 * time.Second
+	maximumResponseBytes    = int64(32 << 20)
+	maximumConcurrent       = 16
 )
 
-var errURLOriginNotApproved = errors.New("change host URL origin was not approved")
+var (
+	errURLOriginNotApproved    = errors.New("change host URL origin was not approved")
+	ErrInvalidHTTPClientConfig = errors.New("invalid change host HTTP client config")
+)
 
 type HTTPClientConfig struct {
 	RequestTimeout   time.Duration
@@ -37,6 +44,7 @@ type HTTPClientConfig struct {
 // AuthorizationSource supplies an in-memory Authorization value for one
 // approved origin. Implementations may consult env, keyring, or an allowlisted
 // provider CLI, but the resulting value must never be persisted or logged.
+// Implementations must honor the supplied bounded context.
 type AuthorizationSource interface {
 	Authorization(context.Context, HostIdentity, string) (string, bool, error)
 }
@@ -53,20 +61,24 @@ type HTTPResult struct {
 // Its production transport dials only approval-time pinned addresses, ignores
 // proxy environment variables, and preserves normal TLS hostname validation.
 type HTTPClient struct {
-	approved      ApprovedHost
-	client        *http.Client
-	authorization AuthorizationSource
-	maxBytes      int64
-	userAgent     string
-	semaphore     chan struct{}
+	approved       *ApprovedHost
+	client         *http.Client
+	authorization  AuthorizationSource
+	maxBytes       int64
+	requestTimeout time.Duration
+	userAgent      string
+	semaphore      chan struct{}
 }
 
-func NewHTTPClient(approved ApprovedHost, config HTTPClientConfig, authorization AuthorizationSource) (*HTTPClient, error) {
-	if err := ValidateApprovedHost(approved); err != nil {
+func NewHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authorization AuthorizationSource) (*HTTPClient, error) {
+	if err := validateApprovedHost(approved); err != nil {
 		return nil, err
 	}
 	approved = cloneApprovedHost(approved)
-	config = normalizeHTTPClientConfig(config)
+	config, err := normalizeHTTPClientConfig(config)
+	if err != nil {
+		return nil, err
+	}
 	transport := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           newPinnedDialer(approved, config.ConnectTimeout),
@@ -78,15 +90,19 @@ func NewHTTPClient(approved ApprovedHost, config HTTPClientConfig, authorization
 	return newHTTPClient(approved, config, authorization, transport)
 }
 
-func newHTTPClient(approved ApprovedHost, config HTTPClientConfig, authorization AuthorizationSource, transport http.RoundTripper) (*HTTPClient, error) {
-	if err := ValidateApprovedHost(approved); err != nil {
+func newHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authorization AuthorizationSource, transport http.RoundTripper) (*HTTPClient, error) {
+	if err := validateApprovedHost(approved); err != nil {
 		return nil, err
 	}
 	approved = cloneApprovedHost(approved)
-	config = normalizeHTTPClientConfig(config)
+	config, err := normalizeHTTPClientConfig(config)
+	if err != nil {
+		return nil, err
+	}
 	result := &HTTPClient{
 		approved: approved, authorization: authorization, maxBytes: config.MaxResponseBytes,
-		userAgent: config.UserAgent, semaphore: make(chan struct{}, config.MaxConcurrent),
+		requestTimeout: config.RequestTimeout, userAgent: config.UserAgent,
+		semaphore: make(chan struct{}, config.MaxConcurrent),
 	}
 	result.client = &http.Client{
 		Transport: transport,
@@ -108,23 +124,41 @@ func newHTTPClient(approved ApprovedHost, config HTTPClientConfig, authorization
 	return result, nil
 }
 
-func normalizeHTTPClientConfig(config HTTPClientConfig) HTTPClientConfig {
+func normalizeHTTPClientConfig(config HTTPClientConfig) (HTTPClientConfig, error) {
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = defaultRequestTimeout
 	}
-	if config.ConnectTimeout <= 0 || config.ConnectTimeout > config.RequestTimeout {
+	if config.RequestTimeout > maximumRequestTimeout {
+		return HTTPClientConfig{}, ErrInvalidHTTPClientConfig
+	}
+	if config.ConnectTimeout <= 0 {
 		config.ConnectTimeout = defaultConnectTimeout
+		if config.ConnectTimeout > config.RequestTimeout {
+			config.ConnectTimeout = config.RequestTimeout
+		}
+	}
+	if config.ConnectTimeout > maximumConnectTimeout || config.ConnectTimeout > config.RequestTimeout {
+		return HTTPClientConfig{}, ErrInvalidHTTPClientConfig
 	}
 	if config.MaxResponseBytes <= 0 {
 		config.MaxResponseBytes = defaultMaxResponseBytes
 	}
+	if config.MaxResponseBytes > maximumResponseBytes {
+		return HTTPClientConfig{}, ErrInvalidHTTPClientConfig
+	}
 	if config.MaxConcurrent <= 0 {
 		config.MaxConcurrent = defaultMaxConcurrent
+	}
+	if config.MaxConcurrent > maximumConcurrent {
+		return HTTPClientConfig{}, ErrInvalidHTTPClientConfig
 	}
 	if config.UserAgent == "" {
 		config.UserAgent = "session-insight-changehost/0.6"
 	}
-	return config
+	if len(config.UserAgent) > 128 || strings.ContainsAny(config.UserAgent, "\r\n") {
+		return HTTPClientConfig{}, ErrInvalidHTTPClientConfig
+	}
+	return config, nil
 }
 
 func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL string, headers http.Header) (HTTPResult, error) {
@@ -134,6 +168,15 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 	if method != http.MethodGet && method != http.MethodHead {
 		return HTTPResult{}, &Error{Code: ErrorUnsupported, Operation: operation}
 	}
+	if !c.approved.active() {
+		return HTTPResult{}, &Error{Code: ErrorHostRevoked, Operation: operation}
+	}
+	requestContext, cancelRequest := context.WithTimeout(ctx, c.requestTimeout)
+	stopRevocation := context.AfterFunc(c.approved.state.context, cancelRequest)
+	defer func() {
+		stopRevocation()
+		cancelRequest()
+	}()
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return HTTPResult{}, &Error{Code: ErrorHostNotApproved, Operation: operation, Cause: err}
@@ -145,10 +188,10 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 	select {
 	case c.semaphore <- struct{}{}:
 		defer func() { <-c.semaphore }()
-	case <-ctx.Done():
-		return HTTPResult{}, &Error{Code: ErrorUnavailable, Operation: operation, Cause: ctx.Err()}
+	case <-requestContext.Done():
+		return HTTPResult{}, c.contextError(operation, requestContext.Err())
 	}
-	request, err := http.NewRequestWithContext(ctx, method, parsed.String(), nil)
+	request, err := http.NewRequestWithContext(requestContext, method, parsed.String(), nil)
 	if err != nil {
 		return HTTPResult{}, &Error{Code: ErrorInvalidResponse, Operation: operation, Cause: err}
 	}
@@ -156,8 +199,11 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", c.userAgent)
 	if c.authorization != nil {
-		value, configured, authErr := c.authorization.Authorization(ctx, c.approved.Host, origin)
+		value, configured, authErr := c.authorization.Authorization(requestContext, c.approved.Identity(), origin)
 		if authErr != nil {
+			if !c.approved.active() {
+				return HTTPResult{}, &Error{Code: ErrorHostRevoked, Operation: operation, Cause: authErr}
+			}
 			return HTTPResult{}, &Error{Code: ErrorAuthRequired, Operation: operation, Cause: authErr}
 		}
 		if configured {
@@ -169,6 +215,9 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 	}
 	response, err := c.client.Do(request)
 	if err != nil {
+		if !c.approved.active() {
+			return HTTPResult{}, &Error{Code: ErrorHostRevoked, Operation: operation, Cause: err}
+		}
 		if errors.Is(err, errURLOriginNotApproved) {
 			return HTTPResult{}, &Error{Code: ErrorHostNotApproved, Operation: operation, Cause: err}
 		}
@@ -198,6 +247,7 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 		LastModified: response.Header.Get("Last-Modified"), Metadata: metadata,
 	}
 	if code, failed := responseErrorCode(response.StatusCode, metadata); failed {
+		result.Body = nil
 		providerError := &Error{Code: code, Operation: operation}
 		if metadata.RetryAfterSeconds != nil {
 			providerError.RetryAfter = time.Duration(*metadata.RetryAfterSeconds) * time.Second
@@ -205,6 +255,13 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 		return result, providerError
 	}
 	return result, nil
+}
+
+func (c *HTTPClient) contextError(operation Operation, cause error) error {
+	if !c.approved.active() {
+		return &Error{Code: ErrorHostRevoked, Operation: operation, Cause: cause}
+	}
+	return &Error{Code: ErrorUnavailable, Operation: operation, Cause: cause}
 }
 
 func (c *HTTPClient) validateURL(u *url.URL) (string, error) {
@@ -316,14 +373,14 @@ func firstHeader(header http.Header, names ...string) string {
 	return ""
 }
 
-func newPinnedDialer(approved ApprovedHost, timeout time.Duration) func(context.Context, string, string) (net.Conn, error) {
+func newPinnedDialer(approved *ApprovedHost, timeout time.Duration) func(context.Context, string, string) (net.Conn, error) {
 	type pinnedTarget struct {
 		addresses []net.IP
 		port      string
 		counter   atomic.Uint64
 	}
-	targets := make(map[string]*pinnedTarget, len(approved.Endpoints))
-	for _, endpoint := range approved.Endpoints {
+	targets := make(map[string]*pinnedTarget, len(approved.endpoints))
+	for _, endpoint := range approved.endpoints {
 		dialAddress, err := endpointDialAddress(endpoint.Origin)
 		if err != nil {
 			continue

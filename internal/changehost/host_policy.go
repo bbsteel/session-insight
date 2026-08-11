@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type HostPolicyErrorCode string
@@ -19,6 +20,7 @@ const (
 	HostPolicyHTTPNotApproved    HostPolicyErrorCode = "http_not_approved"
 	HostPolicyPrivateNotApproved HostPolicyErrorCode = "private_network_not_approved"
 	HostPolicyResolutionFailed   HostPolicyErrorCode = "resolution_failed"
+	HostPolicyApprovalRevoked    HostPolicyErrorCode = "approval_revoked"
 )
 
 // HostPolicyError intentionally excludes the input URL, hostname, DNS error,
@@ -53,33 +55,41 @@ type HostPreview struct {
 	RequiresPrivateApproval bool         `json:"requires_private_network_approval"`
 }
 
-type ApprovedEndpoint struct {
+type approvedEndpoint struct {
 	Origin    string
 	Addresses []netip.Addr
 }
 
-// ApprovedHost is an immutable approval result. Endpoint addresses are pinned
-// for subsequent dials; clients never resolve an approved hostname again.
+type approvalState struct {
+	context context.Context
+	cancel  context.CancelFunc
+}
+
+// ApprovedHost is an opaque, revocable approval capability. Package-external
+// callers cannot construct its authority fields or expand its origin/IP set.
 type ApprovedHost struct {
-	Host               HostIdentity
-	Endpoints          []ApprovedEndpoint
-	HTTPApproved       bool
-	PrivateNetApproved bool
+	host               HostIdentity
+	endpoints          []approvedEndpoint
+	httpApproved       bool
+	privateNetApproved bool
+	state              *approvalState
 }
 
 type NetIPResolver interface {
+	// LookupNetIP must honor ctx; HostPolicy supplies its own bounded context.
 	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
 }
 
 type HostPolicy struct {
-	resolver NetIPResolver
+	resolver       NetIPResolver
+	resolveTimeout time.Duration
 }
 
 func NewHostPolicy(resolver NetIPResolver) *HostPolicy {
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
-	return &HostPolicy{resolver: resolver}
+	return &HostPolicy{resolver: resolver, resolveTimeout: 10 * time.Second}
 }
 
 // Preview performs syntax and literal-address classification only. DNS is
@@ -112,39 +122,47 @@ func (p *HostPolicy) Preview(host HostIdentity) (HostPreview, error) {
 
 // Approve is the only policy operation that resolves DNS. It re-validates the
 // exact explicit origin set and pins every returned address in the result.
-func (p *HostPolicy) Approve(ctx context.Context, host HostIdentity, options HostApprovalOptions) (ApprovedHost, error) {
+func (p *HostPolicy) Approve(ctx context.Context, host HostIdentity, options HostApprovalOptions) (*ApprovedHost, error) {
 	preview, err := p.Preview(host)
 	if err != nil {
-		return ApprovedHost{}, err
+		return nil, err
 	}
 	if preview.RequiresHTTPApproval && !options.AllowHTTP {
-		return ApprovedHost{}, &HostPolicyError{Code: HostPolicyHTTPNotApproved}
+		return nil, &HostPolicyError{Code: HostPolicyHTTPNotApproved}
 	}
 	host = preview.Host
-	approved := ApprovedHost{
-		Host:               host,
-		HTTPApproved:       options.AllowHTTP,
-		PrivateNetApproved: options.AllowPrivateNetwork,
-		Endpoints:          make([]ApprovedEndpoint, 0, len(host.EndpointOrigins)),
+	resolveContext, cancelResolve := context.WithTimeout(ctx, p.resolveTimeout)
+	defer cancelResolve()
+	approved := &ApprovedHost{
+		host:               host,
+		httpApproved:       options.AllowHTTP,
+		privateNetApproved: options.AllowPrivateNetwork,
+		endpoints:          make([]approvedEndpoint, 0, len(host.EndpointOrigins)),
 	}
 	for _, rawOrigin := range host.EndpointOrigins {
 		u, parseErr := url.Parse(rawOrigin)
 		if parseErr != nil {
-			return ApprovedHost{}, &HostPolicyError{Code: HostPolicyInvalidHost, Cause: parseErr}
+			return nil, &HostPolicyError{Code: HostPolicyInvalidHost, Cause: parseErr}
 		}
-		addresses, resolveErr := p.resolve(ctx, u.Hostname())
+		addresses, resolveErr := p.resolve(resolveContext, u.Hostname())
 		if resolveErr != nil || len(addresses) == 0 {
-			return ApprovedHost{}, &HostPolicyError{Code: HostPolicyResolutionFailed, Cause: resolveErr}
+			return nil, &HostPolicyError{Code: HostPolicyResolutionFailed, Cause: resolveErr}
 		}
 		for _, addr := range addresses {
 			if isRestrictedAddress(addr) && !options.AllowPrivateNetwork {
-				return ApprovedHost{}, &HostPolicyError{Code: HostPolicyPrivateNotApproved}
+				return nil, &HostPolicyError{Code: HostPolicyPrivateNotApproved}
 			}
 		}
-		approved.Endpoints = append(approved.Endpoints, ApprovedEndpoint{Origin: rawOrigin, Addresses: addresses})
+		approved.endpoints = append(approved.endpoints, approvedEndpoint{Origin: rawOrigin, Addresses: addresses})
 	}
-	if err := ValidateApprovedHost(approved); err != nil {
-		return ApprovedHost{}, err
+	if err := resolveContext.Err(); err != nil {
+		return nil, &HostPolicyError{Code: HostPolicyResolutionFailed, Cause: err}
+	}
+	approvalContext, cancelApproval := context.WithCancel(context.Background())
+	approved.state = &approvalState{context: approvalContext, cancel: cancelApproval}
+	if err := validateApprovedHost(approved); err != nil {
+		cancelApproval()
+		return nil, err
 	}
 	return approved, nil
 }
@@ -171,21 +189,29 @@ func (p *HostPolicy) resolve(ctx context.Context, hostname string) ([]netip.Addr
 	return result, nil
 }
 
-func ValidateApprovedHost(approved ApprovedHost) error {
-	if errs := ValidateHostIdentity(approved.Host); len(errs) != 0 {
+func validateApprovedHost(approved *ApprovedHost) error {
+	if approved == nil || approved.state == nil || approved.state.context == nil || approved.state.cancel == nil {
+		return &HostPolicyError{Code: HostPolicyInvalidHost, Cause: errors.New("approval capability is missing")}
+	}
+	select {
+	case <-approved.state.context.Done():
+		return &HostPolicyError{Code: HostPolicyApprovalRevoked}
+	default:
+	}
+	if errs := ValidateHostIdentity(approved.host); len(errs) != 0 {
 		return &HostPolicyError{Code: HostPolicyInvalidHost, Cause: errs}
 	}
-	if len(approved.Endpoints) != len(approved.Host.EndpointOrigins) {
+	if len(approved.endpoints) != len(approved.host.EndpointOrigins) {
 		return &HostPolicyError{Code: HostPolicyInvalidHost, Cause: errors.New("approved endpoint set differs from host identity")}
 	}
-	seen := make(map[string]bool, len(approved.Endpoints))
-	for _, endpoint := range approved.Endpoints {
+	seen := make(map[string]bool, len(approved.endpoints))
+	for _, endpoint := range approved.endpoints {
 		if seen[endpoint.Origin] || len(endpoint.Addresses) == 0 {
 			return &HostPolicyError{Code: HostPolicyInvalidHost, Cause: errors.New("invalid approved endpoint")}
 		}
 		seen[endpoint.Origin] = true
 		matched := false
-		for _, expected := range approved.Host.EndpointOrigins {
+		for _, expected := range approved.host.EndpointOrigins {
 			if endpoint.Origin == expected {
 				matched = true
 				break
@@ -195,11 +221,11 @@ func ValidateApprovedHost(approved ApprovedHost) error {
 			return &HostPolicyError{Code: HostPolicyInvalidHost, Cause: errors.New("origin expansion is forbidden")}
 		}
 		u, _ := url.Parse(endpoint.Origin)
-		if u.Scheme == "http" && !approved.HTTPApproved {
+		if u.Scheme == "http" && !approved.httpApproved {
 			return &HostPolicyError{Code: HostPolicyHTTPNotApproved}
 		}
 		for _, address := range endpoint.Addresses {
-			if !address.IsValid() || (isRestrictedAddress(address) && !approved.PrivateNetApproved) {
+			if !address.IsValid() || (isRestrictedAddress(address) && !approved.privateNetApproved) {
 				return &HostPolicyError{Code: HostPolicyPrivateNotApproved}
 			}
 		}
@@ -234,16 +260,19 @@ func normalizeHostIdentity(host HostIdentity) (HostIdentity, error) {
 	return normalized, nil
 }
 
-func cloneApprovedHost(approved ApprovedHost) ApprovedHost {
-	cloned := approved
-	cloned.Host.EndpointOrigins = append([]string(nil), approved.Host.EndpointOrigins...)
-	cloned.Endpoints = make([]ApprovedEndpoint, len(approved.Endpoints))
-	for i, endpoint := range approved.Endpoints {
-		cloned.Endpoints[i] = ApprovedEndpoint{
+func cloneApprovedHost(approved *ApprovedHost) *ApprovedHost {
+	if approved == nil {
+		return nil
+	}
+	cloned := *approved
+	cloned.host.EndpointOrigins = append([]string(nil), approved.host.EndpointOrigins...)
+	cloned.endpoints = make([]approvedEndpoint, len(approved.endpoints))
+	for i, endpoint := range approved.endpoints {
+		cloned.endpoints[i] = approvedEndpoint{
 			Origin: endpoint.Origin, Addresses: append([]netip.Addr(nil), endpoint.Addresses...),
 		}
 	}
-	return cloned
+	return &cloned
 }
 
 func endpointOrigin(rawURL string) (string, error) {
@@ -315,15 +344,51 @@ var restrictedNetworkPrefixes = func() []netip.Prefix {
 	return result
 }()
 
-func (a ApprovedHost) endpoint(origin string) (ApprovedEndpoint, bool) {
-	for _, endpoint := range a.Endpoints {
+func (a *ApprovedHost) endpoint(origin string) (approvedEndpoint, bool) {
+	if a == nil {
+		return approvedEndpoint{}, false
+	}
+	for _, endpoint := range a.endpoints {
 		if endpoint.Origin == origin {
 			return endpoint, true
 		}
 	}
-	return ApprovedEndpoint{}, false
+	return approvedEndpoint{}, false
 }
 
-func (a ApprovedHost) String() string {
-	return fmt.Sprintf("approved change host %s", a.Host.Key)
+// Identity returns a defensive copy suitable for status/provider binding.
+func (a *ApprovedHost) Identity() HostIdentity {
+	if a == nil {
+		return HostIdentity{}
+	}
+	host := a.host
+	host.EndpointOrigins = append([]string(nil), a.host.EndpointOrigins...)
+	return host
+}
+
+// Revoke cancels queued and in-flight requests using this capability. It is
+// idempotent and does not delete cached evidence.
+func (a *ApprovedHost) Revoke() {
+	if a != nil && a.state != nil && a.state.cancel != nil {
+		a.state.cancel()
+	}
+}
+
+func (a *ApprovedHost) active() bool {
+	if a == nil || a.state == nil || a.state.context == nil {
+		return false
+	}
+	select {
+	case <-a.state.context.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+func (a *ApprovedHost) String() string {
+	if a == nil {
+		return "approved change host"
+	}
+	return fmt.Sprintf("approved change host %s", a.host.Key)
 }

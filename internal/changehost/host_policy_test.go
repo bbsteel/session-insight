@@ -5,11 +5,19 @@ import (
 	"errors"
 	"net/netip"
 	"testing"
+	"time"
 )
 
 type policyResolver struct {
 	addresses map[string][]netip.Addr
 	calls     int
+}
+
+type blockingResolver struct{}
+
+func (blockingResolver) LookupNetIP(ctx context.Context, _, _ string) ([]netip.Addr, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (r *policyResolver) LookupNetIP(_ context.Context, _, host string) ([]netip.Addr, error) {
@@ -19,6 +27,20 @@ func (r *policyResolver) LookupNetIP(_ context.Context, _, host string) ([]netip
 		return nil, errors.New("resolver detail must remain wrapped")
 	}
 	return addresses, nil
+}
+
+func TestHostPolicyBoundsApprovalDNSResolution(t *testing.T) {
+	policy := NewHostPolicy(blockingResolver{})
+	policy.resolveTimeout = 20 * time.Millisecond
+	started := time.Now()
+	_, err := policy.Approve(context.Background(), githubHost(), HostApprovalOptions{})
+	var policyErr *HostPolicyError
+	if !errors.As(err, &policyErr) || policyErr.Code != HostPolicyResolutionFailed {
+		t.Fatalf("blocking DNS did not return typed failure: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("approval DNS exceeded internal deadline: %s", elapsed)
+	}
 }
 
 func TestHostPolicyDefersDNSUntilApprovalAndPinsExplicitOrigins(t *testing.T) {
@@ -39,11 +61,15 @@ func TestHostPolicyDefersDNSUntilApprovalAndPinsExplicitOrigins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolver.calls != 2 || len(approved.Endpoints) != 2 {
+	if resolver.calls != 2 || len(approved.endpoints) != 2 {
 		t.Fatalf("approval did not resolve and pin the exact origin set: %+v, calls=%d", approved, resolver.calls)
 	}
-	if approved.Endpoints[0].Origin != host.EndpointOrigins[0] || approved.Endpoints[1].Origin != host.EndpointOrigins[1] {
-		t.Fatalf("approval changed origin order or expanded origins: %+v", approved.Endpoints)
+	resolver.addresses["github.com"][0] = netip.MustParseAddr("9.9.9.9")
+	if approved.endpoints[0].Addresses[0] != netip.MustParseAddr("8.8.8.8") {
+		t.Fatal("post-approval DNS mutation changed the pinned address set")
+	}
+	if approved.endpoints[0].Origin != host.EndpointOrigins[0] || approved.endpoints[1].Origin != host.EndpointOrigins[1] {
+		t.Fatalf("approval changed origin order or expanded origins: %+v", approved.endpoints)
 	}
 }
 
@@ -93,32 +119,35 @@ func TestHostPolicyRequiresAdvancedApprovalForPrivateHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !approved.HTTPApproved || !approved.PrivateNetApproved {
+	if !approved.httpApproved || !approved.privateNetApproved {
 		t.Fatalf("advanced approvals were not fixed in result: %+v", approved)
 	}
 }
 
 func TestApprovedHostRejectsOriginExpansionAndPrivateRebinding(t *testing.T) {
-	approved := approvedGitHubHost()
-	approved.Endpoints = append(approved.Endpoints, ApprovedEndpoint{
+	approved := approvedGitHubHost(t)
+	approved.endpoints = append(approved.endpoints, approvedEndpoint{
 		Origin: "https://uploads.github.com", Addresses: []netip.Addr{netip.MustParseAddr("8.8.4.4")},
 	})
-	if err := ValidateApprovedHost(approved); err == nil {
+	if err := validateApprovedHost(approved); err == nil {
 		t.Fatal("origin expansion accepted")
 	}
-	approved = approvedGitHubHost()
-	approved.Endpoints[0].Addresses = []netip.Addr{netip.MustParseAddr("127.0.0.1")}
-	if err := ValidateApprovedHost(approved); err == nil {
+	approved = approvedGitHubHost(t)
+	approved.endpoints[0].Addresses = []netip.Addr{netip.MustParseAddr("127.0.0.1")}
+	if err := validateApprovedHost(approved); err == nil {
 		t.Fatal("private rebinding accepted without approval")
 	}
 }
 
-func approvedGitHubHost() ApprovedHost {
-	return ApprovedHost{
-		Host: githubHost(),
-		Endpoints: []ApprovedEndpoint{
-			{Origin: "https://github.com", Addresses: []netip.Addr{netip.MustParseAddr("8.8.8.8")}},
-			{Origin: "https://api.github.com", Addresses: []netip.Addr{netip.MustParseAddr("1.1.1.1")}},
-		},
+func approvedGitHubHost(t *testing.T) *ApprovedHost {
+	t.Helper()
+	resolver := &policyResolver{addresses: map[string][]netip.Addr{
+		"github.com":     {netip.MustParseAddr("8.8.8.8")},
+		"api.github.com": {netip.MustParseAddr("1.1.1.1")},
+	}}
+	approved, err := NewHostPolicy(resolver).Approve(context.Background(), githubHost(), HostApprovalOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
+	return approved
 }

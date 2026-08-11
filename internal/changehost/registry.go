@@ -3,15 +3,20 @@ package changehost
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"reflect"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/bbsteel/session-insight/internal/model"
 )
 
 var (
-	ErrDuplicateProvider = errors.New("change provider already registered")
-	ErrProviderNotFound  = errors.New("change provider not registered")
+	ErrDuplicateProvider  = errors.New("change provider already registered")
+	ErrProviderNotFound   = errors.New("change provider not registered")
+	ErrAmbiguousReference = errors.New("change reference is ambiguous")
+	ErrProviderContract   = errors.New("change provider contract mismatch")
 )
 
 // ProviderFactory binds a provider implementation to an already-approved
@@ -35,7 +40,7 @@ func NewRegistry() *Registry {
 }
 
 func (r *Registry) RegisterParser(parser ReferenceParser) error {
-	if parser == nil || !model.IsKnownChangeProviderKind(parser.Kind()) {
+	if nilInterface(parser) || !model.IsKnownChangeProviderKind(parser.Kind()) {
 		return fmt.Errorf("%w: invalid parser", ErrProviderNotFound)
 	}
 	r.mu.Lock()
@@ -61,6 +66,9 @@ func (r *Registry) RegisterFactory(kind model.ChangeProviderKind, factory Provid
 }
 
 func (r *Registry) NewProvider(kind model.ChangeProviderKind, host HostIdentity, client *HTTPClient) (Provider, error) {
+	if client == nil || !model.IsKnownChangeProviderKind(kind) || kind == model.ChangeProviderGeneric || host.Provider != kind || !sameHostIdentity(host, client.approved.Identity()) {
+		return nil, ErrProviderContract
+	}
 	r.mu.RLock()
 	factory := r.factories[kind]
 	r.mu.RUnlock()
@@ -71,33 +79,139 @@ func (r *Registry) NewProvider(kind model.ChangeProviderKind, host HostIdentity,
 	if err != nil {
 		return nil, err
 	}
+	if nilInterface(provider) {
+		return nil, ErrProviderContract
+	}
 	if errs := ValidateProvider(provider); len(errs) != 0 {
 		return nil, errs
+	}
+	if provider.Kind() != kind || !sameHostIdentity(provider.Host(), host) {
+		return nil, ErrProviderContract
 	}
 	return provider, nil
 }
 
+func nilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
 func (r *Registry) ParseReference(raw string) (model.ChangeRequestReference, bool) {
-	for _, parser := range r.orderedParsers() {
+	ref, err := r.ResolveReference(raw)
+	return ref, err == nil
+}
+
+// ResolveReference fails closed when multiple automatic providers claim the
+// same input. Generic parsing is considered only when none do.
+func (r *Registry) ResolveReference(raw string) (model.ChangeRequestReference, error) {
+	parsers := r.orderedParsers()
+	matches := make([]model.ChangeRequestReference, 0, 1)
+	for _, parser := range parsers {
+		if parser.Kind() == model.ChangeProviderGeneric {
+			continue
+		}
 		ref, ok := parser.ParseReference(raw)
 		if !ok || ref.Provider != parser.Kind() {
 			continue
 		}
 		if validation := model.ValidateChangeRequestReference(ref); validation.OK() {
-			return ref, true
+			matches = append(matches, ref)
 		}
 	}
-	return model.ChangeRequestReference{}, false
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return model.ChangeRequestReference{}, ErrAmbiguousReference
+	}
+	for _, parser := range parsers {
+		if parser.Kind() != model.ChangeProviderGeneric {
+			continue
+		}
+		ref, ok := parser.ParseReference(raw)
+		if ok && ref.Provider == model.ChangeProviderGeneric {
+			if validation := model.ValidateChangeRequestReference(ref); validation.OK() {
+				return ref, nil
+			}
+		}
+	}
+	return model.ChangeRequestReference{}, ErrProviderNotFound
 }
 
 func (r *Registry) ParseRemote(raw string) (model.HostedRepositoryReference, bool) {
-	for _, parser := range r.orderedParsers() {
+	ref, err := r.ResolveRemote(raw)
+	return ref, err == nil
+}
+
+// ResolveRemote applies the same fail-closed ambiguity rule and validates the
+// sanitized remote before returning it to repository discovery.
+func (r *Registry) ResolveRemote(raw string) (model.HostedRepositoryReference, error) {
+	parsers := r.orderedParsers()
+	matches := make([]model.HostedRepositoryReference, 0, 1)
+	for _, parser := range parsers {
+		if parser.Kind() == model.ChangeProviderGeneric {
+			continue
+		}
 		ref, ok := parser.ParseRemote(raw)
-		if ok && ref.Provider == parser.Kind() {
-			return ref, true
+		if ok && ref.Provider == parser.Kind() && validRepositoryReference(ref) {
+			matches = append(matches, ref)
 		}
 	}
-	return model.HostedRepositoryReference{}, false
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return model.HostedRepositoryReference{}, ErrAmbiguousReference
+	}
+	for _, parser := range parsers {
+		if parser.Kind() != model.ChangeProviderGeneric {
+			continue
+		}
+		ref, ok := parser.ParseRemote(raw)
+		if ok && ref.Provider == model.ChangeProviderGeneric && validRepositoryReference(ref) {
+			return ref, nil
+		}
+	}
+	return model.HostedRepositoryReference{}, ErrProviderNotFound
+}
+
+func validRepositoryReference(ref model.HostedRepositoryReference) bool {
+	if !model.IsKnownChangeProviderKind(ref.Provider) || strings.TrimSpace(ref.Slug) == "" || strings.TrimSpace(ref.Slug) != ref.Slug {
+		return false
+	}
+	if issue := validateOrigin("display_origin", ref.DisplayOrigin); issue != nil {
+		return false
+	}
+	origin, err := endpointOrigin(ref.DisplayOrigin)
+	if err != nil || origin != ref.DisplayOrigin {
+		return false
+	}
+	remote, err := url.Parse(ref.SanitizedRemote)
+	if err != nil || remote.Host == "" || remote.User != nil || remote.RawQuery != "" || remote.Fragment != "" || remote.Path == "" || remote.Path == "/" {
+		return false
+	}
+	remoteOrigin, err := endpointOrigin(remote.String())
+	return err == nil && remoteOrigin == ref.DisplayOrigin
+}
+
+func sameHostIdentity(left, right HostIdentity) bool {
+	if left.Key != right.Key || left.Provider != right.Provider || left.DisplayOrigin != right.DisplayOrigin || len(left.EndpointOrigins) != len(right.EndpointOrigins) {
+		return false
+	}
+	for i := range left.EndpointOrigins {
+		if left.EndpointOrigins[i] != right.EndpointOrigins[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Registry) Kinds() []model.ChangeProviderKind {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/bbsteel/session-insight/internal/model"
@@ -52,8 +53,8 @@ func GenericIdentity(ref model.ChangeRequestReference) (model.ChangeRequestIdent
 	if ref.Provider != model.ChangeProviderGeneric {
 		return model.ChangeRequestIdentity{}, ErrUnsafeGenericReference
 	}
-	normalized, origin, _, err := normalizeGenericURL(ref.NormalizedURL)
-	if err != nil || normalized != ref.NormalizedURL || origin != ref.DisplayOrigin {
+	normalized, origin, pathValue, err := normalizeGenericURL(ref.NormalizedURL)
+	if err != nil || pathValue == "/" || normalized != ref.NormalizedURL || origin != ref.DisplayOrigin {
 		return model.ChangeRequestIdentity{}, ErrUnsafeGenericReference
 	}
 	sum := sha256.Sum256([]byte(normalized))
@@ -84,6 +85,12 @@ func normalizeGenericURL(raw string) (normalized, origin, pathValue string, err 
 		return "", "", "", ErrUnsafeGenericReference
 	}
 	port := u.Port()
+	if port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return "", "", "", ErrUnsafeGenericReference
+		}
+	}
 	if port == "443" {
 		port = ""
 	}
