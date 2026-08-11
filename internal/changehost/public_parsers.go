@@ -32,6 +32,19 @@ func PublicGitLabHost() HostIdentity {
 	}
 }
 
+// PublicHost returns the fixed built-in SaaS host for one automatic provider.
+// Generic references are offline-only and therefore never return a host.
+func PublicHost(kind model.ChangeProviderKind) (HostIdentity, bool) {
+	switch kind {
+	case model.ChangeProviderGitHub:
+		return PublicGitHubHost(), true
+	case model.ChangeProviderGitLab:
+		return PublicGitLabHost(), true
+	default:
+		return HostIdentity{}, false
+	}
+}
+
 type GitHubParser struct{}
 
 func (GitHubParser) Kind() model.ChangeProviderKind { return model.ChangeProviderGitHub }

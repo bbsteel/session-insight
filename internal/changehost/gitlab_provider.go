@@ -38,6 +38,10 @@ func NewGitLabProvider(host HostIdentity, client *HTTPClient) (*GitLabProvider, 
 func (p *GitLabProvider) Kind() model.ChangeProviderKind { return model.ChangeProviderGitLab }
 func (p *GitLabProvider) Host() HostIdentity             { return p.host }
 func (p *GitLabProvider) Capabilities() ProviderCapabilities {
+	return gitLabCapabilities()
+}
+
+func gitLabCapabilities() ProviderCapabilities {
 	operations := make(map[CapabilityID]CapabilityDeclaration, len(CapabilityIDs()))
 	for _, id := range CapabilityIDs() {
 		operations[id] = CapabilityDeclaration{State: CapabilitySupported}

@@ -80,6 +80,20 @@ func RegisterBuiltIns(registry *Registry) error {
 	return nil
 }
 
+// BuiltInProviderCapabilities exposes the provider-owned declaration without
+// approving a host or creating a network client. Frontends consume this
+// runtime projection instead of maintaining a second platform matrix.
+func BuiltInProviderCapabilities(kind model.ChangeProviderKind) (ProviderCapabilities, bool) {
+	switch kind {
+	case model.ChangeProviderGitHub:
+		return gitHubCapabilities(), true
+	case model.ChangeProviderGitLab:
+		return gitLabCapabilities(), true
+	default:
+		return ProviderCapabilities{}, false
+	}
+}
+
 func (r *Registry) RegisterParser(parser ReferenceParser) error {
 	if nilInterface(parser) || !model.IsKnownChangeProviderKind(parser.Kind()) {
 		return fmt.Errorf("%w: invalid parser", ErrProviderNotFound)

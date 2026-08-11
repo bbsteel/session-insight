@@ -308,6 +308,43 @@ func (db *DB) StoreSessionChangeRequestLink(link model.SessionChangeRequestLink)
 			return model.SessionChangeRequestLink{}, fmt.Errorf("insert Change Request evidence anchor: %w", err)
 		}
 	}
+	if link.Relationship == model.ChangeRelationshipExclusive {
+		selection := model.ChangeRequestAuthoritySelection{
+			LinkID: link.LinkID, ContentVersionKey: link.ContentVersionKey,
+			RootAgentType: link.RootAgentType, RootSessionID: link.RootSessionID,
+			RepositoryEntryKey: link.RepositoryEntryKey,
+			Coverage:           model.ChangeCoverageCompleteDelivery,
+		}
+		selectionJSON, err := json.Marshal(selection)
+		if err != nil {
+			return model.SessionChangeRequestLink{}, fmt.Errorf("marshal Change Request authority selection: %w", err)
+		}
+		exact, err := marshalAssessment(model.ExactGitEvidence())
+		if err != nil {
+			return model.SessionChangeRequestLink{}, err
+		}
+		result, err := c.ExecContext(ctx, `
+			UPDATE session_git_evidence
+			SET revision = revision + 1,
+			    state = ?, reason_code = ?, reasons_json = ?,
+			    stale = 0, authority = 'hosted_change',
+			    selected_change_snapshot_id = ?, authority_selection_json = ?,
+			    generated_at = ?
+			WHERE binding_id = ?`,
+			exact.state, exact.reasonCode, exact.reasonsJSON,
+			snapshotID, string(selectionJSON), model.FormatTime(time.Now().UTC()), bindingID,
+		)
+		if err != nil {
+			return model.SessionChangeRequestLink{}, fmt.Errorf("select hosted Change Request authority: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return model.SessionChangeRequestLink{}, fmt.Errorf("inspect hosted Change Request authority selection: %w", err)
+		}
+		if rows != 1 {
+			return model.SessionChangeRequestLink{}, fmt.Errorf("Session repository evidence does not exist")
+		}
+	}
 
 	if _, err := c.ExecContext(ctx, `COMMIT`); err != nil {
 		return model.SessionChangeRequestLink{}, fmt.Errorf("commit Session Change Request write: %w", err)
