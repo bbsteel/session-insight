@@ -65,3 +65,55 @@ func TestNewKonsoleSessionRequiresOneUnambiguousTab(t *testing.T) {
 		t.Fatal("ambiguous concurrent tabs must not be reported exact")
 	}
 }
+
+func TestKonsoleServicePIDParsesOnlyPidSuffixedNames(t *testing.T) {
+	pid, ok := konsoleServicePID("org.kde.konsole-16923")
+	if !ok || pid != 16923 {
+		t.Fatalf("%d %v", pid, ok)
+	}
+	for _, service := range []string{"org.kde.konsole", ":1.217", "org.kde.konsole-", "org.kde.konsole-abc"} {
+		if _, ok := konsoleServicePID(service); ok {
+			t.Fatalf("%s must not parse as a pid-suffixed service", service)
+		}
+	}
+}
+
+func TestPickKonsoleTargetPrefersBackendHostInstance(t *testing.T) {
+	targets := []konsoleTarget{
+		{service: "org.kde.konsole-10387", windowID: "/Windows/1", pid: 10387},
+		{service: "org.kde.konsole-16923", windowID: "/Windows/1", pid: 16923},
+		{service: "org.kde.konsole-16923", windowID: "/Windows/2", pid: 16923},
+	}
+	resolve := func(service string) int {
+		if service == ":1.217" {
+			return 16923
+		}
+		return 0
+	}
+	got, ok := pickKonsoleTarget(targets, ":1.217", "/Windows/2", resolve)
+	if !ok || got.service != "org.kde.konsole-16923" || got.windowID != "/Windows/2" {
+		t.Fatalf("%+v %v", got, ok)
+	}
+	// A preferred window that does not exist on the matched instance falls
+	// back to that instance's first discovered window.
+	got, ok = pickKonsoleTarget(targets, ":1.217", "/Windows/9", resolve)
+	if !ok || got.service != "org.kde.konsole-16923" || got.windowID != "/Windows/1" {
+		t.Fatalf("%+v %v", got, ok)
+	}
+}
+
+func TestPickKonsoleTargetIgnoresStalePreference(t *testing.T) {
+	targets := []konsoleTarget{{service: "org.kde.konsole-16923", windowID: "/Windows/1", pid: 16923}}
+	resolve := func(string) int { return 99999 }
+	got, ok := pickKonsoleTarget(targets, ":1.999", "/Windows/1", resolve)
+	if !ok || got.service != "org.kde.konsole-16923" {
+		t.Fatalf("stale preference must fall back to the first window: %+v %v", got, ok)
+	}
+	got, ok = pickKonsoleTarget(targets, "", "", resolve)
+	if !ok || got.service != "org.kde.konsole-16923" {
+		t.Fatalf("missing preference must fall back to the first window: %+v %v", got, ok)
+	}
+	if _, ok := pickKonsoleTarget(nil, ":1.217", "/Windows/1", resolve); ok {
+		t.Fatal("no running Konsole means no tab target")
+	}
+}
