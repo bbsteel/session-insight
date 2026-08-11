@@ -114,5 +114,61 @@ func (r *HermesReader) renderMessages(row sessionRow, messages []hermesMessage) 
 			}
 		}
 	}
-	return shared.DropEmptyRenderTurns(events)
+	return shared.DropEmptyRenderTurns(interleaveToolResults(events))
+}
+
+// interleaveToolResults moves each ToolResult directly after its parent
+// ToolInvocation. Hermes stores parallel tool calls as one assistant message
+// carrying N tool_calls followed by N separate tool messages, so raw stream
+// order renders call1, call2, result1, result2 — the result boxes detach
+// from the invocation they belong to. Pairing by tool_call_id restores
+// call1, result1, call2, result2. Results whose parent invocation is unknown
+// or in another turn keep their stream position.
+func interleaveToolResults(events []model.RenderEvent) []model.RenderEvent {
+	invocations := map[string]int{}
+	for i, event := range events {
+		if event.Type == "ToolInvocation" {
+			invocations[event.EventID] = i
+		}
+	}
+	if len(invocations) == 0 {
+		return events
+	}
+	// A result may only move within its own turn: never reorder across a
+	// TurnBoundary.
+	turnOf := make([]int, len(events))
+	turn := -1
+	for i, event := range events {
+		if event.Type == "TurnBoundary" {
+			turn++
+		}
+		turnOf[i] = turn
+	}
+	resultsByParent := map[string][]int{}
+	moved := make([]bool, len(events))
+	for i, event := range events {
+		if event.Type != "ToolResult" || event.ParentEventID == "" {
+			continue
+		}
+		parent, ok := invocations[event.ParentEventID]
+		if !ok || turnOf[parent] != turnOf[i] {
+			continue
+		}
+		resultsByParent[event.ParentEventID] = append(resultsByParent[event.ParentEventID], i)
+		moved[i] = true
+	}
+	if len(resultsByParent) == 0 {
+		return events
+	}
+	out := make([]model.RenderEvent, 0, len(events))
+	for i, event := range events {
+		if moved[i] {
+			continue
+		}
+		out = append(out, event)
+		for _, resultIdx := range resultsByParent[event.EventID] {
+			out = append(out, events[resultIdx])
+		}
+	}
+	return out
 }
