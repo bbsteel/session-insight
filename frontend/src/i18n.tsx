@@ -33,6 +33,7 @@ export const messages: Record<Locale, Messages> = {
     'common.next': 'Next',
     'common.copied': 'Copied',
     'common.noMatches': 'No matches',
+    'common.justNow': 'just now',
     'theme.label': 'Theme',
     'theme.light': 'Light',
     'theme.dark': 'Dark',
@@ -1132,6 +1133,7 @@ export const messages: Record<Locale, Messages> = {
     'common.next': '下一个',
     'common.copied': '已复制',
     'common.noMatches': '无匹配结果',
+    'common.justNow': '刚刚',
     'theme.label': '主题',
     'theme.light': '浅色',
     'theme.dark': '深色',
@@ -2241,6 +2243,8 @@ export function formatNumber(locale: Locale, value: number, options?: Intl.Numbe
   return new Intl.NumberFormat(locale, options).format(value)
 }
 export function formatRelativeTime(locale: Locale, value: number, unit: Intl.RelativeTimeFormatUnit = 'second') {
+  // Intl zh-CN yields "此刻" for 0; product copy prefers "刚刚" / "just now".
+  if (value === 0) return translate(locale, 'common.justNow')
   return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(value, unit)
 }
 

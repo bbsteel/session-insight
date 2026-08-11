@@ -2,11 +2,14 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const compiledModule = path.join('/tmp', 'session-insight-sidebarRows.mjs')
+// Compiled with i18n + i18nRuntime so formatRelativeTime can use translate(common.justNow).
+// OutDir lives under frontend/.runtime so Node can resolve react from frontend/node_modules.
+const compiledModule = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '.runtime', 'sidebar-rows-test', 'sidebarRows.js')
 const { buildSidebarRows, formatRelativeTime, isSessionLive } = await import(pathToFileURL(compiledModule).href)
 
 const now = Date.parse('2026-07-12T12:00:00Z')
-assert.equal(formatRelativeTime('2026-07-12T11:59:31Z', now), '此刻')
+assert.equal(formatRelativeTime('2026-07-12T11:59:31Z', now), '刚刚')
+assert.equal(formatRelativeTime('2026-07-12T11:59:31Z', now, 'en'), 'just now')
 assert.equal(formatRelativeTime('2026-07-12T11:42:00Z', now), '18分钟前')
 assert.equal(formatRelativeTime('2026-07-12T09:00:00Z', now), '3小时前')
 assert.equal(formatRelativeTime('2026-07-07T12:00:00Z', now), '5天前')

@@ -1,3 +1,4 @@
+import { translate, type Locale } from './i18n.js'
 import type { SessionSummary } from './types'
 
 export type SidebarRow =
@@ -24,13 +25,14 @@ export function isSessionLive(session: Pick<SessionSummary, 'is_live' | 'updated
   return session.is_live && now - new Date(session.updated_at).getTime() < LIVE_WINDOW_MS
 }
 
-export function formatRelativeTime(dateStr: string, now = Date.now(), locale = 'zh-CN'): string {
+export function formatRelativeTime(dateStr: string, now = Date.now(), locale: Locale = 'zh-CN'): string {
   const timestamp = new Date(dateStr).getTime()
   if (!Number.isFinite(timestamp)) return dateStr
 
   const elapsedMinutes = Math.max(0, Math.floor((now - timestamp) / 60_000))
+  // Prefer product copy over Intl: zh-CN "此刻" is literary; common.justNow is "刚刚" / "just now".
+  if (elapsedMinutes < 1) return translate(locale, 'common.justNow')
   const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
-  if (elapsedMinutes < 1) return relative.format(0, 'minute')
   if (elapsedMinutes < 60) return relative.format(-elapsedMinutes, 'minute')
   const hours = Math.floor(elapsedMinutes / 60)
   if (hours < 24) return relative.format(-hours, 'hour')
