@@ -568,16 +568,34 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   }, [agentFilter, agentsReady, effectiveAgents])
 
   const projectEntries = useMemo<ProjectEntry[]>(() => {
-    const counts = new Map<string, number>()
+    // Aggregate count + most recent activity; list order is applied in ProjectFilter.
+    const byName = new Map<string, { session_count: number; last_active: string; lastMs: number }>()
     for (const s of sessions) {
       if (!s.project) continue
       // When agent filter is active, only count sessions of that agent.
       if (agentFilter && s.agent_type !== agentFilter) continue
-      counts.set(s.project, (counts.get(s.project) ?? 0) + 1)
+      const updatedMs = Date.parse(s.updated_at)
+      const ms = Number.isFinite(updatedMs) ? updatedMs : 0
+      const prev = byName.get(s.project)
+      if (!prev) {
+        byName.set(s.project, {
+          session_count: 1,
+          last_active: ms > 0 ? s.updated_at : '',
+          lastMs: ms,
+        })
+      } else {
+        prev.session_count += 1
+        if (ms > prev.lastMs) {
+          prev.lastMs = ms
+          prev.last_active = s.updated_at
+        }
+      }
     }
-    return [...counts.entries()]
-      .map(([name, session_count]) => ({ name, session_count }))
-      .sort((a, b) => b.session_count - a.session_count || a.name.localeCompare(b.name))
+    return [...byName.entries()].map(([name, entry]) => ({
+      name,
+      session_count: entry.session_count,
+      last_active: entry.last_active,
+    }))
   }, [sessions, agentFilter])
 
   const modelEntries = useMemo<ModelEntry[]>(() => {
