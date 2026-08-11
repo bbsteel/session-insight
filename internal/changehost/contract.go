@@ -158,12 +158,12 @@ type Provider interface {
 }
 
 type ResultMetadata struct {
-	Assessment GitEvidenceAssessment `json:"assessment"`
-	PageCount  int                   `json:"page_count"`
-	ItemCount  int                   `json:"item_count"`
-	BytesRead  int64                 `json:"bytes_read"`
-	RetryAfter *time.Duration        `json:"retry_after,omitempty"`
-	RateLimit  *RateLimit            `json:"rate_limit,omitempty"`
+	Assessment        GitEvidenceAssessment `json:"assessment"`
+	PageCount         int                   `json:"page_count"`
+	ItemCount         int                   `json:"item_count"`
+	BytesRead         int64                 `json:"bytes_read"`
+	RetryAfterSeconds *int64                `json:"retry_after_seconds,omitempty"`
+	RateLimit         *RateLimit            `json:"rate_limit,omitempty"`
 }
 
 // GitEvidenceAssessment aliases the shared model type so provider result

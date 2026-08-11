@@ -501,12 +501,19 @@ type SessionChangeRequestLink struct {
 // are intentionally absent: the server derives them from the URL-path Session
 // and this opaque repository entry key.
 type ChangeRequestBindRequest struct {
-	RepositoryEntryKey   string                    `json:"repository_entry_key,omitempty"`
-	Change               ChangeRequestIdentity     `json:"change"`
-	ContentVersionKey    ContentVersionKey         `json:"content_version_key,omitempty"`
-	Relationship         ChangeRequestRelationship `json:"relationship"`
-	ConfirmExclusive     bool                      `json:"confirm_exclusive"`
-	ConfirmationRevision string                    `json:"confirmation_revision,omitempty"`
+	ChangeKey          string                         `json:"change_key"`
+	RepositoryEntryKey string                         `json:"repository_entry_key,omitempty"`
+	ContentVersionKey  ContentVersionKey              `json:"content_version_key,omitempty"`
+	Relationship       ChangeRequestRelationship      `json:"relationship"`
+	Confirmation       *ChangeRequestBindConfirmation `json:"confirmation,omitempty"`
+}
+
+// ChangeRequestBindConfirmation is an explicit user assertion about one
+// already-resolved content version. The server still derives the persisted
+// confirmation revision and every Session/repository identity.
+type ChangeRequestBindConfirmation struct {
+	CompleteDelivery  bool              `json:"complete_delivery"`
+	ContentVersionKey ContentVersionKey `json:"content_version_key"`
 }
 
 type GitEvidenceAuthority string
@@ -558,7 +565,12 @@ type SessionGitEvidence struct {
 // repository entry owns its own authority decision; no global authority can
 // accidentally promote a Change Request across repositories.
 type SessionGitEvidenceEnvelope struct {
-	RootAgentType string               `json:"root_agent_type"`
-	RootSessionID string               `json:"root_session_id"`
-	Repositories  []SessionGitEvidence `json:"repositories"`
+	RootAgentType string                `json:"root_agent_type"`
+	RootSessionID string                `json:"root_session_id"`
+	Revision      int64                 `json:"revision"`
+	Assessment    GitEvidenceAssessment `json:"assessment"`
+	Provisional   bool                  `json:"provisional"`
+	Stale         bool                  `json:"stale"`
+	GeneratedAt   time.Time             `json:"generated_at"`
+	Repositories  []SessionGitEvidence  `json:"repositories"`
 }

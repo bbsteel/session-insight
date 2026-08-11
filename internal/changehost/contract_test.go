@@ -109,6 +109,25 @@ func TestHostListDTOIsCredentialSafeAndUsesArray(t *testing.T) {
 	}
 }
 
+func TestResultMetadataRetryAfterUsesExplicitSeconds(t *testing.T) {
+	seconds := int64(15)
+	metadata := ResultMetadata{Assessment: model.ExactGitEvidence(), RetryAfterSeconds: &seconds}
+	if errs := ValidateResultMetadata(metadata); len(errs) != 0 {
+		t.Fatalf("valid retry interval rejected: %v", errs)
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"retry_after_seconds":15`) || strings.Contains(string(raw), `"retry_after":`) {
+		t.Fatalf("retry interval must use explicit seconds, got %s", raw)
+	}
+	seconds = -1
+	if errs := ValidateResultMetadata(metadata); !errs.Has(ValidationInvalidLimit) {
+		t.Fatalf("negative retry interval accepted: %v", errs)
+	}
+}
+
 func TestProviderErrorIsTypedAndRedactsCause(t *testing.T) {
 	cause := errors.New("https://token@example.com/private?access_token=secret")
 	err := &Error{Code: ErrorAuthRequired, Operation: OperationGetSnapshot, Cause: cause}

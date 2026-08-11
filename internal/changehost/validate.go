@@ -219,8 +219,8 @@ func ValidateResultMetadata(metadata ResultMetadata) ValidationErrors {
 	if metadata.BytesRead < 0 {
 		errs = append(errs, ValidationError{Field: "bytes_read", Code: ValidationInvalidLimit, Message: "count cannot be negative"})
 	}
-	if metadata.RetryAfter != nil && *metadata.RetryAfter < 0 {
-		errs = append(errs, ValidationError{Field: "retry_after", Code: ValidationInvalidLimit, Message: "duration cannot be negative"})
+	if metadata.RetryAfterSeconds != nil && *metadata.RetryAfterSeconds < 0 {
+		errs = append(errs, ValidationError{Field: "retry_after_seconds", Code: ValidationInvalidLimit, Message: "duration cannot be negative"})
 	}
 	if metadata.RateLimit != nil && metadata.RateLimit.Remaining != nil && *metadata.RateLimit.Remaining < 0 {
 		errs = append(errs, ValidationError{Field: "rate_limit.remaining", Code: ValidationInvalidLimit, Message: "remaining count cannot be negative"})

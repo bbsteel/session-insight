@@ -80,6 +80,9 @@ func localIntervalGolden() *SessionGitEvidenceEnvelope {
 	return &SessionGitEvidenceEnvelope{
 		RootAgentType: "codex",
 		RootSessionID: "session-root-1",
+		Revision:      8,
+		Assessment:    ExactGitEvidence(),
+		GeneratedAt:   gitTestTime("2026-08-11T08:10:03Z"),
 		Repositories: []SessionGitEvidence{
 			{
 				RootAgentType: "codex", RootSessionID: "session-root-1", RepositoryEntryKey: entryKey,
@@ -135,7 +138,8 @@ func hostedExclusiveGolden() *SessionGitEvidenceEnvelope {
 		ConfirmationRevision: "confirmation-1", Evidence: []GitEvidenceLink{},
 	}
 	return &SessionGitEvidenceEnvelope{
-		RootAgentType: "codex", RootSessionID: "session-root-1",
+		RootAgentType: "codex", RootSessionID: "session-root-1", Revision: 12,
+		Assessment: ExactGitEvidence(), GeneratedAt: gitTestTime("2026-08-11T09:00:00Z"),
 		Repositories: []SessionGitEvidence{
 			{
 				RootAgentType: "codex", RootSessionID: "session-root-1", RepositoryEntryKey: entryKey,
@@ -281,7 +285,9 @@ func TestGitEvidenceGoldenSerialization(t *testing.T) {
 
 func TestGitEvidenceEmptyCollectionsSerializeAsArrays(t *testing.T) {
 	envelope := &SessionGitEvidenceEnvelope{
-		RootAgentType: "codex", RootSessionID: "empty-session", Repositories: []SessionGitEvidence{},
+		RootAgentType: "codex", RootSessionID: "empty-session", Revision: 1,
+		Assessment:  NonExactGitEvidence(GitEvidenceUnavailable, ReasonNotAGitRepository),
+		GeneratedAt: gitTestTime("2026-08-11T10:00:00Z"), Repositories: []SessionGitEvidence{},
 	}
 	raw := marshalGitGolden(envelope)
 	if !bytes.Contains(raw, []byte(`"repositories": []`)) {

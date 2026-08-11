@@ -102,9 +102,9 @@ func TestValidateSnapshotKeepsCompletenessDimensionsIndependent(t *testing.T) {
 func TestValidateSnapshotRejectsUnfixedDerivedContentVersion(t *testing.T) {
 	snapshot := hostedSnapshotGolden()
 	snapshot.Content.NativeVersion = ""
-	snapshot.Content.FileManifestDigest = ""
+	snapshot.Content.BaseRefSHA = ""
 	if validation := ValidateChangeRequestSnapshot(snapshot); !validation.Has(GitIssueInvalidRevision) {
-		t.Fatalf("derived content version without manifest digest accepted: %+v", validation.Issues)
+		t.Fatalf("derived content version without base SHA accepted: %+v", validation.Issues)
 	}
 }
 
@@ -119,10 +119,12 @@ func TestValidateSessionEvidenceRejectsAutomaticExclusiveLink(t *testing.T) {
 
 func TestBindRequestExposesOnlyOpaqueRepositoryEntryKey(t *testing.T) {
 	request := ChangeRequestBindRequest{
-		RepositoryEntryKey: "repo-entry-hosted-1", Change: githubIdentity(),
+		ChangeKey: "change-key-github-pr-42", RepositoryEntryKey: "repo-entry-hosted-1",
 		ContentVersionKey: "github:PR_kwDOExample42:manifest-7",
-		Relationship:      ChangeRelationshipExclusive, ConfirmExclusive: true,
-		ConfirmationRevision: "confirmation-1",
+		Relationship:      ChangeRelationshipExclusive,
+		Confirmation: &ChangeRequestBindConfirmation{
+			CompleteDelivery: true, ContentVersionKey: "github:PR_kwDOExample42:manifest-7",
+		},
 	}
 	if validation := ValidateChangeRequestBindRequest(request); !validation.OK() {
 		t.Fatalf("valid bind request rejected: %+v", validation.Issues)
@@ -131,12 +133,12 @@ func TestBindRequestExposesOnlyOpaqueRepositoryEntryKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"root_agent_type", "root_session_id", "worktree", "common_root_id", "collaboration_revision"} {
+	for _, forbidden := range []string{"root_agent_type", "root_session_id", "worktree", "common_root_id", "collaboration_revision", "provider_object_id", "target_repository"} {
 		if strings.Contains(string(raw), forbidden) {
 			t.Fatalf("bind request exposes server-derived field %q: %s", forbidden, raw)
 		}
 	}
-	request.ConfirmExclusive = false
+	request.Confirmation.CompleteDelivery = false
 	if validation := ValidateChangeRequestBindRequest(request); !validation.Has(GitIssueInvalidLink) {
 		t.Fatalf("unconfirmed exclusive request accepted: %+v", validation.Issues)
 	}
@@ -171,7 +173,11 @@ func TestValidateSessionEvidenceRequiresDistinctPositionRevision(t *testing.T) {
 }
 
 func TestValidateEnvelopeRejectsNullAndCrossRootRepositories(t *testing.T) {
-	nilRepositories := &SessionGitEvidenceEnvelope{RootAgentType: "codex", RootSessionID: "session-root-1"}
+	nilRepositories := &SessionGitEvidenceEnvelope{
+		RootAgentType: "codex", RootSessionID: "session-root-1", Revision: 1,
+		Assessment:  NonExactGitEvidence(GitEvidenceUnavailable, ReasonBaselineNotCaptured),
+		GeneratedAt: gitTestTime("2026-08-11T08:00:00Z"),
+	}
 	if validation := ValidateSessionGitEvidenceEnvelope(nilRepositories); !validation.Has(GitIssueInvalidIdentity) {
 		t.Fatalf("nil repositories accepted: %+v", validation.Issues)
 	}
@@ -179,6 +185,32 @@ func TestValidateEnvelopeRejectsNullAndCrossRootRepositories(t *testing.T) {
 	envelope.Repositories[0].RootSessionID = "different-root"
 	if validation := ValidateSessionGitEvidenceEnvelope(envelope); !validation.Has(GitIssueInvalidIdentity) {
 		t.Fatalf("cross-root repository accepted: %+v", validation.Issues)
+	}
+}
+
+func TestValidateEnvelopeRequiresHonestEmptyAndAggregateState(t *testing.T) {
+	empty := &SessionGitEvidenceEnvelope{
+		RootAgentType: "codex", RootSessionID: "session-root-1", Revision: 1,
+		Assessment: ExactGitEvidence(), GeneratedAt: gitTestTime("2026-08-11T08:00:00Z"),
+		Repositories: []SessionGitEvidence{},
+	}
+	if validation := ValidateSessionGitEvidenceEnvelope(empty); !validation.Has(GitIssueInvalidAssessment) {
+		t.Fatalf("exact empty envelope accepted: %+v", validation.Issues)
+	}
+	empty.Assessment = NonExactGitEvidence(GitEvidenceUnavailable, ReasonNotAGitRepository)
+	if validation := ValidateSessionGitEvidenceEnvelope(empty); !validation.OK() {
+		t.Fatalf("honest unavailable empty envelope rejected: %+v", validation.Issues)
+	}
+
+	envelope := localIntervalGolden()
+	envelope.Repositories[0].Provisional = true
+	if validation := ValidateSessionGitEvidenceEnvelope(envelope); !validation.Has(GitIssueInvalidAssessment) {
+		t.Fatalf("unpropagated provisional state accepted: %+v", validation.Issues)
+	}
+	envelope.Provisional = true
+	envelope.Repositories[0].Stale = true
+	if validation := ValidateSessionGitEvidenceEnvelope(envelope); !validation.Has(GitIssueInvalidAssessment) {
+		t.Fatalf("unpropagated stale state accepted: %+v", validation.Issues)
 	}
 }
 

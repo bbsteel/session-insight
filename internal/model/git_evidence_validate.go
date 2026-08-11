@@ -195,8 +195,8 @@ func validateContentVersion(v *GitValidation, field string, content ChangeReques
 	validateSHA(v, field+".base_ref_sha", content.BaseRefSHA, false)
 	validateSHA(v, field+".diff_base_sha", content.DiffBaseSHA, false)
 	validateSHA(v, field+".head_sha", content.HeadSHA, false)
-	if content.NativeVersion == "" && (content.DiffBaseSHA == "" || content.HeadSHA == "" || content.FileManifestDigest == "") {
-		v.add(GitIssueInvalidRevision, field, "a derived content version requires diff-base SHA, head SHA, and file-manifest digest")
+	if content.NativeVersion == "" && (content.BaseRefSHA == "" || content.DiffBaseSHA == "" || content.HeadSHA == "" || content.FileManifestDigest == "") {
+		v.add(GitIssueInvalidRevision, field, "a derived content version requires base, diff-base, head SHAs, and file-manifest digest")
 	}
 }
 
@@ -439,7 +439,7 @@ func validateChangeLink(v *GitValidation, field string, link SessionChangeReques
 // on this DTO and therefore cannot be forged by the client.
 func ValidateChangeRequestBindRequest(request ChangeRequestBindRequest) GitValidation {
 	var v GitValidation
-	validateIdentity(&v, "change", request.Change)
+	validateOpaque(&v, "change_key", request.ChangeKey)
 	switch request.Relationship {
 	case ChangeRelationshipExclusive, ChangeRelationshipContributing, ChangeRelationshipRelated:
 	default:
@@ -449,15 +449,12 @@ func ValidateChangeRequestBindRequest(request ChangeRequestBindRequest) GitValid
 		validateOpaque(&v, "repository_entry_key", request.RepositoryEntryKey)
 		validateOpaque(&v, "content_version_key", string(request.ContentVersionKey))
 	}
-	if request.Change.Provider == ChangeProviderGeneric && request.Relationship != ChangeRelationshipRelated {
-		v.add(GitIssueInvalidLink, "relationship", "generic unresolved Change Requests may be related only")
-	}
 	if request.Relationship == ChangeRelationshipExclusive {
-		if !request.ConfirmExclusive || strings.TrimSpace(request.ConfirmationRevision) == "" {
-			v.add(GitIssueInvalidLink, "confirm_exclusive", "exclusive binding requires explicit confirmation tied to a confirmation revision")
+		if request.Confirmation == nil || !request.Confirmation.CompleteDelivery || request.Confirmation.ContentVersionKey != request.ContentVersionKey {
+			v.add(GitIssueInvalidLink, "confirmation", "exclusive binding requires complete-delivery confirmation for the requested content version")
 		}
-	} else if request.ConfirmExclusive || request.ConfirmationRevision != "" {
-		v.add(GitIssueInvalidLink, "confirm_exclusive", "exclusive confirmation fields are valid only for an exclusive relationship")
+	} else if request.Confirmation != nil {
+		v.add(GitIssueInvalidLink, "confirmation", "confirmation is valid only for an exclusive relationship")
 	}
 	return v.finish()
 }
@@ -618,8 +615,18 @@ func ValidateSessionGitEvidenceEnvelope(envelope *SessionGitEvidenceEnvelope) Gi
 	}
 	validateRequired(&v, "root_agent_type", envelope.RootAgentType)
 	validateRequired(&v, "root_session_id", envelope.RootSessionID)
+	if envelope.Revision < 1 {
+		v.add(GitIssueInvalidRevision, "revision", "must be >= 1")
+	}
+	validateAssessment(&v, "assessment", envelope.Assessment)
+	if envelope.GeneratedAt.IsZero() {
+		v.add(GitIssueMissingField, "generated_at", "generation timestamp is required")
+	}
 	if envelope.Repositories == nil {
 		v.add(GitIssueInvalidIdentity, "repositories", "must be an explicit JSON array, not null")
+	}
+	if len(envelope.Repositories) == 0 && envelope.Assessment.State == GitEvidenceExact {
+		v.add(GitIssueInvalidAssessment, "assessment", "an exact envelope requires at least one repository entry")
 	}
 	seen := map[string]bool{}
 	for i := range envelope.Repositories {
@@ -632,6 +639,15 @@ func ValidateSessionGitEvidenceEnvelope(envelope *SessionGitEvidenceEnvelope) Gi
 			v.add(GitIssueDuplicateID, field+".repository_entry_key", fmt.Sprintf("duplicate repository entry key %q", repository.RepositoryEntryKey))
 		}
 		seen[repository.RepositoryEntryKey] = true
+		if envelope.Assessment.State == GitEvidenceExact && repository.Assessment.State != GitEvidenceExact {
+			v.add(GitIssueInvalidAssessment, "assessment", "an exact envelope cannot contain degraded repository evidence")
+		}
+		if repository.Provisional && !envelope.Provisional {
+			v.add(GitIssueInvalidAssessment, "provisional", "envelope must reflect provisional repository evidence")
+		}
+		if repository.Stale && !envelope.Stale {
+			v.add(GitIssueInvalidAssessment, "stale", "envelope must reflect stale repository evidence")
+		}
 		for _, issue := range ValidateSessionGitEvidence(repository).Issues {
 			v.add(issue.Code, field+"."+issue.Field, issue.Detail)
 		}
