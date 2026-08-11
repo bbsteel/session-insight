@@ -38,6 +38,7 @@ const (
 	ReasonSessionStillLive                   GitEvidenceReasonCode = "session_still_live"
 	ReasonAgentGitFactMissing                GitEvidenceReasonCode = "agent_git_fact_missing"
 	ReasonAgentGitFactInvalid                GitEvidenceReasonCode = "agent_git_fact_invalid"
+	ReasonAgentGitFactTimestampUnavailable   GitEvidenceReasonCode = "agent_git_fact_timestamp_unavailable"
 	ReasonRepositoryNotFound                 GitEvidenceReasonCode = "repository_not_found"
 	ReasonNotAGitRepository                  GitEvidenceReasonCode = "not_a_git_repository"
 	ReasonWorktreeIdentityChanged            GitEvidenceReasonCode = "worktree_identity_changed"
@@ -75,7 +76,7 @@ func IsKnownGitEvidenceReasonCode(code GitEvidenceReasonCode) bool {
 	case ReasonBaselineNotCaptured, ReasonBaselineDirtyStateMissing,
 		ReasonBaselineCapturedAfterMutation, ReasonFinalNotCaptured,
 		ReasonSessionStillLive, ReasonAgentGitFactMissing,
-		ReasonAgentGitFactInvalid,
+		ReasonAgentGitFactInvalid, ReasonAgentGitFactTimestampUnavailable,
 		ReasonRepositoryNotFound, ReasonNotAGitRepository,
 		ReasonWorktreeIdentityChanged, ReasonHeadHistoryRewritten,
 		ReasonSharedWorktreeOverlap, ReasonSnapshotLimitExceeded,

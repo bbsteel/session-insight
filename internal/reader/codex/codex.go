@@ -641,6 +641,8 @@ func codexSessionFromReader(path string, source io.Reader, discovery model.Sessi
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 	}
+	// Keep the legacy detail fields unchanged. Source-qualified repository and
+	// branch facts belong to IndexSnapshotEnvelope.OriginGit.
 	return session, scanner.Err()
 }
 
@@ -738,6 +740,7 @@ func parseCodexEnvelopeEvidence(source io.Reader, sourceRevision string) (*model
 
 	missingAssessment := model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonAgentGitFactMissing)
 	invalidAssessment := model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonAgentGitFactInvalid)
+	untimedAssessment := model.NonExactGitEvidence(model.GitEvidenceEstimated, model.ReasonAgentGitFactTimestampUnavailable)
 	stringFact := func(value string, valid func(string) bool) model.GitFact[string] {
 		fact := model.GitFact[string]{
 			Source:         model.GitSourceAgentRecorded,
@@ -751,6 +754,9 @@ func parseCodexEnvelopeEvidence(source io.Reader, sourceRevision string) (*model
 			fact.Assessment = missingAssessment
 		case !valid(value):
 			fact.Assessment = invalidAssessment
+		case metaRecordedAt == nil:
+			fact.Value = value
+			fact.Assessment = untimedAssessment
 		default:
 			fact.Value = value
 			fact.Assessment = model.ExactGitEvidence()

@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +98,86 @@ func TestCodexAuthoritativeEnvelopeAbsentFacts(t *testing.T) {
 	}
 }
 
+func TestCodexAuthoritativeEnvelopeDegradesUntimedOriginFacts(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		outerTimestamp   string
+		payloadTimestamp string
+	}{
+		{name: "missing"},
+		{name: "invalid", outerTimestamp: "not-a-timestamp", payloadTimestamp: "also-not-a-timestamp"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sessionsDir := t.TempDir()
+			path := filepath.Join(sessionsDir, "untimed.jsonl")
+			metaPayload := map[string]any{
+				"id":  "untimed",
+				"cwd": "/workspace/untimed-project",
+				"git": map[string]any{
+					"repository_url": "https://example.test/acme/untimed.git",
+					"branch":         "feature/untimed",
+					"commit_hash":    "abcdef0123456789abcdef0123456789abcdef01",
+				},
+			}
+			if test.payloadTimestamp != "" {
+				metaPayload["timestamp"] = test.payloadTimestamp
+			}
+			metaLine := map[string]any{"type": "session_meta", "payload": metaPayload}
+			if test.outerTimestamp != "" {
+				metaLine["timestamp"] = test.outerTimestamp
+			}
+			lines := []map[string]any{
+				metaLine,
+				{
+					"timestamp": "2026-08-11T08:01:00Z",
+					"type":      "event_msg",
+					"payload": map[string]any{
+						"type":    "user_message",
+						"message": "test an untimed origin",
+					},
+				},
+			}
+			var data []byte
+			for _, line := range lines {
+				encoded, err := json.Marshal(line)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data = append(data, encoded...)
+				data = append(data, '\n')
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			envelope, err := New(sessionsDir).ReadIndexSnapshotEnvelope(context.Background(), model.Session{ID: "untimed"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, check := range map[string]struct {
+				fact model.GitFact[string]
+				want string
+			}{
+				"repository_url": {envelope.OriginGit.RepositoryURL, "https://example.test/acme/untimed.git"},
+				"worktree_path":  {envelope.OriginGit.WorktreePath, "/workspace/untimed-project"},
+				"branch":         {envelope.OriginGit.Branch, "feature/untimed"},
+				"head_sha":       {envelope.OriginGit.HeadSHA, "abcdef0123456789abcdef0123456789abcdef01"},
+			} {
+				if check.fact.Value != check.want || check.fact.Assessment.State != model.GitEvidenceEstimated ||
+					check.fact.Assessment.ReasonCode != model.ReasonAgentGitFactTimestampUnavailable || check.fact.RecordedAt != nil {
+					t.Errorf("%s untimed fact=%+v want value %q", name, check.fact, check.want)
+				}
+			}
+			if validation := model.ValidateIndexSnapshotEnvelope(envelope); !validation.OK() {
+				t.Fatalf("untimed envelope must remain valid: %+v", validation.Issues)
+			}
+			if envelope.Detail.Session.Repository != "" || envelope.Detail.Session.Branch != "" {
+				t.Fatalf("legacy detail fields must remain empty: repository=%q branch=%q", envelope.Detail.Session.Repository, envelope.Detail.Session.Branch)
+			}
+		})
+	}
+}
+
 func TestCodexOpenTurnDoesNotFabricateLiveState(t *testing.T) {
 	envelope := adaptertest.AssertIndexSnapshotEnvelope(t, gitOriginFixtureReader(), adaptertest.IndexSnapshotEnvelopeExpect{SessionID: "open-turn"})
 	if envelope.Finalization.State != model.SessionFinalizationUnknown ||
@@ -141,8 +222,8 @@ func TestCodexAuthoritativeEnvelopeSatisfiesProtocol(t *testing.T) {
 	var _ interface {
 		ReadIndexSnapshotEnvelope(context.Context, model.Session) (*model.IndexSnapshotEnvelope, error)
 	} = (*CodexReader)(nil)
-	if Capabilities().AdapterRevision != 4 {
-		t.Fatalf("adapter revision=%d want 4", Capabilities().AdapterRevision)
+	if Capabilities().AdapterRevision != 5 {
+		t.Fatalf("adapter revision=%d want 5", Capabilities().AdapterRevision)
 	}
 }
 
