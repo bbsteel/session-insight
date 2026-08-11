@@ -68,6 +68,27 @@ func TestHTTPClientRestrictsMethodsOriginsHeadersAndResponseSize(t *testing.T) {
 	}
 }
 
+func TestHTTPClientPreservesAllowlistedProviderMediaType(t *testing.T) {
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if accept := request.Header.Get("Accept"); accept != "application/vnd.github.diff" {
+			t.Fatalf("provider media type = %q", accept)
+		}
+		return response(request, http.StatusOK, "diff --git a/a b/a\n", nil), nil
+	})
+	client, err := newHTTPClient(approvedGitHubHost(t), HTTPClientConfig{}, nil, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := make(http.Header)
+	headers.Set("Accept", "application/vnd.github.diff")
+	if _, err := client.Do(
+		context.Background(), OperationGetSnapshot, http.MethodGet,
+		"https://api.github.com/repos/acme/widgets/pulls/42", headers,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHTTPClientAllowsOnlyApprovedRedirectAndDropsAuthorization(t *testing.T) {
 	var seen []string
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {

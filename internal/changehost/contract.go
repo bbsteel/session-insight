@@ -206,7 +206,21 @@ type DiscoveryResult struct {
 
 type SnapshotResult struct {
 	Snapshot model.ChangeRequestSnapshot `json:"snapshot"`
-	Metadata ResultMetadata              `json:"metadata"`
+	// Contents carries bounded raw provider patch bytes into the persistence
+	// orchestrator. It is internal capture data, not an API DTO, and therefore
+	// must never be JSON encoded alongside the sanitized snapshot model.
+	Contents []SnapshotContent `json:"-"`
+	Metadata ResultMetadata    `json:"metadata"`
+}
+
+type SnapshotContentPurpose string
+
+const SnapshotContentPatch SnapshotContentPurpose = "patch"
+
+type SnapshotContent struct {
+	FileKey string
+	Purpose SnapshotContentPurpose
+	Content []byte
 }
 
 type Operation string

@@ -228,6 +228,64 @@ func ValidateResultMetadata(metadata ResultMetadata) ValidationErrors {
 	return sortValidationErrors(errs)
 }
 
+// ValidateSnapshotResult ties exact patch claims to the raw bytes handed to
+// persistence. Provider capture bytes are intentionally excluded from JSON,
+// but their file keys and completeness still form part of the SPI contract.
+func ValidateSnapshotResult(result SnapshotResult) ValidationErrors {
+	var errs ValidationErrors
+	for _, issue := range model.ValidateChangeRequestSnapshot(&result.Snapshot).Issues {
+		errs = append(errs, ValidationError{
+			Field: "snapshot." + issue.Field, Code: ValidationContractMismatch, Message: issue.Detail,
+		})
+	}
+	for _, issue := range ValidateResultMetadata(result.Metadata) {
+		errs = append(errs, ValidationError{
+			Field: "metadata." + issue.Field, Code: issue.Code, Message: issue.Message,
+		})
+	}
+	if result.Contents == nil {
+		errs = append(errs, ValidationError{
+			Field: "contents", Code: ValidationMissingField, Message: "must be an explicit capture array, not nil",
+		})
+		return sortValidationErrors(errs)
+	}
+	files := make(map[string]model.GitFileChange, len(result.Snapshot.Files))
+	for _, file := range result.Snapshot.Files {
+		files[file.Key] = file
+	}
+	seen := make(map[string]bool, len(result.Contents))
+	for i, content := range result.Contents {
+		field := fmt.Sprintf("contents[%d]", i)
+		file, ok := files[content.FileKey]
+		if !ok {
+			errs = append(errs, ValidationError{Field: field + ".file_key", Code: ValidationContractMismatch, Message: "content must reference a captured file"})
+		}
+		if content.Purpose != SnapshotContentPatch {
+			errs = append(errs, ValidationError{Field: field + ".purpose", Code: ValidationInvalidState, Message: fmt.Sprintf("unknown snapshot content purpose %q", content.Purpose)})
+		}
+		key := content.FileKey + "\x00" + string(content.Purpose)
+		if seen[key] {
+			errs = append(errs, ValidationError{Field: field, Code: ValidationDuplicateValue, Message: "duplicate snapshot content"})
+		}
+		seen[key] = true
+		if len(content.Content) == 0 {
+			errs = append(errs, ValidationError{Field: field + ".content", Code: ValidationMissingField, Message: "captured patch bytes must be non-empty"})
+		}
+		if ok && file.PatchAssessment.State != model.GitEvidenceExact {
+			errs = append(errs, ValidationError{Field: field, Code: ValidationContractMismatch, Message: "non-exact file cannot carry authoritative patch bytes"})
+		}
+	}
+	for i, file := range result.Snapshot.Files {
+		if file.PatchAssessment.State == model.GitEvidenceExact && !seen[file.Key+"\x00"+string(SnapshotContentPatch)] {
+			errs = append(errs, ValidationError{
+				Field: fmt.Sprintf("snapshot.files[%d].patch_assessment", i),
+				Code:  ValidationContractMismatch, Message: "exact patch requires captured patch bytes",
+			})
+		}
+	}
+	return sortValidationErrors(errs)
+}
+
 // ValidateHostStatus validates the credential-safe host DTO without touching
 // an auth reference or making a request.
 func ValidateHostStatus(status HostStatus) ValidationErrors {

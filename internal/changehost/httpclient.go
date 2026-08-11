@@ -196,7 +196,9 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 		return HTTPResult{}, &Error{Code: ErrorInvalidResponse, Operation: operation, Cause: err}
 	}
 	copySafeRequestHeaders(request.Header, headers)
-	request.Header.Set("Accept", "application/json")
+	if request.Header.Get("Accept") == "" {
+		request.Header.Set("Accept", "application/json")
+	}
 	request.Header.Set("User-Agent", c.userAgent)
 	if c.authorization != nil {
 		value, configured, authErr := c.authorization.Authorization(requestContext, c.approved.Identity(), origin)
@@ -279,7 +281,7 @@ func (c *HTTPClient) validateURL(u *url.URL) (string, error) {
 }
 
 func copySafeRequestHeaders(destination, source http.Header) {
-	for _, name := range []string{"If-None-Match", "If-Modified-Since", "Accept"} {
+	for _, name := range []string{"If-None-Match", "If-Modified-Since", "Accept", "X-GitHub-Api-Version"} {
 		if value := source.Get(name); value != "" && !strings.ContainsAny(value, "\r\n") {
 			destination.Set(name, value)
 		}

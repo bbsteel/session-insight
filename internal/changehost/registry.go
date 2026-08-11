@@ -39,6 +39,47 @@ func NewRegistry() *Registry {
 	}
 }
 
+// NewDefaultRegistry returns the built-in v0.6 provider set. Registration is
+// local-only: constructing the registry never approves a host or performs
+// network I/O.
+func NewDefaultRegistry() *Registry {
+	registry := NewRegistry()
+	if err := RegisterBuiltIns(registry); err != nil {
+		panic(fmt.Sprintf("register built-in change providers: %v", err))
+	}
+	return registry
+}
+
+// RegisterBuiltIns installs GitHub and GitLab automatic providers plus the
+// offline-only generic parser. Generic intentionally has no provider factory.
+func RegisterBuiltIns(registry *Registry) error {
+	if registry == nil {
+		return ErrProviderContract
+	}
+	for _, parser := range []ReferenceParser{GitHubParser{}, GitLabParser{}, GenericParser{}} {
+		if err := registry.RegisterParser(parser); err != nil {
+			return err
+		}
+	}
+	factories := []struct {
+		kind    model.ChangeProviderKind
+		factory ProviderFactory
+	}{
+		{model.ChangeProviderGitHub, func(host HostIdentity, client *HTTPClient) (Provider, error) {
+			return NewGitHubProvider(host, client)
+		}},
+		{model.ChangeProviderGitLab, func(host HostIdentity, client *HTTPClient) (Provider, error) {
+			return NewGitLabProvider(host, client)
+		}},
+	}
+	for _, item := range factories {
+		if err := registry.RegisterFactory(item.kind, item.factory); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Registry) RegisterParser(parser ReferenceParser) error {
 	if nilInterface(parser) || !model.IsKnownChangeProviderKind(parser.Kind()) {
 		return fmt.Errorf("%w: invalid parser", ErrProviderNotFound)

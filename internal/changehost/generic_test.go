@@ -3,6 +3,7 @@ package changehost
 import (
 	"errors"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/bbsteel/session-insight/internal/model"
@@ -168,5 +169,49 @@ func TestRegistryBindsFactoryToRequestedKindAndApprovedHost(t *testing.T) {
 	provider, err := registry.NewProvider(model.ChangeProviderGitHub, approved.Identity(), client)
 	if err != nil || provider.Kind() != model.ChangeProviderGitHub {
 		t.Fatalf("valid provider binding rejected: provider=%v err=%v", provider, err)
+	}
+}
+
+func TestDefaultRegistryIncludesAutomaticAndOfflineProviders(t *testing.T) {
+	registry := NewDefaultRegistry()
+	want := []model.ChangeProviderKind{
+		model.ChangeProviderGeneric,
+		model.ChangeProviderGitHub,
+		model.ChangeProviderGitLab,
+	}
+	if got := registry.Kinds(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected built-in provider kinds: got %v want %v", got, want)
+	}
+
+	for _, example := range []struct {
+		raw      string
+		provider model.ChangeProviderKind
+	}{
+		{"https://github.com/acme/widgets/pull/42", model.ChangeProviderGitHub},
+		{"https://gitlab.com/acme/widgets/-/merge_requests/42", model.ChangeProviderGitLab},
+		{"https://code.example/acme/widgets/reviews/42", model.ChangeProviderGeneric},
+	} {
+		ref, err := registry.ResolveReference(example.raw)
+		if err != nil || ref.Provider != example.provider {
+			t.Fatalf("resolve %q: ref=%+v err=%v", example.raw, ref, err)
+		}
+	}
+}
+
+func TestDefaultRegistryFactoriesRemainBoundToApprovedPublicHost(t *testing.T) {
+	registry := NewDefaultRegistry()
+	approved := approvedGitHubHost(t)
+	client, err := newHTTPClient(approved, HTTPClientConfig{}, nil, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		panic("provider construction must not perform network I/O")
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := registry.NewProvider(model.ChangeProviderGitHub, PublicGitHubHost(), client)
+	if err != nil || provider.Kind() != model.ChangeProviderGitHub {
+		t.Fatalf("construct built-in GitHub provider: provider=%v err=%v", provider, err)
+	}
+	if _, err := registry.NewProvider(model.ChangeProviderGitLab, PublicGitLabHost(), client); !errors.Is(err, ErrProviderContract) {
+		t.Fatalf("mismatched approved client was accepted: %v", err)
 	}
 }

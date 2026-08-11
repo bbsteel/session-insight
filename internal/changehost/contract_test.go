@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
 )
@@ -125,6 +126,74 @@ func TestResultMetadataRetryAfterUsesExplicitSeconds(t *testing.T) {
 	seconds = -1
 	if errs := ValidateResultMetadata(metadata); !errs.Has(ValidationInvalidLimit) {
 		t.Fatalf("negative retry interval accepted: %v", errs)
+	}
+}
+
+func TestValidateSnapshotResultRequiresBytesForEveryExactPatch(t *testing.T) {
+	result := validSnapshotResult()
+	if errs := ValidateSnapshotResult(result); len(errs) != 0 {
+		t.Fatalf("valid snapshot result rejected: %v", errs)
+	}
+	result.Contents = []SnapshotContent{}
+	if errs := ValidateSnapshotResult(result); !errs.Has(ValidationContractMismatch) {
+		t.Fatalf("exact patch without capture bytes accepted: %v", errs)
+	}
+	result = validSnapshotResult()
+	result.Snapshot.Files[0].PatchAssessment = model.NonExactGitEvidence(
+		model.GitEvidenceUnavailable, model.ReasonChangeRequestPartial,
+	)
+	if errs := ValidateSnapshotResult(result); !errs.Has(ValidationContractMismatch) {
+		t.Fatalf("non-exact patch retained authoritative bytes: %v", errs)
+	}
+	result = validSnapshotResult()
+	result.Contents = nil
+	if errs := ValidateSnapshotResult(result); !errs.Has(ValidationMissingField) {
+		t.Fatalf("nil capture content array accepted: %v", errs)
+	}
+}
+
+func validSnapshotResult() SnapshotResult {
+	additions, deletions := 2, 1
+	target := &model.HostedRepositoryIdentity{
+		HostID: "host-github-public", ImmutableID: "repository-1", Slug: "acme/widgets",
+	}
+	return SnapshotResult{
+		Snapshot: model.ChangeRequestSnapshot{
+			SnapshotID: "snapshot-provider-pr-42",
+			Identity: model.ChangeRequestIdentity{
+				Provider: model.ChangeProviderGitHub, HostID: target.HostID,
+				TargetRepository: target, ProviderObjectID: "provider-pr-42",
+			},
+			Content: model.ChangeRequestContentVersion{
+				Key:        "github:provider-pr-42:content-1",
+				BaseRefSHA: strings.Repeat("1", 40), DiffBaseSHA: strings.Repeat("1", 40),
+				HeadSHA: strings.Repeat("2", 40), FileManifestDigest: "sha256:manifest-1",
+			},
+			MetadataRevision: "metadata-1", Kind: model.ChangeRequestPullRequest,
+			DisplayNumber: "42", LifecycleState: model.ChangeLifecycleOpen,
+			Title: "Add provider capture", WebURL: "https://github.com/acme/widgets/pull/42",
+			SourceRepository: target, SourceRef: "feature", TargetRef: "main",
+			Files: []model.GitFileChange{{
+				Ordinal: 0, Key: "hosted:file-1", Layer: model.GitFileLayerHosted,
+				DisplayPath: "internal/provider.go", PathEncoding: model.GitPathUTF8,
+				Status: model.GitFileModified, OldMode: "100644", NewMode: "100644",
+				Additions: &additions, Deletions: &deletions,
+				StatusAssessment: model.ExactGitEvidence(), PatchAssessment: model.ExactGitEvidence(),
+				Evidence: []model.GitEvidenceLink{},
+			}},
+			Commits: []model.GitCandidateCommit{},
+			Completeness: model.ChangeRequestCompleteness{
+				Metadata: model.ExactGitEvidence(), FileSet: model.ExactGitEvidence(),
+				Patches: model.ExactGitEvidence(), Modes: model.ExactGitEvidence(),
+				Commits: model.ExactGitEvidence(),
+			},
+			FetchedAt: time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC),
+		},
+		Contents: []SnapshotContent{{
+			FileKey: "hosted:file-1", Purpose: SnapshotContentPatch,
+			Content: []byte("@@ -1 +1 @@\n-old\n+new\n"),
+		}},
+		Metadata: ResultMetadata{Assessment: model.ExactGitEvidence(), PageCount: 1, ItemCount: 1},
 	}
 }
 
