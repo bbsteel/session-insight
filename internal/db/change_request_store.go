@@ -640,14 +640,14 @@ func ensureChangeRequestIdentity(ctx context.Context, c *sql.Conn, changeKey str
 	if provider != string(identity.Provider) || hostID != identity.HostID ||
 		repositoryID != expectedRepositoryID || objectID != identity.ProviderObjectID ||
 		genericID != identity.GenericOpaqueID {
-		return fmt.Errorf("Change Request key %q belongs to a different identity", changeKey)
+		return fmt.Errorf("change request key %q belongs to a different identity", changeKey)
 	}
 	return nil
 }
 
 func validateChangeRequestSnapshotWrite(write ChangeRequestSnapshotWrite) error {
 	if write.SyncStartedAt.IsZero() || write.SyncStartedAt.UnixNano() <= 0 || write.SyncStartedAt.After(write.Snapshot.FetchedAt) {
-		return fmt.Errorf("Change Request sync requires a request start no later than its fetch completion")
+		return fmt.Errorf("change request sync requires a request start no later than its fetch completion")
 	}
 	if validation := model.ValidateChangeRequestSnapshot(&write.Snapshot); !validation.OK() {
 		return fmt.Errorf("validate Change Request snapshot: %+v", validation.Issues)
@@ -663,7 +663,7 @@ func validateChangeRequestSnapshotWrite(write ChangeRequestSnapshotWrite) error 
 			return err
 		}
 		if write.Snapshot.SourceRepository.HostID != write.Snapshot.Identity.HostID {
-			return fmt.Errorf("Change Request source repository belongs to another host")
+			return fmt.Errorf("change request source repository belongs to another host")
 		}
 	}
 	fileKeys := make(map[string]bool, len(write.Snapshot.Files))
@@ -682,13 +682,13 @@ func validateChangeRequestSnapshotWrite(write ChangeRequestSnapshotWrite) error 
 	for _, content := range write.Contents {
 		key := content.FileKey + "\x00" + content.Purpose
 		if !fileKeys[content.FileKey] || seenContent[key] {
-			return fmt.Errorf("Change Request content has unknown or duplicate file key %q", content.FileKey)
+			return fmt.Errorf("change request content has unknown or duplicate file key %q", content.FileKey)
 		}
 		seenContent[key] = true
 		switch content.Purpose {
 		case "before", "after", "patch":
 		default:
-			return fmt.Errorf("Change Request content %q has invalid purpose", content.FileKey)
+			return fmt.Errorf("change request content %q has invalid purpose", content.FileKey)
 		}
 	}
 	for _, file := range write.Snapshot.Files {
@@ -731,16 +731,16 @@ func validateChangeRequestAlias(alias ChangeRequestAliasWrite, snapshot model.Ch
 		return fmt.Errorf("invalid Change Request SHA alias")
 	}
 	if alias.Repository == nil || alias.Repository.HostID != snapshot.Identity.HostID {
-		return fmt.Errorf("Change Request alias repository must use the Change Request host")
+		return fmt.Errorf("change request alias repository must use the Change Request host")
 	}
 	target := snapshot.Identity.TargetRepository
 	isTarget := alias.Repository.ImmutableID == target.ImmutableID
 	isSource := snapshot.SourceRepository != nil && alias.Repository.ImmutableID == snapshot.SourceRepository.ImmutableID
 	if !isTarget && !isSource {
-		return fmt.Errorf("Change Request alias repository must match its target or fixed source repository")
+		return fmt.Errorf("change request alias repository must match its target or fixed source repository")
 	}
 	if (alias.Kind == ChangeAliasURL || alias.Kind == ChangeAliasDisplayNumber || alias.Kind == ChangeAliasProviderNative) && !isTarget {
-		return fmt.Errorf("Change Request identity aliases must use the target repository")
+		return fmt.Errorf("change request identity aliases must use the target repository")
 	}
 	return nil
 }
@@ -1049,7 +1049,7 @@ func verifyChangeRequestURLOrigin(ctx context.Context, c *sql.Conn, hostID, rawU
 		return fmt.Errorf("read Change Request host approval: %w", err)
 	}
 	if lifecycle != "approved" {
-		return fmt.Errorf("Change Request host is not approved")
+		return fmt.Errorf("change request host is not approved")
 	}
 	var endpoints []string
 	if err := json.Unmarshal([]byte(endpointsJSON), &endpoints); err != nil {
@@ -1065,5 +1065,5 @@ func verifyChangeRequestURLOrigin(ctx context.Context, c *sql.Conn, hostID, rawU
 			return nil
 		}
 	}
-	return fmt.Errorf("Change Request web URL is outside the approved host endpoints")
+	return fmt.Errorf("change request web URL is outside the approved host endpoints")
 }

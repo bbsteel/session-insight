@@ -50,7 +50,7 @@ func (db *DB) StoreSessionHostedRepositoryBinding(
 		rootAgentType, rootSessionID, repositoryEntryKey,
 	).Scan(&bindingID); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("Session repository entry does not exist")
+			return fmt.Errorf("session repository entry does not exist")
 		}
 		return fmt.Errorf("resolve Session repository entry: %w", err)
 	}
@@ -59,12 +59,12 @@ func (db *DB) StoreSessionHostedRepositoryBinding(
 		SELECT lifecycle FROM change_hosts WHERE host_id = ?`, repository.HostID,
 	).Scan(&lifecycle); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("Change Request host does not exist")
+			return fmt.Errorf("change request host does not exist")
 		}
 		return fmt.Errorf("resolve Change Request host: %w", err)
 	}
 	if lifecycle != "approved" {
-		return fmt.Errorf("Change Request host is not approved")
+		return fmt.Errorf("change request host is not approved")
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO hosted_repositories(repository_id, host_id, provider_immutable_id, slug)
@@ -178,7 +178,7 @@ func (db *DB) StoreSessionChangeRequestLink(link model.SessionChangeRequestLink)
 			link.RootAgentType, link.RootSessionID, link.RepositoryEntryKey,
 		).Scan(&resolved); err != nil {
 			if err == sql.ErrNoRows {
-				return model.SessionChangeRequestLink{}, fmt.Errorf("Session repository entry does not exist")
+				return model.SessionChangeRequestLink{}, fmt.Errorf("session repository entry does not exist")
 			}
 			return model.SessionChangeRequestLink{}, fmt.Errorf("resolve Session repository entry: %w", err)
 		}
@@ -342,7 +342,7 @@ func (db *DB) StoreSessionChangeRequestLink(link model.SessionChangeRequestLink)
 			return model.SessionChangeRequestLink{}, fmt.Errorf("inspect hosted Change Request authority selection: %w", err)
 		}
 		if rows != 1 {
-			return model.SessionChangeRequestLink{}, fmt.Errorf("Session repository evidence does not exist")
+			return model.SessionChangeRequestLink{}, fmt.Errorf("session repository evidence does not exist")
 		}
 	}
 
@@ -361,7 +361,7 @@ func verifyStoredChangeRequestIdentity(ctx context.Context, c *sql.Conn, changeK
 		FROM change_request_identities WHERE change_id = ?`, changeKey,
 	).Scan(&provider, &hostID, &repositoryID, &objectID, &genericID); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("Change Request identity does not exist")
+			return fmt.Errorf("change request identity does not exist")
 		}
 		return fmt.Errorf("read Change Request identity: %w", err)
 	}
@@ -385,12 +385,12 @@ func verifyChangeLinkCollaboration(ctx context.Context, c *sql.Conn, link model.
 		link.RootAgentType, link.RootSessionID,
 	).Scan(&revision); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("Session collaboration root does not exist")
+			return fmt.Errorf("session collaboration root does not exist")
 		}
 		return fmt.Errorf("read Session collaboration revision: %w", err)
 	}
 	if revision != link.CollaborationRevision {
-		return fmt.Errorf("Session collaboration revision changed")
+		return fmt.Errorf("session collaboration revision changed")
 	}
 	if link.InvocationID == "" {
 		if link.SourceAgentType != link.RootAgentType || link.SourceSessionID != link.RootSessionID {
@@ -406,13 +406,13 @@ func verifyChangeLinkCollaboration(ctx context.Context, c *sql.Conn, link model.
 		link.RootAgentType, link.RootSessionID, link.InvocationID,
 	).Scan(&sourceAgentType, &backingAgentType, &backingSessionID); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("Session collaboration invocation does not exist")
+			return fmt.Errorf("session collaboration invocation does not exist")
 		}
 		return fmt.Errorf("read Session collaboration invocation: %w", err)
 	}
 	if sourceAgentType != link.SourceAgentType ||
 		(backingSessionID != "" && (backingAgentType != link.SourceAgentType || backingSessionID != link.SourceSessionID)) {
-		return fmt.Errorf("Session collaboration invocation identity changed")
+		return fmt.Errorf("session collaboration invocation identity changed")
 	}
 	return nil
 }
@@ -433,10 +433,10 @@ func stableChangeLinkOrdinal(ctx context.Context, c *sql.Conn, link model.Sessio
 			return 0, err
 		}
 		if rootAgentType != link.RootAgentType || rootSessionID != link.RootSessionID {
-			return 0, fmt.Errorf("Change Request link belongs to another Session root")
+			return 0, fmt.Errorf("change request link belongs to another Session root")
 		}
 		if !nullableStringMatchesAny(storedBindingID, bindingID) || storedChangeKey != changeKey {
-			return 0, fmt.Errorf("Change Request link repository and identity are immutable")
+			return 0, fmt.Errorf("change request link repository and identity are immutable")
 		}
 		return ordinal, nil
 	}

@@ -98,7 +98,7 @@ func (db *DB) ApproveChangeHost(hostID string, allowHTTP, allowPrivateNetwork bo
 		return err
 	}
 	if rows != 1 {
-		return fmt.Errorf("Change Request host preview does not exist")
+		return fmt.Errorf("change request host preview does not exist")
 	}
 	return nil
 }

@@ -87,7 +87,7 @@ func validateSHA(v *GitValidation, field, sha string, required bool) {
 		return
 	}
 	for _, r := range sha {
-		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			v.add(GitIssueInvalidSHA, field, "must be a 40- or 64-character lowercase hexadecimal object ID")
 			return
 		}

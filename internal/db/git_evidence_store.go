@@ -156,7 +156,7 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 			&storedCollaborationRevision, &storedCacheState,
 		); err != nil {
 			if err == sql.ErrNoRows {
-				return fmt.Errorf("Session Change Request link %q is not persisted for this repository", link.LinkID)
+				return fmt.Errorf("session change request link %q is not persisted for this repository", link.LinkID)
 			}
 			return fmt.Errorf("verify Session Change Request link %q: %w", link.LinkID, err)
 		}
@@ -170,7 +170,7 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 			storedConfirmationSource != string(link.ConfirmationSource) ||
 			storedConfirmationRevision != link.ConfirmationRevision ||
 			storedCollaborationRevision != link.CollaborationRevision {
-			return fmt.Errorf("Session Change Request link %q changed during evidence derivation", link.LinkID)
+			return fmt.Errorf("session change request link %q changed during evidence derivation", link.LinkID)
 		}
 		if evidence.AuthoritySelection != nil && evidence.AuthoritySelection.LinkID == link.LinkID {
 			if !storedSnapshotID.Valid {

@@ -35,7 +35,7 @@ func validateSourceFingerprint(v *GitValidation, envelope *IndexSnapshotEnvelope
 		v.add(GitIssueInvalidRevision, "source_fingerprint.digest", "sha256 digest must be 64 lowercase hexadecimal characters")
 	} else {
 		for _, r := range fingerprint.Digest {
-			if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+			if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 				v.add(GitIssueInvalidRevision, "source_fingerprint.digest", "sha256 digest must be 64 lowercase hexadecimal characters")
 				break
 			}

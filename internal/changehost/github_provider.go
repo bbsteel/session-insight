@@ -493,8 +493,6 @@ func githubFiles(
 		parsed, err := parseGitHubDiff(rawDiff)
 		if err == nil {
 			sections = parsed
-		} else {
-			rawAvailable = false
 		}
 	}
 	sectionMap := githubDiffSectionsByPath(sections)

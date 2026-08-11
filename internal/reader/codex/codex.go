@@ -183,7 +183,7 @@ func attachAuthoritativeCodexProvenance(detail *model.SessionDetail, path string
 		CapturedAt:      time.Now().UTC(),
 		AdapterRevision: Capabilities().AdapterRevision,
 		Sources: []model.SessionSourceFile{
-			provenance.PresentSource(model.SourceRolePrimaryTranscript, filepath.Clean(path), detail.Session.UpdatedAt, sourceSize),
+			provenance.PresentSource(model.SourceRolePrimaryTranscript, filepath.Clean(path), detail.UpdatedAt, sourceSize),
 		},
 		Warnings:          warnings,
 		HasReplayableBody: len(detail.Turns) > 0,
@@ -814,7 +814,7 @@ func validRecordedSHA(value string) bool {
 		return false
 	}
 	for _, r := range value {
-		if !(r >= '0' && r <= '9') && !(r >= 'a' && r <= 'f') {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return false
 		}
 	}

@@ -36,8 +36,8 @@ func AssertIndexSnapshotEnvelope(t *testing.T, r Reader, expect IndexSnapshotEnv
 	if validation := model.ValidateIndexSnapshotEnvelope(envelope); !validation.OK() {
 		t.Fatalf("invalid authoritative envelope: %+v", validation.Issues)
 	}
-	if envelope.Detail.Session.ID != expect.SessionID {
-		t.Fatalf("detail session id=%q want %q", envelope.Detail.Session.ID, expect.SessionID)
+	if envelope.Detail.ID != expect.SessionID {
+		t.Fatalf("detail session id=%q want %q", envelope.Detail.ID, expect.SessionID)
 	}
 	if !strings.HasPrefix(envelope.SourceRevision, string(model.SourceFingerprintSHA256)+":") {
 		t.Fatalf("source revision %q is not an authoritative sha256 fingerprint", envelope.SourceRevision)

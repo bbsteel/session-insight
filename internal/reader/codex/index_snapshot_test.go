@@ -46,7 +46,7 @@ func TestCodexAuthoritativeEnvelopeComplete(t *testing.T) {
 	if envelope.SourceFingerprint.SizeBytes != int64(len(data)) {
 		t.Fatalf("fingerprint size=%d want %d", envelope.SourceFingerprint.SizeBytes, len(data))
 	}
-	if envelope.Detail.Session.CWD != "/workspace/sanitized-project" || len(envelope.Detail.Turns) != 1 || len(envelope.RenderEvents) == 0 {
+	if envelope.Detail.CWD != "/workspace/sanitized-project" || len(envelope.Detail.Turns) != 1 || len(envelope.RenderEvents) == 0 {
 		t.Fatalf("detail/render not built from fixture: detail=%+v events=%d", envelope.Detail.Session, len(envelope.RenderEvents))
 	}
 }
@@ -70,8 +70,8 @@ func TestCodexAuthoritativeEnvelopePartialInvalidAndPrivateValues(t *testing.T) 
 		}
 	}
 	assertExactStringGitFact(t, "branch", origin.Branch, "feature/partial", envelope.SourceRevision)
-	if envelope.Detail.Session.CWD != "" {
-		t.Fatalf("invalid relative cwd escaped in detail: %q", envelope.Detail.Session.CWD)
+	if envelope.Detail.CWD != "" {
+		t.Fatalf("invalid relative cwd escaped in detail: %q", envelope.Detail.CWD)
 	}
 	if envelope.Finalization.SignalAssessment.Precision != model.SessionEvidenceEstimated ||
 		envelope.Finalization.SignalAssessment.ReasonCode != model.ReasonSessionSignalTimestampInvalid {
@@ -171,8 +171,8 @@ func TestCodexAuthoritativeEnvelopeDegradesUntimedOriginFacts(t *testing.T) {
 			if validation := model.ValidateIndexSnapshotEnvelope(envelope); !validation.OK() {
 				t.Fatalf("untimed envelope must remain valid: %+v", validation.Issues)
 			}
-			if envelope.Detail.Session.Repository != "" || envelope.Detail.Session.Branch != "" {
-				t.Fatalf("legacy detail fields must remain empty: repository=%q branch=%q", envelope.Detail.Session.Repository, envelope.Detail.Session.Branch)
+			if envelope.Detail.Repository != "" || envelope.Detail.Branch != "" {
+				t.Fatalf("legacy detail fields must remain empty: repository=%q branch=%q", envelope.Detail.Repository, envelope.Detail.Branch)
 			}
 		})
 	}
@@ -213,7 +213,7 @@ func TestCodexAuthoritativeRevisionChangesWithParsedBytes(t *testing.T) {
 	if first.SourceRevision == second.SourceRevision {
 		t.Fatalf("source revision did not change after byte mutation: %q", first.SourceRevision)
 	}
-	if first.Detail.Session.Name != second.Detail.Session.Name || len(first.RenderEvents) != len(second.RenderEvents) {
+	if first.Detail.Name != second.Detail.Name || len(first.RenderEvents) != len(second.RenderEvents) {
 		t.Fatal("non-semantic byte mutation unexpectedly changed parsed detail/render data")
 	}
 }
