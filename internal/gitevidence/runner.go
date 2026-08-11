@@ -28,6 +28,9 @@ const (
 	OperationObjectFormat   Operation = "object_format"
 	OperationHead           Operation = "head"
 	OperationBranch         Operation = "branch"
+	OperationIndexState     Operation = "index_state"
+	OperationStatusState    Operation = "status_state"
+	OperationSnapshotPaths  Operation = "snapshot_paths"
 )
 
 func operations() []Operation {
@@ -39,6 +42,9 @@ func operations() []Operation {
 		OperationObjectFormat,
 		OperationHead,
 		OperationBranch,
+		OperationIndexState,
+		OperationStatusState,
+		OperationSnapshotPaths,
 	}
 }
 
@@ -222,6 +228,12 @@ func operationArgs(operation Operation) ([]string, bool) {
 		return []string{"rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"}, true
 	case OperationBranch:
 		return []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, true
+	case OperationIndexState:
+		return []string{"ls-files", "--stage", "--full-name", "-z"}, true
+	case OperationStatusState:
+		return []string{"status", "--porcelain=v2", "-z", "--untracked-files=all", "--no-renames", "--ignore-submodules=none"}, true
+	case OperationSnapshotPaths:
+		return []string{"ls-files", "--cached", "--others", "--exclude-standard", "--full-name", "-z"}, true
 	default:
 		return nil, false
 	}
@@ -236,6 +248,7 @@ func fixedArgs(operation Operation) ([]string, bool) {
 		"--no-pager",
 		"--no-optional-locks",
 		"-c", "diff.external=",
+		"-c", "status.renames=false",
 		"-c", "core.fsmonitor=false",
 		"-c", "maintenance.auto=false",
 		"-c", "gc.auto=0",

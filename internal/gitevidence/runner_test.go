@@ -128,6 +128,30 @@ func TestRunnerUsesFixedArgvAndIsolatedEnvironment(t *testing.T) {
 	}
 }
 
+func TestSnapshotOperationsUseOnlyFixedReadOnlyArgv(t *testing.T) {
+	for operation, suffix := range map[Operation][]string{
+		OperationIndexState:    {"ls-files", "--stage", "--full-name", "-z"},
+		OperationStatusState:   {"status", "--porcelain=v2", "-z", "--untracked-files=all", "--no-renames", "--ignore-submodules=none"},
+		OperationSnapshotPaths: {"ls-files", "--cached", "--others", "--exclude-standard", "--full-name", "-z"},
+	} {
+		t.Run(string(operation), func(t *testing.T) {
+			argv, ok := fixedArgs(operation)
+			if !ok {
+				t.Fatalf("operation %q is not allowlisted", operation)
+			}
+			if len(argv) < len(suffix) || !reflect.DeepEqual(argv[len(argv)-len(suffix):], suffix) {
+				t.Fatalf("argv suffix = %q, want %q", argv, suffix)
+			}
+			joined := strings.Join(argv, " ")
+			for _, required := range []string{"--no-pager", "--no-optional-locks", "diff.external=", "status.renames=false", "core.fsmonitor=false", "credential.helper="} {
+				if !strings.Contains(joined, required) {
+					t.Errorf("argv %q is missing %q", argv, required)
+				}
+			}
+		})
+	}
+}
+
 func TestRunnerRejectsInjectionLookingOperationWithoutStartingProcess(t *testing.T) {
 	runner := testRunner(t, nil)
 	started := false
