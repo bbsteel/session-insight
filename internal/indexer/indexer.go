@@ -33,6 +33,9 @@ type Indexer struct {
 	db      *db.DB
 	readers []reader.BaseSessionReader
 	kick    chan struct{}
+	git     *gitEvidenceRuntime
+
+	gitAttempted sync.Map // agent_type\x00session_id -> successful bounded attempt
 
 	requestMu      sync.Mutex
 	fullRequested  bool
@@ -51,10 +54,12 @@ type Indexer struct {
 }
 
 func New(database *db.DB, readers []reader.BaseSessionReader) *Indexer {
+	gitRuntime, _ := newGitEvidenceRuntime()
 	return &Indexer{
 		db:             database,
 		readers:        readers,
 		kick:           make(chan struct{}, 1),
+		git:            gitRuntime,
 		agentRequested: make(map[string]struct{}),
 		progress: Progress{
 			State:   "idle",
@@ -361,7 +366,17 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 			return false, err
 		}
 		collabCurrentKnown = true
-		if collabCurrent {
+		gitCurrent := true
+		if _, authoritative := r.(reader.AuthoritativeIndexSnapshotReader); authoritative && ix.git != nil {
+			gitCurrent, err = ix.db.HasSessionGitEvidence(agentType, sess.ID)
+			if err != nil {
+				return false, err
+			}
+			if !gitCurrent {
+				_, gitCurrent = ix.gitAttempted.Load(agentType + "\x00" + sess.ID)
+			}
+		}
+		if collabCurrent && gitCurrent {
 			// Turn content is unchanged, but list-derived metadata may still
 			// need a backfill when adapter logic improves without touching
 			// session files (project basename normalization, Codex resume_id).
@@ -370,14 +385,17 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	}
 
 	var (
-		detail        *model.SessionDetail
-		renderEvents  []model.RenderEvent
-		detailElapsed time.Duration
-		renderElapsed time.Duration
+		detail                *model.SessionDetail
+		renderEvents          []model.RenderEvent
+		authoritativeEnvelope *model.IndexSnapshotEnvelope
+		authoritativeReader   reader.AuthoritativeIndexSnapshotReader
+		detailElapsed         time.Duration
+		renderElapsed         time.Duration
 	)
-	if authoritativeReader, ok := r.(reader.AuthoritativeIndexSnapshotReader); ok {
+	if snapshotReader, ok := r.(reader.AuthoritativeIndexSnapshotReader); ok {
+		authoritativeReader = snapshotReader
 		snapshotStarted := time.Now()
-		envelope, err := authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
+		envelope, err := snapshotReader.ReadIndexSnapshotEnvelope(ctx, sess)
 		detailElapsed = time.Since(snapshotStarted)
 		renderElapsed = 0
 		if err != nil {
@@ -388,6 +406,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		}
 		detail = envelope.Detail
 		renderEvents = envelope.RenderEvents
+		authoritativeEnvelope = envelope
 	} else if snapshotReader, ok := r.(reader.IndexSnapshotReader); ok {
 		snapshotStarted := time.Now()
 		var err error
@@ -417,6 +436,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	}
 
 	persisted := sess
+	persisted.AgentType = agentType
 	applyDetailMetadata(&persisted, detail.Session)
 
 	// Collaboration runs before the shared snapshot commit: a collaboration
@@ -443,6 +463,13 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		Revision:            revision,
 	}); err != nil {
 		return false, fmt.Errorf("replace session snapshot: %w", err)
+	}
+	if authoritativeEnvelope != nil && ix.git != nil {
+		if err := ix.indexGitEvidence(ctx, authoritativeReader, persisted, authoritativeEnvelope); err != nil {
+			_ = ix.db.ClearSessionWatermark(agentType, sess.ID)
+			return false, fmt.Errorf("index Git evidence: %w", err)
+		}
+		ix.gitAttempted.Store(agentType+"\x00"+sess.ID, struct{}{})
 	}
 	// Structured read failures with metadata-only / unsupported provenance may
 	// still surface via detail.Provenance without body; handled above.

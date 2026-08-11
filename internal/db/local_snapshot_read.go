@@ -37,6 +37,24 @@ type LocalGitSnapshotRecord struct {
 	Files             []LocalGitSnapshotFileRecord
 }
 
+// SessionRepositoryBindingID resolves the storage-private binding ID behind a
+// Session-scoped API repository key, preserving pre-v35 IDs when present.
+func (db *DB) SessionRepositoryBindingID(rootAgentType, rootSessionID, repositoryEntryKey string) (string, bool, error) {
+	var bindingID string
+	err := db.conn.QueryRow(`
+		SELECT binding_id FROM session_git_bindings
+		WHERE agent_type = ? AND session_id = ? AND repository_entry_key = ?`,
+		rootAgentType, rootSessionID, repositoryEntryKey,
+	).Scan(&bindingID)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("resolve Session repository binding: %w", err)
+	}
+	return bindingID, true, nil
+}
+
 // LatestLocalGitSnapshot returns the newest retained snapshot of one kind for
 // a binding, including any source bytes retained under the local quota.
 func (db *DB) LatestLocalGitSnapshot(bindingID string, kind model.GitSnapshotKind) (LocalGitSnapshotRecord, bool, error) {

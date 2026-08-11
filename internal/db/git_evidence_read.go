@@ -23,6 +23,26 @@ type ChangeRequestRecord struct {
 	Aliases         []string                     `json:"aliases"`
 }
 
+// HasSessionGitEvidence is the cheap backfill gate used when the normal turn
+// watermark is already current. It does not reconstruct manifests or blobs.
+func (db *DB) HasSessionGitEvidence(rootAgentType, rootSessionID string) (bool, error) {
+	var found int
+	err := db.conn.QueryRow(`
+		SELECT 1
+		FROM session_git_bindings binding
+		JOIN session_git_evidence evidence ON evidence.binding_id = binding.binding_id
+		WHERE binding.agent_type = ? AND binding.session_id = ?
+		LIMIT 1`, rootAgentType, rootSessionID,
+	).Scan(&found)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect Session Git evidence: %w", err)
+	}
+	return true, nil
+}
+
 // SessionGitEvidenceEnvelope reconstructs every repository entry for one
 // attribution root without consulting the filesystem or a hosted provider.
 func (db *DB) SessionGitEvidenceEnvelope(rootAgentType, rootSessionID string) (model.SessionGitEvidenceEnvelope, bool, error) {
