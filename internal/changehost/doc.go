@@ -1,4 +1,3 @@
-// Package changehost defines the provider-neutral, read-only contract for
-// hosted Change Requests. It contains no HTTP client and performs no network
-// access; provider implementations and host approval arrive in later phases.
+// Package changehost defines provider-neutral, read-only hosted Change Request
+// contracts plus the approved-host network boundary used by providers.
 package changehost
