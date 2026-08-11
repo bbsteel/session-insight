@@ -53,11 +53,6 @@ func (db *DB) PutSourceContent(owner SourceContentOwner, content []byte, quota S
 		return "", err
 	}
 	quota = quota.withDefaults()
-	if int64(len(content)) > quota.MaxFileBytes {
-		return "", fmt.Errorf("%w: file bytes %d exceed %d", ErrSourceContentQuotaExceeded, len(content), quota.MaxFileBytes)
-	}
-	digest := sha256.Sum256(content)
-	sha := hex.EncodeToString(digest[:])
 
 	ctx := context.Background()
 	c, err := db.conn.Conn(ctx)
@@ -74,6 +69,35 @@ func (db *DB) PutSourceContent(owner SourceContentOwner, content []byte, quota S
 			_, _ = c.ExecContext(ctx, `ROLLBACK`)
 		}
 	}()
+
+	sha, err := putSourceContentReference(ctx, c, owner, content, quota)
+	if err != nil {
+		return "", err
+	}
+	if err := checkSourceContentQuota(ctx, c, owner, quota); err != nil {
+		return "", err
+	}
+	if _, err := c.ExecContext(ctx, `COMMIT`); err != nil {
+		return "", fmt.Errorf("commit source content write: %w", err)
+	}
+	committed = true
+	return sha, nil
+}
+
+// putSourceContentReference writes one blob/reference pair on an existing
+// transaction. Aggregate stores use it so metadata, manifests, and retained
+// content become visible together. The caller performs aggregate quota checks
+// after attaching every reference.
+func putSourceContentReference(ctx context.Context, c *sql.Conn, owner SourceContentOwner, content []byte, quota SourceContentQuota) (string, error) {
+	if err := owner.validate(); err != nil {
+		return "", err
+	}
+	quota = quota.withDefaults()
+	if int64(len(content)) > quota.MaxFileBytes {
+		return "", fmt.Errorf("%w: file bytes %d exceed %d", ErrSourceContentQuotaExceeded, len(content), quota.MaxFileBytes)
+	}
+	digest := sha256.Sum256(content)
+	sha := hex.EncodeToString(digest[:])
 
 	if _, err := c.ExecContext(ctx, `
 		INSERT INTO source_content_blobs(sha256, content, raw_bytes, stored_bytes, codec)
@@ -118,13 +142,6 @@ func (db *DB) PutSourceContent(owner SourceContentOwner, content []byte, quota S
 			return "", err
 		}
 	}
-	if err := checkSourceContentQuota(ctx, c, owner, quota); err != nil {
-		return "", err
-	}
-	if _, err := c.ExecContext(ctx, `COMMIT`); err != nil {
-		return "", fmt.Errorf("commit source content write: %w", err)
-	}
-	committed = true
 	return sha, nil
 }
 
