@@ -31,6 +31,11 @@ const (
 	OperationIndexState     Operation = "index_state"
 	OperationStatusState    Operation = "status_state"
 	OperationSnapshotPaths  Operation = "snapshot_paths"
+	OperationCommitObject   Operation = "commit_object"
+	OperationCommitAncestry Operation = "commit_ancestry"
+	OperationCommitFirst    Operation = "commit_first_parent"
+	OperationCommitPaths    Operation = "commit_paths"
+	OperationCommitWindow   Operation = "commit_window"
 )
 
 func operations() []Operation {
@@ -45,6 +50,11 @@ func operations() []Operation {
 		OperationIndexState,
 		OperationStatusState,
 		OperationSnapshotPaths,
+		OperationCommitObject,
+		OperationCommitAncestry,
+		OperationCommitFirst,
+		OperationCommitPaths,
+		OperationCommitWindow,
 	}
 }
 
@@ -62,6 +72,7 @@ type ErrorCode string
 
 const (
 	ErrorInvalidConfig       ErrorCode = "invalid_config"
+	ErrorInvalidInput        ErrorCode = "invalid_input"
 	ErrorInvalidOperation    ErrorCode = "invalid_operation"
 	ErrorInvalidWorkingDir   ErrorCode = "invalid_working_directory"
 	ErrorStartFailed         ErrorCode = "start_failed"
@@ -244,7 +255,11 @@ func fixedArgs(operation Operation) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	argv := []string{
+	return append(fixedPrefix(), operationArgv...), true
+}
+
+func fixedPrefix() []string {
+	return []string{
 		"--no-pager",
 		"--no-optional-locks",
 		"-c", "diff.external=",
@@ -255,7 +270,6 @@ func fixedArgs(operation Operation) ([]string, bool) {
 		"-c", "credential.helper=",
 		"-c", "core.hooksPath=" + os.DevNull,
 	}
-	return append(argv, operationArgv...), true
 }
 
 func commandEnvironment() []string {
@@ -317,6 +331,19 @@ func (r *Runner) Run(ctx context.Context, cwd string, operation Operation) (Resu
 	}
 	argv, ok := fixedArgs(operation)
 	if !ok {
+		return Result{}, &Error{Code: ErrorInvalidOperation, Operation: operation}
+	}
+	return r.runArgs(ctx, cwd, operation, argv)
+}
+
+// runArgs is the single process boundary for fixed and private typed
+// operations. Callers outside this package cannot use it to smuggle arbitrary
+// Git arguments into the hardened runner.
+func (r *Runner) runArgs(ctx context.Context, cwd string, operation Operation, argv []string) (Result, error) {
+	if r == nil {
+		return Result{}, &Error{Code: ErrorInvalidConfig, Operation: operation}
+	}
+	if !isKnownOperation(operation) || len(argv) == 0 {
 		return Result{}, &Error{Code: ErrorInvalidOperation, Operation: operation}
 	}
 	workingDirectory, err := validateWorkingDirectory(cwd)

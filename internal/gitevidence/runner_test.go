@@ -210,6 +210,114 @@ func TestRunnerErrorNeverIncludesStderr(t *testing.T) {
 	}
 }
 
+func TestCandidateRunnerKeepsLiteralPathAfterRevisionSeparator(t *testing.T) {
+	runner := testRunner(t, nil)
+	runner.command = helperFactory("observe")
+	maliciousPath := "--all; touch candidate-injected"
+	result, err := runner.commitLog(context.Background(), t.TempDir(), commitLogRequest{
+		mode: commitLogPaths, final: strings.Repeat("a", 40),
+		paths: []string{maliciousPath}, since: time.Unix(100, 0), until: time.Unix(200, 0), limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observation helperObservation
+	if err := json.Unmarshal(result.Stdout, &observation); err != nil {
+		t.Fatalf("decode helper observation: %v", err)
+	}
+	separator := -1
+	for index, arg := range observation.Args {
+		if arg == "--" {
+			separator = index
+		}
+	}
+	if separator < 0 || separator+1 >= len(observation.Args) || observation.Args[separator+1] != maliciousPath {
+		t.Fatalf("literal path was not isolated after --: %q", observation.Args)
+	}
+	if observation.Args[len(observation.Args)-1] != maliciousPath {
+		t.Fatalf("unexpected argv after literal path: %q", observation.Args)
+	}
+	for _, required := range []string{"--no-textconv", "--no-ext-diff", "--no-show-signature"} {
+		found := false
+		for _, arg := range observation.Args {
+			if arg == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("candidate argv omitted %s: %q", required, observation.Args)
+		}
+	}
+	for _, arg := range observation.Args {
+		if strings.Contains(arg, "%ae") || strings.Contains(arg, "%aE") || strings.Contains(arg, "%ce") || strings.Contains(arg, "%cE") {
+			t.Fatalf("candidate format requested author/committer email: %q", observation.Args)
+		}
+	}
+}
+
+func TestCandidateRunnerRejectsUnvalidatedDynamicArguments(t *testing.T) {
+	runner := testRunner(t, nil)
+	started := false
+	runner.command = func(context.Context, string, ...string) *exec.Cmd {
+		started = true
+		return nil
+	}
+	for name, request := range map[string]commitLogRequest{
+		"revision": {
+			mode: commitLogWindow, final: "HEAD;touch-pwned",
+			since: time.Unix(100, 0), until: time.Unix(200, 0), limit: 2,
+		},
+		"path": {
+			mode: commitLogPaths, final: strings.Repeat("a", 40), paths: []string{"../outside"},
+			since: time.Unix(100, 0), until: time.Unix(200, 0), limit: 2,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := runner.commitLog(context.Background(), t.TempDir(), request)
+			if typed := typedError(t, err); typed.Code != ErrorInvalidInput {
+				t.Fatalf("code = %q, want %q", typed.Code, ErrorInvalidInput)
+			}
+		})
+	}
+	if started {
+		t.Fatal("invalid dynamic argument reached the process boundary")
+	}
+}
+
+func TestCandidateRunnerUsesOperationTimeout(t *testing.T) {
+	runner := testRunner(t, func(config *Config) {
+		config.Timeouts[OperationCommitWindow] = 60 * time.Millisecond
+	})
+	runner.command = helperFactory("sleep")
+	started := time.Now()
+	_, err := runner.commitLog(context.Background(), t.TempDir(), commitLogRequest{
+		mode: commitLogWindow, final: strings.Repeat("a", 40),
+		since: time.Unix(100, 0), until: time.Unix(200, 0), limit: 2,
+	})
+	if typed := typedError(t, err); typed.Code != ErrorTimedOut || typed.Operation != OperationCommitWindow {
+		t.Fatalf("typed error = %+v", typed)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("candidate timeout took %s", elapsed)
+	}
+}
+
+func TestCandidateRunnerUsesSharedOutputCaps(t *testing.T) {
+	runner := testRunner(t, func(config *Config) {
+		config.Default.StdoutBytes = 32
+		config.Default.StderrBytes = 16
+	})
+	runner.command = helperFactory("oversize")
+	_, err := runner.commitLog(context.Background(), t.TempDir(), commitLogRequest{
+		mode: commitLogWindow, final: strings.Repeat("a", 40),
+		since: time.Unix(100, 0), until: time.Unix(200, 0), limit: 2,
+	})
+	if typed := typedError(t, err); typed.Code != ErrorOutputLimitExceeded || typed.Operation != OperationCommitWindow {
+		t.Fatalf("typed error = %+v", typed)
+	}
+}
+
 func TestNewRunnerRejectsInvalidConfiguration(t *testing.T) {
 	config := DefaultConfig()
 	config.Default.StdoutBytes = 0
