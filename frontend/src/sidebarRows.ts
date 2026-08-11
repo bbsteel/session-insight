@@ -29,8 +29,9 @@ export function formatRelativeTime(dateStr: string, now = Date.now(), locale = '
   if (!Number.isFinite(timestamp)) return dateStr
 
   const elapsedMinutes = Math.max(0, Math.floor((now - timestamp) / 60_000))
+  // Prefer product copy over Intl: zh-CN "此刻" is literary; "刚刚" / "just now" reads better in a session list.
+  if (elapsedMinutes < 1) return locale === 'en' ? 'just now' : '刚刚'
   const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
-  if (elapsedMinutes < 1) return relative.format(0, 'minute')
   if (elapsedMinutes < 60) return relative.format(-elapsedMinutes, 'minute')
   const hours = Math.floor(elapsedMinutes / 60)
   if (hours < 24) return relative.format(-hours, 'hour')
