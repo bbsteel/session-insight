@@ -6,9 +6,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
-func TestV35FreshSchema(t *testing.T) {
+func TestV36FreshSchema(t *testing.T) {
 	database, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -19,21 +21,88 @@ func TestV35FreshSchema(t *testing.T) {
 	if err := database.Conn().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 35 {
-		t.Fatalf("schema version = %d, want 35", version)
+	if version != 36 {
+		t.Fatalf("schema version = %d, want 36", version)
 	}
 	complete, err := inspectV34Schema(t.Context(), database.Conn())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !complete {
+		for _, object := range v34SchemaObjects {
+			exists, objectErr := schemaObjectExists(t.Context(), database.Conn(), object)
+			if objectErr != nil || !exists {
+				t.Logf("v34 object %s %s exists=%v err=%v", object.kind, object.name, exists, objectErr)
+			}
+		}
 		t.Fatal("fresh v34 physical schema is incomplete")
 	}
 	complete, err = inspectV35Schema(t.Context(), database.Conn())
 	if err != nil || !complete {
 		t.Fatalf("fresh v35 physical schema complete=%v err=%v", complete, err)
 	}
+	complete, err = inspectV36Schema(t.Context(), database.Conn())
+	if err != nil || !complete {
+		t.Fatalf("fresh v36 physical schema complete=%v err=%v", complete, err)
+	}
 	assertNoForeignKeyViolations(t, database.Conn())
+}
+
+func TestV36RebuildPreservesSnapshotFilesAndAcceptsSpecialKinds(t *testing.T) {
+	dir := makeRawV33Database(t)
+	conn, err := sql.Open("sqlite3", filepath.Join(dir, "index.db")+"?_foreign_keys=on&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := migrateGitAssociationV34(conn); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateGitAssociationV35(conn); err != nil {
+		t.Fatal(err)
+	}
+	database := &DB{conn: conn}
+	insertTestSession(t, database, "codex", "v36-upgrade")
+	seed := testSessionGitEvidence("v36-upgrade", "entry-v36", "seed.go")
+	if err := database.ReplaceSessionGitEvidence(seed); err != nil {
+		t.Fatal(err)
+	}
+	bindingID := CanonicalSessionRepositoryBindingID("codex", "v36-upgrade", "entry-v36")
+	write := localSnapshotTestWrite(bindingID, "v36-baseline", model.GitSnapshotBaseline, "seed.go", []byte("seed"))
+	if err := database.StoreLocalGitSnapshot(write); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateGitAssociationV36(conn); err != nil {
+		t.Fatal(err)
+	}
+
+	var displayPath string
+	if err := conn.QueryRow(`SELECT display_path FROM session_git_snapshot_files WHERE snapshot_id='v36-baseline'`).Scan(&displayPath); err != nil {
+		t.Fatal(err)
+	}
+	if displayPath != "seed.go" {
+		t.Fatalf("preserved display path = %q", displayPath)
+	}
+	if _, err := conn.Exec(`
+		INSERT INTO session_git_snapshot_files(
+			snapshot_id,path_key,ordinal,raw_path,display_path,path_encoding,
+			layer,file_type,content_state
+		) VALUES ('v36-baseline',?,1,?,'socket','utf8','worktree','special','unavailable')`,
+		strings.Repeat("f", 64), []byte("socket"),
+	); err != nil {
+		t.Fatalf("insert special snapshot file: %v", err)
+	}
+	complete, err := inspectV34Schema(t.Context(), conn)
+	if err != nil || !complete {
+		for _, object := range v34SchemaObjects {
+			exists, objectErr := schemaObjectExists(t.Context(), conn, object)
+			if objectErr != nil || !exists {
+				t.Logf("v34 object %s %s exists=%v err=%v", object.kind, object.name, exists, objectErr)
+			}
+		}
+		t.Fatalf("v34 schema rejected v36 successor: complete=%v err=%v", complete, err)
+	}
+	assertNoForeignKeyViolations(t, conn)
 }
 
 func TestV35UpgradesV34AliasScopeWithoutWeakeningV34Inspection(t *testing.T) {

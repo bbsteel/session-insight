@@ -50,6 +50,38 @@ func TestStoreLocalGitSnapshotPublishesManifestAndContentAtomically(t *testing.T
 	}
 }
 
+func TestLatestLocalGitSnapshotRoundTripsRetainedAndSpecialFiles(t *testing.T) {
+	database, bindingID := openLocalSnapshotTestDB(t, "snapshot-read", "snapshot-read-entry")
+	defer database.Close()
+
+	write := localSnapshotTestWrite(bindingID, "snapshot-read-final", model.GitSnapshotFinal, "empty.txt", []byte{})
+	specialDigest := sha256.Sum256([]byte("socket"))
+	write.Files = append(write.Files, LocalGitSnapshotFileWrite{
+		PathKey: hex.EncodeToString(specialDigest[:]), Ordinal: 1,
+		RawPath: []byte("socket"), DisplayPath: "socket", PathEncoding: model.GitPathUTF8,
+		Layer: model.GitFileLayerWorktree, FileType: LocalGitFileSpecial,
+		Assessment: model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonSnapshotObjectMissing),
+	})
+	if err := database.StoreLocalGitSnapshot(write); err != nil {
+		t.Fatal(err)
+	}
+
+	record, ok, err := database.LatestLocalGitSnapshot(bindingID, model.GitSnapshotFinal)
+	if err != nil || !ok {
+		t.Fatalf("LatestLocalGitSnapshot ok=%v err=%v", ok, err)
+	}
+	if record.Summary.SnapshotID != "snapshot-read-final" || len(record.Files) != 2 {
+		t.Fatalf("snapshot=%q files=%d", record.Summary.SnapshotID, len(record.Files))
+	}
+	if !record.Files[0].Retained || len(record.Files[0].Content) != 0 {
+		t.Fatalf("exact empty content was not retained: %+v", record.Files[0])
+	}
+	if record.Files[1].FileType != LocalGitFileSpecial || record.Files[1].Retained ||
+		record.Files[1].Assessment.ReasonCode != model.ReasonSnapshotObjectMissing {
+		t.Fatalf("special file = %+v", record.Files[1])
+	}
+}
+
 func TestStoreLocalGitSnapshotFailurePreservesPreviousCheckpoint(t *testing.T) {
 	database, bindingID := openLocalSnapshotTestDB(t, "snapshot-rollback", "snapshot-rollback-entry")
 	defer database.Close()

@@ -17,6 +17,8 @@ const (
 	LocalGitFileSymlink   LocalGitFileType = "symlink"
 	LocalGitFileSubmodule LocalGitFileType = "submodule"
 	LocalGitFileBinary    LocalGitFileType = "binary"
+	LocalGitFileSpecial   LocalGitFileType = "special"
+	LocalGitFileMissing   LocalGitFileType = "missing"
 )
 
 // LocalGitSnapshotFileWrite is one immutable file-manifest row. RetainContent
@@ -234,7 +236,8 @@ func validateLocalGitSnapshotWrite(write LocalGitSnapshotWrite) error {
 			return fmt.Errorf("local Git snapshot file %q has invalid layer", file.PathKey)
 		}
 		switch file.FileType {
-		case LocalGitFileRegular, LocalGitFileSymlink, LocalGitFileSubmodule, LocalGitFileBinary:
+		case LocalGitFileRegular, LocalGitFileSymlink, LocalGitFileSubmodule, LocalGitFileBinary,
+			LocalGitFileSpecial, LocalGitFileMissing:
 		default:
 			return fmt.Errorf("local Git snapshot file %q has invalid file type", file.PathKey)
 		}

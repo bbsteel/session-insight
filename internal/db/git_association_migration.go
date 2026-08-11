@@ -650,6 +650,10 @@ func schemaObjectExists(ctx context.Context, q schemaQueryer, object v34SchemaOb
 }
 
 func schemaObjectMatchesCompatibleSuccessor(actual string, object v34SchemaObject) bool {
+	if object.kind == "table" && object.name == v36SnapshotFilesObject.name &&
+		compactDDL(actual) == compactDDL(v36SnapshotFilesObject.ddl) {
+		return true
+	}
 	if object.kind != "trigger" {
 		return false
 	}
