@@ -1,5 +1,13 @@
 import type { AgentInfo, EditCall, PositionsResponse, ResumePlan, ResumeResult, SearchResult, SessionDetail, SessionSummary, SessionTerminalStatus, TerminalFocusResult } from './types'
 import type { CollaborationGraphDTO, FactEvidenceDTO } from './collaboration/types.js'
+import type {
+  ChangeHostPreview,
+  ChangeRequestLookup,
+  ChangeRequestRelationship,
+  ChangeRequestResolveResponse,
+  SessionChangeRequestLink,
+  SessionGitEvidenceEnvelope,
+} from './gitEvidence.js'
 import { localize } from './i18nRuntime.js'
 
 export class APIError extends Error {
@@ -183,6 +191,130 @@ export async function fetchCollaborationDetail(
     detail: await readJson<CollaborationDetailResponse>(res, 'collaboration'),
     etag: res.headers.get('ETag'),
   }
+}
+
+// ---- Session Git evidence and hosted Change Requests ----
+
+export interface GitEvidenceResult {
+  evidence: SessionGitEvidenceEnvelope
+  etag: string | null
+}
+
+export async function fetchSessionGitEvidence(
+  id: string,
+  agent: string,
+  options?: { etag?: string | null; signal?: AbortSignal },
+): Promise<GitEvidenceResult | 'not-modified'> {
+  const params = new URLSearchParams({ agent })
+  const headers: Record<string, string> = {}
+  if (options?.etag) headers['If-None-Match'] = options.etag
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/git-evidence?${params}`, {
+    headers,
+    signal: options?.signal,
+  })
+  if (res.status === 304) return 'not-modified'
+  if (!res.ok) throw await responseError(res, 'git_evidence_load_failed')
+  return {
+    evidence: await readJson<SessionGitEvidenceEnvelope>(res, 'Git evidence'),
+    etag: res.headers.get('ETag'),
+  }
+}
+
+export async function fetchSessionChangeRequests(id: string, agent: string): Promise<SessionChangeRequestLink[]> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/change-requests?${params}`)
+  if (!res.ok) throw await responseError(res, 'change_requests_load_failed')
+  const payload = await readJson<{ links: SessionChangeRequestLink[] }>(res, 'Change Request links')
+  return payload.links
+}
+
+export async function fetchSessionGitPatch(
+  id: string,
+  agent: string,
+  repositoryEntryKey: string,
+  fileKey: string,
+): Promise<string> {
+  const params = new URLSearchParams({ agent, repository: repositoryEntryKey })
+  const res = await fetch(
+    `/api/sessions/${encodeURIComponent(id)}/git-evidence/files/${encodeURIComponent(fileKey)}/patch?${params}`,
+  )
+  if (!res.ok) throw await responseError(res, 'git_patch_load_failed')
+  return res.text()
+}
+
+export async function resolveChangeRequest(reference: string): Promise<ChangeRequestResolveResponse> {
+  const res = await fetch('/api/change-requests/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reference }),
+  })
+  if (!res.ok) throw await responseError(res, 'change_request_resolve_failed')
+  return readJson<ChangeRequestResolveResponse>(res, 'Change Request resolution')
+}
+
+export async function bindSessionChangeRequest(
+  id: string,
+  agent: string,
+  request: {
+    change_key: string
+    repository_entry_key?: string
+    content_version_key?: string
+    relationship: ChangeRequestRelationship
+    confirmation?: { complete_delivery: true; content_version_key: string }
+  },
+): Promise<SessionChangeRequestLink> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/change-requests/bind?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) throw await responseError(res, 'change_request_bind_failed')
+  return readJson<SessionChangeRequestLink>(res, 'Change Request link')
+}
+
+export async function deleteSessionChangeRequest(id: string, agent: string, linkID: string): Promise<void> {
+  const params = new URLSearchParams({ agent })
+  const res = await fetch(
+    `/api/sessions/${encodeURIComponent(id)}/change-requests/${encodeURIComponent(linkID)}?${params}`,
+    { method: 'DELETE' },
+  )
+  if (!res.ok) throw await responseError(res, 'change_request_unlink_failed')
+}
+
+export async function previewChangeHost(reference: string): Promise<ChangeHostPreview> {
+  const res = await fetch('/api/change-hosts/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reference }),
+  })
+  if (!res.ok) throw await responseError(res, 'change_host_preview_failed')
+  return readJson<ChangeHostPreview>(res, 'Change Request host preview')
+}
+
+export async function approveChangeHost(
+  hostKey: string,
+  options: { allowHTTP: boolean; allowPrivateNetwork: boolean },
+): Promise<void> {
+  const res = await fetch(`/api/change-hosts/${encodeURIComponent(hostKey)}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      allow_http: options.allowHTTP,
+      allow_private_network: options.allowPrivateNetwork,
+    }),
+  })
+  if (!res.ok) throw await responseError(res, 'change_host_approve_failed')
+}
+
+export async function fetchChangeRequestSessions(changeKey: string): Promise<{
+  change_key: string
+  linked_sessions: ChangeRequestLookup['linked_sessions']
+  candidate_sessions: ChangeRequestLookup['candidate_sessions']
+}> {
+  const res = await fetch(`/api/change-requests/${encodeURIComponent(changeKey)}/sessions`)
+  if (!res.ok) throw await responseError(res, 'change_request_sessions_failed')
+  return readJson(res, 'Change Request sessions')
 }
 
 export async function fetchBookmarks(): Promise<SessionSummary[]> {
