@@ -91,6 +91,9 @@ function SessionMatchGroup({
 export default function ChangeRequestLookupDialog({ onClose, onSelectSession, session, onLinked }: Props) {
   const { t } = useI18n()
   const [reference, setReference] = useState('')
+  // Keep sensitive host approval bound to the exact reference that produced
+  // the approval prompt, rather than to editable input text.
+  const [resolvedReference, setResolvedReference] = useState<string | null>(null)
   const [result, setResult] = useState<ChangeRequestResolveResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -120,11 +123,15 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
     setLoading(true)
     setError(null)
     setResult(null)
+    setResolvedReference(null)
     setHostPreview(null)
     setHostScopeConfirmed(false)
     try {
       const next = await resolveChangeRequest(value)
-      if (resolveGenerationRef.current === generation) setResult(next)
+      if (resolveGenerationRef.current === generation) {
+        setResult(next)
+        setResolvedReference(value)
+      }
     } catch (cause) {
       if (resolveGenerationRef.current === generation) {
         setError(cause instanceof APIError ? cause.code : 'change_request_resolve_failed')
@@ -135,29 +142,40 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
   }
 
   const inspectHost = async () => {
+    if (!resolvedReference) return
+    const generation = ++resolveGenerationRef.current
     setEnabling(true)
     setError(null)
     try {
-      setHostPreview(await previewChangeHost(reference.trim()))
+      const preview = await previewChangeHost(resolvedReference)
+      if (resolveGenerationRef.current === generation) setHostPreview(preview)
     } catch (cause) {
-      setError(cause instanceof APIError ? cause.code : 'change_host_preview_failed')
+      if (resolveGenerationRef.current === generation) {
+        setError(cause instanceof APIError ? cause.code : 'change_host_preview_failed')
+      }
     } finally {
-      setEnabling(false)
+      if (resolveGenerationRef.current === generation) setEnabling(false)
     }
   }
 
   const enableHost = async () => {
-    if (!hostPreview) return
+    if (!hostPreview || !resolvedReference) return
+    const generation = ++resolveGenerationRef.current
     setEnabling(true)
     setError(null)
     try {
       await approveChangeHost(hostPreview.host.key, { allowHTTP, allowPrivateNetwork })
-      setResult(await resolveChangeRequest(reference.trim()))
-      setHostPreview(null)
+      const next = await resolveChangeRequest(resolvedReference)
+      if (resolveGenerationRef.current === generation) {
+        setResult(next)
+        setHostPreview(null)
+      }
     } catch (cause) {
-      setError(cause instanceof APIError ? cause.code : 'change_host_approve_failed')
+      if (resolveGenerationRef.current === generation) {
+        setError(cause instanceof APIError ? cause.code : 'change_host_approve_failed')
+      }
     } finally {
-      setEnabling(false)
+      if (resolveGenerationRef.current === generation) setEnabling(false)
     }
   }
 
