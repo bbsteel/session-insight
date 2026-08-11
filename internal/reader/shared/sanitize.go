@@ -55,9 +55,10 @@ func CollapseBinarySpans(s string) string {
 			end++
 		}
 		span := runes[i:last]
+		// Short spans are dropped: an isolated stray control/replacement
+		// rune is not useful content, and carrying it downstream causes
+		// terminal parsers to emit errors.
 		if len(span) < minBinarySpan {
-			sb.WriteString(string(span))
-			prev = span[len(span)-1]
 			i = last
 			continue
 		}
@@ -120,18 +121,28 @@ func stripANSIEscapes(s string) string {
 			i = j
 		case ']': // OSC: ESC ] … terminated by BEL or ESC \
 			j := i + 2
+			terminated := false
 			for j < len(runes) {
 				if runes[j] == '\a' {
 					j++
+					terminated = true
 					break
 				}
 				if runes[j] == esc && j+1 < len(runes) && runes[j+1] == '\\' {
 					j += 2
+					terminated = true
 					break
 				}
 				j++
 			}
-			i = j
+			if terminated {
+				i = j
+			} else {
+				// Unterminated OSC: drop the incomplete escape and the rest.
+				// We do not keep a bare ESC literal because downstream terminal
+				// parsers would treat it as the start of a malformed sequence.
+				i = len(runes)
+			}
 		default:
 			// Two-byte sequence (ESC + final byte); anything else keeps the
 			// ESC so span detection still sees a malformed/lone escape.

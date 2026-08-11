@@ -10,13 +10,22 @@ func TestCollapseBinarySpansKeepsCleanText(t *testing.T) {
 		"",
 		"plain ascii text\nwith newlines\tand tabs",
 		"日本語のテキストと絵文字 🔥\n複数行",
-		"short stray � char stays", // below minBinarySpan
-		"one\x01two",               // single control rune stays
 	}
 	for _, in := range cases {
 		if got := CollapseBinarySpans(in); got != in {
 			t.Fatalf("CollapseBinarySpans(%q) = %q, want unchanged", in, got)
 		}
+	}
+}
+
+// Isolated stray control/replacement runes are removed even when they do not
+// form a collapsible span, so terminal renderers never see them.
+func TestCollapseBinarySpansStripsIsolatedStrays(t *testing.T) {
+	if got := CollapseBinarySpans("one\x01two"); got != "onetwo" {
+		t.Fatalf("single control rune should be stripped, got %q", got)
+	}
+	if got := CollapseBinarySpans("short stray � char stays"); got != "short stray  char stays" {
+		t.Fatalf("single replacement char should be stripped, got %q", got)
 	}
 }
 
@@ -27,7 +36,8 @@ func TestCollapseBinarySpansStripsANSIEscapes(t *testing.T) {
 		"\x1b[31mred file\x1b[0m":                         "red file",
 		"ls \x1b[1;34mdir\x1b[0m done":                    "ls dir done",
 		"\x1b]8;;https://example.com\alink\x1b]8;;\x1b\\": "link",
-		"plain": "plain",
+		"plain":                               "plain",
+		"\x1b]unterminated but keep text\x1b": "",
 	}
 	for in, want := range cases {
 		if got := CollapseBinarySpans(in); got != want {

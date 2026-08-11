@@ -26,10 +26,22 @@ func TestUnwrapUntrustedResult(t *testing.T) {
 		t.Fatalf("plain unwrap=(%q,%v), want unchanged,false", got, ok)
 	}
 
-	// Envelope without the known preamble still drops the tags.
-	tagged := "<untrusted_tool_result source=\"x\">\nraw payload\n</untrusted_tool_result>"
-	if got, ok := unwrapUntrustedResult(tagged); !ok || got != "raw payload" {
-		t.Fatalf("tagged unwrap=(%q,%v)", got, ok)
+	// Envelope without the known preamble is now rejected (returned unchanged).
+	nonPreamble := "<untrusted_tool_result source=\"x\">\nraw payload\n</untrusted_tool_result>"
+	if got, ok := unwrapUntrustedResult(nonPreamble); ok || got != nonPreamble {
+		t.Fatalf("nonPreamble unwrap=(%q,%v)", got, ok)
+	}
+
+	// Missing closing tag is rejected.
+	unclosed := "<untrusted_tool_result source=\"x\">\n" + testEnvelopePreamble + "\npayload"
+	if got, ok := unwrapUntrustedResult(unclosed); ok || got != unclosed {
+		t.Fatalf("unclosed unwrap=(%q,%v)", got, ok)
+	}
+
+	// A tag starting with the same prefix but a different name is not an envelope.
+	lookalike := "<untrusted_tool_result_summary>not an envelope</untrusted_tool_result_summary>"
+	if got, ok := unwrapUntrustedResult(lookalike); ok || got != lookalike {
+		t.Fatalf("lookalike unwrap=(%q,%v)", got, ok)
 	}
 
 	// Preamble with no payload at all yields an empty payload, not the preamble.

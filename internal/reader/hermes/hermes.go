@@ -947,35 +947,41 @@ const (
 )
 
 // unwrapUntrustedResult strips the envelope and returns the inner payload.
-// The second return value reports whether an envelope was present. Content
-// without an envelope is returned unchanged.
+// The second return value reports whether a well-formed envelope was present.
+// Malformed inputs — tags that are not exactly <untrusted_tool_result ...>,
+// missing closing tag, missing preamble — are returned unchanged so they do
+// not accidentally get parsed as a JSON payload.
 func unwrapUntrustedResult(raw string) (string, bool) {
 	trimmed := strings.TrimSpace(raw)
-	if !strings.HasPrefix(trimmed, untrustedOpenPrefix) {
+	if !strings.HasPrefix(trimmed, untrustedOpenPrefix+" ") && !strings.HasPrefix(trimmed, untrustedOpenPrefix+">") {
 		return raw, false
 	}
+	// Verify the opening tag is properly closed.
 	openEnd := strings.Index(trimmed, ">")
 	if openEnd < 0 {
 		return raw, false
 	}
 	body := trimmed[openEnd+1:]
-	if i := strings.LastIndex(body, untrustedCloseTag); i >= 0 {
-		body = body[:i]
+	// Require a closing tag to treat this as an envelope.
+	closeIdx := strings.LastIndex(body, untrustedCloseTag)
+	if closeIdx < 0 {
+		return raw, false
 	}
+	body = body[:closeIdx]
 	body = strings.TrimSpace(body)
-	if strings.HasPrefix(body, untrustedPreamble) {
-		// The preamble is a single paragraph; the payload follows it,
-		// separated by a blank line. Fall back to a single newline so a
-		// format variant never swallows the payload entirely.
-		if i := strings.Index(body, "\n\n"); i >= 0 {
-			return strings.TrimSpace(body[i+2:]), true
-		}
-		if i := strings.Index(body, "\n"); i >= 0 {
-			return strings.TrimSpace(body[i+1:]), true
-		}
-		return "", true
+	if !strings.HasPrefix(body, untrustedPreamble) {
+		return raw, false
 	}
-	return body, true
+	// The preamble is a single paragraph; the payload follows it,
+	// separated by a blank line. Fall back to a single newline so a
+	// format variant never swallows the payload entirely.
+	if i := strings.Index(body, "\n\n"); i >= 0 {
+		return strings.TrimSpace(body[i+2:]), true
+	}
+	if i := strings.Index(body, "\n"); i >= 0 {
+		return strings.TrimSpace(body[i+1:]), true
+	}
+	return "", true
 }
 
 func parseToolResult(message hermesMessage) toolResult {
