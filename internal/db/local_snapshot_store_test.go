@@ -142,12 +142,13 @@ func openLocalSnapshotTestDB(t *testing.T, sessionID, bindingID string) *DB {
 
 func localSnapshotTestWrite(bindingID, snapshotID string, kind model.GitSnapshotKind, path string, content []byte) LocalGitSnapshotWrite {
 	pathDigest := sha256.Sum256([]byte(path))
+	manifestDigest := sha256.Sum256([]byte(snapshotID))
 	now := time.Date(2026, 8, 11, 4, 5, 6, 0, time.UTC)
 	return LocalGitSnapshotWrite{
 		BindingID: bindingID,
 		Summary: model.GitSnapshotSummary{
 			SnapshotID: snapshotID, Kind: kind,
-			ManifestDigest:   "sha256:" + strings.Repeat("b", 64),
+			ManifestDigest:   "sha256:" + hex.EncodeToString(manifestDigest[:]),
 			SourceRevision:   "sha256:" + strings.Repeat("c", 64),
 			CaptureStartedAt: now, CaptureEndedAt: now.Add(time.Second),
 			Assessment: model.ExactGitEvidence(),

@@ -111,7 +111,7 @@ func putSourceContentReference(ctx context.Context, c *sql.Conn, owner SourceCon
 	clause, args := owner.refPredicate()
 	var refID int64
 	var oldSHA string
-	err = c.QueryRowContext(ctx,
+	err := c.QueryRowContext(ctx,
 		`SELECT ref_id, blob_sha FROM source_content_blob_refs WHERE `+clause,
 		args...,
 	).Scan(&refID, &oldSHA)
