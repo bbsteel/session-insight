@@ -72,6 +72,7 @@ func TestLLMProviderHeadersRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected provider")
+		return
 	}
 	if got.Headers != headersJSON {
 		t.Fatalf("headers: got %q want %q", got.Headers, headersJSON)

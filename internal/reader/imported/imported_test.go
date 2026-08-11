@@ -89,6 +89,7 @@ func TestListGetRender(t *testing.T) {
 	info := detail.ImportInfo
 	if info == nil {
 		t.Fatal("ImportInfo not populated")
+		return
 	}
 	if info.OriginalAgentType != "claude" || info.OriginalSessionID != "sess/1" ||
 		info.OriginHost != "origin-box" || info.BundleID != bundleID ||

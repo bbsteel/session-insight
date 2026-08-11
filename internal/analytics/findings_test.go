@@ -166,6 +166,7 @@ func TestFindingsContinuationNudge(t *testing.T) {
 	}
 	if nudge == nil {
 		t.Fatalf("expected continuation-nudge finding, got %+v", res.Findings)
+		return
 	}
 	if nudge.Severity != "warn" {
 		t.Errorf("nudge finding severity = %s, want warn", nudge.Severity)

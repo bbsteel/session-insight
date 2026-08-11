@@ -276,6 +276,7 @@ func TestInsightParseFailureFallback(t *testing.T) {
 	gen, _ := s.DB.LatestAIGeneration("insight", "copilot", "sess-1")
 	if gen == nil {
 		t.Fatal("fallback generation not persisted")
+		return
 	}
 	if strings.Contains(gen.Content, "<script>") {
 		t.Errorf("raw HTML must be escaped in fallback: %s", gen.Content)

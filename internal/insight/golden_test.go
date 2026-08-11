@@ -45,6 +45,7 @@ func TestGoldenBundleEndToEnd(t *testing.T) {
 	}
 	if fanout == nil {
 		t.Fatal("subagent_fanout finding missing on golden session")
+		return
 	}
 	if got := fanout.Metrics["subagent_count"]; got != 27 {
 		t.Errorf("subagent_count = %v, want 27", got)

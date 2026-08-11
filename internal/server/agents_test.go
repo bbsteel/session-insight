@@ -133,6 +133,7 @@ func TestHandleListAgentsMarksDiscoveredAndCountsSessions(t *testing.T) {
 	}
 	if claude == nil {
 		t.Fatal("claude missing from catalog")
+		return
 	}
 	if !claude.Discovered {
 		t.Error("claude should be discovered")

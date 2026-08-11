@@ -164,6 +164,7 @@ func TestRollbackFoldPositionUsesVisibleHeaderLine(t *testing.T) {
 	}
 	if fold == nil {
 		t.Fatalf("expected rollback fold position, got %+v", positions)
+		return
 	}
 	if got := stripANSIForTest(lines[fold.LineStart]); !strings.Contains(got, "已回滚 2 个 turn") {
 		t.Fatalf("rollback fold display header points at %q, want the visible rollback row", got)
@@ -714,6 +715,7 @@ func TestToolInvocationEmitsToolPosition(t *testing.T) {
 	}
 	if tool == nil {
 		t.Fatalf("expected a tool position, got %+v", positions)
+		return
 	}
 	if tool.Label != "Bash" {
 		t.Errorf("tool label: got %q, want Bash", tool.Label)
@@ -821,9 +823,11 @@ func TestUserPromptTrailingBlankLineAndLineEnd(t *testing.T) {
 	}
 	if userPos == nil {
 		t.Fatalf("expected a user position, got %+v", positions)
+		return
 	}
 	if userPos.LineEnd == nil {
 		t.Fatalf("user position must record LineEnd for highlight decoration")
+		return
 	}
 	if *userPos.LineEnd < userPos.LineStart {
 		t.Fatalf("LineEnd (%d) must be >= LineStart (%d)", *userPos.LineEnd, userPos.LineStart)
@@ -925,6 +929,7 @@ func TestAssistantSummaryExactCapContinuation(t *testing.T) {
 	}
 	if asst == nil {
 		t.Fatalf("expected an assistant position, got %+v", positions)
+		return
 	}
 	got, _ := asst.Payload["text"].(string)
 	if r := []rune(got); len(r) != assistantSummaryMaxRunes+1 || !strings.HasSuffix(got, "…") {

@@ -42,6 +42,7 @@ func TestGetSessionBillingFromShutdown(t *testing.T) {
 	b := detail.Billing
 	if b == nil {
 		t.Fatal("expected billing from session.shutdown")
+		return
 	}
 	if b.Precision != model.PrecisionExact || b.BillingUnit != "aiu" {
 		t.Errorf("precision/unit mismatch: %+v", b)
