@@ -226,25 +226,72 @@ func (db *DB) DeleteSessionData(agentType, sessionID string) error {
 	}
 	defer tx.Rollback()
 
+	// Resolve the bounded set of content hashes owned by this Session before
+	// cascading its snapshot/evidence rows. Shared hosted or other-Session
+	// references keep the corresponding blobs alive.
+	rows, err := tx.Query(`
+		SELECT DISTINCT refs.blob_sha
+		FROM source_content_blob_refs refs
+		LEFT JOIN session_git_snapshots snapshots
+		  ON snapshots.snapshot_id = refs.local_snapshot_id
+		LEFT JOIN session_git_bindings snapshot_bindings
+		  ON snapshot_bindings.binding_id = snapshots.binding_id
+		LEFT JOIN session_git_evidence evidence
+		  ON evidence.evidence_id = refs.evidence_id
+		LEFT JOIN session_git_bindings evidence_bindings
+		  ON evidence_bindings.binding_id = evidence.binding_id
+		WHERE (snapshot_bindings.agent_type = ? AND snapshot_bindings.session_id = ?)
+		   OR (evidence_bindings.agent_type = ? AND evidence_bindings.session_id = ?)`,
+		agentType, sessionID, agentType, sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("list session source content: %w", err)
+	}
+	var ownedBlobSHAs []string
+	for rows.Next() {
+		var sha string
+		if err := rows.Scan(&sha); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan session source content: %w", err)
+		}
+		ownedBlobSHAs = append(ownedBlobSHAs, sha)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close session source content rows: %w", err)
+	}
+
 	stmts := []string{
 		`DELETE FROM turn_texts WHERE agent_type = ? AND session_id = ?`,
 		`DELETE FROM index_watermarks WHERE agent_type = ? AND session_id = ?`,
-		`DELETE FROM sessions WHERE agent_type = ? AND id = ?`,
 		`DELETE FROM session_positions WHERE agent_type = ? AND session_id = ?`,
 		`DELETE FROM session_position_caches WHERE agent_type = ? AND session_id = ?`,
 		`DELETE FROM bookmarked_sessions WHERE agent_type = ? AND session_id = ?`,
 		`DELETE FROM ai_generations WHERE agent_type = ? AND session_id = ?`,
 		`DELETE FROM session_title_overrides WHERE agent_type = ? AND session_id = ?`,
+		`DELETE FROM terminal_bindings WHERE agent_type = ? AND session_id = ?`,
 		// Explicit SI delete removes provenance; do not leave a tombstone.
 		`DELETE FROM session_provenance WHERE agent_type = ? AND session_id = ?`,
 		// Imported copies carry an import record tied to the session row.
 		`DELETE FROM import_records WHERE agent_type = ? AND session_id = ?`,
 		// Cascades to the root's collaboration invocations and delegations.
 		`DELETE FROM collaboration_roots WHERE root_agent_type = ? AND root_session_id = ?`,
+		// v34 Session Git rows and their content references cascade from the
+		// session row. Shared hosted snapshots remain pinned independently.
+		`DELETE FROM sessions WHERE agent_type = ? AND id = ?`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt, agentType, sessionID); err != nil {
 			return fmt.Errorf("delete session data: %w", err)
+		}
+	}
+	for _, sha := range ownedBlobSHAs {
+		if _, err := tx.Exec(`
+			DELETE FROM source_content_blobs
+			WHERE sha256 = ? AND NOT EXISTS (
+				SELECT 1 FROM source_content_blob_refs
+				WHERE source_content_blob_refs.blob_sha = source_content_blobs.sha256
+			)`, sha); err != nil {
+			return fmt.Errorf("delete session source content: %w", err)
 		}
 	}
 	return tx.Commit()

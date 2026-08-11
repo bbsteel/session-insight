@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 33
+const currentSchemaVersion = 34
 
 type DB struct {
 	conn *sql.DB
@@ -904,6 +904,15 @@ func migrate(conn *sql.DB) error {
 		if err := normalizePathFormProjects(conn); err != nil {
 			return fmt.Errorf("v33 normalize path-form projects: %w", err)
 		}
+	}
+
+	// Version 34: Git/session and hosted-change persistence. The helper owns
+	// its version row and uses a pinned connection plus BEGIN IMMEDIATE so
+	// independent SessionInsight processes cannot interleave partial schemas.
+	// It deliberately leaves index_watermarks untouched: current worktree
+	// state is not a trustworthy historical session-start baseline.
+	if err := migrateGitAssociationV34(conn); err != nil {
+		return err
 	}
 
 	_, err = conn.Exec(
