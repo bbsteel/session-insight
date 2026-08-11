@@ -375,7 +375,20 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		detailElapsed time.Duration
 		renderElapsed time.Duration
 	)
-	if snapshotReader, ok := r.(reader.IndexSnapshotReader); ok {
+	if authoritativeReader, ok := r.(reader.AuthoritativeIndexSnapshotReader); ok {
+		snapshotStarted := time.Now()
+		envelope, err := authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
+		detailElapsed = time.Since(snapshotStarted)
+		renderElapsed = 0
+		if err != nil {
+			return ix.handleReadFailure(r, agentType, sess, err)
+		}
+		if validation := model.ValidateIndexSnapshotEnvelope(envelope); !validation.OK() {
+			return false, fmt.Errorf("validate authoritative index snapshot: %+v", validation.Issues)
+		}
+		detail = envelope.Detail
+		renderEvents = envelope.RenderEvents
+	} else if snapshotReader, ok := r.(reader.IndexSnapshotReader); ok {
 		snapshotStarted := time.Now()
 		var err error
 		detail, renderEvents, err = snapshotReader.ReadIndexSnapshot(ctx, sess)
