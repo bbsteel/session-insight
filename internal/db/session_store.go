@@ -91,23 +91,27 @@ func (db *DB) UpdateSessionResumeID(agentType, sessionID, resumeID string) (bool
 // rebuilding the turn index. Call this when the session content revision is
 // unchanged but adapter logic may have improved metadata — for example
 // project-name normalization (Grok full paths → basenames) or Codex resume_id
-// backfill. Empty resumeID leaves the stored value alone so a partial list
-// projection cannot wipe a previously known native ID.
+// backfill.
+//
+// Empty project and empty resumeID leave the stored values alone so partial
+// list projections (notably imported sessions, which omit Project on list)
+// cannot wipe previously known metadata.
 func (db *DB) RefreshSessionListMetadata(agentType string, sess model.Session) (bool, error) {
+	project := sess.Project
 	resumeID := sess.ResumeID
 	result, err := db.conn.Exec(
 		`UPDATE sessions SET
-		     project = ?,
+		     project = CASE WHEN ? != '' THEN ? ELSE project END,
 		     resume_id = CASE WHEN ? != '' THEN ? ELSE resume_id END
 		 WHERE agent_type = ? AND id = ?
 		   AND (
-		     project <> ?
+		     (? != '' AND project <> ?)
 		     OR (? != '' AND resume_id <> ?)
 		   )`,
-		sess.Project,
+		project, project,
 		resumeID, resumeID,
 		agentType, sess.ID,
-		sess.Project,
+		project, project,
 		resumeID, resumeID,
 	)
 	if err != nil {

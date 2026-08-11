@@ -916,7 +916,18 @@ func migrate(conn *sql.DB) error {
 // normalizePathFormProjects rewrites sessions.project values that look like
 // absolute filesystem paths into their last path component. Repository slugs
 // (owner/repo) and already-short names are left alone.
+//
+// Partial-schema upgrade fixtures (and very old DBs mid-migration) may lack
+// the project column; skip rather than failing Open for unrelated tables.
 func normalizePathFormProjects(conn *sql.DB) error {
+	hasProject, err := tableHasColumn(context.Background(), conn, "sessions", "project")
+	if err != nil {
+		return err
+	}
+	if !hasProject {
+		return nil
+	}
+
 	rows, err := conn.Query(`
 		SELECT agent_type, id, project FROM sessions
 		 WHERE project LIKE '/%'

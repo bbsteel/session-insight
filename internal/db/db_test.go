@@ -56,26 +56,42 @@ func TestUpdateSessionResumeID(t *testing.T) {
 }
 
 func TestV33NormalizesPathFormProjects(t *testing.T) {
-	// Exercise the v33 helper directly. Re-opening after DELETE of only the
-	// current schema_migrations row would re-run maxVersion<8 and DROP
-	// sessions (schema_migrations stores only currentSchemaVersion).
-	database, err := Open(t.TempDir())
+	// Drive v33 through Open: pin schema_migrations at 32 (do not DELETE only
+	// the current version row — that resets maxVersion to 0 and re-runs v8
+	// DROP sessions). Insert path-form projects, then reopen.
+	dir := t.TempDir()
+	database, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
-
 	if _, err := database.Conn().Exec(`
 		INSERT INTO sessions(agent_type, id, project) VALUES
 			('grok', 's1', '/home/deck/projects/session-insight/'),
 			('grok', 's2', '/home/deck/projects/lego-lookup/'),
 			('claude', 's3', 'session-insight'),
 			('copilot', 's4', 'owner/repo');
+		DELETE FROM schema_migrations;
+		INSERT INTO schema_migrations(version) VALUES (32);
 	`); err != nil {
+		database.Close()
 		t.Fatal(err)
 	}
-	if err := normalizePathFormProjects(database.Conn()); err != nil {
+	if err := database.Close(); err != nil {
 		t.Fatal(err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+
+	var ver int
+	if err := reopened.Conn().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&ver); err != nil {
+		t.Fatal(err)
+	}
+	if ver != 33 {
+		t.Fatalf("schema version = %d, want 33", ver)
 	}
 
 	want := map[string]string{
@@ -86,7 +102,7 @@ func TestV33NormalizesPathFormProjects(t *testing.T) {
 	}
 	for id, project := range want {
 		var got string
-		if err := database.Conn().QueryRow(
+		if err := reopened.Conn().QueryRow(
 			`SELECT project FROM sessions WHERE id = ?`, id,
 		).Scan(&got); err != nil {
 			t.Fatalf("%s: %v", id, err)
@@ -171,6 +187,27 @@ func TestRefreshSessionListMetadata(t *testing.T) {
 	}
 	if resumeID != "native-id" {
 		t.Fatalf("empty resume wiped stored id: %q", resumeID)
+	}
+
+	// Empty project (imported list projection) must not wipe a stored project.
+	changed, err = database.RefreshSessionListMetadata("grok", model.Session{
+		ID:       "s1",
+		Project:  "",
+		ResumeID: "native-id",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("expected no-op when list project is empty")
+	}
+	if err := database.Conn().QueryRow(
+		`SELECT project FROM sessions WHERE agent_type='grok' AND id='s1'`,
+	).Scan(&project); err != nil {
+		t.Fatal(err)
+	}
+	if project != "session-insight" {
+		t.Fatalf("empty list project wiped stored project: %q", project)
 	}
 
 	// Idempotent when already normalized.
