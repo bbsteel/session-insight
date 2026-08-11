@@ -125,6 +125,27 @@ func TestV34SelfHealsMissingPhysicalTable(t *testing.T) {
 	}
 }
 
+func TestV34SelfHealsMissingVersionRowInsideMigration(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Conn().Exec(`DELETE FROM schema_migrations WHERE version = 34`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateGitAssociationV34(database.Conn()); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := database.Conn().QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = 34`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("v34 migration row count = %d, want 1", count)
+	}
+}
+
 func TestV34RejectsIncompatiblePhysicalSchema(t *testing.T) {
 	dir := makeRawV33Database(t)
 	conn, err := sql.Open("sqlite3", filepath.Join(dir, "index.db")+"?_foreign_keys=on&_busy_timeout=5000")
@@ -246,6 +267,341 @@ func TestV34ConstraintsAndIndexes(t *testing.T) {
 		if err := database.Conn().QueryRow(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`, index).Scan(&got); err != nil {
 			t.Fatalf("missing index %s: %v", index, err)
 		}
+	}
+	assertNoForeignKeyViolations(t, database.Conn())
+}
+
+func TestV34HostApprovalConstraints(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_hosts(
+			host_id, provider, scheme, hostname, port, display_origin,
+			endpoint_origins_json, allow_http, allow_private_network,
+			lifecycle, state, approved_at
+		) VALUES (
+			'http-approved','gitlab','http','git.internal',80,'http://git.internal',
+			'["http://git.internal"]',1,1,'approved','exact','2026-08-11T00:00:00Z'
+		)`); err != nil {
+		t.Fatalf("approved HTTP host rejected: %v", err)
+	}
+	var allowHTTP, allowPrivate int
+	if err := database.Conn().QueryRow(`
+		SELECT allow_http, allow_private_network FROM change_hosts WHERE host_id='http-approved'`,
+	).Scan(&allowHTTP, &allowPrivate); err != nil {
+		t.Fatal(err)
+	}
+	if allowHTTP != 1 || allowPrivate != 1 {
+		t.Fatalf("persisted approval flags = (%d,%d), want (1,1)", allowHTTP, allowPrivate)
+	}
+	if _, err := database.Conn().Exec(`
+		UPDATE change_hosts
+		SET endpoint_origins_json='["http://git.internal","http://api.git.internal"]'
+		WHERE host_id='http-approved'`); err == nil {
+		t.Fatal("approved host endpoint authority changed without a new approval resource")
+	}
+	if _, err := database.Conn().Exec(`
+		UPDATE change_hosts
+		SET lifecycle='revoked', revoked_at='2026-08-11T00:01:00Z'
+		WHERE host_id='http-approved'`); err != nil {
+		t.Fatalf("approved host could not be revoked: %v", err)
+	}
+	if _, err := database.Conn().Exec(`
+		UPDATE change_hosts SET lifecycle='approved', revoked_at=NULL
+		WHERE host_id='http-approved'`); err == nil {
+		t.Fatal("revoked host authority was silently reactivated")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_hosts(
+			host_id, provider, scheme, hostname, port, display_origin,
+			allow_http, lifecycle, state
+		) VALUES ('http-preview','gitlab','http','other.internal',80,'http://other.internal',0,'preview','exact')`); err != nil {
+		t.Fatalf("unapproved HTTP preview was not persistable: %v", err)
+	}
+	if _, err := database.Conn().Exec(`
+		UPDATE change_hosts SET
+			lifecycle='approved', approved_at='2026-08-11T00:00:00Z',
+			endpoint_origins_json='["http://other.internal"]'
+		WHERE host_id='http-preview'`); err == nil {
+		t.Fatal("HTTP preview became approved without explicit allow_http")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_hosts(
+			host_id,provider,hostname,display_origin,endpoint_origins_json,lifecycle,state,approved_at
+		) VALUES (
+			'generic-approved','generic','code.example','https://code.example',
+			'["https://code.example"]','approved','exact','2026-08-11T00:00:00Z'
+		)`); err == nil {
+		t.Fatal("generic manual reference became a network-approved host")
+	}
+	for name, endpoints := range map[string]string{
+		"object":  `{}`,
+		"empty":   `[]`,
+		"missing": `["https://api.example"]`,
+	} {
+		if _, err := database.Conn().Exec(`
+			INSERT INTO change_hosts(
+				host_id,provider,hostname,display_origin,endpoint_origins_json,lifecycle,state,approved_at
+			) VALUES (?,?,?,?,?,'approved','exact','2026-08-11T00:00:00Z')`,
+			"bad-endpoints-"+name, "github", name+".example", "https://"+name+".example", endpoints,
+		); err == nil {
+			t.Fatalf("approved host accepted invalid endpoint set %s", name)
+		}
+	}
+}
+
+func TestV34ChangeRequestRelationsCannotCrossAuthorityBoundaries(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertTestSession(t, database, "codex", "root-one")
+	insertTestSession(t, database, "codex", "root-two")
+
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_hosts(
+			host_id,provider,hostname,display_origin,endpoint_origins_json,lifecycle,state,approved_at
+		) VALUES
+			('host-one','github','one.example','https://one.example','["https://one.example"]','approved','exact','2026-08-11T00:00:00Z'),
+			('host-two','gitlab','two.example','https://two.example','["https://two.example"]','approved','exact','2026-08-11T00:00:00Z');
+		INSERT INTO hosted_repositories(repository_id,host_id,provider_immutable_id,slug)
+		VALUES
+			('repo-one','host-one','repo-native-one','acme/widgets'),
+			('repo-two','host-two','repo-native-two','acme/widgets-fork');
+		INSERT INTO session_git_bindings(
+			binding_id,agent_type,session_id,repository_entry_key,worktree_root,
+			common_root_id,worktree_id,state,observed_at
+		) VALUES
+			('binding-one','codex','root-one','entry-one','/repo','common-one','worktree-one','exact','2026-08-11T00:00:00Z'),
+			('binding-two','codex','root-two','entry-two','/repo-two','common-two','worktree-two','exact','2026-08-11T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_identities(
+			change_id,provider,host_id,target_repository_id,provider_object_id
+		) VALUES ('cross-host','gitlab','host-two','repo-one','mr-cross')`); err == nil {
+		t.Fatal("change request identity accepted a repository from another host")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_identities(
+			change_id,provider,host_id,target_repository_id,provider_object_id
+		) VALUES ('provider-mismatch','github','host-two','repo-two','pr-cross')`); err == nil {
+		t.Fatal("change request identity accepted a provider different from its host")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_identities(
+			change_id,provider,host_id,target_repository_id,provider_object_id
+		) VALUES ('change-one','github','host-one','repo-one','pr-one');
+		INSERT INTO change_request_identities(
+			change_id,provider,host_id,target_repository_id,provider_object_id
+		) VALUES ('change-two','github','host-one','repo-one','pr-two');
+		INSERT INTO change_request_snapshots(
+			snapshot_id,change_id,content_version_key,metadata_revision,kind,
+			display_number,lifecycle_state,web_url,completeness_json,fetched_at
+		) VALUES
+		(
+			'snapshot-one','change-one','content-one','metadata-one','pull_request',
+			'1','open','https://one.example/acme/widgets/pull/1','{}','2026-08-11T00:00:00Z'
+		),
+		(
+			'snapshot-two','change-two','content-two','metadata-two','pull_request',
+			'2','open','https://one.example/acme/widgets/pull/2','{}','2026-08-11T00:00:00Z'
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_snapshots(
+			snapshot_id,change_id,content_version_key,metadata_revision,kind,
+			display_number,lifecycle_state,web_url,source_repository_id,completeness_json,fetched_at
+		) VALUES (
+			'cross-source','change-one','cross-source-content','metadata-two','pull_request',
+			'1','open','https://one.example/acme/widgets/pull/1','repo-two','{}','2026-08-11T00:00:00Z'
+		)`); err == nil {
+		t.Fatal("change request snapshot accepted a source repository from another host")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_aliases(
+			alias_kind,host_id,repository_id,alias_value,change_id,snapshot_id
+		) VALUES ('url','host-two','repo-two','https://two.example/acme/widgets/merge_requests/1','change-one','snapshot-one')`); err == nil {
+		t.Fatal("change request alias accepted a scope from another host/repository")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_aliases(
+			alias_kind,host_id,repository_id,alias_value,change_id,snapshot_id
+		) VALUES ('url','host-one','repo-one','https://one.example/acme/widgets/pull/1','change-one','snapshot-one')`); err != nil {
+		t.Fatalf("valid scoped change request alias rejected: %v", err)
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_aliases(
+			alias_kind,host_id,repository_id,alias_value,change_id,snapshot_id
+		) VALUES ('head_sha','host-one','repo-one','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','change-one','snapshot-two')`); err == nil {
+		t.Fatal("change request alias accepted a snapshot from another change")
+	}
+
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_change_requests(
+			link_id,ordinal,root_agent_type,root_session_id,source_agent_type,source_session_id,
+			collaboration_revision,binding_id,change_id,snapshot_id,content_version_key,
+			relationship,method,state,confirmation_source
+		) VALUES (
+			'cross-root',0,'codex','root-two','codex','root-two',1,'binding-one',
+			'change-one','snapshot-one','content-one','contributing','head_sha','exact','none'
+		)`); err == nil {
+		t.Fatal("change request link accepted a binding owned by another root Session")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_change_requests(
+			link_id,ordinal,root_agent_type,root_session_id,source_agent_type,source_session_id,
+			collaboration_revision,binding_id,change_id,snapshot_id,content_version_key,
+			relationship,method,state,confirmation_source,confirmation_revision
+		) VALUES (
+			'wrong-content',0,'codex','root-one','codex','root-one',1,'binding-one',
+			'change-one','snapshot-one','content-two','exclusive','explicit','exact','user','confirm-one'
+		)`); err == nil {
+		t.Fatal("change request link accepted a snapshot under the wrong content version")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_change_requests(
+			link_id,ordinal,root_agent_type,root_session_id,source_agent_type,source_session_id,
+			collaboration_revision,binding_id,change_id,content_version_key,
+			relationship,method,state,confirmation_source
+		) VALUES (
+			'unconfirmed-exclusive',0,'codex','root-one','codex','root-one',1,'binding-one',
+			'change-one','content-one','exclusive','explicit','exact','none'
+		)`); err == nil {
+		t.Fatal("exclusive link accepted no fixed snapshot or user confirmation")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_change_requests(
+			link_id,ordinal,root_agent_type,root_session_id,source_agent_type,source_session_id,
+			collaboration_revision,binding_id,change_id,content_version_key,
+			relationship,method,state,confirmation_source
+		) VALUES (
+			'unfixed-contributing',0,'codex','root-one','codex','root-one',1,'binding-one',
+			'change-one','invented-content','contributing','head_sha','estimated','none'
+		)`); err == nil {
+		t.Fatal("contributing link accepted an unpinned content version")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_change_requests(
+			link_id,ordinal,root_agent_type,root_session_id,source_agent_type,source_session_id,
+			collaboration_revision,binding_id,change_id,snapshot_id,content_version_key,
+			relationship,method,state,confirmation_source,confirmation_revision
+		) VALUES (
+			'valid-exclusive',0,'codex','root-one','codex','root-one',1,'binding-one',
+			'change-one','snapshot-one','content-one','exclusive','explicit','exact','user','confirm-one'
+		)`); err != nil {
+		t.Fatalf("valid exclusive link rejected: %v", err)
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_change_requests(
+			link_id,ordinal,root_agent_type,root_session_id,source_agent_type,source_session_id,
+			collaboration_revision,binding_id,change_id,snapshot_id,content_version_key,
+			relationship,method,state,confirmation_source,confirmation_revision
+		) VALUES (
+			'duplicate-binding-exclusive',1,'codex','root-one','codex','root-one',1,'binding-one',
+			'change-two','snapshot-two','content-two','exclusive','explicit','exact','user','confirm-two'
+		)`); err == nil {
+		t.Fatal("one repository binding accepted multiple exclusive change requests")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_change_requests(
+			link_id,ordinal,root_agent_type,root_session_id,source_agent_type,source_session_id,
+			collaboration_revision,binding_id,change_id,snapshot_id,content_version_key,
+			relationship,method,state,confirmation_source,confirmation_revision
+		) VALUES (
+			'duplicate-change-exclusive',0,'codex','root-two','codex','root-two',1,'binding-two',
+			'change-one','snapshot-one','content-one','exclusive','explicit','exact','user','confirm-three'
+		)`); err == nil {
+		t.Fatal("one fixed change request version became exclusive to multiple roots")
+	}
+	assertNoForeignKeyViolations(t, database.Conn())
+}
+
+func TestV34EvidenceLinksRequirePositivePositionsRevision(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertTestSession(t, database, "codex", "positions")
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_git_bindings(
+			binding_id,agent_type,session_id,repository_entry_key,worktree_root,
+			common_root_id,worktree_id,state,observed_at
+		) VALUES ('positions-binding','codex','positions','positions-entry','/repo','common','worktree','exact','2026-08-11T00:00:00Z');
+		INSERT INTO session_git_evidence(
+			evidence_id,binding_id,revision,state,authority,generated_at
+		) VALUES ('positions-binding','positions-binding',1,'exact','none','2026-08-11T00:00:00Z');
+		INSERT INTO session_git_files(
+			evidence_id,file_key,ordinal,layer,display_path,path_encoding,status,status_state,patch_state
+		) VALUES ('positions-binding','file-one',0,'worktree','file.go','utf8','modified','exact','exact')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_git_evidence_links(
+			evidence_id,file_key,ordinal,root_agent_type,root_session_id,
+			source_agent_type,source_session_id,source_revision,positions_revision,state
+		) VALUES (
+			'positions-binding','file-one',0,'codex','positions',
+			'codex','positions','source-one',0,'exact'
+		)`); err == nil {
+		t.Fatal("evidence link accepted positions_revision=0")
+	}
+}
+
+func TestV34GitEvidenceSnapshotsMatchBindingAndKind(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertTestSession(t, database, "codex", "snapshot-root-one")
+	insertTestSession(t, database, "codex", "snapshot-root-two")
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_git_bindings(
+			binding_id,agent_type,session_id,repository_entry_key,worktree_root,
+			common_root_id,worktree_id,state,observed_at
+		) VALUES
+			('snapshot-binding-one','codex','snapshot-root-one','snapshot-entry-one','/repo-one','common-one','worktree-one','exact','2026-08-11T00:00:00Z'),
+			('snapshot-binding-two','codex','snapshot-root-two','snapshot-entry-two','/repo-two','common-two','worktree-two','exact','2026-08-11T00:00:00Z');
+		INSERT INTO session_git_snapshots(
+			snapshot_id,binding_id,kind,source_revision,state,capture_started_at,capture_completed_at
+		) VALUES
+			('baseline-one','snapshot-binding-one','baseline','source-one','exact','2026-08-11T00:00:00Z','2026-08-11T00:00:01Z'),
+			('final-one','snapshot-binding-one','final','source-two','exact','2026-08-11T00:01:00Z','2026-08-11T00:01:01Z'),
+			('baseline-two','snapshot-binding-two','baseline','source-one','exact','2026-08-11T00:00:00Z','2026-08-11T00:00:01Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_git_evidence(
+			evidence_id,binding_id,revision,state,authority,baseline_snapshot_id,generated_at
+		) VALUES ('cross-binding-evidence','snapshot-binding-one',1,'exact','local_interval','baseline-two','2026-08-11T00:02:00Z')`); err == nil {
+		t.Fatal("Git evidence accepted a baseline from another binding")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_git_evidence(
+			evidence_id,binding_id,revision,state,authority,baseline_snapshot_id,generated_at
+		) VALUES ('wrong-kind-evidence','snapshot-binding-one',1,'exact','local_interval','final-one','2026-08-11T00:02:00Z')`); err == nil {
+		t.Fatal("Git evidence accepted a final snapshot as its baseline")
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_git_evidence(
+			evidence_id,binding_id,revision,state,authority,baseline_snapshot_id,final_snapshot_id,generated_at
+		) VALUES (
+			'valid-snapshot-evidence','snapshot-binding-one',1,'exact','local_interval',
+			'baseline-one','final-one','2026-08-11T00:02:00Z'
+		)`); err != nil {
+		t.Fatalf("valid evidence snapshot pair rejected: %v", err)
+	}
+	if err := database.DeleteSessionData("codex", "snapshot-root-one"); err != nil {
+		t.Fatalf("delete Session with evidence snapshots: %v", err)
 	}
 	assertNoForeignKeyViolations(t, database.Conn())
 }

@@ -88,6 +88,84 @@ func TestReplaceSessionGitEvidenceRollbackPreservesPreviousResult(t *testing.T) 
 	}
 }
 
+func TestReplaceSessionGitEvidenceKeepsOriginsForEveryRepositoryEntry(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertTestSession(t, database, "codex", "multi-repository")
+
+	for i, item := range []struct {
+		entry, path, remote, revision string
+	}{
+		{"entry-one", "one.go", "https://example.com/acme/one.git", "source-one"},
+		{"entry-two", "two.go", "https://example.com/acme/two.git", "source-two"},
+	} {
+		evidence := testSessionGitEvidence("multi-repository", item.entry, item.path)
+		evidence.Origin = testSessionGitOrigin(item.remote, item.revision)
+		evidence.Revision = int64(i + 1)
+		if err := database.ReplaceSessionGitEvidence(evidence); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := database.Conn().Query(`
+		SELECT binding_id, json_extract(origin_json, '$.repository_url.value')
+		FROM session_git_origins ORDER BY binding_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	want := []struct{ binding, remote string }{
+		{"entry-one", "https://example.com/acme/one.git"},
+		{"entry-two", "https://example.com/acme/two.git"},
+	}
+	for i, expected := range want {
+		if !rows.Next() {
+			t.Fatalf("origin row %d is missing", i)
+		}
+		var binding, remote string
+		if err := rows.Scan(&binding, &remote); err != nil {
+			t.Fatal(err)
+		}
+		if binding != expected.binding || remote != expected.remote {
+			t.Fatalf("origin row %d = (%q,%q), want (%q,%q)", i, binding, remote, expected.binding, expected.remote)
+		}
+	}
+	if rows.Next() {
+		t.Fatal("unexpected extra origin row")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	withoutOrigin := testSessionGitEvidence("multi-repository", "entry-one", "one.go")
+	withoutOrigin.Revision = 3
+	if err := database.ReplaceSessionGitEvidence(withoutOrigin); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := database.Conn().QueryRow(`SELECT COUNT(*) FROM session_git_origins`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("origin rows after one entry lost its origin = %d, want 1", remaining)
+	}
+	var stale int
+	if err := database.Conn().QueryRow(`
+		SELECT COUNT(*) FROM session_git_origins WHERE binding_id = 'entry-one'`,
+	).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if stale != 0 {
+		t.Fatal("replacement without origin retained the previous origin row")
+	}
+}
+
 func TestSourceContentDedupeSharedReferenceAndFinalGC(t *testing.T) {
 	database, err := Open(t.TempDir())
 	if err != nil {
@@ -247,6 +325,25 @@ func testSessionGitEvidence(sessionID, entryKey, path string) model.SessionGitEv
 		ChangeRequests:   []model.SessionChangeRequestLink{},
 		Authority:        model.GitAuthorityNone,
 		GeneratedAt:      time.Date(2026, 8, 11, 1, 2, 3, 0, time.UTC),
+	}
+}
+
+func testSessionGitOrigin(remote, revision string) *model.SessionGitOrigin {
+	exactString := func(value string) model.GitFact[string] {
+		return model.GitFact[string]{
+			Value: value, Assessment: model.ExactGitEvidence(),
+			Source: model.GitSourceAgentRecorded, SourceRevision: revision,
+		}
+	}
+	return &model.SessionGitOrigin{
+		RepositoryURL: exactString(remote),
+		WorktreePath:  exactString("/workspace/project"),
+		Branch:        exactString("feat/example"),
+		HeadSHA:       exactString(strings.Repeat("a", 40)),
+		DirtyState: model.GitFact[model.GitDirtyState]{
+			Value: model.GitDirtyUnknown, Assessment: model.ExactGitEvidence(),
+			Source: model.GitSourceAgentRecorded, SourceRevision: revision,
+		},
 	}
 }
 

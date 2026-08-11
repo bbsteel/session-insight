@@ -79,17 +79,19 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 			return fmt.Errorf("marshal session Git origin: %w", err)
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO session_git_origins(agent_type, session_id, source_revision, origin_json, captured_at)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(agent_type, session_id) DO UPDATE SET
+			INSERT INTO session_git_origins(binding_id, source_revision, origin_json, captured_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(binding_id) DO UPDATE SET
 				source_revision = excluded.source_revision,
 				origin_json = excluded.origin_json,
 				captured_at = excluded.captured_at`,
-			evidence.RootAgentType, evidence.RootSessionID, originSourceRevision(*evidence.Origin),
+			bindingID, originSourceRevision(*evidence.Origin),
 			string(originJSON), model.FormatTime(evidence.GeneratedAt),
 		); err != nil {
 			return fmt.Errorf("upsert session Git origin: %w", err)
 		}
+	} else if _, err := tx.Exec(`DELETE FROM session_git_origins WHERE binding_id = ?`, bindingID); err != nil {
+		return fmt.Errorf("delete stale session Git origin: %w", err)
 	}
 
 	assessment, err := marshalAssessment(evidence.Assessment)

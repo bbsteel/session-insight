@@ -256,6 +256,10 @@ func (db *DB) DeleteSessionData(agentType, sessionID string) error {
 		}
 		ownedBlobSHAs = append(ownedBlobSHAs, sha)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate session source content: %w", err)
+	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close session source content rows: %w", err)
 	}
