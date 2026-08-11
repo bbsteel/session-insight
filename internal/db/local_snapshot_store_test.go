@@ -12,10 +12,10 @@ import (
 )
 
 func TestStoreLocalGitSnapshotPublishesManifestAndContentAtomically(t *testing.T) {
-	database := openLocalSnapshotTestDB(t, "snapshot-store", "snapshot-entry")
+	database, bindingID := openLocalSnapshotTestDB(t, "snapshot-store", "snapshot-entry")
 	defer database.Close()
 
-	write := localSnapshotTestWrite("snapshot-entry", "snapshot-final", model.GitSnapshotFinal, "final.txt", []byte("final content"))
+	write := localSnapshotTestWrite(bindingID, "snapshot-final", model.GitSnapshotFinal, "final.txt", []byte("final content"))
 	if err := database.StoreLocalGitSnapshot(write); err != nil {
 		t.Fatal(err)
 	}
@@ -51,10 +51,10 @@ func TestStoreLocalGitSnapshotPublishesManifestAndContentAtomically(t *testing.T
 }
 
 func TestStoreLocalGitSnapshotFailurePreservesPreviousCheckpoint(t *testing.T) {
-	database := openLocalSnapshotTestDB(t, "snapshot-rollback", "snapshot-rollback-entry")
+	database, bindingID := openLocalSnapshotTestDB(t, "snapshot-rollback", "snapshot-rollback-entry")
 	defer database.Close()
 
-	first := localSnapshotTestWrite("snapshot-rollback-entry", "checkpoint-one", model.GitSnapshotCheckpoint, "first.txt", []byte("first"))
+	first := localSnapshotTestWrite(bindingID, "checkpoint-one", model.GitSnapshotCheckpoint, "first.txt", []byte("first"))
 	if err := database.StoreLocalGitSnapshot(first); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestStoreLocalGitSnapshotFailurePreservesPreviousCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	failed := localSnapshotTestWrite("snapshot-rollback-entry", "checkpoint-two", model.GitSnapshotCheckpoint, "fail.txt", []byte("second"))
+	failed := localSnapshotTestWrite(bindingID, "checkpoint-two", model.GitSnapshotCheckpoint, "fail.txt", []byte("second"))
 	if err := database.StoreLocalGitSnapshot(failed); err == nil {
 		t.Fatal("expected snapshot replacement to fail")
 	}
@@ -88,10 +88,10 @@ func TestStoreLocalGitSnapshotFailurePreservesPreviousCheckpoint(t *testing.T) {
 }
 
 func TestStoreLocalGitSnapshotQuotaFailureRollsBackAggregate(t *testing.T) {
-	database := openLocalSnapshotTestDB(t, "snapshot-quota", "snapshot-quota-entry")
+	database, bindingID := openLocalSnapshotTestDB(t, "snapshot-quota", "snapshot-quota-entry")
 	defer database.Close()
 
-	write := localSnapshotTestWrite("snapshot-quota-entry", "snapshot-over-quota", model.GitSnapshotFinal, "large.txt", []byte("too large"))
+	write := localSnapshotTestWrite(bindingID, "snapshot-over-quota", model.GitSnapshotFinal, "large.txt", []byte("too large"))
 	write.Quota = SourceContentQuota{MaxFileBytes: 64, MaxSessionBytes: 4, MaxChangeRequestBytes: 64, MaxGlobalBytes: 64}
 	if err := database.StoreLocalGitSnapshot(write); !errors.Is(err, ErrSourceContentQuotaExceeded) {
 		t.Fatalf("quota error = %v", err)
@@ -103,11 +103,11 @@ func TestStoreLocalGitSnapshotQuotaFailureRollsBackAggregate(t *testing.T) {
 }
 
 func TestStoreLocalGitSnapshotRetiresOnlyUnreferencedCheckpoint(t *testing.T) {
-	database := openLocalSnapshotTestDB(t, "snapshot-retire", "snapshot-retire-entry")
+	database, bindingID := openLocalSnapshotTestDB(t, "snapshot-retire", "snapshot-retire-entry")
 	defer database.Close()
 
-	first := localSnapshotTestWrite("snapshot-retire-entry", "checkpoint-old", model.GitSnapshotCheckpoint, "old.txt", []byte("old content"))
-	second := localSnapshotTestWrite("snapshot-retire-entry", "checkpoint-new", model.GitSnapshotCheckpoint, "new.txt", []byte("new content"))
+	first := localSnapshotTestWrite(bindingID, "checkpoint-old", model.GitSnapshotCheckpoint, "old.txt", []byte("old content"))
+	second := localSnapshotTestWrite(bindingID, "checkpoint-new", model.GitSnapshotCheckpoint, "new.txt", []byte("new content"))
 	if err := database.StoreLocalGitSnapshot(first); err != nil {
 		t.Fatal(err)
 	}
@@ -126,18 +126,18 @@ func TestStoreLocalGitSnapshotRetiresOnlyUnreferencedCheckpoint(t *testing.T) {
 	assertTableCount(t, database, "source_content_blob_refs", 1)
 }
 
-func openLocalSnapshotTestDB(t *testing.T, sessionID, bindingID string) *DB {
+func openLocalSnapshotTestDB(t *testing.T, sessionID, repositoryEntryKey string) (*DB, string) {
 	t.Helper()
 	database, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	insertTestSession(t, database, "codex", sessionID)
-	if err := database.ReplaceSessionGitEvidence(testSessionGitEvidence(sessionID, bindingID, "seed.go")); err != nil {
+	if err := database.ReplaceSessionGitEvidence(testSessionGitEvidence(sessionID, repositoryEntryKey, "seed.go")); err != nil {
 		database.Close()
 		t.Fatal(err)
 	}
-	return database
+	return database, CanonicalSessionRepositoryBindingID("codex", sessionID, repositoryEntryKey)
 }
 
 func localSnapshotTestWrite(bindingID, snapshotID string, kind model.GitSnapshotKind, path string, content []byte) LocalGitSnapshotWrite {

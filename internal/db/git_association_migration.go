@@ -624,7 +624,7 @@ func inspectV34Schema(ctx context.Context, q schemaQueryer) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("v34 inspect %s %s: %w", object.kind, object.name, err)
 		}
-		if compactDDL(actual) != compactDDL(object.ddl) {
+		if compactDDL(actual) != compactDDL(object.ddl) && !schemaObjectMatchesCompatibleSuccessor(actual, object) {
 			return false, fmt.Errorf("v34 incompatible %s %s", object.kind, object.name)
 		}
 	}
@@ -643,10 +643,22 @@ func schemaObjectExists(ctx context.Context, q schemaQueryer, object v34SchemaOb
 	if err != nil {
 		return false, err
 	}
-	if compactDDL(actual) != compactDDL(object.ddl) {
+	if compactDDL(actual) != compactDDL(object.ddl) && !schemaObjectMatchesCompatibleSuccessor(actual, object) {
 		return false, fmt.Errorf("incompatible %s %s", object.kind, object.name)
 	}
 	return true, nil
+}
+
+func schemaObjectMatchesCompatibleSuccessor(actual string, object v34SchemaObject) bool {
+	if object.kind != "trigger" {
+		return false
+	}
+	for _, successor := range v35ReplacementTriggers {
+		if successor.name == object.name && compactDDL(actual) == compactDDL(successor.ddl) {
+			return true
+		}
+	}
+	return false
 }
 
 func schemaVersionExists(ctx context.Context, q schemaQueryer, version int) (bool, error) {

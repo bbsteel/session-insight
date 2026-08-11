@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 const (
@@ -51,6 +53,9 @@ type SourceContentOwner struct {
 func (db *DB) PutSourceContent(owner SourceContentOwner, content []byte, quota SourceContentQuota) (string, error) {
 	if err := owner.validate(); err != nil {
 		return "", err
+	}
+	if owner.ChangeSnapshotID != "" {
+		return "", fmt.Errorf("published Change Request content is immutable; use StoreChangeRequestSnapshot")
 	}
 	quota = quota.withDefaults()
 
@@ -186,6 +191,11 @@ func (db *DB) DeleteSourceContentRef(owner SourceContentOwner) error {
 	if _, err := c.ExecContext(ctx, `DELETE FROM source_content_blob_refs WHERE `+clause, args...); err != nil {
 		return fmt.Errorf("delete source content reference: %w", err)
 	}
+	if owner.ChangeSnapshotID != "" {
+		if err := invalidateHostedSnapshotContent(ctx, c, owner.ChangeSnapshotID); err != nil {
+			return err
+		}
+	}
 	if err := deleteBlobIfOrphaned(ctx, c, sha); err != nil {
 		return err
 	}
@@ -193,6 +203,48 @@ func (db *DB) DeleteSourceContentRef(owner SourceContentOwner) error {
 		return fmt.Errorf("commit source content delete: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+func invalidateHostedSnapshotContent(ctx context.Context, c *sql.Conn, snapshotID string) error {
+	pending, err := marshalAssessment(model.NonExactGitEvidence(
+		model.GitEvidenceEstimated, model.ReasonChangeRequestPendingReconfirmation,
+	))
+	if err != nil {
+		return err
+	}
+	if _, err := c.ExecContext(ctx, `
+		UPDATE session_git_evidence
+		SET revision = revision + 1,
+		    state = ?, reason_code = ?, reasons_json = ?, stale = 1,
+		    authority = 'none', selected_change_snapshot_id = NULL,
+		    authority_selection_json = '{}'
+		WHERE authority = 'hosted_change' AND selected_change_snapshot_id = ?`,
+		pending.state, pending.reasonCode, pending.reasonsJSON, snapshotID,
+	); err != nil {
+		return fmt.Errorf("demote deleted hosted Change Request authority: %w", err)
+	}
+	if _, err := c.ExecContext(ctx, `
+		UPDATE session_change_requests
+		SET state = ?, reason_code = ?, reasons_json = ?
+		WHERE snapshot_id = ? AND relationship = 'exclusive'`,
+		pending.state, pending.reasonCode, pending.reasonsJSON, snapshotID,
+	); err != nil {
+		return fmt.Errorf("mark deleted hosted Change Request links pending: %w", err)
+	}
+	if _, err := c.ExecContext(ctx, `
+		UPDATE change_request_snapshots SET cache_state = 'content_deleted'
+		WHERE snapshot_id = ?`, snapshotID,
+	); err != nil {
+		return fmt.Errorf("mark hosted Change Request content deleted: %w", err)
+	}
+	if _, err := c.ExecContext(ctx, `
+		UPDATE change_request_cache_heads
+		SET state = 'stale', reason_code = ?
+		WHERE snapshot_id = ?`, model.ReasonChangeRequestPartial, snapshotID,
+	); err != nil {
+		return fmt.Errorf("mark hosted Change Request cache head stale: %w", err)
+	}
 	return nil
 }
 

@@ -19,17 +19,30 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 		encoded, _ := json.Marshal(validation.Issues)
 		return fmt.Errorf("validate session Git evidence: %s", encoded)
 	}
-	if len(evidence.ChangeRequests) != 0 {
-		return fmt.Errorf("replace session Git evidence: hosted change links require the change-request store")
-	}
-
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("begin session Git evidence replacement: %w", err)
 	}
 	defer tx.Rollback()
 
-	bindingID := evidence.RepositoryEntryKey
+	bindingID := CanonicalSessionRepositoryBindingID(
+		evidence.RootAgentType, evidence.RootSessionID, evidence.RepositoryEntryKey,
+	)
+	var persistedBindingID string
+	err = tx.QueryRow(`
+		SELECT binding_id FROM session_git_bindings
+		WHERE agent_type = ? AND session_id = ? AND repository_entry_key = ?`,
+		evidence.RootAgentType, evidence.RootSessionID, evidence.RepositoryEntryKey,
+	).Scan(&persistedBindingID)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("resolve existing Session repository binding: %w", err)
+	}
+	if err == nil {
+		// Preserve pre-v35 internal IDs. Rekeying this row would require moving
+		// its entire FK graph and is unnecessary because the API key remains
+		// scoped by the root tuple.
+		bindingID = persistedBindingID
+	}
 	var existingAgentType, existingSessionID string
 	err = tx.QueryRow(`
 		SELECT agent_type, session_id FROM session_git_bindings WHERE binding_id = ?`,
@@ -113,6 +126,72 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 	if evidence.Final != nil {
 		finalID = evidence.Final.SnapshotID
 	}
+	var selectedChangeSnapshotID any
+	for _, link := range evidence.ChangeRequests {
+		changeKey, err := CanonicalChangeRequestKey(link.Change)
+		if err != nil {
+			return err
+		}
+		var storedSnapshotID sql.NullString
+		var storedRelationship, storedMethod, storedState string
+		var storedReason, storedReasonsJSON, storedConfirmationSource, storedConfirmationRevision string
+		var storedCacheState string
+		var storedCollaborationRevision int64
+		if err := tx.QueryRow(`
+			SELECT links.snapshot_id, links.relationship, links.method,
+			       links.state, links.reason_code, links.reasons_json,
+			       links.confirmation_source, links.confirmation_revision,
+			       links.collaboration_revision, COALESCE(snapshot.cache_state,'')
+			FROM session_change_requests links
+			LEFT JOIN change_request_snapshots snapshot ON snapshot.snapshot_id = links.snapshot_id
+			WHERE links.link_id = ? AND links.root_agent_type = ? AND links.root_session_id = ?
+			  AND COALESCE(links.binding_id,'') = ? AND links.change_id = ?
+			  AND links.content_version_key = ?`,
+			link.LinkID, evidence.RootAgentType, evidence.RootSessionID,
+			bindingID, changeKey, link.ContentVersionKey,
+		).Scan(
+			&storedSnapshotID, &storedRelationship, &storedMethod,
+			&storedState, &storedReason, &storedReasonsJSON,
+			&storedConfirmationSource, &storedConfirmationRevision,
+			&storedCollaborationRevision, &storedCacheState,
+		); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("Session Change Request link %q is not persisted for this repository", link.LinkID)
+			}
+			return fmt.Errorf("verify Session Change Request link %q: %w", link.LinkID, err)
+		}
+		linkAssessment, err := marshalAssessment(link.Assessment)
+		if err != nil {
+			return err
+		}
+		if storedRelationship != string(link.Relationship) || storedMethod != string(link.Method) ||
+			storedState != linkAssessment.state || storedReason != linkAssessment.reasonCode ||
+			storedReasonsJSON != linkAssessment.reasonsJSON ||
+			storedConfirmationSource != string(link.ConfirmationSource) ||
+			storedConfirmationRevision != link.ConfirmationRevision ||
+			storedCollaborationRevision != link.CollaborationRevision {
+			return fmt.Errorf("Session Change Request link %q changed during evidence derivation", link.LinkID)
+		}
+		if evidence.AuthoritySelection != nil && evidence.AuthoritySelection.LinkID == link.LinkID {
+			if !storedSnapshotID.Valid {
+				return fmt.Errorf("selected Change Request link %q has no fixed snapshot", link.LinkID)
+			}
+			var currentCollaborationRevision int64
+			if err := tx.QueryRow(`
+				SELECT revision FROM collaboration_roots
+				WHERE root_agent_type = ? AND root_session_id = ?`,
+				evidence.RootAgentType, evidence.RootSessionID,
+			).Scan(&currentCollaborationRevision); err != nil {
+				return fmt.Errorf("verify selected Change Request collaboration revision: %w", err)
+			}
+			expectedConfirmation, err := CanonicalChangeRequestConfirmationRevision(link)
+			if err != nil || storedConfirmationRevision != expectedConfirmation ||
+				storedCollaborationRevision != currentCollaborationRevision || storedCacheState != "current" {
+				return fmt.Errorf("selected Change Request link %q requires reconfirmation", link.LinkID)
+			}
+			selectedChangeSnapshotID = storedSnapshotID.String
+		}
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO session_git_evidence(
 			evidence_id, binding_id, revision, state, reason_code, reasons_json,
@@ -135,7 +214,7 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 			generated_at = excluded.generated_at`,
 		bindingID, bindingID, evidence.Revision, assessment.state, assessment.reasonCode, assessment.reasonsJSON,
 		boolInt(evidence.Provisional), boolInt(evidence.Stale), evidence.Authority,
-		baselineID, finalID, nil, authorityJSON, model.FormatTime(evidence.GeneratedAt),
+		baselineID, finalID, selectedChangeSnapshotID, authorityJSON, model.FormatTime(evidence.GeneratedAt),
 	); err != nil {
 		return fmt.Errorf("upsert session Git evidence: %w", err)
 	}
@@ -210,6 +289,14 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 		return fmt.Errorf("commit session Git evidence replacement: %w", err)
 	}
 	return nil
+}
+
+// CanonicalSessionRepositoryBindingID returns the storage identity for one
+// opaque repository entry within one Session root. Repository entry keys are
+// intentionally scoped to their Session envelope and therefore cannot be
+// used directly as database primary keys across all Sessions.
+func CanonicalSessionRepositoryBindingID(rootAgentType, rootSessionID, repositoryEntryKey string) string {
+	return opaqueAssociationKey("binding", rootAgentType, rootSessionID, repositoryEntryKey)
 }
 
 type storedAssessment struct {

@@ -18,6 +18,7 @@ func TestReplaceSessionGitEvidenceAtomicallyReplacesChildren(t *testing.T) {
 	insertTestSession(t, database, "codex", "evidence-session")
 
 	first := testSessionGitEvidence("evidence-session", "entry-1", "first.go")
+	bindingID := CanonicalSessionRepositoryBindingID("codex", "evidence-session", "entry-1")
 	if err := database.ReplaceSessionGitEvidence(first); err != nil {
 		t.Fatal(err)
 	}
@@ -28,24 +29,84 @@ func TestReplaceSessionGitEvidenceAtomicallyReplacesChildren(t *testing.T) {
 	}
 
 	var revision, files, links int
-	if err := database.Conn().QueryRow(`SELECT revision FROM session_git_evidence WHERE evidence_id='entry-1'`).Scan(&revision); err != nil {
+	if err := database.Conn().QueryRow(`SELECT revision FROM session_git_evidence WHERE evidence_id=?`, bindingID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Conn().QueryRow(`SELECT COUNT(*) FROM session_git_files WHERE evidence_id='entry-1'`).Scan(&files); err != nil {
+	if err := database.Conn().QueryRow(`SELECT COUNT(*) FROM session_git_files WHERE evidence_id=?`, bindingID).Scan(&files); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Conn().QueryRow(`SELECT COUNT(*) FROM session_git_evidence_links WHERE evidence_id='entry-1'`).Scan(&links); err != nil {
+	if err := database.Conn().QueryRow(`SELECT COUNT(*) FROM session_git_evidence_links WHERE evidence_id=?`, bindingID).Scan(&links); err != nil {
 		t.Fatal(err)
 	}
 	if revision != 2 || files != 1 || links != 1 {
 		t.Fatalf("revision=%d files=%d links=%d", revision, files, links)
 	}
 	var path string
-	if err := database.Conn().QueryRow(`SELECT display_path FROM session_git_files WHERE evidence_id='entry-1'`).Scan(&path); err != nil {
+	if err := database.Conn().QueryRow(`SELECT display_path FROM session_git_files WHERE evidence_id=?`, bindingID).Scan(&path); err != nil {
 		t.Fatal(err)
 	}
 	if path != "second.go" {
 		t.Fatalf("stored path = %q", path)
+	}
+}
+
+func TestReplaceSessionGitEvidenceScopesOpaqueRepositoryKeyToSession(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for _, sessionID := range []string{"same-key-session-one", "same-key-session-two"} {
+		insertTestSession(t, database, "codex", sessionID)
+		if err := database.ReplaceSessionGitEvidence(testSessionGitEvidence(sessionID, "repository-entry", sessionID+".go")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var bindings int
+	if err := database.Conn().QueryRow(`
+		SELECT COUNT(*) FROM session_git_bindings
+		WHERE repository_entry_key = 'repository-entry'`,
+	).Scan(&bindings); err != nil {
+		t.Fatal(err)
+	}
+	if bindings != 2 {
+		t.Fatalf("bindings sharing a Session-scoped repository key = %d, want 2", bindings)
+	}
+}
+
+func TestReplaceSessionGitEvidencePreservesLegacyBindingID(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertTestSession(t, database, "codex", "legacy-binding-session")
+	if _, err := database.Conn().Exec(`
+		INSERT INTO session_git_bindings(
+			binding_id, agent_type, session_id, repository_entry_key,
+			worktree_root, common_root_id, worktree_id, state, observed_at
+		) VALUES ('legacy-entry','codex','legacy-binding-session','legacy-entry',
+		          '/old','old-common','old-worktree','exact','2026-08-11T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ReplaceSessionGitEvidence(
+		testSessionGitEvidence("legacy-binding-session", "legacy-entry", "updated.go"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	var bindingID, path string
+	if err := database.Conn().QueryRow(`
+		SELECT binding.binding_id, file.display_path
+		FROM session_git_bindings binding
+		JOIN session_git_evidence evidence ON evidence.binding_id = binding.binding_id
+		JOIN session_git_files file ON file.evidence_id = evidence.evidence_id
+		WHERE binding.agent_type='codex' AND binding.session_id='legacy-binding-session'`,
+	).Scan(&bindingID, &path); err != nil {
+		t.Fatal(err)
+	}
+	if bindingID != "legacy-entry" || path != "updated.go" {
+		t.Fatalf("legacy binding=%q path=%q", bindingID, path)
 	}
 }
 
@@ -57,6 +118,7 @@ func TestReplaceSessionGitEvidenceRollbackPreservesPreviousResult(t *testing.T) 
 	defer database.Close()
 	insertTestSession(t, database, "codex", "rollback-session")
 	first := testSessionGitEvidence("rollback-session", "entry-rollback", "first.go")
+	bindingID := CanonicalSessionRepositoryBindingID("codex", "rollback-session", "entry-rollback")
 	if err := database.ReplaceSessionGitEvidence(first); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +141,7 @@ func TestReplaceSessionGitEvidenceRollbackPreservesPreviousResult(t *testing.T) 
 		SELECT e.revision, f.display_path
 		FROM session_git_evidence e
 		JOIN session_git_files f ON f.evidence_id=e.evidence_id
-		WHERE e.evidence_id='entry-rollback'`,
+		WHERE e.evidence_id=?`, bindingID,
 	).Scan(&revision, &path); err != nil {
 		t.Fatal(err)
 	}
@@ -111,15 +173,17 @@ func TestReplaceSessionGitEvidenceKeepsOriginsForEveryRepositoryEntry(t *testing
 	}
 
 	rows, err := database.Conn().Query(`
-		SELECT binding_id, json_extract(origin_json, '$.repository_url.value')
-		FROM session_git_origins ORDER BY binding_id`)
+		SELECT origins.binding_id, json_extract(origins.origin_json, '$.repository_url.value')
+		FROM session_git_origins origins
+		JOIN session_git_bindings binding ON binding.binding_id = origins.binding_id
+		ORDER BY binding.repository_entry_key`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	want := []struct{ binding, remote string }{
-		{"entry-one", "https://example.com/acme/one.git"},
-		{"entry-two", "https://example.com/acme/two.git"},
+		{CanonicalSessionRepositoryBindingID("codex", "multi-repository", "entry-one"), "https://example.com/acme/one.git"},
+		{CanonicalSessionRepositoryBindingID("codex", "multi-repository", "entry-two"), "https://example.com/acme/two.git"},
 	}
 	for i, expected := range want {
 		if !rows.Next() {
@@ -157,7 +221,8 @@ func TestReplaceSessionGitEvidenceKeepsOriginsForEveryRepositoryEntry(t *testing
 	}
 	var stale int
 	if err := database.Conn().QueryRow(`
-		SELECT COUNT(*) FROM session_git_origins WHERE binding_id = 'entry-one'`,
+		SELECT COUNT(*) FROM session_git_origins WHERE binding_id = ?`,
+		CanonicalSessionRepositoryBindingID("codex", "multi-repository", "entry-one"),
 	).Scan(&stale); err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +243,8 @@ func TestSourceContentDedupeSharedReferenceAndFinalGC(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	owner1 := SourceContentOwner{EvidenceID: "blob-entry-1", PathKey: "path-1", Purpose: "patch"}
-	owner2 := SourceContentOwner{EvidenceID: "blob-entry-2", PathKey: "path-2", Purpose: "patch"}
+	owner1 := SourceContentOwner{EvidenceID: CanonicalSessionRepositoryBindingID("codex", "blob-session", "blob-entry-1"), PathKey: "path-1", Purpose: "patch"}
+	owner2 := SourceContentOwner{EvidenceID: CanonicalSessionRepositoryBindingID("codex", "blob-session", "blob-entry-2"), PathKey: "path-2", Purpose: "patch"}
 	sha1, err := database.PutSourceContent(owner1, []byte("shared content"), DefaultSourceContentQuota)
 	if err != nil {
 		t.Fatal(err)
@@ -215,13 +280,13 @@ func TestSourceContentQuotaRollsBackReferenceAndBlob(t *testing.T) {
 	}
 	quota := SourceContentQuota{MaxFileBytes: 10, MaxSessionBytes: 5, MaxChangeRequestBytes: 10, MaxGlobalBytes: 20}
 	if _, err := database.PutSourceContent(
-		SourceContentOwner{EvidenceID: "quota-entry", PathKey: "one", Purpose: "patch"},
+		SourceContentOwner{EvidenceID: CanonicalSessionRepositoryBindingID("codex", "quota-session", "quota-entry"), PathKey: "one", Purpose: "patch"},
 		[]byte("abc"), quota,
 	); err != nil {
 		t.Fatal(err)
 	}
 	_, err = database.PutSourceContent(
-		SourceContentOwner{EvidenceID: "quota-entry", PathKey: "two", Purpose: "patch"},
+		SourceContentOwner{EvidenceID: CanonicalSessionRepositoryBindingID("codex", "quota-session", "quota-entry"), PathKey: "two", Purpose: "patch"},
 		[]byte("def"), quota,
 	)
 	if !errors.Is(err, ErrSourceContentQuotaExceeded) {
@@ -248,7 +313,7 @@ func TestDeleteSessionDataCascadesGitContentAndTerminalBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := database.PutSourceContent(
-		SourceContentOwner{EvidenceID: "delete-entry", PathKey: "delete", Purpose: "patch"},
+		SourceContentOwner{EvidenceID: CanonicalSessionRepositoryBindingID("codex", "delete-session", "delete-entry"), PathKey: "delete", Purpose: "patch"},
 		[]byte("private source"), DefaultSourceContentQuota,
 	); err != nil {
 		t.Fatal(err)
@@ -279,7 +344,7 @@ func TestDeleteSessionDataRetainsBlobSharedByAnotherSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := database.PutSourceContent(
-			SourceContentOwner{EvidenceID: item.entry, PathKey: item.session, Purpose: "patch"},
+			SourceContentOwner{EvidenceID: CanonicalSessionRepositoryBindingID("codex", item.session, item.entry), PathKey: item.session, Purpose: "patch"},
 			[]byte("shared private source"), DefaultSourceContentQuota,
 		); err != nil {
 			t.Fatal(err)
@@ -294,7 +359,8 @@ func TestDeleteSessionDataRetainsBlobSharedByAnotherSession(t *testing.T) {
 	if err := database.Conn().QueryRow(`SELECT evidence_id FROM source_content_blob_refs`).Scan(&remainingOwner); err != nil {
 		t.Fatal(err)
 	}
-	if remainingOwner != "delete-shared-entry-2" {
+	wantRemainingOwner := CanonicalSessionRepositoryBindingID("codex", "delete-shared-2", "delete-shared-entry-2")
+	if remainingOwner != wantRemainingOwner {
 		t.Fatalf("remaining blob owner = %q", remainingOwner)
 	}
 }

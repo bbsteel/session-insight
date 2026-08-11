@@ -172,6 +172,27 @@ func TestValidateSessionEvidenceRequiresDistinctPositionRevision(t *testing.T) {
 	}
 }
 
+func TestValidateChangeRequestLinkRejectsCrossRootEvidenceAnchor(t *testing.T) {
+	link := hostedExclusiveGolden().Repositories[0].ChangeRequests[0]
+	anchor := exactEvidenceLink()
+	anchor.RootSessionID = "different-root"
+	link.Evidence = []GitEvidenceLink{anchor}
+	if validation := ValidateSessionChangeRequestLink(
+		link, link.RootAgentType, link.RootSessionID, link.RepositoryEntryKey,
+	); !validation.Has(GitIssueInvalidLink) {
+		t.Fatalf("cross-root Change Request anchor accepted: %+v", validation.Issues)
+	}
+}
+
+func TestValidateSessionEvidenceAllowsStableChangeLinkOrdinalGap(t *testing.T) {
+	envelope := hostedExclusiveGolden()
+	repository := &envelope.Repositories[0]
+	repository.ChangeRequests[0].Ordinal = 4
+	if validation := ValidateSessionGitEvidence(repository); !validation.OK() {
+		t.Fatalf("stable Change Request ordinal gap rejected: %+v", validation.Issues)
+	}
+}
+
 func TestValidateEnvelopeRejectsNullAndCrossRootRepositories(t *testing.T) {
 	nilRepositories := &SessionGitEvidenceEnvelope{
 		RootAgentType: "codex", RootSessionID: "session-root-1", Revision: 1,

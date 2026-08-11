@@ -430,8 +430,26 @@ func validateChangeLink(v *GitValidation, field string, link SessionChangeReques
 		v.add(GitIssueInvalidLink, field+".evidence", "must be an explicit JSON array, not null")
 	}
 	for i, anchor := range link.Evidence {
-		validateEvidenceLink(v, fmt.Sprintf("%s.evidence[%d]", field, i), anchor)
+		anchorField := fmt.Sprintf("%s.evidence[%d]", field, i)
+		validateEvidenceLink(v, anchorField, anchor)
+		if anchor.RootAgentType != link.RootAgentType || anchor.RootSessionID != link.RootSessionID {
+			v.add(GitIssueInvalidLink, anchorField, "evidence anchor attribution root must match its Change Request link")
+		}
 	}
+}
+
+// ValidateSessionChangeRequestLink validates one link against its
+// server-derived attribution root and repository entry without requiring a
+// complete SessionGitEvidence aggregate. Related links may omit repositoryKey;
+// contributing and exclusive links remain fixed to it.
+func ValidateSessionChangeRequestLink(link SessionChangeRequestLink, rootAgentType, rootSessionID, repositoryKey string) GitValidation {
+	var v GitValidation
+	owner := &SessionGitEvidence{
+		RootAgentType: rootAgentType, RootSessionID: rootSessionID,
+		RepositoryEntryKey: repositoryKey,
+	}
+	validateChangeLink(&v, "link", link, owner)
+	return v.finish()
 }
 
 // ValidateChangeRequestBindRequest validates only client-writable binding
@@ -544,12 +562,14 @@ func ValidateSessionGitEvidence(evidence *SessionGitEvidence) GitValidation {
 	}
 	links := make(map[string]SessionChangeRequestLink, len(evidence.ChangeRequests))
 	exclusiveCount := 0
+	previousLinkOrdinal := -1
 	for i, link := range evidence.ChangeRequests {
 		field := fmt.Sprintf("change_requests[%d]", i)
 		validateChangeLink(&v, field, link, evidence)
-		if link.Ordinal != i {
-			v.add(GitIssueInvalidOrdinal, field+".ordinal", fmt.Sprintf("must equal stable array ordinal %d", i))
+		if link.Ordinal <= previousLinkOrdinal {
+			v.add(GitIssueInvalidOrdinal, field+".ordinal", "stable link ordinals must be strictly increasing")
 		}
+		previousLinkOrdinal = link.Ordinal
 		if _, exists := links[link.LinkID]; exists {
 			v.add(GitIssueDuplicateID, field+".link_id", fmt.Sprintf("duplicate link ID %q", link.LinkID))
 		}
@@ -571,6 +591,9 @@ func ValidateSessionGitEvidence(evidence *SessionGitEvidence) GitValidation {
 		selected, ok := links[selection.LinkID]
 		if !ok || selected.Relationship != ChangeRelationshipExclusive || selected.ContentVersionKey != selection.ContentVersionKey {
 			v.add(GitIssueInvalidAuthority, "authority_selection", "selection must reference the matching fixed version of an exclusive link")
+		}
+		if ok && selected.Assessment.State != GitEvidenceExact {
+			v.add(GitIssueInvalidAuthority, "authority_selection", "selected exclusive link must still be exact and confirmed")
 		}
 		if selection.RootAgentType != evidence.RootAgentType || selection.RootSessionID != evidence.RootSessionID || selection.RepositoryEntryKey != evidence.RepositoryEntryKey {
 			v.add(GitIssueInvalidAuthority, "authority_selection", "selection root and repository binding must match the evidence owner")

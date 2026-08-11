@@ -62,6 +62,8 @@ func TestStoreChangeRequestSnapshotPublishesFixedVersionAndReverseAliases(t *tes
 	write.Snapshot.MetadataRevision = "metadata-2"
 	write.Snapshot.Title = "Updated title"
 	write.Snapshot.ETag = "etag-2"
+	write.SyncStartedAt = write.SyncStartedAt.Add(time.Minute)
+	write.Snapshot.FetchedAt = write.Snapshot.FetchedAt.Add(time.Minute)
 	if _, err := database.StoreChangeRequestSnapshot(write); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +111,195 @@ func TestStoreChangeRequestSnapshotRejectsContentIdentityRewrite(t *testing.T) {
 		t.Fatalf("retained version=%q head=%q", version, head)
 	}
 	assertTableCount(t, database, "source_content_blob_refs", 1)
+}
+
+func TestStoreChangeRequestSnapshotRejectsPayloadAndCompletenessDrift(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertChangeHost(t, database, "host-github-public", "github", "github.example")
+	write := testChangeRequestSnapshotWrite()
+	if _, err := database.StoreChangeRequestSnapshot(write); err != nil {
+		t.Fatal(err)
+	}
+
+	drift := testChangeRequestSnapshotWrite()
+	drift.Snapshot.Files[0].DisplayPath = "internal/drift.go"
+	drift.Contents[0].Content = []byte("different patch")
+	if _, err := database.StoreChangeRequestSnapshot(drift); err == nil {
+		t.Fatal("fixed snapshot accepted different file/content payload")
+	}
+	partial := testChangeRequestSnapshotWrite()
+	partial.Snapshot.Completeness.Patches = model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonChangeRequestPartial)
+	if _, err := database.StoreChangeRequestSnapshot(partial); err == nil {
+		t.Fatal("fixed snapshot accepted a different completeness claim")
+	}
+
+	var path string
+	if err := database.Conn().QueryRow(`SELECT display_path FROM change_request_files`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if path != "internal/evidence.go" {
+		t.Fatalf("stored fixed payload drifted to %q", path)
+	}
+}
+
+func TestStoreChangeRequestSnapshotScopesForkAliasesAndPreventsCacheRollback(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertChangeHost(t, database, "host-github-public", "github", "github.example")
+	original := testChangeRequestSnapshotWrite()
+	changeKey, err := database.StoreChangeRequestSnapshot(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := CanonicalHostedRepositoryKey(*original.Snapshot.SourceRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var branchRepository string
+	if err := database.Conn().QueryRow(`
+		SELECT repository_id FROM change_request_aliases
+		WHERE change_id = ? AND alias_kind = 'branch' AND alias_value = ?`,
+		changeKey, original.Snapshot.SourceRef,
+	).Scan(&branchRepository); err != nil {
+		t.Fatal(err)
+	}
+	if branchRepository != sourceID {
+		t.Fatalf("source branch repository = %q, want %q", branchRepository, sourceID)
+	}
+
+	newer := testChangeRequestSnapshotWrite()
+	newer.Snapshot.SnapshotID = "snapshot-pr-42-newer"
+	newer.Snapshot.Content.Key = "github:provider-pr-42:content-2"
+	newer.Snapshot.Content.HeadSHA = testChangeCommit
+	newer.Snapshot.FetchedAt = original.Snapshot.FetchedAt.Add(time.Minute)
+	newer.SyncStartedAt = original.SyncStartedAt.Add(time.Minute)
+	if _, err := database.StoreChangeRequestSnapshot(newer); err != nil {
+		t.Fatal(err)
+	}
+	lateOlderRequest := original
+	lateOlderRequest.Snapshot.FetchedAt = newer.Snapshot.FetchedAt.Add(time.Minute)
+	if _, err := database.StoreChangeRequestSnapshot(lateOlderRequest); err != nil {
+		t.Fatal(err)
+	}
+	var head string
+	if err := database.Conn().QueryRow(`SELECT snapshot_id FROM change_request_cache_heads WHERE change_id = ?`, changeKey).Scan(&head); err != nil {
+		t.Fatal(err)
+	}
+	if head != newer.Snapshot.SnapshotID {
+		t.Fatalf("cache head rolled back to %q", head)
+	}
+	var originalState, newerState string
+	if err := database.Conn().QueryRow(`SELECT cache_state FROM change_request_snapshots WHERE snapshot_id = ?`, original.Snapshot.SnapshotID).Scan(&originalState); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Conn().QueryRow(`SELECT cache_state FROM change_request_snapshots WHERE snapshot_id = ?`, newer.Snapshot.SnapshotID).Scan(&newerState); err != nil {
+		t.Fatal(err)
+	}
+	if originalState != "stale" || newerState != "current" {
+		t.Fatalf("cache states original=%q newer=%q", originalState, newerState)
+	}
+}
+
+func TestStoreChangeRequestSnapshotPreventsMutableMetadataRollback(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertChangeHost(t, database, "host-github-public", "github", "github.example")
+
+	original := testChangeRequestSnapshotWrite()
+	if _, err := database.StoreChangeRequestSnapshot(original); err != nil {
+		t.Fatal(err)
+	}
+	newer := original
+	newer.SyncStartedAt = original.SyncStartedAt.Add(2 * time.Minute)
+	newer.Snapshot.FetchedAt = original.Snapshot.FetchedAt.Add(2 * time.Minute)
+	newer.Snapshot.MetadataRevision = "metadata-newer"
+	newer.Snapshot.Title = "Newest metadata"
+	if _, err := database.StoreChangeRequestSnapshot(newer); err != nil {
+		t.Fatal(err)
+	}
+	lateOlder := original
+	lateOlder.SyncStartedAt = original.SyncStartedAt.Add(time.Minute)
+	lateOlder.Snapshot.FetchedAt = newer.Snapshot.FetchedAt.Add(time.Minute)
+	lateOlder.Snapshot.MetadataRevision = "metadata-older"
+	lateOlder.Snapshot.Title = "Late old metadata"
+	if _, err := database.StoreChangeRequestSnapshot(lateOlder); err != nil {
+		t.Fatal(err)
+	}
+
+	var title, revision string
+	if err := database.Conn().QueryRow(`
+		SELECT title, metadata_revision FROM change_request_snapshots WHERE snapshot_id = ?`,
+		original.Snapshot.SnapshotID,
+	).Scan(&title, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if title != newer.Snapshot.Title || revision != newer.Snapshot.MetadataRevision {
+		t.Fatalf("metadata rolled back to title=%q revision=%q", title, revision)
+	}
+}
+
+func TestStoreHistoricalChangeRequestSnapshotDoesNotReplaceCurrentHead(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertChangeHost(t, database, "host-github-public", "github", "github.example")
+
+	current := testChangeRequestSnapshotWrite()
+	changeKey, err := database.StoreChangeRequestSnapshot(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historical := testChangeRequestSnapshotWrite()
+	historical.Snapshot.SnapshotID = "snapshot-pr-42-historical"
+	historical.Snapshot.Content.Key = "github:provider-pr-42:historical"
+	historical.Snapshot.Content.HeadSHA = testChangeCommit
+	historical.SyncStartedAt = current.SyncStartedAt.Add(time.Minute)
+	historical.Snapshot.FetchedAt = current.Snapshot.FetchedAt.Add(time.Minute)
+	historical.UpdateCacheHead = false
+	if _, err := database.StoreChangeRequestSnapshot(historical); err != nil {
+		t.Fatal(err)
+	}
+
+	var head, currentState, historicalState string
+	if err := database.Conn().QueryRow(`SELECT snapshot_id FROM change_request_cache_heads WHERE change_id = ?`, changeKey).Scan(&head); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Conn().QueryRow(`SELECT cache_state FROM change_request_snapshots WHERE snapshot_id = ?`, current.Snapshot.SnapshotID).Scan(&currentState); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Conn().QueryRow(`SELECT cache_state FROM change_request_snapshots WHERE snapshot_id = ?`, historical.Snapshot.SnapshotID).Scan(&historicalState); err != nil {
+		t.Fatal(err)
+	}
+	if head != current.Snapshot.SnapshotID || currentState != "current" || historicalState != "stale" {
+		t.Fatalf("head=%q current=%q historical=%q", head, currentState, historicalState)
+	}
+}
+
+func TestStoreChangeRequestSnapshotRejectsURLOutsideApprovedOrigins(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertChangeHost(t, database, "host-github-public", "github", "github.example")
+	write := testChangeRequestSnapshotWrite()
+	write.Snapshot.WebURL = "https://unapproved.example/acme/widgets/pull/42"
+	if _, err := database.StoreChangeRequestSnapshot(write); err == nil {
+		t.Fatal("snapshot accepted a web URL outside approved endpoints")
+	}
+	assertTableCount(t, database, "change_request_snapshots", 0)
 }
 
 func TestStoreChangeRequestSnapshotQuotaFailureRollsBackEverything(t *testing.T) {
@@ -159,6 +350,41 @@ func TestStoreGenericChangeRequestIsOfflineAndIdempotent(t *testing.T) {
 	assertTableCount(t, database, "change_request_identities", 1)
 	assertTableCount(t, database, "change_request_aliases", 1)
 	assertTableCount(t, database, "change_request_snapshots", 0)
+}
+
+func TestStoreGenericChangeRequestRejectsReferencesOutsideParserContract(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for name, reference := range map[string]model.ChangeRequestReference{
+		"http": {
+			Provider: model.ChangeProviderGeneric, DisplayOrigin: "http://review.example",
+			NormalizedURL: "http://review.example/team/repo/reviews/7",
+		},
+		"root": {
+			Provider: model.ChangeProviderGeneric, DisplayOrigin: "https://review.example",
+			NormalizedURL: "https://review.example/",
+		},
+		"origin-mismatch": {
+			Provider: model.ChangeProviderGeneric, DisplayOrigin: "https://other.example",
+			NormalizedURL: "https://review.example/team/repo/reviews/7",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			digest := sha256.Sum256([]byte(reference.NormalizedURL))
+			identity := model.ChangeRequestIdentity{
+				Provider:        model.ChangeProviderGeneric,
+				GenericOpaqueID: "generic-" + hex.EncodeToString(digest[:]),
+			}
+			if _, err := database.StoreGenericChangeRequest(reference, identity); err == nil {
+				t.Fatal("unsafe generic reference was accepted")
+			}
+		})
+	}
+	assertTableCount(t, database, "change_request_identities", 0)
+	assertTableCount(t, database, "change_request_aliases", 0)
 }
 
 func TestStoreChangeRequestSnapshotRequiresRetainedExactPatch(t *testing.T) {
@@ -229,7 +455,9 @@ func testChangeRequestSnapshotWrite() ChangeRequestSnapshotWrite {
 			},
 			ETag: "etag-1", FetchedAt: now,
 		},
-		Aliases: []ChangeRequestAliasWrite{},
+		SyncStartedAt:   now.Add(-time.Second),
+		UpdateCacheHead: true,
+		Aliases:         []ChangeRequestAliasWrite{},
 		Contents: []ChangeRequestContentWrite{{
 			FileKey: "hosted:file-1", Purpose: "patch", Content: []byte("@@ -1 +1 @@\n-old\n+new\n"),
 		}},

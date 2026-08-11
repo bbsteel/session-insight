@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 34
+const currentSchemaVersion = 35
 
 type DB struct {
 	conn *sql.DB
@@ -912,6 +912,13 @@ func migrate(conn *sql.DB) error {
 	// It deliberately leaves index_watermarks untouched: current worktree
 	// state is not a trustworthy historical session-start baseline.
 	if err := migrateGitAssociationV34(conn); err != nil {
+		return err
+	}
+	// Version 35 adds Session↔Change Request links, repository-scoped reverse
+	// lookup, sync ordering, and source-repository alias constraints. It is a
+	// separate physical-schema audit so partially created pre-release v34
+	// databases are repaired without pretending upstream v33 owned these rows.
+	if err := migrateGitAssociationV35(conn); err != nil {
 		return err
 	}
 

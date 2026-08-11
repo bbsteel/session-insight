@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestV34FreshSchema(t *testing.T) {
+func TestV35FreshSchema(t *testing.T) {
 	database, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -19,8 +19,8 @@ func TestV34FreshSchema(t *testing.T) {
 	if err := database.Conn().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 34 {
-		t.Fatalf("schema version = %d, want 34", version)
+	if version != 35 {
+		t.Fatalf("schema version = %d, want 35", version)
 	}
 	complete, err := inspectV34Schema(t.Context(), database.Conn())
 	if err != nil {
@@ -29,7 +29,86 @@ func TestV34FreshSchema(t *testing.T) {
 	if !complete {
 		t.Fatal("fresh v34 physical schema is incomplete")
 	}
+	complete, err = inspectV35Schema(t.Context(), database.Conn())
+	if err != nil || !complete {
+		t.Fatalf("fresh v35 physical schema complete=%v err=%v", complete, err)
+	}
 	assertNoForeignKeyViolations(t, database.Conn())
+}
+
+func TestV35UpgradesV34AliasScopeWithoutWeakeningV34Inspection(t *testing.T) {
+	dir := makeRawV33Database(t)
+	conn, err := sql.Open("sqlite3", filepath.Join(dir, "index.db")+"?_foreign_keys=on&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := migrateGitAssociationV34(conn); err != nil {
+		t.Fatal(err)
+	}
+	oldTrigger, ok := v34ObjectByName("trigger", "trg_change_request_aliases_scope_insert")
+	if !ok {
+		t.Fatal("v34 alias trigger missing from contract")
+	}
+	var actual string
+	if err := conn.QueryRow(`SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?`, oldTrigger.name).Scan(&actual); err != nil {
+		t.Fatal(err)
+	}
+	if compactDDL(actual) != compactDDL(oldTrigger.ddl) {
+		t.Fatal("v34 setup did not install the old alias trigger")
+	}
+	if err := migrateGitAssociationV35(conn); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := inspectV35Schema(t.Context(), conn)
+	if err != nil || !complete {
+		t.Fatalf("v35 schema complete=%v err=%v", complete, err)
+	}
+	complete, err = inspectV34Schema(t.Context(), conn)
+	if err != nil || !complete {
+		t.Fatalf("v34 schema rejected its compatible v35 successor: complete=%v err=%v", complete, err)
+	}
+}
+
+func TestV35AliasScopeTriggersRejectSourceIdentityBypass(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertChangeHost(t, database, "host-github-public", "github", "github.example")
+	write := testChangeRequestSnapshotWrite()
+	changeKey, err := database.StoreChangeRequestSnapshot(write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID, err := CanonicalHostedRepositoryKey(*write.Snapshot.SourceRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`
+		INSERT INTO change_request_aliases(
+			alias_kind,host_id,repository_id,alias_value,change_id,snapshot_id
+		) VALUES ('url',?,?,?,?,?)`,
+		write.Snapshot.Identity.HostID, sourceID, "https://github.example/fork/pull/42",
+		changeKey, write.Snapshot.SnapshotID,
+	); err == nil {
+		t.Fatal("source repository accepted a Change Request identity URL alias")
+	}
+	if _, err := database.Conn().Exec(`
+		UPDATE change_request_aliases SET alias_kind='url'
+		WHERE change_id=? AND snapshot_id=? AND alias_kind='branch'`,
+		changeKey, write.Snapshot.SnapshotID,
+	); err == nil {
+		t.Fatal("source branch alias was rewritten into an identity alias")
+	}
+	if _, err := database.Conn().Exec(`
+		UPDATE change_request_aliases SET repository_id=?
+		WHERE change_id=? AND snapshot_id=? AND alias_kind='url'`,
+		sourceID, changeKey, write.Snapshot.SnapshotID,
+	); err == nil {
+		t.Fatal("target identity alias was moved to the source repository")
+	}
 }
 
 func TestV34UpgradeFromV33PreservesWatermarks(t *testing.T) {
