@@ -12,11 +12,26 @@ func TestCollapseBinarySpansKeepsCleanText(t *testing.T) {
 		"日本語のテキストと絵文字 🔥\n複数行",
 		"short stray � char stays", // below minBinarySpan
 		"one\x01two",               // single control rune stays
-		"ansi-ish \x1b[31m short",  // span of 1 (< 4) stays verbatim
 	}
 	for _, in := range cases {
 		if got := CollapseBinarySpans(in); got != in {
 			t.Fatalf("CollapseBinarySpans(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+// ANSI color/cursor markup is presentation, not content: strip it instead of
+// collapsing the surrounding text as binary garbage.
+func TestCollapseBinarySpansStripsANSIEscapes(t *testing.T) {
+	cases := map[string]string{
+		"\x1b[31mred file\x1b[0m":                         "red file",
+		"ls \x1b[1;34mdir\x1b[0m done":                    "ls dir done",
+		"\x1b]8;;https://example.com\alink\x1b]8;;\x1b\\": "link",
+		"plain": "plain",
+	}
+	for in, want := range cases {
+		if got := CollapseBinarySpans(in); got != want {
+			t.Fatalf("CollapseBinarySpans(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -36,6 +51,10 @@ func TestCollapseBinarySpansCollapsesGarbage(t *testing.T) {
 	if strings.ContainsRune(got, '�') || strings.ContainsRune(got, '\x02') {
 		t.Fatalf("garbage runes survived: %q", got)
 	}
+	// The marker must not introduce whitespace at the newline boundary.
+	if strings.Contains(got, "]\n") == false {
+		t.Fatalf("marker should sit directly before the newline: %q", got)
+	}
 }
 
 func TestCollapseBinarySpansMergesSeparateSpansIntoDistinctMarkers(t *testing.T) {
@@ -54,7 +73,7 @@ func TestCollapseBinarySpansMergesSeparateSpansIntoDistinctMarkers(t *testing.T)
 func TestCollapseBinarySpansReportsRuneCount(t *testing.T) {
 	span := strings.Repeat("�", 30)
 	got := CollapseBinarySpans(span)
-	if !strings.Contains(got, "[binary data omitted: 30 chars]") {
-		t.Fatalf("marker should report rune count, got %q", got)
+	if got != "[binary data omitted: 30 chars]" {
+		t.Fatalf("whole-string span should produce a bare marker, got %q", got)
 	}
 }

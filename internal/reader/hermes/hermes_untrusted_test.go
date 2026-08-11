@@ -37,6 +37,13 @@ func TestUnwrapUntrustedResult(t *testing.T) {
 	if got, ok := unwrapUntrustedResult(empty); !ok || got != "" {
 		t.Fatalf("empty unwrap=(%q,%v)", got, ok)
 	}
+
+	// A format variant separating preamble and payload with a single
+	// newline must still surface the payload.
+	singleNL := "<untrusted_tool_result source=\"x\">\n" + testEnvelopePreamble + "\npayload here\n</untrusted_tool_result>"
+	if got, ok := unwrapUntrustedResult(singleNL); !ok || got != "payload here" {
+		t.Fatalf("single-newline unwrap=(%q,%v)", got, ok)
+	}
 }
 
 // Regression: Hermes wraps MCP search results in the untrusted envelope. The

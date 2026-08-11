@@ -964,10 +964,14 @@ func unwrapUntrustedResult(raw string) (string, bool) {
 	}
 	body = strings.TrimSpace(body)
 	if strings.HasPrefix(body, untrustedPreamble) {
-		// The preamble is a single paragraph; the payload follows the first
-		// blank line.
+		// The preamble is a single paragraph; the payload follows it,
+		// separated by a blank line. Fall back to a single newline so a
+		// format variant never swallows the payload entirely.
 		if i := strings.Index(body, "\n\n"); i >= 0 {
 			return strings.TrimSpace(body[i+2:]), true
+		}
+		if i := strings.Index(body, "\n"); i >= 0 {
+			return strings.TrimSpace(body[i+1:]), true
 		}
 		return "", true
 	}
