@@ -50,7 +50,10 @@ func gitFixtureCommand(t *testing.T, cwd string, when time.Time, args ...string)
 	command.Dir = cwd
 	stamp := when.Format(time.RFC3339)
 	command.Env = append(os.Environ(),
-		"LC_ALL=C", "GIT_TERMINAL_PROMPT=0", "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp,
+		"LC_ALL=C", "GIT_TERMINAL_PROMPT=0",
+		"GIT_AUTHOR_NAME=Fixture Author", "GIT_AUTHOR_EMAIL=fixture@example.invalid",
+		"GIT_COMMITTER_NAME=Fixture Author", "GIT_COMMITTER_EMAIL=fixture@example.invalid",
+		"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp,
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {
