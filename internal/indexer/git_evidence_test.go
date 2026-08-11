@@ -78,6 +78,17 @@ func TestIndexerCapturesOnlyProvenLiveBaselineThenExactFinal(t *testing.T) {
 	session.UpdatedAt = session.UpdatedAt.Add(time.Second)
 	reader.session = session
 	reader.envelope = gitEvidenceEnvelope(session, repository, head, "b", model.SessionFinalized)
+	reader.envelope.RenderEvents = []model.RenderEvent{
+		{
+			EventID: "edit-tracked", Type: "ToolInvocation", Timestamp: session.UpdatedAt.Add(-time.Second),
+			TurnIndex: 1, ToolName: "apply_patch", ToolCallID: "edit-call",
+			ToolInput: map[string]any{"input": "*** Begin Patch\n*** Update File: tracked.txt\n@@\n-before\n+after\n*** End Patch"},
+		},
+		{
+			EventID: "edit-result", ParentEventID: "edit-tracked", Type: "ToolResult",
+			Timestamp: session.UpdatedAt, TurnIndex: 1, ToolCallID: "edit-call",
+		},
+	}
 	if err := index.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +103,17 @@ func TestIndexerCapturesOnlyProvenLiveBaselineThenExactFinal(t *testing.T) {
 		t.Fatalf("derived evidence = %+v", derived)
 	}
 	if derived.Files[0].DisplayPath != "tracked.txt" || derived.Files[0].Status != model.GitFileModified ||
-		derived.Files[0].PatchAssessment.State != model.GitEvidenceUnavailable {
+		derived.Files[0].PatchAssessment.State != model.GitEvidenceExact ||
+		derived.Files[0].Additions == nil || *derived.Files[0].Additions != 1 ||
+		derived.Files[0].Deletions == nil || *derived.Files[0].Deletions != 1 || len(derived.Files[0].Evidence) != 1 ||
+		derived.Files[0].Evidence[0].EventID != "edit-tracked" || derived.Files[0].Evidence[0].PositionsRevision < 1 {
 		t.Fatalf("derived file = %+v", derived.Files[0])
+	}
+	patch, err := database.SessionGitEvidencePatch(
+		session.AgentType, session.ID, derived.RepositoryEntryKey, derived.Files[0].Key, 1<<20,
+	)
+	if err != nil || !strings.Contains(string(patch), "-before\n+after\n") {
+		t.Fatalf("retained patch = %q err=%v", patch, err)
 	}
 
 	// A newer source revision without exact finalization must stop serving the

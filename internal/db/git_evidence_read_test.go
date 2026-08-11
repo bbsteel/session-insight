@@ -51,6 +51,60 @@ func TestSessionGitEvidenceEnvelopeReconstructsExplicitArraysAndLinks(t *testing
 	}
 }
 
+func TestSessionGitEvidencePatchRequiresExactPublishedFile(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	insertTestSession(t, database, "codex", "local-patch")
+	evidence := testSessionGitEvidence("local-patch", "local-entry", "src/file.go")
+	evidence.Files[0].PatchAssessment = model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonSnapshotObjectMissing)
+	evidence.Files[0].Evidence = []model.GitEvidenceLink{}
+	if err := database.ReplaceSessionGitEvidence(evidence); err != nil {
+		t.Fatal(err)
+	}
+	patch := []byte("diff --git a/src/file.go b/src/file.go\n")
+	if err := database.ReplaceSessionGitPatchContent(
+		"codex", "local-patch", "local-entry",
+		map[string][]byte{evidence.Files[0].Key: patch}, DefaultSourceContentQuota,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SessionGitEvidencePatch("codex", "local-patch", "local-entry", evidence.Files[0].Key, 1<<20); !errors.Is(err, ErrSourceContentNotFound) {
+		t.Fatalf("unpublished patch read error = %v", err)
+	}
+
+	evidence.Files[0].PatchAssessment = model.ExactGitEvidence()
+	if err := database.ReplaceSessionGitEvidence(evidence); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := database.SessionGitEvidencePatch("codex", "local-patch", "local-entry", evidence.Files[0].Key, 1<<20)
+	if err != nil || string(stored) != string(patch) {
+		t.Fatalf("exact patch = %q err=%v", stored, err)
+	}
+
+	evidence.Files[0].PatchAssessment = model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonSnapshotObjectMissing)
+	if err := database.ReplaceSessionGitEvidence(evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SessionGitEvidencePatch("codex", "local-patch", "local-entry", evidence.Files[0].Key, 1<<20); !errors.Is(err, ErrSourceContentNotFound) {
+		t.Fatalf("demoted patch read error = %v", err)
+	}
+	if err := database.ReplaceSessionGitPatchContent(
+		"codex", "local-patch", "local-entry", map[string][]byte{}, DefaultSourceContentQuota,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var refs int
+	if err := database.Conn().QueryRow(`SELECT COUNT(*) FROM source_content_blob_refs WHERE purpose='patch'`).Scan(&refs); err != nil {
+		t.Fatal(err)
+	}
+	if refs != 0 {
+		t.Fatalf("patch refs after clear = %d", refs)
+	}
+}
+
 func TestChangeRequestReadReturnsFixedSnapshotAndBoundedPatch(t *testing.T) {
 	database, changeKey, _ := setupChangeRequestLinkTest(t, "read-change", "read-change-entry")
 	defer database.Close()

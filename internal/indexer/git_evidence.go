@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,6 +16,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/gitevidence"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 type gitEvidenceRuntime struct {
@@ -173,7 +176,7 @@ func (ix *Indexer) indexGitEvidence(
 			return readErr
 		}
 		if found && finalRecord.Summary.SourceRevision == envelope.SourceRevision {
-			return ix.deriveLocalGitEvidence(ctx, evidence, repository, baselineRecord, finalRecord)
+			return ix.deriveLocalGitEvidence(ctx, session, envelope, evidence, repository, baselineRecord, finalRecord)
 		}
 	}
 
@@ -216,7 +219,7 @@ func (ix *Indexer) indexGitEvidence(
 		evidence.Provisional = true
 		return ix.db.ReplaceSessionGitEvidence(evidence)
 	case model.GitSnapshotFinal:
-		return ix.deriveLocalGitEvidence(ctx, evidence, repository, baselineRecord, snapshotRecord(captured.Snapshot))
+		return ix.deriveLocalGitEvidence(ctx, session, envelope, evidence, repository, baselineRecord, snapshotRecord(captured.Snapshot))
 	default:
 		return nil
 	}
@@ -238,6 +241,8 @@ func recheckGitSource(ctx context.Context, source reader.AuthoritativeIndexSnaps
 
 func (ix *Indexer) deriveLocalGitEvidence(
 	ctx context.Context,
+	session model.Session,
+	envelope *model.IndexSnapshotEnvelope,
 	evidence model.SessionGitEvidence,
 	repository *gitevidence.Repository,
 	baselineRecord, finalRecord db.LocalGitSnapshotRecord,
@@ -251,8 +256,19 @@ func (ix *Indexer) deriveLocalGitEvidence(
 	evidence.Baseline = snapshotSummaryCopy(baselineRecord.Summary)
 	evidence.Final = snapshotSummaryCopy(finalRecord.Summary)
 	evidence.Provisional = false
+	if evidence.Authority == model.GitAuthorityHostedChange {
+		// Local snapshots remain useful private observations, but a user-selected
+		// fixed hosted change owns the public file set until explicitly changed.
+		return ix.db.ReplaceSessionGitEvidence(evidence)
+	}
 
+	renderedPatches := gitevidence.RenderPatches(baseline, final, diff, gitevidence.DefaultPatchLimits())
+	patchesByChange := make(map[string]gitevidence.RenderedPatch, len(renderedPatches))
+	for _, patch := range renderedPatches {
+		patchesByChange[patch.ChangeKey] = patch
+	}
 	files := make([]model.GitFileChange, 0, len(diff.Files))
+	patchContent := make(map[string][]byte, len(diff.Files))
 	changedPaths := make([]gitevidence.CandidateCommitPath, 0, len(diff.Files))
 	for _, change := range diff.Files {
 		key := snapshotPathKey(change.Key, change.PathBytes)
@@ -272,25 +288,25 @@ func (ix *Indexer) deriveLocalGitEvidence(
 			binary = binary || change.After.Binary
 			submodule = submodule || change.After.Kind == gitevidence.FileGitlink
 		}
-		patchAssessment := change.PatchAssessment
-		// Patch blobs are published in a later bounded rendering step. Do not
-		// claim exact retained patches merely because both endpoint blobs exist.
-		// Snapshot manifests retain content precision, while binary and gitlink
-		// patch precision is intrinsic to their type. Restore those distinctions
-		// before downgrading ordinary exact endpoint pairs for deferred rendering.
-		switch {
-		case binary:
-			patchAssessment = model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonBinaryPatchUnavailable)
-		case submodule:
-			patchAssessment = model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonSubmoduleNotExpanded)
-		case patchAssessment.State == model.GitEvidenceExact:
+		patch := patchesByChange[change.Key]
+		patchAssessment := patch.Assessment
+		if patchAssessment.State == "" {
 			patchAssessment = model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonSnapshotObjectMissing)
+		}
+		if patchAssessment.State == model.GitEvidenceExact {
+			patchContent[key] = append([]byte(nil), patch.Content...)
+		}
+		var additions, deletions *int
+		if patchAssessment.State == model.GitEvidenceExact {
+			additions = intPointer(patch.Additions)
+			deletions = intPointer(patch.Deletions)
 		}
 		files = append(files, model.GitFileChange{
 			Ordinal: len(files), Key: key, Layer: model.GitFileLayerWorktree,
 			DisplayPath: change.DisplayPath, PathBytesB64: pathBytesB64,
 			PathEncoding: change.PathEncoding, Status: change.Status,
 			OldMode: oldMode, NewMode: newMode, Binary: binary, Submodule: submodule,
+			Additions: additions, Deletions: deletions,
 			StatusAssessment: change.StatusAssessment, PatchAssessment: patchAssessment,
 			Evidence: []model.GitEvidenceLink{},
 		})
@@ -298,6 +314,7 @@ func (ix *Indexer) deriveLocalGitEvidence(
 			changedPaths = append(changedPaths, gitevidence.CandidateCommitPath{Key: key, Path: string(change.PathBytes)})
 		}
 	}
+	ix.attachRootMutationEvidence(session, envelope, repository, files)
 	evidence.Files = files
 	evidence.CandidateCommits = []model.GitCandidateCommit{}
 	commitResult, commitErr := ix.git.discoverer.Discover(ctx, repository, gitevidence.CandidateCommitInput{
@@ -308,15 +325,123 @@ func (ix *Indexer) deriveLocalGitEvidence(
 	if commitErr == nil {
 		evidence.CandidateCommits = commitResult.Commits
 	}
-	if evidence.Authority != model.GitAuthorityHostedChange {
-		evidence.Assessment = diff.Assessment
-		if len(files) > 0 {
-			evidence.Assessment = model.NonExactGitEvidence(model.GitEvidenceEstimated, model.ReasonSnapshotObjectMissing)
+	evidence.Assessment = diff.Assessment
+	if evidence.Assessment.State == model.GitEvidenceExact {
+		for _, file := range files {
+			if file.PatchAssessment.State != model.GitEvidenceExact {
+				evidence.Assessment = model.NonExactGitEvidence(
+					model.GitEvidenceEstimated, file.PatchAssessment.ReasonCode,
+				)
+				break
+			}
 		}
-		evidence.Authority = model.GitAuthorityLocalInterval
-		evidence.AuthoritySelection = nil
+	}
+	evidence.Authority = model.GitAuthorityLocalInterval
+	evidence.AuthoritySelection = nil
+
+	// First publish the new file identity with patches gated unavailable. Blob
+	// replacement then cannot expose either an old or a half-published patch.
+	staged := evidence
+	staged.Files = append([]model.GitFileChange(nil), evidence.Files...)
+	for index := range staged.Files {
+		if staged.Files[index].PatchAssessment.State == model.GitEvidenceExact {
+			staged.Files[index].PatchAssessment = model.NonExactGitEvidence(
+				model.GitEvidenceUnavailable, model.ReasonSnapshotObjectMissing,
+			)
+			staged.Files[index].Additions = nil
+			staged.Files[index].Deletions = nil
+		}
+	}
+	if staged.Assessment.State == model.GitEvidenceExact && len(patchContent) != 0 {
+		staged.Assessment = model.NonExactGitEvidence(model.GitEvidenceEstimated, model.ReasonSnapshotObjectMissing)
+	}
+	if err := ix.db.ReplaceSessionGitEvidence(staged); err != nil {
+		return err
+	}
+	if err := ix.db.ReplaceSessionGitPatchContent(
+		evidence.RootAgentType, evidence.RootSessionID, evidence.RepositoryEntryKey,
+		patchContent, db.DefaultSourceContentQuota,
+	); err != nil {
+		return err
 	}
 	return ix.db.ReplaceSessionGitEvidence(evidence)
+}
+
+func intPointer(value int) *int {
+	copy := value
+	return &copy
+}
+
+func (ix *Indexer) attachRootMutationEvidence(
+	session model.Session,
+	envelope *model.IndexSnapshotEnvelope,
+	repository *gitevidence.Repository,
+	files []model.GitFileChange,
+) {
+	if envelope == nil || envelope.OriginGit == nil || repository == nil || len(files) == 0 {
+		return
+	}
+	mutationRoot := envelope.OriginGit.WorktreePath.Value
+	relativeRoot, err := filepath.Rel(repository.WorktreeRoot, mutationRoot)
+	if err != nil || filepath.IsAbs(relativeRoot) || relativeRoot == ".." ||
+		strings.HasPrefix(relativeRoot, ".."+string(filepath.Separator)) {
+		return
+	}
+	prefix := ""
+	if relativeRoot != "." {
+		prefix = filepath.ToSlash(relativeRoot)
+	}
+	result, err := gitevidence.BuildFileMutationEvidence(envelope.RenderEvents, gitevidence.MutationSource{
+		RootAgentType: session.AgentType, RootSessionID: session.ID,
+		SourceRevision: envelope.SourceRevision,
+		DefaultAttribution: gitevidence.MutationAttribution{
+			SourceAgentType: session.AgentType, SourceSessionID: session.ID,
+		},
+	})
+	if err != nil {
+		return
+	}
+
+	mutations := make([]gitevidence.FileMutationEvidence, 0, len(result.Mutations))
+	anchors := make([]gitevidence.MutationPositionAnchor, 0, len(result.Mutations))
+	for _, mutation := range result.Mutations {
+		// The current replay position cache emits depth-zero tool anchors. Child
+		// transcript positions need their own source Session revision and are not
+		// guessed from the root layout.
+		if mutation.Depth != 0 || mutation.SourceAgentType != session.AgentType || mutation.SourceSessionID != session.ID {
+			continue
+		}
+		mutation.Path = path.Join(prefix, mutation.Path)
+		if mutation.PreviousPath != "" {
+			mutation.PreviousPath = path.Join(prefix, mutation.PreviousPath)
+		}
+		turn := mutation.TurnIndex
+		mutations = append(mutations, mutation)
+		anchors = append(anchors, gitevidence.MutationPositionAnchor{
+			Path:          mutation.Path,
+			RootAgentType: mutation.RootAgentType, RootSessionID: mutation.RootSessionID,
+			SourceAgentType: mutation.SourceAgentType, SourceSessionID: mutation.SourceSessionID,
+			BackingAgentType: mutation.BackingAgentType, BackingSessionID: mutation.BackingSessionID,
+			InvocationID: mutation.InvocationID, EventID: mutation.EventID, ToolCallID: mutation.ToolCallID,
+			TurnIndex: &turn, RecordedAt: mutation.RecordedAt,
+		})
+	}
+	positions := gitevidence.MutationPositionSet{
+		SourceRevision:    envelope.SourceRevision,
+		PositionsRevision: render.PositionsRevision(session, render.Options{}),
+		Anchors:           anchors,
+	}
+	for fileIndex := range files {
+		if files[fileIndex].PathEncoding != model.GitPathUTF8 {
+			continue
+		}
+		for _, mutation := range mutations {
+			resolution := gitevidence.ResolveMutationEvidenceLink(mutation, files[fileIndex].DisplayPath, positions)
+			if resolution.Link != nil {
+				files[fileIndex].Evidence = append(files[fileIndex].Evidence, *resolution.Link)
+			}
+		}
+	}
 }
 
 func sessionRepositoryEntryKey(agentType, sessionID, worktreeID string) string {

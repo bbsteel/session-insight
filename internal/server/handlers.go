@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"log"
 	"net/http"
 	"strconv"
@@ -726,9 +725,7 @@ func positionCacheToResponse(c *db.PositionCache) positionsResponse {
 // SessionRevision is a UnixNano timestamp, so adding a small option mask
 // could collide with a genuinely newer revision of the same session.
 func positionsRevision(sess model.Session, opts render.Options) int64 {
-	h := fnv.New64a()
-	fmt.Fprintf(h, "%d|%d|%d", model.SessionRevision(sess), render.FormatVersion, opts.Mask())
-	return int64(h.Sum64() &^ (1 << 63))
+	return render.PositionsRevision(sess, opts)
 }
 
 func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) {

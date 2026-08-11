@@ -348,11 +348,14 @@ func (db *DB) SessionGitEvidencePatch(rootAgentType, rootSessionID, repositoryEn
 		SELECT blob.content, blob.raw_bytes
 		FROM source_content_blob_refs ref
 		JOIN source_content_blobs blob ON blob.sha256 = ref.blob_sha
+		LEFT JOIN session_git_files file
+		  ON file.evidence_id = ref.evidence_id AND file.file_key = ref.path_key
 		WHERE ref.%s = ? AND ref.path_key = ? AND ref.purpose = 'patch'
+		  AND (? = 'hosted_change' OR file.patch_state = 'exact')
 		LIMIT 1`, ownerColumn)
 	var content []byte
 	var rawBytes int64
-	if err := db.conn.QueryRow(query, ownerID, fileKey).Scan(&content, &rawBytes); err != nil {
+	if err := db.conn.QueryRow(query, ownerID, fileKey, authority).Scan(&content, &rawBytes); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrSourceContentNotFound
 		}
