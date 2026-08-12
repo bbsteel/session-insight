@@ -43,6 +43,11 @@ export interface TerminalControl {
   // line-height variants); used to preserve the logical visible position
   // across layout changes that only alter the container height.
   getViewportTopLine: () => number
+  // Original render row (positions line_start space) at the viewport center,
+  // resolved through xterm's own buffer state + the fold mapping. Drives the
+  // key-event outline's current-position tracking; null when no terminal is
+  // attached yet.
+  getViewportAnchor: () => number | null
   setLineMatchers: (matchers: TerminalLineMatcher<unknown>[]) => void
   // Briefly highlight buffer lines after a programmatic jump so the user can
   // see where they landed. Rendered via xterm marker/decoration (AGENTS.md:

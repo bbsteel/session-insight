@@ -237,13 +237,13 @@ body {
 }
 
 .minimap-shell {
-  width: 88px;
+  width: 64px;
   height: 100%;
 }
 
 @media (max-width: 767px) {
   .minimap-shell {
-    width: 72px;
+    width: 52px;
     height: 100%;
   }
 }

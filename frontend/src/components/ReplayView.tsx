@@ -31,7 +31,9 @@ import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContext
 import TerminalSearchBar from './TerminalSearchBar'
 import ToolCallPanel from './ToolCallPanel'
 import UserMessagePanel from './UserMessagePanel'
+import KeyEventOutlinePanel from './KeyEventOutlinePanel'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
+import { nearestOutlineKey, outlineItemsFromPositions } from '../semanticOutline'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysContainingTarget, foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { isSessionLive, LIVE_WINDOW_MS, getAgentLabel } from '../sidebarRows'
@@ -153,6 +155,10 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const [edits, setEdits] = useState<EditCall[]>([])
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [showUserPanel, setShowUserPanel] = useState(false)
+  const [showOutlinePanel, setShowOutlinePanel] = useState(false)
+  // Terminal viewport anchor (original render row at the viewport center) for
+  // the outline's current-position tracking; updated from scroll metrics.
+  const [outlineAnchor, setOutlineAnchor] = useState<number | null>(null)
   // When pinned, click-outside does not close the nav overlay.
   // Auto-open+pin only when settings "open on session" is not off.
   const [navPinned, setNavPinned] = useState(false)
@@ -796,9 +802,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     // Drop analytics-driven tool filters when leaving a session so they do not
     // stick to a later manual open of the tool panel.
     setToolFilterRequest(null)
+    setOutlineAnchor(null)
     if (!sessionId) {
       setShowUserPanel(false)
       setShowToolPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(false)
       return
     }
@@ -806,14 +814,17 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     if (pref === 'user') {
       setShowUserPanel(true)
       setShowToolPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(true)
     } else if (pref === 'tool') {
       setShowToolPanel(true)
       setShowUserPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(true)
     } else {
       setShowUserPanel(false)
       setShowToolPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(false)
     }
   }, [sessionId])
@@ -1304,6 +1315,20 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     [positionsData],
   )
 
+  const outlineItems = useMemo(
+    () => outlineItemsFromPositions(positionsData?.positions),
+    [positionsData],
+  )
+
+  // Current position = outline event nearest the viewport center. Computed
+  // against ALL outline items — the panel decides afterwards whether the
+  // active filters hide it, so disabling a category never silently retargets
+  // "current" onto a different event.
+  const currentOutlineKey = useMemo(
+    () => (outlineAnchor === null ? null : nearestOutlineKey(outlineItems, outlineAnchor)),
+    [outlineItems, outlineAnchor],
+  )
+
   // User-message ranges for the terminal: highlight decoration + sticky top
   // bar. Mapped from positions (kind === 'user') to the shape TerminalPanel
   // consumes. line_end / logical_end come from the backend (set when the user
@@ -1339,6 +1364,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     setToolFilterRequest(prev => ({ name, token: (prev?.token ?? 0) + 1 }))
     setShowToolPanel(true)
     setShowUserPanel(false)
+    setShowOutlinePanel(false)
     setNavPinned(false)
     setViewMode('terminal')
   }, [])
@@ -1425,6 +1451,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const handleTerminalScrollMetrics = useCallback((metrics: ScrollMetrics) => {
     lastMetricsRef.current = metrics
     lastMetricsSessionIdRef.current = sessionDetailRef.current?.id ?? null
+    // Viewport anchor for the outline's current-position tracking. The
+    // metrics callback already rides TerminalPanel's rAF-batched
+    // scroll/resize/render lifecycle; only commit state on change.
+    const anchor = termControlRef.current?.getViewportAnchor() ?? null
+    setOutlineAnchor(prev => (prev === anchor ? prev : anchor))
     const range = getVisibleTurnRange(metrics, turns.length)
     miniMapControlRef?.current?.updateViewport(metrics, range)
     if (range && !isSameVisibleRange(visibleRangeRef.current, range)) {
@@ -1833,6 +1864,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               const next = !v
               if (next) {
                 setShowToolPanel(false)
+                setShowOutlinePanel(false)
                 setToolFilterRequest(null)
               } else {
                 setNavPinned(false)
@@ -1853,6 +1885,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               const next = !v
               if (next) {
                 setShowUserPanel(false)
+                setShowOutlinePanel(false)
               } else {
                 setToolFilterRequest(null)
                 setNavPinned(false)
@@ -1867,6 +1900,27 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             title={t('replay.toolCalls')}
           >
             {t('replay.toolCalls')}{toolCallCount > 0 ? ` ${formatNumber(locale, toolCallCount)}` : ''}
+          </button>
+          <button
+            onClick={() => setShowOutlinePanel(v => {
+              const next = !v
+              if (next) {
+                setShowUserPanel(false)
+                setShowToolPanel(false)
+                setToolFilterRequest(null)
+              } else {
+                setNavPinned(false)
+              }
+              return next
+            })}
+            className={`h-7 rounded-md border px-2 text-nav ${
+              showOutlinePanel
+                ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title={t('replay.outline')}
+          >
+            {t('replay.outline')}{outlineItems.length > 0 ? ` ${formatNumber(locale, outlineItems.length)}` : ''}
           </button>
         </div>
         <span ref={visibleRangeLabelRef} className="flex-shrink-0 text-meta text-[var(--text-muted)]">
@@ -2022,7 +2076,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               controlRef={termControlRef}
               refreshToken={foldVersion}
               focusToken={searchFocusToken}
-              rightInset={navPinned && (showUserPanel || showToolPanel) ? navPanelWidth : 0}
+              rightInset={navPinned && (showUserPanel || showToolPanel || showOutlinePanel) ? navPanelWidth : 0}
               onClose={() => setSearchOpen(false)}
             />
           )}
@@ -2107,6 +2161,21 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 // 面板生命周期结束,清掉分析页带来的筛选请求,
                 // 避免下次手动打开时又套用旧筛选。
                 setToolFilterRequest(null)
+              }}
+            />
+          )}
+          {viewMode === 'terminal' && showOutlinePanel && (
+            <KeyEventOutlinePanel
+              positions={positionsData}
+              building={positionsBuilding}
+              currentKey={currentOutlineKey}
+              pinned={navPinned}
+              onPinnedChange={setNavPinned}
+              onWidthChange={setNavPanelWidth}
+              onJump={handlePanelJump}
+              onClose={() => {
+                setShowOutlinePanel(false)
+                setNavPinned(false)
               }}
             />
           )}

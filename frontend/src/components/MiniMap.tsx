@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { MiniMapPosition, PositionsResponse, SessionBillingSummary, TurnVM } from '../types'
+import type { PositionsResponse, SessionBillingSummary, TurnVM } from '../types'
 import {
   getPositionViewportFrame,
   getScrollBoundaryTop,
@@ -8,7 +8,7 @@ import {
   type ScrollBoundary,
   type ScrollMetrics,
 } from '../minimapGeometry'
-import { getMiniMapEventKind, getMiniMapTurnPositionPercent, getTokenPressureTone, type MiniMapEventKind, type TokenPressureTone } from '../minimapSemantics'
+import { getMiniMapTurnPositionPercent, getTokenPressureTone, type TokenPressureTone } from '../minimapSemantics'
 import { TERMINAL_LINE_HEIGHT } from '../terminalControl'
 import type { VisibleTurnRange } from '../scrollSync'
 import { formatNumber, useI18n } from '../i18n'
@@ -45,40 +45,10 @@ const pressureColors: Record<TokenPressureTone, string> = {
   critical: 'var(--error)',
 }
 
-function eventLabel(kind: MiniMapEventKind, t: (key: string, vars?: Record<string, string | number>) => string): string {
-  return t(`minimap.${kind}`)
-}
-
-const eventShortLabels: Record<MiniMapEventKind, string> = {
-  anomaly: '!',
-  compaction: 'C',
-  rollback: '↩',
-  user: 'U',
-}
-
-const eventClassNames: Record<MiniMapEventKind, string> = {
-  anomaly: 'border-[var(--error)] bg-[var(--error)] text-white',
-  compaction: 'border-[var(--accent-blue)] bg-[var(--accent-blue)] text-white',
-  rollback: 'border-[var(--warning)] bg-[var(--warning)] text-white',
-  user: 'border-[var(--success)] bg-[var(--success)] text-white',
-}
-
-function positionEventKind(position: MiniMapPosition): MiniMapEventKind | null {
-  if (position.kind === 'fold' && position.payload?.level === 'rollback') return 'rollback'
-  return positionKindToEventKind[position.kind]
-}
-
-const positionKindToEventKind: Record<MiniMapPosition['kind'], MiniMapEventKind | null> = {
-  turn: null,
-  user: 'user',
-  assistant: null,  // assistant entries feed the interaction panel, not minimap markers
-  error: 'anomaly',
-  compaction: 'compaction',
-  edit: null,
-  fold: null,  // fold/trunc entries drive terminal interactions, not minimap markers
-  trunc: null,
-  tool: null,  // tool entries feed the tool-call panel, not minimap markers
-}
+// v0.6.1: precise event discovery and jumping live in the key-event outline
+// panel. The MiniMap is a passive overview: turn length distribution,
+// relative cost pressure, viewport frame, and coarse scrolling only — no
+// event markers.
 
 // Compute minimapContentHeight: at least visibleTrackHeight, at most 4×, scaled
 // so each terminal line gets ≥0.6px. Returns visibleTrackHeight if no positions.
@@ -126,7 +96,7 @@ function formatCompactCount(locale: 'en' | 'zh-CN', count: number): string {
   return `${compact}${suffix}`
 }
 
-function turnTooltip(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string, eventName = ''): React.ReactNode {
+function turnTooltip(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit: string | undefined, locale: 'en' | 'zh-CN', t: (key: string, vars?: Record<string, string | number>) => string): React.ReactNode {
   if (!turn) return null
   return (
     <div className="min-w-[132px]">
@@ -143,7 +113,6 @@ function turnTooltip(turn: TurnVM | undefined, tw: TurnWeight | undefined, unit:
         <span className="text-right font-medium tabular-nums">{t('minimap.metricCount', { count: formatNumber(locale, turn.tool_call_count) })}</span>
         <span className="text-[var(--text-secondary)]">{t('minimap.toolCallLabel')}</span>
       </div>
-      {eventName && <div className="mt-1 text-[var(--text-secondary)]">{eventName}</div>}
     </div>
   )
 }
@@ -157,8 +126,6 @@ interface PositionModeProps {
   billingUnit?: string
   visibleTrackHeight: number
   contentOffset: number
-  activeKey: string | null
-  onMarkerClick: (pos: MiniMapPosition) => void
 }
 
 function PositionModeContent({
@@ -168,8 +135,6 @@ function PositionModeContent({
   billingUnit,
   visibleTrackHeight,
   contentOffset,
-  activeKey,
-  onMarkerClick,
 }: PositionModeProps) {
   const { locale, t } = useI18n()
   const { total_lines: totalLines, positions: items } = positions
@@ -177,8 +142,6 @@ function PositionModeContent({
 
   const contentHeight = computeContentHeight(totalLines, visibleTrackHeight)
 
-  // Filter to non-turn events with visible marker kinds.
-  const markerItems = items.filter(p => positionEventKind(p) !== null)
   const turnItems = items.filter(p => p.kind === 'turn' && p.turn_index >= 0)
   const maxShare = Math.max(...[...weights.values()].map(w => w.share), 0.0001)
 
@@ -188,7 +151,7 @@ function PositionModeContent({
       style={{ pointerEvents: 'none' }}
     >
       {/* Background strip */}
-      <div className="absolute inset-y-2 left-[36px] right-[10px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
+      <div className="absolute inset-y-2 left-[6px] right-[6px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
 
       {/* Content layer — translated by contentOffset */}
       <div
@@ -217,7 +180,7 @@ function PositionModeContent({
               key={pos.position_key}
               // pointer-events-auto only for the hover tooltip; pointerdown is
               // NOT stopped here so dragging through a segment still scrolls.
-              className="pointer-events-auto absolute left-[40px] right-[14px]"
+              className="pointer-events-auto absolute left-[10px] right-[10px]"
               style={{ top: segStart + 1, height: segHeight }}
             >
               <InstantTooltip
@@ -230,40 +193,6 @@ function PositionModeContent({
                   className="absolute left-0 top-0 h-full rounded-[2px]"
                   style={{ width: `${clamp(rel * 100, 6, 100)}%`, background: pressureColors[tone], opacity: 0.65 }}
                 />
-              </InstantTooltip>
-            </div>
-          )
-        })}
-
-        {markerItems.map(pos => {
-          const eventKind = positionEventKind(pos)!
-          const markerY = (pos.line_start / totalLines) * contentHeight
-          const isActive = pos.position_key === activeKey
-
-          return (
-            <div
-              key={pos.position_key}
-              className="absolute left-0 right-0 h-3"
-              style={{ top: markerY, transform: 'translateY(-50%)' }}
-            >
-              <InstantTooltip
-                text={t('minimap.markerLine', { event: eventLabel(eventKind, t), line: pos.line_start })}
-                placement="cursor-left"
-                nowrap
-                className="pointer-events-auto absolute left-[7px] top-1/2 inline-flex -translate-y-1/2"
-              >
-                <button
-                  type="button"
-                  className={`flex h-[16px] w-[22px] items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                    eventClassNames[eventKind]
-                  } ${isActive ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
-                  style={{ minWidth: '16px', minHeight: '16px' }}
-                  aria-label={`${eventLabel(eventKind, t)} · ${t('minimap.jump')}`}
-                  onPointerDown={e => e.stopPropagation()}
-                  onClick={e => { e.stopPropagation(); onMarkerClick(pos) }}
-                >
-                  {eventShortLabels[eventKind]}
-                </button>
               </InstantTooltip>
             </div>
           )
@@ -290,10 +219,9 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
   const visibleRangeRef = useRef<VisibleTurnRange>()
   const trackLengthRef = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
-  const [activeIndex, setActiveIndex] = useState<number | null>(null)
-  const [activePositionKey, setActivePositionKey] = useState<string | null>(null)
-  // contentOffset drives the markers layer transform in position mode; stored
-  // as ref so PositionModeContent re-renders on scroll without extra state churn.
+  // contentOffset drives the cost-segment layer transform in position mode;
+  // stored as ref so PositionModeContent re-renders on scroll without extra
+  // state churn.
   const contentOffsetRef = useRef(0)
   const [, setContentOffsetVersion] = useState(0)
   const maxTokens = useMemo(() => Math.max(...turns.map(getTotalTokens), 1), [turns])
@@ -345,10 +273,27 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       viewport.style.height = `${frame.height}px`
     }
     if (rangeLabelRef.current) {
-      const displayCount = usePositions ? (positions?.total_lines ?? 0) : barCount
-      rangeLabelRef.current.textContent = range
-        ? `${range.start + 1}-${range.end + 1} / ${displayCount}`
-        : `1 / ${displayCount}`
+      // One unit per label, never a mix: position mode reports visible
+      // terminal lines against the formatter's exact total; turn (fallback)
+      // mode reports turns against the turn count.
+      if (usePositions) {
+        const totalLines = positions?.total_lines ?? 0
+        const startLine = clamp(Math.floor(metrics.scrollTop / TERMINAL_LINE_HEIGHT) + 1, 1, Math.max(totalLines, 1))
+        const endLine = clamp(Math.ceil((metrics.scrollTop + metrics.clientHeight) / TERMINAL_LINE_HEIGHT), startLine, Math.max(totalLines, 1))
+        rangeLabelRef.current.textContent = t('minimap.rangeLines', {
+          start: formatNumber(locale, startLine),
+          end: formatNumber(locale, endLine),
+          total: formatNumber(locale, totalLines),
+        })
+      } else {
+        rangeLabelRef.current.textContent = range
+          ? t('minimap.rangeTurns', {
+              start: formatNumber(locale, range.start + 1),
+              end: formatNumber(locale, range.end + 1),
+              total: formatNumber(locale, barCount),
+            })
+          : t('minimap.rangeTurns', { start: 1, end: 1, total: formatNumber(locale, barCount) })
+      }
     }
   }
 
@@ -358,7 +303,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
     return () => {
       if (controlRef.current?.updateViewport === updateViewport) controlRef.current = null
     }
-  }, [controlRef, barCount, usePositions, positions?.total_lines])
+  }, [controlRef, barCount, usePositions, positions?.total_lines, locale])
 
   useEffect(() => {
     const container = containerRef.current
@@ -380,10 +325,6 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
   function scrollTo(index: number, behavior: ReplayScrollBehavior = 'smooth') {
     if (barCount === 0) return
     scrollToIndexRef?.current?.(clamp(index, 0, barCount - 1), behavior)
-  }
-
-  function scrollToLine(line: number) {
-    scrollToTopRef?.current?.(line * TERMINAL_LINE_HEIGHT, 'auto')
   }
 
   function scrollToBoundary(boundary: ScrollBoundary) {
@@ -538,15 +479,10 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
             billingUnit={billing?.billing_unit}
             visibleTrackHeight={trackLengthRef.current}
             contentOffset={contentOffsetRef.current}
-            activeKey={activePositionKey}
-            onMarkerClick={pos => {
-              setActivePositionKey(pos.position_key)
-              scrollToLine(pos.line_start)
-            }}
           />
         ) : (
           <>
-            <div className="absolute inset-y-2 left-[36px] right-[10px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
+            <div className="absolute inset-y-2 left-[6px] right-[6px] rounded-sm bg-[var(--bg-primary)] border border-[var(--border-muted)]" />
 
             {turns.map((turn, index) => {
               const tokens = getTotalTokens(turn)
@@ -554,9 +490,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
               const rowTransform = index === 0 ? 'translateY(0)' : index === barCount - 1 ? 'translateY(-100%)' : 'translateY(-50%)'
               const pressureRatio = tokens / maxTokens
               const pressureTone = getTokenPressureTone(pressureRatio)
-              const eventKind = getMiniMapEventKind(turn)
-              const eventName = eventKind ? eventLabel(eventKind, t) : ''
-              const tooltip = turnTooltip(turn, weights.get(turn.turn_index), billing?.billing_unit, locale, t, eventName)
+              const tooltip = turnTooltip(turn, weights.get(turn.turn_index), billing?.billing_unit, locale, t)
 
               return (
                 <div
@@ -564,35 +498,11 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
                   className="pointer-events-none absolute left-0 right-0 h-3"
                   style={{ top: rowTop, transform: rowTransform }}
                 >
-                  {eventKind && (
-                    <InstantTooltip
-                      text={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
-                      placement="cursor-left"
-                      nowrap
-                      className="pointer-events-auto absolute left-[7px] top-1/2 inline-flex -translate-y-1/2"
-                    >
-                      <button
-                        type="button"
-                        className={`flex h-[16px] w-[22px] items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                          eventClassNames[eventKind]
-                        } ${activeIndex === index ? 'ring-2 ring-[var(--accent-blue)] ring-offset-1 ring-offset-[var(--bg-inset)]' : ''}`}
-                        aria-label={`${eventName} · ${t('minimap.jumpTurn', { turn: turn.turn_index })}`}
-                        onPointerDown={e => e.stopPropagation()}
-                        onClick={e => {
-                          e.stopPropagation()
-                          setActiveIndex(index)
-                          scrollTo(index)
-                        }}
-                      >
-                        {eventShortLabels[eventKind]}
-                      </button>
-                    </InstantTooltip>
-                  )}
                   <InstantTooltip
                     content={tooltip}
                     placement="cursor-left"
                     nowrap
-                    className="pointer-events-auto absolute left-[40px] right-[14px] top-1/2 h-[12px] -translate-y-1/2"
+                    className="pointer-events-auto absolute left-[10px] right-[10px] top-1/2 h-[12px] -translate-y-1/2"
                   >
                     <span
                       className="absolute inset-x-0 top-1/2 h-[4px] -translate-y-1/2 rounded-[2px]"
@@ -645,7 +555,9 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       </InstantTooltip>
       <div className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
         <span ref={rangeLabelRef} className="text-meta text-[var(--text-muted)]">
-          {usePositions ? `0 / ${positions!.total_lines}` : `1 / ${barCount}`}
+          {usePositions
+            ? t('minimap.rangeLines', { start: 0, end: 0, total: formatNumber(locale, positions!.total_lines) })
+            : t('minimap.rangeTurns', { start: 1, end: 1, total: formatNumber(locale, barCount) })}
         </span>
       </div>
     </nav>
