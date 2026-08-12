@@ -121,7 +121,23 @@ func (ix *Indexer) indexGitEvidence(
 	// Create or refresh the private binding before immutable snapshots attach
 	// to it. Existing hosted authority and its exact fixed files are preserved.
 	if err := ix.db.ReplaceSessionGitEvidence(evidence); err != nil {
-		return err
+		if !errors.Is(err, db.ErrHostedAuthorityRequiresReconfirmation) {
+			return err
+		}
+		// Hosted selection is an optional authority overlay. If its fixed
+		// confirmation became stale, remove only that selection and continue
+		// with local capture instead of failing the session watermark.
+		evidence.Authority = model.GitAuthorityNone
+		evidence.AuthoritySelection = nil
+		evidence.Files = []model.GitFileChange{}
+		evidence.CandidateCommits = []model.GitCandidateCommit{}
+		evidence.Assessment = model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonBaselineNotCaptured)
+		if evidence.Baseline != nil {
+			evidence.Assessment = model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonFinalNotCaptured)
+		}
+		if err := ix.db.ReplaceSessionGitEvidence(evidence); err != nil {
+			return err
+		}
 	}
 	bindingID, ok, err := ix.db.SessionRepositoryBindingID(session.AgentType, session.ID, entryKey)
 	if err != nil || !ok {

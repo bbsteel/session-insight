@@ -88,9 +88,53 @@ func TestAutomaticResolveWithoutApprovalReturnsTypedLocalState(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &resolved); err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Matches == nil || len(resolved.Matches) != 0 ||
-		resolved.Assessment.ReasonCode != model.ReasonChangeHostNotApproved {
+	if resolved.Matches == nil || resolved.CreationSessions == nil || len(resolved.Matches) != 0 ||
+		resolved.Assessment.ReasonCode != model.ReasonChangeRequestNotFound {
 		t.Fatalf("unexpected unapproved resolve state: %+v", resolved)
+	}
+	response = serveChangeRequestAPI(server, "POST", "/api/change-requests/resolve", `{
+		"reference":"https://github.com/acme/widgets/pull/42",
+		"include_hosted_details":true
+	}`)
+	if err := json.Unmarshal(response.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Assessment.ReasonCode != model.ReasonChangeHostNotApproved {
+		t.Fatalf("hosted details did not require approval: %+v", resolved)
+	}
+}
+
+func TestAutomaticResolveFindsLocalCreationEvidenceWithoutHostApproval(t *testing.T) {
+	database := openCollabAPIDB(t)
+	seedCollabSession(t, database, "codex", "creator", false)
+	reference := model.ChangeRequestReference{
+		Provider: model.ChangeProviderGitHub, DisplayOrigin: "https://github.com",
+		TargetRepositorySlug: "acme/widgets", DisplayNumber: "42",
+		NormalizedURL: "https://github.com/acme/widgets/pull/42",
+	}
+	evidence := model.ChangeRequestCreationEvidence{
+		EvidenceID: "cr-create-api", Reference: reference,
+		CommandKind: "github_cli_pr_create", ToolName: "exec", EventID: "invoke",
+		RecordedAt:     time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC),
+		SourceRevision: "sha256:source", Assessment: model.ExactGitEvidence(),
+	}
+	if err := database.ReplaceSessionChangeRequestCreationEvidence("codex", "creator", evidence.SourceRevision, []model.ChangeRequestCreationEvidence{evidence}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(database, nil)
+	response := serveChangeRequestAPI(server, "POST", "/api/change-requests/resolve", `{
+		"reference":"https://github.com/acme/widgets/pull/42"
+	}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var resolved changeRequestResolveResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Assessment.State != model.GitEvidenceExact || len(resolved.CreationSessions) != 1 ||
+		resolved.CreationSessions[0].RootSessionID != "creator" || len(resolved.Matches) != 0 {
+		t.Fatalf("unexpected local creation match: %+v", resolved)
 	}
 }
 

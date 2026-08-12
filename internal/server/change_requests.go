@@ -23,7 +23,8 @@ const (
 )
 
 type changeRequestResolveRequest struct {
-	Reference string `json:"reference"`
+	Reference            string `json:"reference"`
+	IncludeHostedDetails bool   `json:"include_hosted_details,omitempty"`
 }
 
 type changeRequestLookup struct {
@@ -33,9 +34,10 @@ type changeRequestLookup struct {
 }
 
 type changeRequestResolveResponse struct {
-	Reference  model.ChangeRequestReference `json:"reference"`
-	Matches    []changeRequestLookup        `json:"matches"`
-	Assessment model.GitEvidenceAssessment  `json:"assessment"`
+	Reference        model.ChangeRequestReference              `json:"reference"`
+	CreationSessions []model.ChangeRequestCreationSessionMatch `json:"creation_sessions"`
+	Matches          []changeRequestLookup                     `json:"matches"`
+	Assessment       model.GitEvidenceAssessment               `json:"assessment"`
 }
 
 type changeRequestSessionsResponse struct {
@@ -257,10 +259,17 @@ func (s *Server) handleResolveChangeRequest(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	response := changeRequestResolveResponse{
-		Reference: reference, Matches: []changeRequestLookup{},
+		Reference: reference, CreationSessions: []model.ChangeRequestCreationSessionMatch{}, Matches: []changeRequestLookup{},
 		Assessment: model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonChangeRequestNotFound),
 	}
-	if len(changeKeys) == 0 && reference.Provider != model.ChangeProviderGeneric {
+	if reference.Provider == model.ChangeProviderGitHub || reference.Provider == model.ChangeProviderGitLab {
+		response.CreationSessions, err = s.DB.ChangeRequestCreationSessions(reference.NormalizedURL, 100)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "internal")
+			return
+		}
+	}
+	if len(changeKeys) == 0 && reference.Provider != model.ChangeProviderGeneric && request.IncludeHostedDetails {
 		if host, ok := changehost.PublicHost(reference.Provider); ok {
 			record, exists, readErr := s.DB.ChangeHost(host.Key)
 			switch {
@@ -292,7 +301,7 @@ func (s *Server) handleResolveChangeRequest(w http.ResponseWriter, r *http.Reque
 		}
 		response.Matches = append(response.Matches, lookup)
 	}
-	if len(response.Matches) > 0 {
+	if len(response.Matches) > 0 || len(response.CreationSessions) > 0 {
 		response.Assessment = model.ExactGitEvidence()
 	}
 	writeJSONStatus(w, http.StatusOK, response)

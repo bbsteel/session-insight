@@ -203,8 +203,15 @@ func TestIndexerPrefersAuthoritativeSnapshotEnvelope(t *testing.T) {
 		},
 		envelope: testAuthoritativeEnvelope(session, "authoritative path"),
 	}
+	r.envelope.RenderEvents = []model.RenderEvent{
+		{EventID: "create", Type: "ToolInvocation", ToolName: "exec", ToolCallID: "call-create",
+			ToolInput: map[string]any{"command": "gh pr create --base main"}},
+		{EventID: "created", ParentEventID: "create", Type: "ToolResult", ToolCallID: "call-create",
+			Timestamp: time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC), Stdout: "https://github.com/acme/widgets/pull/42\n"},
+	}
 
-	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+	ix := New(database, []reader.BaseSessionReader{r})
+	if err := ix.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 1 {
@@ -219,6 +226,33 @@ func TestIndexerPrefersAuthoritativeSnapshotEnvelope(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].SessionID != "s1" {
 		t.Fatalf("authoritative envelope was not indexed: %+v", results)
+	}
+	created, err := database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 1 || created[0].RootSessionID != "s1" {
+		t.Fatalf("creation evidence not indexed: matches=%+v err=%v", created, err)
+	}
+
+	// A source rewrite must invalidate exact local evidence even if a buggy or
+	// coarse lister leaves UpdatedAt unchanged.
+	r.envelope = testAuthoritativeEnvelope(session, "rewritten authoritative path")
+	r.envelope.SourceFingerprint.Digest = strings.Repeat("b", 64)
+	r.envelope.SourceRevision = "sha256:" + strings.Repeat("b", 64)
+	for _, fact := range []*model.GitFact[string]{
+		&r.envelope.OriginGit.RepositoryURL, &r.envelope.OriginGit.WorktreePath,
+		&r.envelope.OriginGit.Branch, &r.envelope.OriginGit.HeadSHA,
+	} {
+		fact.SourceRevision = r.envelope.SourceRevision
+	}
+	r.envelope.OriginGit.DirtyState.SourceRevision = r.envelope.SourceRevision
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err = database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 0 {
+		t.Fatalf("rewritten source retained creation evidence: matches=%+v err=%v", created, err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
+		t.Fatalf("authoritative calls after unchanged-timestamp rewrite = %d, want 2", got)
 	}
 }
 

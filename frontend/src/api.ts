@@ -242,11 +242,11 @@ export async function fetchSessionGitPatch(
   return res.text()
 }
 
-export async function resolveChangeRequest(reference: string): Promise<ChangeRequestResolveResponse> {
+export async function resolveChangeRequest(reference: string, includeHostedDetails = false): Promise<ChangeRequestResolveResponse> {
   const res = await fetch('/api/change-requests/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reference }),
+    body: JSON.stringify({ reference, include_hosted_details: includeHostedDetails }),
   })
   if (!res.ok) throw await responseError(res, 'change_request_resolve_failed')
   return readJson<ChangeRequestResolveResponse>(res, 'Change Request resolution')

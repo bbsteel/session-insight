@@ -10,7 +10,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/model"
 )
 
-func TestV36FreshSchema(t *testing.T) {
+func TestV37FreshSchema(t *testing.T) {
 	database, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -21,8 +21,8 @@ func TestV36FreshSchema(t *testing.T) {
 	if err := database.Conn().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 36 {
-		t.Fatalf("schema version = %d, want 36", version)
+	if version != currentSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, currentSchemaVersion)
 	}
 	complete, err := inspectV34Schema(t.Context(), database.Conn())
 	if err != nil {
@@ -44,6 +44,10 @@ func TestV36FreshSchema(t *testing.T) {
 	complete, err = inspectV36Schema(t.Context(), database.Conn())
 	if err != nil || !complete {
 		t.Fatalf("fresh v36 physical schema complete=%v err=%v", complete, err)
+	}
+	complete, err = inspectV37Schema(t.Context(), database.Conn())
+	if err != nil || !complete {
+		t.Fatalf("fresh v37 physical schema complete=%v err=%v", complete, err)
 	}
 	assertNoForeignKeyViolations(t, database.Conn())
 }

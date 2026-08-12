@@ -12,6 +12,7 @@ import {
   changeRequestSessionGroups,
   changeRequestDisplayName,
   type ChangeHostPreview,
+  type ChangeRequestCreationSessionMatch,
   type ChangeRequestLookup,
   type ChangeRequestRelationship,
   type ChangeRequestResolveResponse,
@@ -88,6 +89,44 @@ function SessionMatchGroup({
   )
 }
 
+function CreationSessionGroup({
+  matches,
+  onSelect,
+}: {
+  matches: ChangeRequestCreationSessionMatch[]
+  onSelect: (match: ChangeRequestCreationSessionMatch) => void
+}) {
+  const { t } = useI18n()
+  if (matches.length === 0) return null
+  return (
+    <div className="rounded-lg border border-[var(--accent-green)]/30 bg-[var(--accent-green)]/5 p-4" data-testid="change-request-creation-sessions">
+      <h3 className="text-body font-medium text-[var(--text-primary)]">
+        {t('git.lookup.creationSessions', { count: matches.length })}
+      </h3>
+      <p className="mt-1 text-helper text-[var(--text-secondary)]">{t('git.lookup.creationHelp')}</p>
+      <div className="mt-3 space-y-1.5">
+        {matches.map(match => (
+          <button
+            type="button"
+            key={match.evidence.evidence_id}
+            onClick={() => onSelect(match)}
+            className="flex w-full items-center gap-2 rounded-md border border-[var(--accent-green)]/25 bg-[var(--bg-surface)] px-2.5 py-2 text-left hover:border-[var(--accent-blue)]"
+          >
+            <span className="min-w-0 flex-1 truncate text-helper text-[var(--text-primary)]">
+              <span className="font-medium">{match.root_agent_type}</span>
+              <span className="ml-1 font-mono text-meta">{match.root_session_id.slice(0, 16)}</span>
+            </span>
+            <span className="text-meta text-[var(--text-muted)]">{t('git.match.created')}</span>
+            <span className="rounded border border-[var(--accent-green)]/30 px-1.5 py-0.5 text-meta text-[var(--accent-green)]">
+              {t('git.state.exact')}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function ChangeRequestLookupDialog({ onClose, onSelectSession, session, onLinked }: Props) {
   const { t } = useI18n()
   const [reference, setReference] = useState('')
@@ -147,8 +186,13 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
     setEnabling(true)
     setError(null)
     try {
-      const preview = await previewChangeHost(resolvedReference)
-      if (resolveGenerationRef.current === generation) setHostPreview(preview)
+      const hosted = await resolveChangeRequest(resolvedReference, true)
+      if (resolveGenerationRef.current !== generation) return
+      setResult(hosted)
+      if (hosted.assessment.reason_code === 'change_host_not_approved') {
+        const preview = await previewChangeHost(resolvedReference)
+        if (resolveGenerationRef.current === generation) setHostPreview(preview)
+      }
     } catch (cause) {
       if (resolveGenerationRef.current === generation) {
         setError(cause instanceof APIError ? cause.code : 'change_host_preview_failed')
@@ -165,7 +209,7 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
     setError(null)
     try {
       await approveChangeHost(hostPreview.host.key, { allowHTTP, allowPrivateNetwork })
-      const next = await resolveChangeRequest(resolvedReference)
+      const next = await resolveChangeRequest(resolvedReference, true)
       if (resolveGenerationRef.current === generation) {
         setResult(next)
         setHostPreview(null)
@@ -204,6 +248,10 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
   }
 
   const hostNeedsApproval = result?.assessment.reason_code === 'change_host_not_approved'
+  const canLoadHostedDetails = result && !hostNeedsApproval &&
+    result.matches.length === 0 &&
+    (result.assessment.state === 'exact' || result.assessment.reason_code === 'change_request_not_found') &&
+    (result.reference.provider === 'github' || result.reference.provider === 'gitlab')
 
   return createPortal(
     <div
@@ -320,11 +368,20 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
             </div>
           )}
 
-          {result && !hostNeedsApproval && result.matches.length === 0 && (
+          {result && !hostNeedsApproval && result.matches.length === 0 && result.creation_sessions.length === 0 && (
             <div className="py-10 text-center text-helper text-[var(--text-muted)]">{t('git.lookup.empty')}</div>
           )}
 
           <div className="space-y-3">
+            {result && (
+              <CreationSessionGroup
+                matches={result.creation_sessions}
+                onSelect={match => {
+                  onSelectSession?.(match.root_session_id, match.root_agent_type, true)
+                  onClose()
+                }}
+              />
+            )}
             {result?.matches.map(lookup => {
               const sessionGroups = changeRequestSessionGroups(lookup)
               const snapshot = lookup.change.snapshot
@@ -445,6 +502,20 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
                 </article>
               )
             })}
+            {canLoadHostedDetails && (
+              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-primary)] p-4">
+                <h3 className="text-body font-medium text-[var(--text-primary)]">{t('git.lookup.hostedDetailsTitle')}</h3>
+                <p className="mt-1 text-helper text-[var(--text-secondary)]">{t('git.lookup.hostedDetailsHelp')}</p>
+                <button
+                  type="button"
+                  onClick={() => void inspectHost()}
+                  disabled={enabling}
+                  className="mt-3 rounded-md border border-[var(--accent-blue)] px-3 py-1.5 text-nav font-medium text-[var(--accent-blue)] disabled:opacity-50"
+                >
+                  {enabling ? t('git.host.inspecting') : t('git.lookup.loadHostedDetails')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </section>

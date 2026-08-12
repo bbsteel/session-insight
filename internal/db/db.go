@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 36
+const currentSchemaVersion = 37
 
 type DB struct {
 	conn *sql.DB
@@ -924,6 +924,11 @@ func migrate(conn *sql.DB) error {
 	// Version 36 preserves explicitly unavailable special/missing worktree
 	// entries instead of forcing the capture layer to drop or misclassify them.
 	if err := migrateGitAssociationV36(conn); err != nil {
+		return err
+	}
+	// Version 37 indexes exact, local PR/MR creation evidence independently
+	// from optional hosted metadata and network approval.
+	if err := migrateGitAssociationV37(conn); err != nil {
 		return err
 	}
 

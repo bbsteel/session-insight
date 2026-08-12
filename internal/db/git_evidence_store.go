@@ -3,11 +3,14 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
 )
+
+var ErrHostedAuthorityRequiresReconfirmation = errors.New("hosted Change Request authority requires reconfirmation")
 
 // ReplaceSessionGitEvidence validates and atomically replaces one repository
 // entry's derived file, commit, and source-link rows. Snapshot and hosted
@@ -174,7 +177,7 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 		}
 		if evidence.AuthoritySelection != nil && evidence.AuthoritySelection.LinkID == link.LinkID {
 			if !storedSnapshotID.Valid {
-				return fmt.Errorf("selected Change Request link %q has no fixed snapshot", link.LinkID)
+				return fmt.Errorf("%w: selected link %q has no fixed snapshot", ErrHostedAuthorityRequiresReconfirmation, link.LinkID)
 			}
 			var currentCollaborationRevision int64
 			if err := tx.QueryRow(`
@@ -182,12 +185,12 @@ func (db *DB) ReplaceSessionGitEvidence(evidence model.SessionGitEvidence) error
 				WHERE root_agent_type = ? AND root_session_id = ?`,
 				evidence.RootAgentType, evidence.RootSessionID,
 			).Scan(&currentCollaborationRevision); err != nil {
-				return fmt.Errorf("verify selected Change Request collaboration revision: %w", err)
+				return fmt.Errorf("%w: verify selected link %q collaboration revision: %v", ErrHostedAuthorityRequiresReconfirmation, link.LinkID, err)
 			}
 			expectedConfirmation, err := CanonicalChangeRequestConfirmationRevision(link)
 			if err != nil || storedConfirmationRevision != expectedConfirmation ||
 				storedCollaborationRevision != currentCollaborationRevision || storedCacheState != "current" {
-				return fmt.Errorf("selected Change Request link %q requires reconfirmation", link.LinkID)
+				return fmt.Errorf("%w: selected link %q", ErrHostedAuthorityRequiresReconfirmation, link.LinkID)
 			}
 			selectedChangeSnapshotID = storedSnapshotID.String
 		}

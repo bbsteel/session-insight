@@ -178,8 +178,27 @@ export interface ChangeRequestLookup {
   candidate_sessions: ChangeRequestSessionMatch[]
 }
 
+export interface ChangeRequestCreationSessionMatch {
+  root_agent_type: string
+  root_session_id: string
+  evidence: {
+    evidence_id: string
+    reference: ChangeRequestReference
+    command_kind: string
+    tool_name: string
+    event_id: string
+    tool_call_id?: string
+    turn_index: number
+    invocation_id?: string
+    recorded_at: string
+    source_revision: string
+    assessment: GitEvidenceAssessment
+  }
+}
+
 export interface ChangeRequestResolveResponse {
   reference: ChangeRequestReference
+  creation_sessions: ChangeRequestCreationSessionMatch[]
   matches: ChangeRequestLookup[]
   assessment: GitEvidenceAssessment
 }

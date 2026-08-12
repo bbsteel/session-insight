@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/bbsteel/session-insight/internal/changeevidence"
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
@@ -353,6 +354,15 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	if err != nil {
 		return false, fmt.Errorf("get watermark: %w", err)
 	}
+	var (
+		detail                *model.SessionDetail
+		renderEvents          []model.RenderEvent
+		authoritativeEnvelope *model.IndexSnapshotEnvelope
+		authoritativeReader   reader.AuthoritativeIndexSnapshotReader
+		detailElapsed         time.Duration
+		renderElapsed         time.Duration
+	)
+	authoritativeReader, _ = r.(reader.AuthoritativeIndexSnapshotReader)
 	collabCurrentKnown := false
 	collabCurrent := false
 	if exists && storedRev == revision {
@@ -367,13 +377,36 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		}
 		collabCurrentKnown = true
 		gitCurrent := true
-		if _, authoritative := r.(reader.AuthoritativeIndexSnapshotReader); authoritative && ix.git != nil {
-			gitCurrent, err = ix.db.HasSessionGitEvidence(agentType, sess.ID)
-			if err != nil {
-				return false, err
+		if authoritativeReader != nil {
+			storedSourceRevision, creationCurrent, hasCreationEvidence, readErr := ix.db.SessionChangeRequestCreationIndexState(agentType, sess.ID)
+			if readErr != nil {
+				return false, readErr
 			}
-			if !gitCurrent {
-				_, gitCurrent = ix.gitAttempted.Load(agentType + "\x00" + sess.ID)
+			gitEvidenceCurrent := false
+			if ix.git != nil {
+				gitEvidenceCurrent, readErr = ix.db.HasSessionGitEvidence(agentType, sess.ID)
+				if readErr != nil {
+					return false, readErr
+				}
+			}
+			if creationCurrent && (hasCreationEvidence || gitEvidenceCurrent) {
+				snapshotStarted := time.Now()
+				authoritativeEnvelope, readErr = authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
+				detailElapsed = time.Since(snapshotStarted)
+				if readErr != nil {
+					return ix.handleReadFailure(r, agentType, sess, readErr)
+				}
+				if validation := model.ValidateIndexSnapshotEnvelope(authoritativeEnvelope); !validation.OK() {
+					return false, fmt.Errorf("validate authoritative index snapshot: %+v", validation.Issues)
+				}
+				creationCurrent = storedSourceRevision == authoritativeEnvelope.SourceRevision
+			}
+			gitCurrent = creationCurrent
+			if ix.git != nil {
+				if !gitEvidenceCurrent {
+					_, gitEvidenceCurrent = ix.gitAttempted.Load(agentType + "\x00" + sess.ID)
+				}
+				gitCurrent = gitCurrent && gitEvidenceCurrent
 			}
 		}
 		if collabCurrent && gitCurrent {
@@ -384,29 +417,22 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		}
 	}
 
-	var (
-		detail                *model.SessionDetail
-		renderEvents          []model.RenderEvent
-		authoritativeEnvelope *model.IndexSnapshotEnvelope
-		authoritativeReader   reader.AuthoritativeIndexSnapshotReader
-		detailElapsed         time.Duration
-		renderElapsed         time.Duration
-	)
-	if snapshotReader, ok := r.(reader.AuthoritativeIndexSnapshotReader); ok {
-		authoritativeReader = snapshotReader
-		snapshotStarted := time.Now()
-		envelope, err := snapshotReader.ReadIndexSnapshotEnvelope(ctx, sess)
-		detailElapsed = time.Since(snapshotStarted)
+	if authoritativeReader != nil {
+		if authoritativeEnvelope == nil {
+			snapshotStarted := time.Now()
+			envelope, readErr := authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
+			detailElapsed = time.Since(snapshotStarted)
+			if readErr != nil {
+				return ix.handleReadFailure(r, agentType, sess, readErr)
+			}
+			if validation := model.ValidateIndexSnapshotEnvelope(envelope); !validation.OK() {
+				return false, fmt.Errorf("validate authoritative index snapshot: %+v", validation.Issues)
+			}
+			authoritativeEnvelope = envelope
+		}
 		renderElapsed = 0
-		if err != nil {
-			return ix.handleReadFailure(r, agentType, sess, err)
-		}
-		if validation := model.ValidateIndexSnapshotEnvelope(envelope); !validation.OK() {
-			return false, fmt.Errorf("validate authoritative index snapshot: %+v", validation.Issues)
-		}
-		detail = envelope.Detail
-		renderEvents = envelope.RenderEvents
-		authoritativeEnvelope = envelope
+		detail = authoritativeEnvelope.Detail
+		renderEvents = authoritativeEnvelope.RenderEvents
 	} else if snapshotReader, ok := r.(reader.IndexSnapshotReader); ok {
 		snapshotStarted := time.Now()
 		var err error
@@ -464,12 +490,23 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	}); err != nil {
 		return false, fmt.Errorf("replace session snapshot: %w", err)
 	}
-	if authoritativeEnvelope != nil && ix.git != nil {
-		if err := ix.indexGitEvidence(ctx, authoritativeReader, persisted, authoritativeEnvelope); err != nil {
+	if authoritativeEnvelope != nil {
+		creationEvidence := changeevidence.ExtractCreationEvidence(
+			authoritativeEnvelope.RenderEvents, authoritativeEnvelope.SourceRevision,
+		)
+		if err := ix.db.ReplaceSessionChangeRequestCreationEvidence(
+			agentType, sess.ID, authoritativeEnvelope.SourceRevision, creationEvidence,
+		); err != nil {
 			_ = ix.db.ClearSessionWatermark(agentType, sess.ID)
-			return false, fmt.Errorf("index Git evidence: %w", err)
+			return false, fmt.Errorf("index Change Request creation evidence: %w", err)
 		}
-		ix.gitAttempted.Store(agentType+"\x00"+sess.ID, struct{}{})
+		if ix.git != nil {
+			if err := ix.indexGitEvidence(ctx, authoritativeReader, persisted, authoritativeEnvelope); err != nil {
+				_ = ix.db.ClearSessionWatermark(agentType, sess.ID)
+				return false, fmt.Errorf("index Git evidence: %w", err)
+			}
+			ix.gitAttempted.Store(agentType+"\x00"+sess.ID, struct{}{})
+		}
 	}
 	// Structured read failures with metadata-only / unsupported provenance may
 	// still surface via detail.Provenance without body; handled above.
