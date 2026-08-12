@@ -70,6 +70,7 @@ func RunBasicBehavior(t *testing.T, r Reader, exp Expectations) {
 			}
 			if detail == nil {
 				t.Fatalf("GetSession(%q) returned nil detail without error", s.ID)
+				return
 			}
 			if detail.AgentType != s.AgentType {
 				t.Errorf("%s: detail AgentType %q != list %q", s.ID, detail.AgentType, s.AgentType)
@@ -206,6 +207,7 @@ func RunBasicBehavior(t *testing.T, r Reader, exp Expectations) {
 			}
 			if d == nil {
 				t.Fatalf("GetSession(%q) nil detail", s.ID)
+				return
 			}
 			// Empty turns are a valid zero, not an error.
 			_ = d.Turns

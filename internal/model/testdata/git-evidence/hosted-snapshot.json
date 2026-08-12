@@ -1,0 +1,100 @@
+{
+  "snapshot_id": "cr-snapshot-1",
+  "identity": {
+    "provider": "github",
+    "host_id": "host-github-public",
+    "target_repository": {
+      "host_id": "host-github-public",
+      "immutable_id": "R_kgDOExample",
+      "slug": "acme/widgets"
+    },
+    "provider_object_id": "PR_kwDOExample42"
+  },
+  "content": {
+    "content_version_key": "github:PR_kwDOExample42:manifest-7",
+    "base_ref_sha": "1111111111111111111111111111111111111111",
+    "diff_base_sha": "1111111111111111111111111111111111111111",
+    "head_sha": "2222222222222222222222222222222222222222",
+    "file_manifest_digest": "sha256:manifest-7"
+  },
+  "metadata_revision": "metadata-etag-4",
+  "kind": "pull_request",
+  "display_number": "42",
+  "lifecycle_state": "open",
+  "draft": false,
+  "title": "Add Git evidence",
+  "web_url": "https://github.com/acme/widgets/pull/42",
+  "source_repository": {
+    "host_id": "host-github-public",
+    "immutable_id": "R_kgDOFork",
+    "slug": "contributor/widgets"
+  },
+  "source_ref": "feat/git-evidence",
+  "target_ref": "main",
+  "files": [
+    {
+      "ordinal": 0,
+      "key": "hosted:sha256:rename-1",
+      "layer": "hosted_change",
+      "display_path": "internal/new.go",
+      "old_display_path": "internal/old.go",
+      "path_encoding": "utf8",
+      "status": "renamed",
+      "old_mode": "100644",
+      "new_mode": "100644",
+      "binary": false,
+      "submodule": false,
+      "additions": 8,
+      "deletions": 2,
+      "status_assessment": {
+        "state": "exact",
+        "reasons": []
+      },
+      "patch_assessment": {
+        "state": "exact",
+        "reasons": []
+      },
+      "evidence": []
+    }
+  ],
+  "commits": [
+    {
+      "ordinal": 0,
+      "sha": "3333333333333333333333333333333333333333",
+      "subject": "Add provider-neutral contracts",
+      "author_name": "Example Contributor",
+      "authored_at": "2026-08-11T08:30:00Z",
+      "committed_at": "2026-08-11T08:31:00Z",
+      "relation": "change_request_membership",
+      "assessment": {
+        "state": "exact",
+        "reasons": []
+      },
+      "evidence": []
+    }
+  ],
+  "completeness": {
+    "metadata": {
+      "state": "exact",
+      "reasons": []
+    },
+    "file_set": {
+      "state": "exact",
+      "reasons": []
+    },
+    "patches": {
+      "state": "exact",
+      "reasons": []
+    },
+    "modes": {
+      "state": "exact",
+      "reasons": []
+    },
+    "commits": {
+      "state": "exact",
+      "reasons": []
+    }
+  },
+  "etag": "etag-4",
+  "fetched_at": "2026-08-11T08:32:00Z"
+}

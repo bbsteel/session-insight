@@ -25,6 +25,7 @@ func TestCompactRecordStatus(t *testing.T) {
 	c := CompactRecordStatus(p)
 	if c == nil {
 		t.Fatal("expected compact status")
+		return
 	}
 	if c.State != RecordDegraded || c.WarningCount != 3 {
 		t.Fatalf("unexpected compact: %+v", c)

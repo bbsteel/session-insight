@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 33
+const currentSchemaVersion = 37
 
 type DB struct {
 	conn *sql.DB
@@ -904,6 +904,32 @@ func migrate(conn *sql.DB) error {
 		if err := normalizePathFormProjects(conn); err != nil {
 			return fmt.Errorf("v33 normalize path-form projects: %w", err)
 		}
+	}
+
+	// Version 34: Git/session and hosted-change persistence. The helper owns
+	// its version row and uses a pinned connection plus BEGIN IMMEDIATE so
+	// independent SessionInsight processes cannot interleave partial schemas.
+	// It deliberately leaves index_watermarks untouched: current worktree
+	// state is not a trustworthy historical session-start baseline.
+	if err := migrateGitAssociationV34(conn); err != nil {
+		return err
+	}
+	// Version 35 adds Session↔Change Request links, repository-scoped reverse
+	// lookup, sync ordering, and source-repository alias constraints. It is a
+	// separate physical-schema audit so partially created pre-release v34
+	// databases are repaired without pretending upstream v33 owned these rows.
+	if err := migrateGitAssociationV35(conn); err != nil {
+		return err
+	}
+	// Version 36 preserves explicitly unavailable special/missing worktree
+	// entries instead of forcing the capture layer to drop or misclassify them.
+	if err := migrateGitAssociationV36(conn); err != nil {
+		return err
+	}
+	// Version 37 indexes exact, local PR/MR creation evidence independently
+	// from optional hosted metadata and network approval.
+	if err := migrateGitAssociationV37(conn); err != nil {
+		return err
 	}
 
 	_, err = conn.Exec(

@@ -5,6 +5,7 @@ package indexer
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -90,6 +91,56 @@ func (m *mockReader) RenderANSI(id string, cols int) (string, error) { return ""
 
 func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) { return nil, nil }
 
+type authoritativeMockReader struct {
+	*mockReader
+	envelope           *model.IndexSnapshotEnvelope
+	authoritativeCalls int32
+	legacyCalls        int32
+}
+
+func (m *authoritativeMockReader) ReadIndexSnapshotEnvelope(context.Context, model.Session) (*model.IndexSnapshotEnvelope, error) {
+	atomic.AddInt32(&m.authoritativeCalls, 1)
+	return m.envelope, nil
+}
+
+func (m *authoritativeMockReader) ReadIndexSnapshot(context.Context, model.Session) (*model.SessionDetail, []model.RenderEvent, error) {
+	atomic.AddInt32(&m.legacyCalls, 1)
+	return m.details["s1"], nil, nil
+}
+
+func testAuthoritativeEnvelope(session model.Session, message string) *model.IndexSnapshotEnvelope {
+	digest := strings.Repeat("a", 64)
+	revision := "sha256:" + digest
+	missing := model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonAgentGitFactMissing)
+	missingString := func() model.GitFact[string] {
+		return model.GitFact[string]{
+			Assessment: missing, Source: model.GitSourceAgentRecorded, SourceRevision: revision,
+		}
+	}
+	return &model.IndexSnapshotEnvelope{
+		Detail: &model.SessionDetail{
+			Session: session,
+			Turns:   []model.TurnVM{{TurnIndex: 0, UserMessage: message}},
+		},
+		RenderEvents:      []model.RenderEvent{},
+		SourceRevision:    revision,
+		SourceFingerprint: model.SourceFingerprint{Algorithm: model.SourceFingerprintSHA256, Digest: digest, SizeBytes: 1},
+		OriginGit: &model.SessionGitOrigin{
+			RepositoryURL: missingString(), WorktreePath: missingString(), Branch: missingString(), HeadSHA: missingString(),
+			DirtyState: model.GitFact[model.GitDirtyState]{
+				Value: model.GitDirtyUnknown, Assessment: missing,
+				Source: model.GitSourceAgentRecorded, SourceRevision: revision,
+			},
+		},
+		Finalization: model.SessionFinalizationEvidence{
+			State:            model.SessionFinalizationUnknown,
+			Assessment:       model.NonExactSessionEvidence(model.SessionEvidenceMissing, model.ReasonSessionStateNotRecorded),
+			SignalKind:       model.SessionSignalNone,
+			SignalAssessment: model.NonExactSessionEvidence(model.SessionEvidenceMissing, model.ReasonSessionStateNotRecorded),
+		},
+	}
+}
+
 func TestIndexer_FirstRun(t *testing.T) {
 	database, err := db.Open(t.TempDir())
 	if err != nil {
@@ -131,6 +182,101 @@ func TestIndexer_FirstRun(t *testing.T) {
 	}
 	if results[0].SessionID != "s1" {
 		t.Fatalf("expected s1, got %s", results[0].SessionID)
+	}
+}
+
+func TestIndexerPrefersAuthoritativeSnapshotEnvelope(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "test", UpdatedAt: time.Unix(0, 100)}
+	r := &authoritativeMockReader{
+		mockReader: &mockReader{
+			agentType: "test",
+			sessions:  []model.Session{session},
+			details: map[string]*model.SessionDetail{
+				"s1": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "legacy path"}}},
+			},
+		},
+		envelope: testAuthoritativeEnvelope(session, "authoritative path"),
+	}
+	r.envelope.RenderEvents = []model.RenderEvent{
+		{EventID: "create", Type: "ToolInvocation", ToolName: "exec", ToolCallID: "call-create",
+			ToolInput: map[string]any{"command": "gh pr create --base main"}},
+		{EventID: "created", ParentEventID: "create", Type: "ToolResult", ToolCallID: "call-create",
+			Timestamp: time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC), Stdout: "https://github.com/acme/widgets/pull/42\n"},
+	}
+
+	ix := New(database, []reader.BaseSessionReader{r})
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 1 {
+		t.Fatalf("authoritative calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&r.legacyCalls); got != 0 {
+		t.Fatalf("legacy snapshot calls = %d, want 0", got)
+	}
+	results, err := database.SearchTurns("authoritative", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].SessionID != "s1" {
+		t.Fatalf("authoritative envelope was not indexed: %+v", results)
+	}
+	created, err := database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 1 || created[0].RootSessionID != "s1" {
+		t.Fatalf("creation evidence not indexed: matches=%+v err=%v", created, err)
+	}
+
+	// A source rewrite must invalidate exact local evidence even if a buggy or
+	// coarse lister leaves UpdatedAt unchanged.
+	r.envelope = testAuthoritativeEnvelope(session, "rewritten authoritative path")
+	r.envelope.SourceFingerprint.Digest = strings.Repeat("b", 64)
+	r.envelope.SourceRevision = "sha256:" + strings.Repeat("b", 64)
+	for _, fact := range []*model.GitFact[string]{
+		&r.envelope.OriginGit.RepositoryURL, &r.envelope.OriginGit.WorktreePath,
+		&r.envelope.OriginGit.Branch, &r.envelope.OriginGit.HeadSHA,
+	} {
+		fact.SourceRevision = r.envelope.SourceRevision
+	}
+	r.envelope.OriginGit.DirtyState.SourceRevision = r.envelope.SourceRevision
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err = database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 0 {
+		t.Fatalf("rewritten source retained creation evidence: matches=%+v err=%v", created, err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
+		t.Fatalf("authoritative calls after unchanged-timestamp rewrite = %d, want 2", got)
+	}
+}
+
+func TestIndexerRejectsInvalidAuthoritativeSnapshotEnvelope(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "test", UpdatedAt: time.Unix(0, 100)}
+	envelope := testAuthoritativeEnvelope(session, "invalid envelope")
+	envelope.SourceRevision = "positions-layout-7"
+	r := &authoritativeMockReader{
+		mockReader: &mockReader{agentType: "test", sessions: []model.Session{session}, details: map[string]*model.SessionDetail{}},
+		envelope:   envelope,
+	}
+
+	err = New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "validate authoritative index snapshot") {
+		t.Fatalf("invalid authoritative envelope error = %v", err)
+	}
+	if _, exists, err := database.GetWatermark("test", "s1"); err != nil || exists {
+		t.Fatalf("invalid envelope advanced watermark: exists=%v err=%v", exists, err)
 	}
 }
 

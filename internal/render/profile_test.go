@@ -322,6 +322,7 @@ func TestClaudeToolFoldHeaderFullPath(t *testing.T) {
 	}
 	if fold == nil {
 		t.Fatalf("claude tool fold missing: %+v", positions)
+		return
 	}
 	lines := strings.Split(ansi, "\n")
 	if !strings.Contains(stripANSIForTest(lines[fold.LineStart]), "▼ Tool: Read") {

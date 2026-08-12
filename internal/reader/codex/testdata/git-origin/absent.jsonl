@@ -1,0 +1,2 @@
+{"timestamp":"2026-01-08T00:00:00Z","type":"session_meta","payload":{"id":"codex-absent-native","cwd":"/workspace/no-git-metadata","model_provider":"openai"}}
+{"timestamp":"2026-01-08T00:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"metadata only"}}

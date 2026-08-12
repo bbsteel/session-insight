@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/collaboration"
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 // Collaboration index lifecycle (frozen contract, internal/collaboration):
@@ -114,6 +115,18 @@ func (db *DB) ReplaceCollaborationGraph(g collaboration.CollaborationGraph) erro
 		return fmt.Errorf("begin collaboration replace: %w", err)
 	}
 	defer tx.Rollback()
+	var previousRevision int64
+	previousExists := true
+	if err := tx.QueryRow(`
+		SELECT revision FROM collaboration_roots
+		WHERE root_agent_type = ? AND root_session_id = ?`,
+		g.RootAgentType, g.RootSessionID,
+	).Scan(&previousRevision); err != nil {
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("read previous collaboration revision: %w", err)
+		}
+		previousExists = false
+	}
 
 	// Deleting the root row cascades to the prior revision's invocations and
 	// delegations; the fresh root row carries the new revision.
@@ -136,6 +149,44 @@ func (db *DB) ReplaceCollaborationGraph(g collaboration.CollaborationGraph) erro
 		childCount, activeCount, problemCount,
 	); err != nil {
 		return fmt.Errorf("insert collaboration root: %w", err)
+	}
+	if previousExists && previousRevision != g.Revision {
+		pending, err := marshalAssessment(model.NonExactGitEvidence(
+			model.GitEvidenceEstimated, model.ReasonChangeRequestPendingReconfirmation,
+		))
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			UPDATE session_git_evidence
+			SET revision = revision + 1,
+			    state = ?, reason_code = ?, reasons_json = ?, stale = 1,
+			    authority = 'none', selected_change_snapshot_id = NULL,
+			    authority_selection_json = '{}'
+			WHERE authority = 'hosted_change' AND EXISTS (
+				SELECT 1 FROM session_change_requests links
+				WHERE links.binding_id = session_git_evidence.binding_id
+				  AND links.root_agent_type = ? AND links.root_session_id = ?
+				  AND links.relationship = 'exclusive'
+				  AND links.collaboration_revision <> ?
+				  AND links.snapshot_id = session_git_evidence.selected_change_snapshot_id
+				  AND links.link_id = json_extract(session_git_evidence.authority_selection_json, '$.link_id')
+			)`,
+			pending.state, pending.reasonCode, pending.reasonsJSON,
+			g.RootAgentType, g.RootSessionID, g.Revision,
+		); err != nil {
+			return fmt.Errorf("demote hosted authority after collaboration revision change: %w", err)
+		}
+		if _, err := tx.Exec(`
+			UPDATE session_change_requests
+			SET state = ?, reason_code = ?, reasons_json = ?
+			WHERE root_agent_type = ? AND root_session_id = ?
+			  AND relationship = 'exclusive' AND collaboration_revision <> ?`,
+			pending.state, pending.reasonCode, pending.reasonsJSON,
+			g.RootAgentType, g.RootSessionID, g.Revision,
+		); err != nil {
+			return fmt.Errorf("mark Change Request confirmations stale after collaboration revision change: %w", err)
+		}
 	}
 
 	for i, inv := range g.Invocations {

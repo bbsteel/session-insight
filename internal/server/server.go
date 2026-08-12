@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bbsteel/session-insight/internal/changehost"
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/model"
@@ -55,6 +56,10 @@ type Server struct {
 	terminalLauncher terminal.Launcher
 	resumeMu         sync.Mutex
 	resumeInFlight   map[string]bool
+	changeRegistry   *changehost.Registry
+	hostPolicy       *changehost.HostPolicy
+	hostMu           sync.Mutex
+	approvedHosts    map[string]*changehost.ApprovedHost
 
 	// importRoot is the directory imported session bundles live under
 	// (<SI_DATA_DIR>/imports). Empty means the import endpoints are disabled.
@@ -112,6 +117,9 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 		startNano:        time.Now().UnixNano(),
 		terminalLauncher: terminal.NewSystemLauncher(),
 		resumeInFlight:   make(map[string]bool),
+		changeRegistry:   changehost.NewDefaultRegistry(),
+		hostPolicy:       changehost.NewHostPolicy(nil),
+		approvedHosts:    make(map[string]*changehost.ApprovedHost),
 	}
 	s.registerRoutes()
 	return s
@@ -127,6 +135,20 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/sessions/{id}/terminal", s.handleGetSessionTerminal)
 	s.Mux.HandleFunc("POST /api/sessions/{id}/terminal/focus", s.handleFocusSessionTerminal)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/collaboration", s.handleGetCollaboration)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/git-evidence", s.handleGetGitEvidence)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/git-evidence/files/{fileKey}/patch", s.handleGetGitEvidencePatch)
+	s.Mux.HandleFunc("GET /api/sessions/{id}/change-requests", s.handleGetSessionChangeRequests)
+	s.Mux.HandleFunc("POST /api/sessions/{id}/change-requests/bind", s.handleBindSessionChangeRequest)
+	s.Mux.HandleFunc("DELETE /api/sessions/{id}/change-requests/{linkID}", s.handleDeleteSessionChangeRequest)
+	s.Mux.HandleFunc("POST /api/change-requests/resolve", s.handleResolveChangeRequest)
+	s.Mux.HandleFunc("GET /api/change-requests/{changeID}/sessions", s.handleGetChangeRequestSessions)
+	s.Mux.HandleFunc("GET /api/change-requests/{changeID}", s.handleGetChangeRequest)
+	s.Mux.HandleFunc("GET /api/change-hosts", s.handleListChangeHosts)
+	s.Mux.HandleFunc("POST /api/change-hosts/preview", s.handlePreviewChangeHost)
+	s.Mux.HandleFunc("POST /api/change-hosts/{hostKey}/approve", s.handleApproveChangeHost)
+	s.Mux.HandleFunc("POST /api/change-hosts/{hostKey}/revoke", s.handleRevokeChangeHost)
+	s.Mux.HandleFunc("GET /api/change-hosts/{hostKey}/status", s.handleGetChangeHostStatus)
+	s.Mux.HandleFunc("POST /api/change-hosts/{hostKey}/refresh", s.handleRefreshChangeHost)
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	// Remove a source_missing tombstone from the SI index only (not agent source).
 	s.Mux.HandleFunc("DELETE /api/sessions/{id}/index", s.handleRemoveFromIndex)
