@@ -59,6 +59,16 @@ func FormatEventsOpts(events []model.RenderEvent, cols int, opts Options) string
 	return ansi
 }
 
+// FormatResult is the complete layout result of one render pass: the ANSI
+// text, every recorded position, and the exact terminal line count taken from
+// the line tracker's final state. TotalLines covers output after the last
+// marker, so callers must not infer it from positions.
+type FormatResult struct {
+	ANSI       string
+	Positions  []RenderPosition
+	TotalLines int
+}
+
 // FormatEventsWithPositions renders events as ANSI text and simultaneously
 // records terminal line positions for each significant event kind.
 // Returns the ANSI string and a slice of positions ordered by line_start.
@@ -66,10 +76,27 @@ func FormatEventsWithPositions(events []model.RenderEvent, cols int) (string, []
 	return FormatEventsWithPositionsOpts(events, cols, Options{})
 }
 
+// FormatEventsResultOpts renders events and returns the full layout result,
+// including the exact terminal line count. Options change line layout, so
+// callers caching any return field must include opts.Mask() in their cache key.
+func FormatEventsResultOpts(events []model.RenderEvent, cols int, opts Options) FormatResult {
+	ansi, positions, totalLines := formatEvents(events, cols, opts)
+	return FormatResult{ANSI: ansi, Positions: positions, TotalLines: totalLines}
+}
+
 // FormatEventsWithPositionsOpts is FormatEventsWithPositions with per-request
 // render options. Options change line layout, so callers caching either
 // return value must include opts.Mask() in their cache key.
 func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Options) (string, []RenderPosition) {
+	r := FormatEventsResultOpts(events, cols, opts)
+	return r.ANSI, r.Positions
+}
+
+// formatEvents is the shared render pass behind the Format* entry points.
+// The returned line count is the tracker's final state plus one (0-based
+// current line → line count); an empty session reports the conventional
+// minimum of 1.
+func formatEvents(events []model.RenderEvent, cols int, opts Options) (string, []RenderPosition, int) {
 	if cols <= 0 {
 		cols = TermWidth
 	}
@@ -477,7 +504,7 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 			onEdit := func(filePath string) {
 				seq := editSeqByTurn[evt.TurnIndex]
 				editSeqByTurn[evt.TurnIndex]++
-				emit("edit", filePath, "", evt.TurnIndex, map[string]any{"edit_seq": float64(seq)})
+				emit("edit", filePath, "", evt.TurnIndex, map[string]any{"edit_seq": float64(seq), "tool_call_id": evt.ToolCallID})
 			}
 			outcome := outcomes[evt.ToolCallID]
 			toolTS := tsFor(evt, opts.TimestampTool)
@@ -587,14 +614,14 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 		deduped = append(deduped, p)
 	}
 
-	return tb.String(), deduped
+	return tb.String(), deduped, tb.CurrentLine() + 1
 }
 
 // FormatVersion increments whenever the ANSI layout changes in a way that
 // shifts line numbers, so cached line positions keyed on it are invalidated.
 // It also covers position-set changes (e.g. a new position kind), since
 // positions are cached under the same key.
-const FormatVersion int64 = 32
+const FormatVersion int64 = 33
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or

@@ -742,6 +742,7 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 
 	// Find session and its reader.
 	var sess *model.Session
+	var sessDetail *model.SessionDetail
 	var foundReader interface {
 		GetRenderEvents(id string) ([]model.RenderEvent, error)
 	}
@@ -752,6 +753,7 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 		}
 		s := detail.Session
 		sess = &s
+		sessDetail = detail
 		foundReader = rd
 		break
 	}
@@ -791,9 +793,25 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 			ch <- buildResult{err: err}
 			return
 		}
-		_, rpositions := render.FormatEventsWithPositionsOpts(events, cols, opts)
+		fr := render.FormatEventsResultOpts(events, cols, opts)
 
-		totalLines := 0
+		// Merge the sparse key-event outline into the core positions and order
+		// the combined set with the shared tie-breaker.
+		outline, ostats := render.BuildSemanticOutline(render.SemanticOutlineInput{
+			Events:        events,
+			Detail:        sessDetail,
+			CorePositions: fr.Positions,
+		})
+		rpositions := append(fr.Positions, outline...)
+		render.SortPositions(rpositions)
+		if ostats.Emitted > 0 || ostats.SkippedNoLanding > 0 {
+			log.Printf("positions build %s: outline candidates=%d emitted=%d skipped_no_landing=%d by_category=%v",
+				id, ostats.Candidates, ostats.Emitted, ostats.SkippedNoLanding, ostats.ByCategory)
+		}
+
+		// TotalLines is the formatter's exact line-tracker result — output
+		// after the last marker counts too.
+		totalLines := fr.TotalLines
 		entries := make([]db.PositionEntry, 0, len(rpositions))
 		for _, rp := range rpositions {
 			entries = append(entries, db.PositionEntry{
@@ -806,11 +824,7 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 				Severity:    rp.Severity,
 				Payload:     rp.Payload,
 			})
-			if rp.LineStart > totalLines {
-				totalLines = rp.LineStart
-			}
 		}
-		totalLines++ // convert max line_start to total count
 
 		if err := dbRef.SavePositionCache(agentType, id, revision, cols, totalLines, entries); err != nil {
 			ch <- buildResult{err: err}
