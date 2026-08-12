@@ -2,9 +2,9 @@ import claudeColorIcon from '@lobehub/icons-static-svg/icons/claude-color.svg'
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude.svg'
 import githubCopilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg'
 import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg'
+import openAIIcon from '@lobehub/icons-static-svg/icons/openai.svg'
 import openCodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg'
 const chrysIcon = '/icons/chrys-c.png'
-const codexBlossomIcon = '/icons/codex-blossom.svg'
 const hermesBlackIcon = '/icons/hermes-logo-black.svg'
 const hermesWhiteIcon = '/icons/hermes-logo-white.svg'
 import { resolveAgentStyle } from '../agentStyles'
@@ -32,9 +32,11 @@ function resolveIcon(agentType?: string): AgentIconPair | null {
     light: { src: claudeColorIcon },
     dark: { src: claudeIcon, color: '#e8a48c' },
   }
+  // OpenAI / Codex mark from lobehub (transparent mono); theme via mask colors.
+  // Source: https://lobehub.com/icons/openai — light = black mark, dark = white mark.
   if (normalized.includes('codex')) return {
-    light: { src: codexBlossomIcon },
-    dark: { src: codexBlossomIcon },
+    light: { src: openAIIcon, color: '#111111' },
+    dark: { src: openAIIcon, color: '#ffffff' },
   }
   if (normalized.includes('hermes')) return {
     light: { src: hermesBlackIcon },
