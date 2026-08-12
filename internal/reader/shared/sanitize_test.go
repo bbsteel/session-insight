@@ -37,7 +37,7 @@ func TestCollapseBinarySpansStripsANSIEscapes(t *testing.T) {
 		"ls \x1b[1;34mdir\x1b[0m done":                    "ls dir done",
 		"\x1b]8;;https://example.com\alink\x1b]8;;\x1b\\": "link",
 		"plain":                               "plain",
-		"\x1b]unterminated but keep text\x1b": "",
+		"\x1b]unterminated but keep text\x1b": "unterminated but keep text",
 	}
 	for in, want := range cases {
 		if got := CollapseBinarySpans(in); got != want {

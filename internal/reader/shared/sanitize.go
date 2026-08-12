@@ -138,10 +138,10 @@ func stripANSIEscapes(s string) string {
 			if terminated {
 				i = j
 			} else {
-				// Unterminated OSC: drop the incomplete escape and the rest.
-				// We do not keep a bare ESC literal because downstream terminal
-				// parsers would treat it as the start of a malformed sequence.
-				i = len(runes)
+				// Unterminated OSC: skip the malformed opener so the readable
+				// text after it is preserved. Any remaining stray control runes
+				// are dropped by CollapseBinarySpans.
+				i += 2
 			}
 		default:
 			// Two-byte sequence (ESC + final byte); anything else keeps the

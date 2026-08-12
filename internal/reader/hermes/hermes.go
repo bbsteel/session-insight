@@ -967,6 +967,11 @@ func unwrapUntrustedResult(raw string) (string, bool) {
 	if closeIdx < 0 {
 		return raw, false
 	}
+	// Reject envelopes with trailing content after the closing tag.
+	trailing := strings.TrimSpace(body[closeIdx+len(untrustedCloseTag):])
+	if trailing != "" {
+		return raw, false
+	}
 	body = body[:closeIdx]
 	body = strings.TrimSpace(body)
 	if !strings.HasPrefix(body, untrustedPreamble) {

@@ -44,6 +44,12 @@ func TestUnwrapUntrustedResult(t *testing.T) {
 		t.Fatalf("lookalike unwrap=(%q,%v)", got, ok)
 	}
 
+	// Trailing content after the closing tag is rejected.
+	trailing := "<untrusted_tool_result source=\"x\">\n" + testEnvelopePreamble + "\n\npayload\n</untrusted_tool_result>\ntrailing text"
+	if got, ok := unwrapUntrustedResult(trailing); ok || got != trailing {
+		t.Fatalf("trailing unwrap=(%q,%v)", got, ok)
+	}
+
 	// Preamble with no payload at all yields an empty payload, not the preamble.
 	empty := "<untrusted_tool_result source=\"x\">\n" + testEnvelopePreamble + "\n</untrusted_tool_result>"
 	if got, ok := unwrapUntrustedResult(empty); !ok || got != "" {
