@@ -1,10 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
+import {
+  defaultOrderForKey,
+  getProjectSortPref,
+  setProjectSortPref,
+  sortProjects,
+  type ProjectEntry,
+  type ProjectSortKey,
+  type ProjectSortOrder,
+  type ProjectSortPref,
+} from '../projectSort'
 
-export interface ProjectEntry {
-  name: string
-  session_count: number
-}
+export type { ProjectEntry }
 
 interface ProjectFilterProps {
   projects: ProjectEntry[]
@@ -30,10 +37,24 @@ function FolderIcon({ size = 16 }: { size?: number }) {
   )
 }
 
+const SORT_KEYS: ProjectSortKey[] = ['name', 'sessions', 'recent']
+
+function sortKeyLabel(translate: (key: string) => string, key: ProjectSortKey): string {
+  switch (key) {
+    case 'name':
+      return translate('filter.projectSort.name')
+    case 'sessions':
+      return translate('filter.projectSort.sessions')
+    case 'recent':
+      return translate('filter.projectSort.recent')
+  }
+}
+
 export default function ProjectFilter({ projects, selected, onSelect }: ProjectFilterProps) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [currentSortPref, setCurrentSortPref] = useState<ProjectSortPref>(() => getProjectSortPref())
   const containerRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -69,11 +90,34 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
     setOpen(false)
   }
 
+  const applySort = (newSortPref: ProjectSortPref) => {
+    setCurrentSortPref(newSortPref)
+    setProjectSortPref(newSortPref)
+  }
+
+  const selectSortKey = (key: ProjectSortKey) => {
+    if (key === currentSortPref.key) return
+    applySort({ key, order: defaultOrderForKey(key) })
+  }
+
+  const toggleOrder = () => {
+    const order: ProjectSortOrder = currentSortPref.order === 'asc' ? 'desc' : 'asc'
+    applySort({ ...currentSortPref, order })
+  }
+
+  const sortedProjects = useMemo(
+    () => sortProjects(projects, currentSortPref.key, currentSortPref.order),
+    [projects, currentSortPref.key, currentSortPref.order],
+  )
+
   const visible = search.trim()
-    ? projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
-    : projects
+    ? sortedProjects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    : sortedProjects
 
   if (projects.length === 0) return null
+
+  const orderLabel = currentSortPref.order === 'asc' ? t('filter.projectSort.asc') : t('filter.projectSort.desc')
+  const orderAria = t('filter.projectSort.toggleOrder', { order: orderLabel })
 
   return (
     <div className="px-4 pb-2 flex-shrink-0">
@@ -127,6 +171,54 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
                   className="w-full h-7 rounded border border-[var(--border-default)] bg-[var(--bg-inset)] pl-6 pr-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
                 />
               </div>
+            </div>
+
+            {/* Sort controls */}
+            <div
+              className="px-1.5 py-1.5 border-b border-[var(--border-default)] flex items-center gap-1"
+              role="group"
+              aria-label={t('filter.projectSort.label')}
+            >
+              <div className="flex flex-1 min-w-0 rounded border border-[var(--border-default)] overflow-hidden">
+                {SORT_KEYS.map(key => {
+                  const active = currentSortPref.key === key
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => selectSortKey(key)}
+                      aria-pressed={active}
+                      title={sortKeyLabel(t, key)}
+                      className={`flex-1 min-w-0 h-6 px-1 text-[10px] leading-none truncate transition-colors duration-fast ${
+                        active
+                          ? 'bg-[var(--bg-surface-selected)] text-[var(--text-primary)] font-medium'
+                          : 'bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {sortKeyLabel(t, key)}
+                    </button>
+                  )
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={toggleOrder}
+                aria-label={orderAria}
+                title={orderAria}
+                className="flex-shrink-0 h-6 w-6 inline-flex items-center justify-center rounded border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors duration-fast"
+              >
+                {currentSortPref.order === 'asc' ? (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="12" y1="19" x2="12" y2="5" />
+                    <polyline points="5 12 12 5 19 12" />
+                  </svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <polyline points="19 12 12 19 5 12" />
+                  </svg>
+                )}
+              </button>
             </div>
 
             {/* Options */}
