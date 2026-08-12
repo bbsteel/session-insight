@@ -934,9 +934,65 @@ func toolKind(name string) string {
 	}
 }
 
+// Hermes wraps MCP tool results in an <untrusted_tool_result> envelope: an
+// opening tag carrying the tool name, a fixed security preamble paragraph,
+// the raw payload, and a closing tag. The envelope makes the stored content
+// invalid JSON as a whole, so it must be stripped before the payload can be
+// parsed — otherwise the UI shows the raw JSON text with literal \n and
+// \uXXXX escapes.
+const (
+	untrustedOpenPrefix = "<untrusted_tool_result"
+	untrustedCloseTag   = "</untrusted_tool_result>"
+	untrustedPreamble   = "The following content was retrieved from an external source."
+)
+
+// unwrapUntrustedResult strips the envelope and returns the inner payload.
+// The second return value reports whether a well-formed envelope was present.
+// Malformed inputs — tags that are not exactly <untrusted_tool_result ...>,
+// missing closing tag, missing preamble — are returned unchanged so they do
+// not accidentally get parsed as a JSON payload.
+func unwrapUntrustedResult(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, untrustedOpenPrefix+" ") && !strings.HasPrefix(trimmed, untrustedOpenPrefix+">") {
+		return raw, false
+	}
+	// Verify the opening tag is properly closed.
+	openEnd := strings.Index(trimmed, ">")
+	if openEnd < 0 {
+		return raw, false
+	}
+	body := trimmed[openEnd+1:]
+	// Require a closing tag to treat this as an envelope.
+	closeIdx := strings.LastIndex(body, untrustedCloseTag)
+	if closeIdx < 0 {
+		return raw, false
+	}
+	// Reject envelopes with trailing content after the closing tag.
+	trailing := strings.TrimSpace(body[closeIdx+len(untrustedCloseTag):])
+	if trailing != "" {
+		return raw, false
+	}
+	body = body[:closeIdx]
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, untrustedPreamble) {
+		return raw, false
+	}
+	// The preamble is a single paragraph; the payload follows it,
+	// separated by a blank line. Fall back to a single newline so a
+	// format variant never swallows the payload entirely.
+	if i := strings.Index(body, "\n\n"); i >= 0 {
+		return strings.TrimSpace(body[i+2:]), true
+	}
+	if i := strings.Index(body, "\n"); i >= 0 {
+		return strings.TrimSpace(body[i+1:]), true
+	}
+	return "", true
+}
+
 func parseToolResult(message hermesMessage) toolResult {
 	result := toolResult{CallID: message.ToolCallID, Name: message.ToolName, ToolKind: toolKind(message.ToolName)}
-	object := jsonMap(message.Content)
+	content, wrapped := unwrapUntrustedResult(message.Content)
+	object := jsonMap(content)
 	if object != nil {
 		result.Stdout = firstString(object, "stdout", "output", "result")
 		result.Stderr = firstString(object, "stderr", "error")
@@ -951,9 +1007,22 @@ func parseToolResult(message hermesMessage) toolResult {
 		if result.Stderr == "" {
 			result.Stderr = firstString(object, "message")
 		}
+		if wrapped && result.Stdout == "" {
+			// Envelope-wrapped JSON payloads use tool-specific key shapes
+			// (browser_navigate stores url/title/snapshot, ...). When none of
+			// the canonical output keys match, fall back to the pretty-printed
+			// payload so the reply stays readable instead of vanishing.
+			if pretty, err := json.MarshalIndent(object, "", "  "); err == nil {
+				result.Stdout = string(pretty)
+			}
+		}
 	} else {
-		result.Stdout = contentText(message.Content)
+		result.Stdout = contentText(content)
 	}
+	// Compressed/binary payloads relayed by upstream tools (gzipped HTTP
+	// bodies, archives) decode into pages of mojibake; collapse them.
+	result.Stdout = shared.CollapseBinarySpans(result.Stdout)
+	result.Stderr = shared.CollapseBinarySpans(result.Stderr)
 	disposition := strings.ToLower(message.EffectDisposition)
 	if strings.Contains(disposition, "reject") {
 		result.Rejected = true
