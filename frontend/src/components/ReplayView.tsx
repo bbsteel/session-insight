@@ -1871,7 +1871,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               }
               return next
             })}
-            className={`h-7 rounded-md border px-2 text-nav ${
+            className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showUserPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -1892,7 +1892,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               }
               return next
             })}
-            className={`h-7 rounded-md border px-2 text-nav ${
+            className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showToolPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -1913,7 +1913,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               }
               return next
             })}
-            className={`h-7 rounded-md border px-2 text-nav ${
+            className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showOutlinePanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'

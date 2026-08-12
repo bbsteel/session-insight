@@ -553,8 +553,8 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
           ↓
         </button>
       </InstantTooltip>
-      <div className="flex h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)]">
-        <span ref={rangeLabelRef} className="text-meta text-[var(--text-muted)]">
+      <div className="flex min-h-[22px] flex-shrink-0 items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)] py-0.5">
+        <span ref={rangeLabelRef} className="text-center text-[10px] leading-tight text-[var(--text-muted)]">
           {usePositions
             ? t('minimap.rangeLines', { start: 0, end: 0, total: formatNumber(locale, positions!.total_lines) })
             : t('minimap.rangeTurns', { start: 1, end: 1, total: formatNumber(locale, barCount) })}
