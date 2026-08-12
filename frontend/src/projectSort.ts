@@ -1,8 +1,8 @@
-// Project filter list sort: name / session count / recent activity, with direction.
+// Project filter list sort: name / session count / recent activity, with order.
 // Preference is stored in localStorage so the dropdown reopens with the same order.
 
 export type ProjectSortKey = 'name' | 'sessions' | 'recent'
-export type ProjectSortDir = 'asc' | 'desc'
+export type ProjectSortOrder = 'asc' | 'desc'
 
 export interface ProjectEntry {
   name: string
@@ -13,14 +13,14 @@ export interface ProjectEntry {
 
 export interface ProjectSortPref {
   key: ProjectSortKey
-  dir: ProjectSortDir
+  order: ProjectSortOrder
 }
 
 const STORAGE_KEY = 'si-project-sort'
-export const DEFAULT_PROJECT_SORT: ProjectSortPref = { key: 'sessions', dir: 'desc' }
+export const DEFAULT_PROJECT_SORT: ProjectSortPref = { key: 'sessions', order: 'desc' }
 
-/** Default direction when the user switches to a sort key. */
-export function defaultDirForKey(key: ProjectSortKey): ProjectSortDir {
+/** Default sort order when the user switches to a sort key. */
+export function defaultOrderForKey(key: ProjectSortKey): ProjectSortOrder {
   // Name: A→Z; sessions/recent: most first.
   return key === 'name' ? 'asc' : 'desc'
 }
@@ -29,7 +29,7 @@ export function isProjectSortKey(v: unknown): v is ProjectSortKey {
   return v === 'name' || v === 'sessions' || v === 'recent'
 }
 
-export function isProjectSortDir(v: unknown): v is ProjectSortDir {
+export function isProjectSortOrder(v: unknown): v is ProjectSortOrder {
   return v === 'asc' || v === 'desc'
 }
 
@@ -37,9 +37,15 @@ export function getProjectSortPref(): ProjectSortPref {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULT_PROJECT_SORT }
-    const parsed = JSON.parse(raw) as { key?: unknown; dir?: unknown }
-    if (isProjectSortKey(parsed.key) && isProjectSortDir(parsed.dir)) {
-      return { key: parsed.key, dir: parsed.dir }
+    const parsed = JSON.parse(raw) as { key?: unknown; order?: unknown; dir?: unknown }
+    // Prefer `order`; accept legacy `dir` from the first ship of this feature.
+    const order = isProjectSortOrder(parsed.order)
+      ? parsed.order
+      : isProjectSortOrder(parsed.dir)
+        ? parsed.dir
+        : null
+    if (isProjectSortKey(parsed.key) && order) {
+      return { key: parsed.key, order }
     }
   } catch {
     // ignore corrupt or unavailable storage
@@ -57,8 +63,8 @@ export function setProjectSortPref(pref: ProjectSortPref): void {
 
 function activityMs(iso: string): number {
   if (!iso) return 0
-  const t = Date.parse(iso)
-  return Number.isFinite(t) ? t : 0
+  const parsed = Date.parse(iso)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 /**
@@ -69,9 +75,9 @@ export function compareProjects(
   a: ProjectEntry,
   b: ProjectEntry,
   key: ProjectSortKey,
-  dir: ProjectSortDir,
+  order: ProjectSortOrder,
 ): number {
-  const sign = dir === 'asc' ? 1 : -1
+  const sign = order === 'asc' ? 1 : -1
   let cmp = 0
   switch (key) {
     case 'name':
@@ -91,7 +97,7 @@ export function compareProjects(
 export function sortProjects(
   projects: readonly ProjectEntry[],
   key: ProjectSortKey,
-  dir: ProjectSortDir,
+  order: ProjectSortOrder,
 ): ProjectEntry[] {
-  return [...projects].sort((a, b) => compareProjects(a, b, key, dir))
+  return [...projects].sort((a, b) => compareProjects(a, b, key, order))
 }

@@ -569,29 +569,33 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
 
   const projectEntries = useMemo<ProjectEntry[]>(() => {
     // Aggregate count + most recent activity; list order is applied in ProjectFilter.
-    const byName = new Map<string, { session_count: number; last_active: string; lastMs: number }>()
+    const projectsByName = new Map<string, {
+      session_count: number
+      last_active: string
+      lastUpdatedMs: number
+    }>()
     for (const s of sessions) {
       if (!s.project) continue
       // When agent filter is active, only count sessions of that agent.
       if (agentFilter && s.agent_type !== agentFilter) continue
-      const updatedMs = Date.parse(s.updated_at)
-      const ms = Number.isFinite(updatedMs) ? updatedMs : 0
-      const prev = byName.get(s.project)
+      const parsedUpdatedMs = Date.parse(s.updated_at)
+      const updatedMs = Number.isFinite(parsedUpdatedMs) ? parsedUpdatedMs : 0
+      const prev = projectsByName.get(s.project)
       if (!prev) {
-        byName.set(s.project, {
+        projectsByName.set(s.project, {
           session_count: 1,
-          last_active: ms > 0 ? s.updated_at : '',
-          lastMs: ms,
+          last_active: updatedMs > 0 ? s.updated_at : '',
+          lastUpdatedMs: updatedMs,
         })
       } else {
         prev.session_count += 1
-        if (ms > prev.lastMs) {
-          prev.lastMs = ms
+        if (updatedMs > prev.lastUpdatedMs) {
+          prev.lastUpdatedMs = updatedMs
           prev.last_active = s.updated_at
         }
       }
     }
-    return [...byName.entries()].map(([name, entry]) => ({
+    return [...projectsByName.entries()].map(([name, entry]) => ({
       name,
       session_count: entry.session_count,
       last_active: entry.last_active,

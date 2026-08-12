@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import {
-  defaultDirForKey,
+  defaultOrderForKey,
   getProjectSortPref,
   setProjectSortPref,
   sortProjects,
   type ProjectEntry,
-  type ProjectSortDir,
   type ProjectSortKey,
+  type ProjectSortOrder,
   type ProjectSortPref,
 } from '../projectSort'
 
@@ -39,14 +39,14 @@ function FolderIcon({ size = 16 }: { size?: number }) {
 
 const SORT_KEYS: ProjectSortKey[] = ['name', 'sessions', 'recent']
 
-function sortKeyLabel(t: (key: string) => string, key: ProjectSortKey): string {
+function sortKeyLabel(translate: (key: string) => string, key: ProjectSortKey): string {
   switch (key) {
     case 'name':
-      return t('filter.projectSort.name')
+      return translate('filter.projectSort.name')
     case 'sessions':
-      return t('filter.projectSort.sessions')
+      return translate('filter.projectSort.sessions')
     case 'recent':
-      return t('filter.projectSort.recent')
+      return translate('filter.projectSort.recent')
   }
 }
 
@@ -54,7 +54,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [sortPref, setSortPref] = useState<ProjectSortPref>(() => getProjectSortPref())
+  const [currentSortPref, setCurrentSortPref] = useState<ProjectSortPref>(() => getProjectSortPref())
   const containerRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -90,34 +90,34 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
     setOpen(false)
   }
 
-  const applySort = (next: ProjectSortPref) => {
-    setSortPref(next)
-    setProjectSortPref(next)
+  const applySort = (newSortPref: ProjectSortPref) => {
+    setCurrentSortPref(newSortPref)
+    setProjectSortPref(newSortPref)
   }
 
   const selectSortKey = (key: ProjectSortKey) => {
-    if (key === sortPref.key) return
-    applySort({ key, dir: defaultDirForKey(key) })
+    if (key === currentSortPref.key) return
+    applySort({ key, order: defaultOrderForKey(key) })
   }
 
-  const toggleDir = () => {
-    const dir: ProjectSortDir = sortPref.dir === 'asc' ? 'desc' : 'asc'
-    applySort({ ...sortPref, dir })
+  const toggleOrder = () => {
+    const order: ProjectSortOrder = currentSortPref.order === 'asc' ? 'desc' : 'asc'
+    applySort({ ...currentSortPref, order })
   }
 
-  const ordered = useMemo(
-    () => sortProjects(projects, sortPref.key, sortPref.dir),
-    [projects, sortPref.key, sortPref.dir],
+  const sortedProjects = useMemo(
+    () => sortProjects(projects, currentSortPref.key, currentSortPref.order),
+    [projects, currentSortPref.key, currentSortPref.order],
   )
 
   const visible = search.trim()
-    ? ordered.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
-    : ordered
+    ? sortedProjects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    : sortedProjects
 
   if (projects.length === 0) return null
 
-  const dirLabel = sortPref.dir === 'asc' ? t('filter.projectSort.asc') : t('filter.projectSort.desc')
-  const dirAria = t('filter.projectSort.toggleDir', { dir: dirLabel })
+  const orderLabel = currentSortPref.order === 'asc' ? t('filter.projectSort.asc') : t('filter.projectSort.desc')
+  const orderAria = t('filter.projectSort.toggleOrder', { order: orderLabel })
 
   return (
     <div className="px-4 pb-2 flex-shrink-0">
@@ -181,7 +181,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
             >
               <div className="flex flex-1 min-w-0 rounded border border-[var(--border-default)] overflow-hidden">
                 {SORT_KEYS.map(key => {
-                  const active = sortPref.key === key
+                  const active = currentSortPref.key === key
                   return (
                     <button
                       key={key}
@@ -202,12 +202,12 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
               </div>
               <button
                 type="button"
-                onClick={toggleDir}
-                aria-label={dirAria}
-                title={dirAria}
+                onClick={toggleOrder}
+                aria-label={orderAria}
+                title={orderAria}
                 className="flex-shrink-0 h-6 w-6 inline-flex items-center justify-center rounded border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors duration-fast"
               >
-                {sortPref.dir === 'asc' ? (
+                {currentSortPref.order === 'asc' ? (
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <line x1="12" y1="19" x2="12" y2="5" />
                     <polyline points="5 12 12 5 19 12" />

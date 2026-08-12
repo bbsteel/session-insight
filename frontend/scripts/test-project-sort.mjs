@@ -11,22 +11,22 @@ const compiledModule = path.join(
 )
 const {
   compareProjects,
-  defaultDirForKey,
+  defaultOrderForKey,
   DEFAULT_PROJECT_SORT,
-  isProjectSortDir,
+  isProjectSortOrder,
   isProjectSortKey,
   sortProjects,
 } = await import(pathToFileURL(compiledModule).href)
 
 // Defaults preserve previous list behavior (most sessions first).
-assert.deepEqual(DEFAULT_PROJECT_SORT, { key: 'sessions', dir: 'desc' })
-assert.equal(defaultDirForKey('name'), 'asc')
-assert.equal(defaultDirForKey('sessions'), 'desc')
-assert.equal(defaultDirForKey('recent'), 'desc')
+assert.deepEqual(DEFAULT_PROJECT_SORT, { key: 'sessions', order: 'desc' })
+assert.equal(defaultOrderForKey('name'), 'asc')
+assert.equal(defaultOrderForKey('sessions'), 'desc')
+assert.equal(defaultOrderForKey('recent'), 'desc')
 assert.equal(isProjectSortKey('name'), true)
 assert.equal(isProjectSortKey('bogus'), false)
-assert.equal(isProjectSortDir('asc'), true)
-assert.equal(isProjectSortDir('up'), false)
+assert.equal(isProjectSortOrder('asc'), true)
+assert.equal(isProjectSortOrder('up'), false)
 
 const projects = [
   { name: 'zeta', session_count: 2, last_active: '2026-08-01T10:00:00Z' },
