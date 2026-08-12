@@ -114,6 +114,7 @@ func TestBundleUsesReaderEvidence(t *testing.T) {
 	}
 	if sub == nil {
 		t.Fatalf("expected subagent:call-1 fact, got %v", factIDsOf(b))
+		return
 	}
 	if sub.Kind != "subagent" || !strings.Contains(sub.Statement, "reviewer") {
 		t.Errorf("subagent fact malformed: %+v", sub)

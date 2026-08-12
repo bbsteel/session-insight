@@ -8,6 +8,7 @@ import ProjectFilter, { type ProjectEntry } from './ProjectFilter'
 import ModelFilter, { type ModelEntry } from './ModelFilter'
 import AgentIcon from './AgentIcon'
 import BookmarkNoteEditor, { type BookmarkNoteAnchor, type BookmarkNoteTarget } from './BookmarkNoteEditor'
+import ChangeRequestLookupDialog from './ChangeRequestLookupDialog'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import ExportImportModal from './ExportImportModal'
 import InstantTooltip from './InstantTooltip'
@@ -93,6 +94,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   // 过滤时只按本地元数据字段匹配。
   const [contentHits, setContentHits] = useState<Set<string> | null>(null)
   const [showExportImport, setShowExportImport] = useState(false)
+  const [showChangeRequestLookup, setShowChangeRequestLookup] = useState(false)
   const [version, setVersion] = useState('')
 
   // 版本号只取一次（进程生命周期内不变），失败时 footer 留空不打扰。
@@ -848,8 +850,10 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       <div className="p-4 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <h2 className="text-nav font-semibold text-[var(--text-primary)] truncate">{t('sidebar.sessions')}</h2>
-          <span className="text-helper text-[var(--text-muted)] flex-shrink-0">{formatNumber(locale, sessions.length)} {t('sidebar.total')}</span>
-          {liveCount > 0 && (
+          {(isMobile || width >= 220) && (
+            <span className="text-helper text-[var(--text-muted)] flex-shrink-0">{formatNumber(locale, sessions.length)} {t('sidebar.total')}</span>
+          )}
+          {liveCount > 0 && (isMobile || width >= 300) && (
             <span className="text-helper text-[var(--success)] flex-shrink-0 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] animate-pulse" />
               {formatNumber(locale, liveCount)} {t('sidebar.live')}
@@ -862,6 +866,15 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowChangeRequestLookup(true)}
+            className="h-6 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            title={t('git.lookup.open')}
+            data-testid="sidebar-change-request-lookup"
+          >
+            {t('git.lookup.short')}
+          </button>
           <button
             type="button"
             onClick={() => setShowExportImport(true)}
@@ -1185,6 +1198,12 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           sessions={filtered}
           preferred={exportPreferred}
           onClose={() => setShowExportImport(false)}
+        />
+      )}
+      {showChangeRequestLookup && (
+        <ChangeRequestLookupDialog
+          onClose={() => setShowChangeRequestLookup(false)}
+          onSelectSession={onSelect}
         />
       )}
 

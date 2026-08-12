@@ -184,6 +184,7 @@ func TestListSessionsCollaborationSummary(t *testing.T) {
 	solo := byID["solo"].Collaboration
 	if solo == nil {
 		t.Fatal("exact zero-child root must still carry a summary (distinguishable from unindexed)")
+		return
 	}
 	if solo.ChildCount != 0 || solo.ActiveCount != 0 || solo.ProblemCount != 0 {
 		t.Fatalf("solo summary = %+v, want exact zero", solo)

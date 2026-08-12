@@ -46,6 +46,15 @@ type IndexSnapshotReader interface {
 	ReadIndexSnapshot(ctx context.Context, session model.Session) (*model.SessionDetail, []model.RenderEvent, error)
 }
 
+// AuthoritativeIndexSnapshotReader is the race-free successor to
+// IndexSnapshotReader. Detail, render events, Agent-recorded origin facts,
+// finalization evidence, and source revision all come from one immutable
+// source-byte view. IndexSnapshotReader remains available until indexer wiring
+// migrates so adapters can adopt this protocol without breaking older ones.
+type AuthoritativeIndexSnapshotReader interface {
+	ReadIndexSnapshotEnvelope(ctx context.Context, session model.Session) (*model.IndexSnapshotEnvelope, error)
+}
+
 // WatchRootProvider is an optional reader capability: the on-disk paths whose
 // changes mean "this agent's session list may have changed". Directories are
 // watched recursively; a file path (e.g. a SQLite database) means "watch this

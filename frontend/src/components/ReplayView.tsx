@@ -22,6 +22,7 @@ import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
+import GitEvidencePanel from './GitEvidencePanel'
 import AIPanel from './AIPanel'
 import BookmarkNoteEditor from './BookmarkNoteEditor'
 import DiffModal from './DiffModal'
@@ -113,10 +114,12 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
   const [recordPanelOpen, setRecordPanelOpen] = useState(false)
+  const [gitPanelOpen, setGitPanelOpen] = useState(false)
   const [degradedBannerDismissed, setDegradedBannerDismissed] = useState(false)
   useEffect(() => {
     setDegradedBannerDismissed(false)
     setRecordPanelOpen(false)
+    setGitPanelOpen(false)
   }, [sessionId])
   const [capCompareOpen, setCapCompareOpen] = useState(false)
   const [agentsCatalog, setAgentsCatalog] = useState<AgentInfo[]>([])
@@ -1448,6 +1451,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 <span className="truncate">{recordStatusLabel(rec, t)}</span>
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setGitPanelOpen(true)}
+              className="h-7 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
+              data-testid="session-git-evidence-button"
+            >
+              {t('git.panel.open')}
+            </button>
           </header>
         )}
         <div className="flex-1 flex items-center justify-center">
@@ -1495,6 +1506,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               onClose={() => setRecordPanelOpen(false)}
               onRemovedFromIndex={() => onSelect?.('')}
             />
+            {gitPanelOpen && (
+              <GitEvidencePanel
+                session={session}
+                onClose={() => setGitPanelOpen(false)}
+                onSelectSession={onSelect}
+              />
+            )}
           </>
         )}
       </main>
@@ -1590,6 +1608,19 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               </button>
             )
           })()}
+          <button
+            type="button"
+            onClick={() => setGitPanelOpen(true)}
+            className={`h-7 rounded-md border px-2 text-nav ${
+              gitPanelOpen
+                ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            aria-expanded={gitPanelOpen}
+            data-testid="session-git-evidence-button"
+          >
+            {t('git.panel.open')}
+          </button>
           {bookmarkError && (
             <span className="text-meta text-[var(--error)]" role="status">
               {t(bookmarkError)}
@@ -1803,6 +1834,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
 
       {showDiffModal && session && (
         <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} initialIdx={initialDiffIdx} />
+      )}
+
+      {gitPanelOpen && session && (
+        <GitEvidencePanel
+          session={session}
+          onClose={() => setGitPanelOpen(false)}
+          onSelectSession={onSelect}
+        />
       )}
 
       {noteEditorOpen && session?.bookmarked && (

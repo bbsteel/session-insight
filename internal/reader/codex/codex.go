@@ -3,8 +3,11 @@ package codex
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -56,12 +59,23 @@ func (r *CodexReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
 	return events, nil
 }
 
-// ReadIndexSnapshot builds the index-facing detail and render stream from one
-// transcript parse. Rollback transcripts retain the established detail parser
-// because their historical branch representation needs its richer state.
+// ReadIndexSnapshot is the compatibility surface used by the current indexer.
+// It delegates to the authoritative envelope so detail and render data still
+// come from the same immutable source-byte view.
 func (r *CodexReader) ReadIndexSnapshot(ctx context.Context, session model.Session) (*model.SessionDetail, []model.RenderEvent, error) {
-	if err := ctx.Err(); err != nil {
+	envelope, err := r.ReadIndexSnapshotEnvelope(ctx, session)
+	if err != nil {
 		return nil, nil, err
+	}
+	return envelope.Detail, envelope.RenderEvents, nil
+}
+
+// ReadIndexSnapshotEnvelope reads the rollout once, then derives every
+// index-facing projection from that immutable byte slice. In particular,
+// origin Git facts never consult the current repository or worktree.
+func (r *CodexReader) ReadIndexSnapshotEnvelope(ctx context.Context, session model.Session) (*model.IndexSnapshotEnvelope, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	path := r.findSessionFile(session.ID)
 	if path == "" {
@@ -70,22 +84,116 @@ func (r *CodexReader) ReadIndexSnapshot(ctx context.Context, session model.Sessi
 		if known := r.knownSessionFile(session.ID); known != "" {
 			readErr.WithSources(sourceInventory(known))
 		}
-		return nil, nil, readErr
+		return nil, readErr
 	}
-	events, skipped, err := codexToRenderEventsDetailed(path)
+	snapshotPath, sourceFingerprint, err := captureCodexSource(ctx, path)
 	if err != nil {
-		return nil, nil, err
-	}
-	for _, event := range events {
-		if event.Type == "RollbackStart" || event.Type == "RollbackEnd" || event.TurnIndex < 0 {
-			detail, err := r.GetSession(session.ID)
-			return detail, events, err
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
 		}
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable", err).
+			WithSources(sourceInventory(path)).
+			WithWarnings([]model.ParseWarning{readerr.SourceUnreadableWarning(model.SourceRolePrimaryTranscript)})
 	}
-	detail := indexDetailFromEvents(session, events, path, skipped)
-	return detail, events, nil
+	defer os.Remove(snapshotPath)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	sourceRevision := string(sourceFingerprint.Algorithm) + ":" + sourceFingerprint.Digest
+	snapshotSession, err := codexSessionFromSnapshot(path, snapshotPath, session)
+	if err != nil {
+		return nil, err
+	}
+	events, renderSkipped, err := codexToRenderEventsSnapshot(path, snapshotPath)
+	if err != nil {
+		return nil, err
+	}
+	var detail *model.SessionDetail
+	if renderEventsContainRollback(events) {
+		parsed, modelName, modelProvider, detailSkipped, parseErr := parseCodexEventsFile(snapshotPath)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if detailSkipped < renderSkipped {
+			detailSkipped = renderSkipped
+		}
+		detail = buildCodexDetail(snapshotSession, parsed, modelName, modelProvider, path, sourceFingerprint.SizeBytes, detailSkipped)
+	} else {
+		detail = indexDetailFromEvents(snapshotSession, events, "", renderSkipped)
+		attachAuthoritativeCodexProvenance(detail, path, sourceFingerprint.SizeBytes, renderSkipped)
+	}
+	origin, finalization, err := parseCodexEnvelopeEvidenceSnapshot(snapshotPath, sourceRevision)
+	if err != nil {
+		return nil, err
+	}
+	envelope := &model.IndexSnapshotEnvelope{
+		Detail:            detail,
+		RenderEvents:      nonNilRenderEvents(events),
+		SourceRevision:    sourceRevision,
+		SourceFingerprint: sourceFingerprint,
+		OriginGit:         origin,
+		Finalization:      finalization,
+	}
+	if validation := model.ValidateIndexSnapshotEnvelope(envelope); !validation.OK() {
+		return nil, fmt.Errorf("invalid Codex index snapshot envelope: %+v", validation.Issues)
+	}
+	return envelope, nil
 }
 
+func renderEventsContainRollback(events []model.RenderEvent) bool {
+	for _, event := range events {
+		if event.Type == "RollbackStart" || event.Type == "RollbackEnd" || event.TurnIndex < 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func buildCodexDetail(session model.Session, parsed codexParsedTurns, modelName, modelProvider, path string, sourceSize int64, skipped int) *model.SessionDetail {
+	if modelName != "" {
+		session.ModelName = modelName
+	}
+	if modelProvider != "" {
+		session.ModelProvider = modelProvider
+	}
+	session.TurnCount = len(parsed.Active)
+	session.HistoricalTurnCount = parsed.Historical
+	for _, group := range parsed.RollbackGroups {
+		session.RolledBackTurnCount += len(group.Turns)
+	}
+	detail := &model.SessionDetail{Session: session, Turns: parsed.Active, RollbackGroups: parsed.RollbackGroups}
+	detail.AnomalySummary = shared.RunAnomalyDetection(parsed.Active)
+	attachAuthoritativeCodexProvenance(detail, path, sourceSize, skipped)
+	return detail
+}
+
+func attachAuthoritativeCodexProvenance(detail *model.SessionDetail, path string, sourceSize int64, skipped int) {
+	if detail == nil || path == "" {
+		return
+	}
+	var warnings []model.ParseWarning
+	if skipped > 0 {
+		warnings = append(warnings, provenance.Warning(
+			model.WarnMalformedRecordSkipped, model.WarningSeverityWarning, true,
+			[]string{model.ImpactReplay}, model.SourceRolePrimaryTranscript, nil, skipped,
+		))
+	}
+	p := provenance.Build(provenance.Input{
+		CapturedAt:      time.Now().UTC(),
+		AdapterRevision: Capabilities().AdapterRevision,
+		Sources: []model.SessionSourceFile{
+			provenance.PresentSource(model.SourceRolePrimaryTranscript, filepath.Clean(path), detail.UpdatedAt, sourceSize),
+		},
+		Warnings:          warnings,
+		HasReplayableBody: len(detail.Turns) > 0,
+	})
+	detail.Provenance = &p
+}
+
+// indexDetailFromEvents remains as the focused projection helper exercised by
+// render tests. The authoritative envelope uses buildCodexDetail so rollback
+// history is retained from the same immutable source bytes.
 func indexDetailFromEvents(session model.Session, events []model.RenderEvent, path string, skipped int) *model.SessionDetail {
 	turns := make([]model.TurnVM, 0)
 	ensureTurn := func(index int) *model.TurnVM {
@@ -140,6 +248,13 @@ func indexDetailFromEvents(session model.Session, events []model.RenderEvent, pa
 	return detail
 }
 
+func nonNilRenderEvents(events []model.RenderEvent) []model.RenderEvent {
+	if events == nil {
+		return []model.RenderEvent{}
+	}
+	return events
+}
+
 func (r *CodexReader) RenderANSI(id string, cols int) (string, error) {
 	path := r.findSessionFile(id)
 	if path == "" {
@@ -161,18 +276,25 @@ type codexEvent struct {
 }
 
 type codexSessionMeta struct {
-	ID               string `json:"id"`
-	SessionID        string `json:"session_id"`
-	ParentThreadID   string `json:"parent_thread_id"`
-	ForkedFromID     string `json:"forked_from_id"`
-	ThreadSource     string `json:"thread_source"`
-	AgentPath        string `json:"agent_path"`
-	Timestamp        string `json:"timestamp"`
-	CWD              string `json:"cwd"`
-	ModelProvider    string `json:"model_provider"`
+	ID               string        `json:"id"`
+	SessionID        string        `json:"session_id"`
+	ParentThreadID   string        `json:"parent_thread_id"`
+	ForkedFromID     string        `json:"forked_from_id"`
+	ThreadSource     string        `json:"thread_source"`
+	AgentPath        string        `json:"agent_path"`
+	Timestamp        string        `json:"timestamp"`
+	CWD              string        `json:"cwd"`
+	ModelProvider    string        `json:"model_provider"`
+	Git              *codexGitMeta `json:"git"`
 	BaseInstructions struct {
 		Text string `json:"text"`
 	} `json:"base_instructions"`
+}
+
+type codexGitMeta struct {
+	CommitHash    string `json:"commit_hash"`
+	Branch        string `json:"branch"`
+	RepositoryURL string `json:"repository_url"`
 }
 
 type codexPayload struct {
@@ -339,6 +461,386 @@ func parseTimestamp(ts string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+func captureCodexSource(ctx context.Context, path string) (snapshotPath string, fingerprint model.SourceFingerprint, err error) {
+	source, err := os.Open(path)
+	if err != nil {
+		return "", model.SourceFingerprint{}, err
+	}
+	defer source.Close()
+
+	snapshot, err := os.CreateTemp("", "session-insight-codex-snapshot-*.jsonl")
+	if err != nil {
+		return "", model.SourceFingerprint{}, err
+	}
+	snapshotPath = snapshot.Name()
+	keep := false
+	defer func() {
+		if closeErr := snapshot.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+		if !keep || err != nil {
+			_ = os.Remove(snapshotPath)
+		}
+	}()
+
+	hasher := sha256.New()
+	buffer := make([]byte, 256*1024)
+	var size int64
+	for {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return "", model.SourceFingerprint{}, contextErr
+		}
+		n, readErr := source.Read(buffer)
+		if n > 0 {
+			chunk := buffer[:n]
+			if _, writeErr := snapshot.Write(chunk); writeErr != nil {
+				return "", model.SourceFingerprint{}, writeErr
+			}
+			if _, hashErr := hasher.Write(chunk); hashErr != nil {
+				return "", model.SourceFingerprint{}, hashErr
+			}
+			size += int64(n)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return "", model.SourceFingerprint{}, readErr
+		}
+	}
+	fingerprint = model.SourceFingerprint{
+		Algorithm: model.SourceFingerprintSHA256,
+		Digest:    fmt.Sprintf("%x", hasher.Sum(nil)),
+		SizeBytes: size,
+	}
+	keep = true
+	return snapshotPath, fingerprint, nil
+}
+
+// codexSessionFromSnapshot rebuilds index-facing metadata from the same
+// immutable bytes used for turns and render events. User-owned bookmark fields
+// are the only values retained from the discovery hint.
+func codexSessionFromSnapshot(path, snapshotPath string, discovery model.Session) (model.Session, error) {
+	snapshot, err := os.Open(snapshotPath)
+	if err != nil {
+		return model.Session{}, err
+	}
+	defer snapshot.Close()
+	return codexSessionFromReader(path, snapshot, discovery)
+}
+
+func codexSessionFromReader(path string, source io.Reader, discovery model.Session) (model.Session, error) {
+	var (
+		cwd           string
+		nativeID      string
+		parentID      string
+		agentPath     string
+		isSubagent    bool
+		modelName     string
+		modelProvider string
+		repositoryURL string
+		firstUserMsg  string
+		userMessages  []string
+		createdAt     time.Time
+		updatedAt     time.Time
+		lineCount     int
+	)
+
+	scanner := bufio.NewScanner(source)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		lineCount++
+		var evt codexEvent
+		if json.Unmarshal(scanner.Bytes(), &evt) != nil {
+			continue
+		}
+		if ts := parseTimestamp(evt.Timestamp); !ts.IsZero() {
+			if createdAt.IsZero() || ts.Before(createdAt) {
+				createdAt = ts
+			}
+			if ts.After(updatedAt) {
+				updatedAt = ts
+			}
+		}
+		switch evt.Type {
+		case "session_meta":
+			var meta codexSessionMeta
+			if json.Unmarshal(evt.Payload, &meta) != nil {
+				continue
+			}
+			if cwd == "" {
+				cwd = meta.CWD
+			}
+			if nativeID == "" {
+				if meta.ID != "" {
+					nativeID = meta.ID
+				} else {
+					nativeID = meta.SessionID
+				}
+			}
+			if modelName == "" {
+				modelName = extractModelName(&meta)
+			}
+			if modelProvider == "" {
+				modelProvider = meta.ModelProvider
+			}
+			if repositoryURL == "" && meta.Git != nil && validRecordedRepositoryURL(meta.Git.RepositoryURL) {
+				repositoryURL = meta.Git.RepositoryURL
+			}
+			if meta.ThreadSource == "subagent" {
+				isSubagent = true
+				if parentID == "" {
+					parentID = meta.ParentThreadID
+					if parentID == "" {
+						parentID = meta.ForkedFromID
+					}
+				}
+				if agentPath == "" {
+					agentPath = meta.AgentPath
+				}
+			}
+		case "event_msg":
+			var payload codexPayload
+			if json.Unmarshal(evt.Payload, &payload) == nil && payload.Type == "user_message" && payload.Message != "" {
+				if firstUserMsg == "" {
+					firstUserMsg = payload.Message
+				}
+				if len(userMessages) < 5 {
+					userMessages = append(userMessages, payload.Message)
+				}
+			}
+		case "turn_context":
+			var payload codexPayload
+			if json.Unmarshal(evt.Payload, &payload) == nil && payload.Model != "" {
+				modelName = payload.Model
+			}
+		}
+	}
+	if !validRecordedWorktreePath(cwd) {
+		cwd = ""
+	}
+
+	session := model.Session{
+		ID:              strings.TrimSuffix(filepath.Base(path), ".jsonl"),
+		AgentType:       "codex",
+		CWD:             cwd,
+		Project:         codexRecordedProject(cwd, repositoryURL),
+		Name:            resolveName(firstUserMsg, createdAt),
+		ModelName:       modelName,
+		ModelProvider:   modelProvider,
+		ResumeID:        nativeID,
+		ParentSessionID: parentID,
+		AgentPath:       agentPath,
+		IsSubagent:      isSubagent,
+		PreviewText:     shared.BuildPreviewText(userMessages),
+		MessageCount:    lineCount,
+		Bookmarked:      discovery.Bookmarked,
+		BookmarkNote:    discovery.BookmarkNote,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+	}
+	// Keep the legacy detail fields unchanged. Source-qualified repository and
+	// branch facts belong to IndexSnapshotEnvelope.OriginGit.
+	return session, scanner.Err()
+}
+
+func codexRecordedProject(cwd, repositoryURL string) string {
+	if parsed, err := url.Parse(repositoryURL); err == nil && parsed.Path != "" {
+		name := strings.TrimSuffix(pathBasePortable(parsed.Path), ".git")
+		if name != "" {
+			return name
+		}
+	}
+	slashPath := strings.ReplaceAll(cwd, `\`, "/")
+	for _, marker := range []string{"/.claude/worktrees/", "/.worktrees/"} {
+		if index := strings.Index(slashPath, marker); index >= 0 {
+			if name := pathBasePortable(slashPath[:index]); name != "" {
+				return name
+			}
+		}
+	}
+	return pathBasePortable(slashPath)
+}
+
+func pathBasePortable(path string) string {
+	path = strings.TrimRight(strings.ReplaceAll(path, `\`, "/"), "/")
+	if index := strings.LastIndex(path, "/"); index >= 0 {
+		return path[index+1:]
+	}
+	return path
+}
+
+func parseCodexEnvelopeEvidenceSnapshot(snapshotPath, sourceRevision string) (*model.SessionGitOrigin, model.SessionFinalizationEvidence, error) {
+	snapshot, err := os.Open(snapshotPath)
+	if err != nil {
+		return nil, model.SessionFinalizationEvidence{}, err
+	}
+	defer snapshot.Close()
+	return parseCodexEnvelopeEvidence(snapshot, sourceRevision)
+}
+
+func parseCodexEnvelopeEvidence(source io.Reader, sourceRevision string) (*model.SessionGitOrigin, model.SessionFinalizationEvidence, error) {
+	var (
+		metaSeen        bool
+		metaInvalid     bool
+		meta            codexSessionMeta
+		metaRecordedAt  *time.Time
+		signalKind      = model.SessionSignalNone
+		signalTime      *time.Time
+		signalTimeValid bool
+	)
+	scanner := bufio.NewScanner(source)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		var evt codexEvent
+		if json.Unmarshal(scanner.Bytes(), &evt) != nil {
+			continue
+		}
+		if evt.Type == "session_meta" && !metaSeen {
+			metaSeen = true
+			if json.Unmarshal(evt.Payload, &meta) != nil {
+				metaInvalid = true
+			} else if recorded := parseTimestamp(evt.Timestamp); !recorded.IsZero() {
+				metaRecordedAt = timePtr(recorded)
+			} else if recorded := parseTimestamp(meta.Timestamp); !recorded.IsZero() {
+				metaRecordedAt = timePtr(recorded)
+			}
+		}
+		if evt.Type != "event_msg" {
+			continue
+		}
+		var payload codexPayload
+		if json.Unmarshal(evt.Payload, &payload) != nil {
+			continue
+		}
+		var kind model.SessionFinalizationSignalKind
+		switch payload.Type {
+		case "task_started":
+			kind = model.SessionSignalTurnOpen
+		case "task_complete":
+			kind = model.SessionSignalTurnComplete
+		case "turn_aborted":
+			kind = model.SessionSignalTurnAborted
+		case "thread_rolled_back":
+			kind = model.SessionSignalTurnsRolledBack
+		default:
+			continue
+		}
+		signalKind = kind
+		if recorded := parseTimestamp(evt.Timestamp); !recorded.IsZero() {
+			signalTime = timePtr(recorded)
+			signalTimeValid = true
+		} else {
+			signalTime = nil
+			signalTimeValid = false
+		}
+	}
+
+	missingAssessment := model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonAgentGitFactMissing)
+	invalidAssessment := model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonAgentGitFactInvalid)
+	untimedAssessment := model.NonExactGitEvidence(model.GitEvidenceEstimated, model.ReasonAgentGitFactTimestampUnavailable)
+	stringFact := func(value string, valid func(string) bool) model.GitFact[string] {
+		fact := model.GitFact[string]{
+			Source:         model.GitSourceAgentRecorded,
+			RecordedAt:     metaRecordedAt,
+			SourceRevision: sourceRevision,
+		}
+		switch {
+		case metaInvalid:
+			fact.Assessment = invalidAssessment
+		case value == "":
+			fact.Assessment = missingAssessment
+		case !valid(value):
+			fact.Assessment = invalidAssessment
+		case metaRecordedAt == nil:
+			fact.Value = value
+			fact.Assessment = untimedAssessment
+		default:
+			fact.Value = value
+			fact.Assessment = model.ExactGitEvidence()
+		}
+		return fact
+	}
+	gitMeta := codexGitMeta{}
+	if meta.Git != nil {
+		gitMeta = *meta.Git
+	}
+	origin := &model.SessionGitOrigin{
+		RepositoryURL: stringFact(gitMeta.RepositoryURL, validRecordedRepositoryURL),
+		WorktreePath:  stringFact(meta.CWD, validRecordedWorktreePath),
+		Branch:        stringFact(gitMeta.Branch, validRecordedBranch),
+		HeadSHA:       stringFact(gitMeta.CommitHash, validRecordedSHA),
+		DirtyState: model.GitFact[model.GitDirtyState]{
+			Value:          model.GitDirtyUnknown,
+			Assessment:     missingAssessment,
+			Source:         model.GitSourceAgentRecorded,
+			RecordedAt:     metaRecordedAt,
+			SourceRevision: sourceRevision,
+		},
+	}
+
+	finalization := model.SessionFinalizationEvidence{
+		State:      model.SessionFinalizationUnknown,
+		SignalKind: signalKind,
+	}
+	switch signalKind {
+	case model.SessionSignalNone:
+		finalization.Assessment = model.NonExactSessionEvidence(model.SessionEvidenceMissing, model.ReasonSessionStateNotRecorded)
+		finalization.SignalAssessment = model.NonExactSessionEvidence(model.SessionEvidenceMissing, model.ReasonSessionStateNotRecorded)
+	case model.SessionSignalTurnOpen:
+		finalization.Assessment = model.NonExactSessionEvidence(model.SessionEvidenceMissing, model.ReasonTurnMarkerNotSessionLiveness)
+	case model.SessionSignalTurnComplete, model.SessionSignalTurnAborted, model.SessionSignalTurnsRolledBack:
+		finalization.Assessment = model.NonExactSessionEvidence(model.SessionEvidenceMissing, model.ReasonTurnMarkerNotSessionFinalization)
+	}
+	if signalKind != model.SessionSignalNone {
+		if signalTimeValid {
+			finalization.SignalRecordedAt = signalTime
+			finalization.SignalAssessment = model.ExactSessionEvidence()
+		} else {
+			finalization.SignalAssessment = model.NonExactSessionEvidence(model.SessionEvidenceEstimated, model.ReasonSessionSignalTimestampInvalid)
+		}
+	}
+	return origin, finalization, scanner.Err()
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
+}
+
+func validRecordedSHA(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validRecordedBranch(value string) bool {
+	return value == strings.TrimSpace(value) && value != "" && len(value) <= 1024 && !strings.ContainsAny(value, "\x00\r\n")
+}
+
+func validRecordedWorktreePath(value string) bool {
+	if value != strings.TrimSpace(value) || value == "" || len(value) > 4096 || strings.ContainsAny(value, "\x00\r\n") {
+		return false
+	}
+	if filepath.IsAbs(value) || strings.HasPrefix(value, `\\`) || strings.HasPrefix(value, "//") {
+		return true
+	}
+	return len(value) >= 3 && ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) && value[1] == ':' && (value[2] == '\\' || value[2] == '/')
+}
+
+func validRecordedRepositoryURL(value string) bool {
+	if value != strings.TrimSpace(value) || strings.ContainsRune(value, '\x00') {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 // ---- ListSessions ----
@@ -713,11 +1215,23 @@ type codexRollbackAttempt struct {
 }
 
 func parseCodexEvents(path string) (codexParsedTurns, string, string, int) {
-	f, err := os.Open(path)
+	parsed, modelName, modelProvider, skipped, err := parseCodexEventsFile(path)
 	if err != nil {
-		return codexParsedTurns{}, "", "", 0
+		return codexParsedTurns{}, "", "", skipped
 	}
-	defer f.Close()
+	return parsed, modelName, modelProvider, skipped
+}
+
+func parseCodexEventsFile(path string) (codexParsedTurns, string, string, int, error) {
+	source, err := os.Open(path)
+	if err != nil {
+		return codexParsedTurns{}, "", "", 0, err
+	}
+	defer source.Close()
+	return parseCodexEventsReader(source)
+}
+
+func parseCodexEventsReader(source io.Reader) (codexParsedTurns, string, string, int, error) {
 
 	var (
 		attempts      []*codexTurnAttempt
@@ -732,7 +1246,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string, int) {
 		skipped       int
 	)
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
 	for scanner.Scan() {
@@ -1028,7 +1542,7 @@ func parseCodexEvents(path string) (codexParsedTurns, string, string, int) {
 		}
 	}
 
-	return result, foundModel, foundProvider, skipped
+	return result, foundModel, foundProvider, skipped, scanner.Err()
 }
 
 // ---- RenderEvent adapter ----
@@ -1080,11 +1594,29 @@ func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
 }
 
 func codexToRenderEventsDetailed(path string) ([]model.RenderEvent, int, error) {
-	f, err := os.Open(path)
+	source, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer f.Close()
+	defer source.Close()
+	var modTime *time.Time
+	if info, statErr := os.Stat(path); statErr == nil {
+		value := info.ModTime()
+		modTime = &value
+	}
+	return codexToRenderEventsDetailedReader(path, source, modTime)
+}
+
+func codexToRenderEventsSnapshot(path, snapshotPath string) ([]model.RenderEvent, int, error) {
+	snapshot, err := os.Open(snapshotPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer snapshot.Close()
+	return codexToRenderEventsDetailedReader(path, snapshot, nil)
+}
+
+func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModTime *time.Time) ([]model.RenderEvent, int, error) {
 
 	var (
 		attempts     []*codexRenderAttempt
@@ -1124,7 +1656,7 @@ func codexToRenderEventsDetailed(path string) ([]model.RenderEvent, int, error) 
 		return evt.EventID
 	}
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
 	for scanner.Scan() {
@@ -1390,8 +1922,8 @@ func codexToRenderEventsDetailed(path string) ([]model.RenderEvent, int, error) 
 	// only when the trailing turn already has visible content: a bare
 	// task_started must not be resurrected by the progress marker.
 	if turnOpen && current != nil && codexRenderAttemptVisible(current) {
-		if fi, statErr := f.Stat(); statErr == nil {
-			if evt, ok := shared.TrailingInProgress(true, fi.ModTime(), len(attempts)-1); ok {
+		if sourceModTime != nil {
+			if evt, ok := shared.TrailingInProgress(true, *sourceModTime, len(attempts)-1); ok {
 				emit(evt)
 			}
 		}

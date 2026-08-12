@@ -108,6 +108,7 @@ func TestSkillReadRecognizedInSessionAndRender(t *testing.T) {
 	}
 	if inv == nil {
 		t.Fatal("no ToolInvocation")
+		return
 	}
 	if inv.name != "Skill" {
 		t.Errorf("ToolName=%q want Skill", inv.name)

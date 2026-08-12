@@ -90,8 +90,8 @@ func TestV33NormalizesPathFormProjects(t *testing.T) {
 	if err := reopened.Conn().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&ver); err != nil {
 		t.Fatal(err)
 	}
-	if ver != 33 {
-		t.Fatalf("schema version = %d, want 33", ver)
+	if ver != currentSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", ver, currentSchemaVersion)
 	}
 
 	want := map[string]string{
