@@ -353,7 +353,12 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
 
   return (
     <>
-    <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }}>
+    {/* relative + sticky+1: z-index needs a position, and the session toolbar
+        is a later sibling at --z-sticky, so the same token covers this overflow. */}
+    <header
+      className="relative flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3"
+      style={{ height: '40px', zIndex: 'calc(var(--z-sticky) + 1)' }}
+    >
       <div ref={containerRef} className="relative w-full max-w-[420px]">
         <input
           ref={inputRef}
@@ -366,6 +371,7 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           onClick={openDropdown}
           className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
           aria-label={t('common.search')}
+          data-testid="global-search-input"
         />
         {indexing && (
           <div
@@ -379,7 +385,10 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           {indexAriaLive}
         </div>
         {open && (
-          <div className="absolute top-full left-0 right-0 mt-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-30 max-h-[400px] overflow-y-auto">
+          <div
+            className="absolute top-full left-0 right-0 mt-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-[var(--z-dropdown)] max-h-[400px] overflow-y-auto"
+            data-testid="global-search-dropdown"
+          >
             {indexLabel && (
               <div className="border-b border-[var(--border-muted)] px-3 py-1.5 text-meta text-[var(--text-muted)]">
                 {indexLabel}
@@ -388,7 +397,10 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
             )}
             {isHistoryMode ? (
               <>
-                <div className="sticky top-0 bg-[var(--bg-surface)] px-3 pt-2 pb-1 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                <div
+                  className="sticky top-0 bg-[var(--bg-surface)] px-3 pt-2 pb-1 text-meta font-medium uppercase tracking-wide text-[var(--text-muted)]"
+                  data-testid="global-search-recent-label"
+                >
                   {t('search.recent')}
                 </div>
                 {visibleHistory.map((entry, i) => (
