@@ -89,17 +89,9 @@ func HasTrailingInProgress(events []model.RenderEvent) bool {
 // is unknown or in another turn keep their stream position, and multiple
 // results under one invocation keep their relative order.
 func InterleaveToolResults(events []model.RenderEvent) []model.RenderEvent {
+	// One pass: index invocations and segment turns by TurnBoundary. A
+	// result may only move within its own turn — never across a boundary.
 	invocations := map[string]int{}
-	for i, event := range events {
-		if event.Type == "ToolInvocation" {
-			invocations[event.EventID] = i
-		}
-	}
-	if len(invocations) == 0 {
-		return events
-	}
-	// A result may only move within its own turn: never reorder across a
-	// TurnBoundary.
 	turnOf := make([]int, len(events))
 	turn := -1
 	for i, event := range events {
@@ -107,9 +99,24 @@ func InterleaveToolResults(events []model.RenderEvent) []model.RenderEvent {
 			turn++
 		}
 		turnOf[i] = turn
+		if event.Type == "ToolInvocation" {
+			invocations[event.EventID] = i
+		}
 	}
+	if len(invocations) == 0 {
+		return events
+	}
+	return spliceResultsAfterInvocations(events, invocations, turnOf)
+}
+
+// spliceResultsAfterInvocations rebuilds the stream with every ToolResult
+// emitted directly after its parent ToolInvocation. The collection pass
+// visits results in ascending index order, so movedIdxs is already sorted
+// and the emit pass can skip moved events with a cursor instead of an
+// O(n) moved-marker slice.
+func spliceResultsAfterInvocations(events []model.RenderEvent, invocations map[string]int, turnOf []int) []model.RenderEvent {
 	resultsByParent := map[string][]int{}
-	moved := make([]bool, len(events))
+	var movedIdxs []int
 	for i, event := range events {
 		if event.Type != "ToolResult" || event.ParentEventID == "" {
 			continue
@@ -119,14 +126,16 @@ func InterleaveToolResults(events []model.RenderEvent) []model.RenderEvent {
 			continue
 		}
 		resultsByParent[event.ParentEventID] = append(resultsByParent[event.ParentEventID], i)
-		moved[i] = true
+		movedIdxs = append(movedIdxs, i)
 	}
-	if len(resultsByParent) == 0 {
+	if len(movedIdxs) == 0 {
 		return events
 	}
 	out := make([]model.RenderEvent, 0, len(events))
+	next := 0
 	for i, event := range events {
-		if moved[i] {
+		if next < len(movedIdxs) && movedIdxs[next] == i {
+			next++
 			continue
 		}
 		out = append(out, event)
