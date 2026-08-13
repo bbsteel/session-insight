@@ -45,6 +45,11 @@ assert_eq "$(select_worktree_listen_port '' 38487)" "38487" "persisted non-reser
 assert_eq "$(select_worktree_listen_port 38487 8080)" "38487" "explicit non-reserved PORT wins over poisoned file"
 assert_eq "$(select_worktree_listen_port 9090 38487)" "9090" "explicit PORT wins over a different saved port"
 assert_eq "$(select_worktree_listen_port 8080 38487)" "38487" "ignored 8080 falls back to saved worktree port"
+assert_eq "$(select_worktree_listen_port abc '')" "0" "non-numeric PORT is ignored"
+assert_eq "$(select_worktree_listen_port 99999 '')" "0" "out-of-range PORT is ignored"
+assert_eq "$(select_worktree_listen_port abc 38487)" "38487" "invalid PORT falls back to saved worktree port"
+assert_eq "$(select_worktree_listen_port 0 '')" "0" "explicit PORT=0 stays OS-assigned"
+assert_eq "$(select_worktree_listen_port 0 38487)" "0" "explicit PORT=0 does not reuse saved port"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf -- "$tmpdir"' EXIT
@@ -69,8 +74,11 @@ cat >"$log_file" <<'EOF'
 2026/08/13 08:04:51 port 8080 is in use, falling back to an OS-assigned port
 2026/08/13 08:04:51 SessionInsight listening on http://127.0.0.1:37307/
 EOF
-# PID 1 is not this binary's listener; ss should not match, so log wins.
-resolve_instance_url_port 1 "$url_file" "$log_file"
+# Stub the live-socket lookup so log-vs-url-file precedence is deterministic
+# (PID 1 may own a listening socket inside a container).
+process_port_from_ss() { :; }
+resolve_instance_url_port 999999 "$url_file" "$log_file"
+# shellcheck disable=SC2154 # _url/_port are set by resolve_instance_url_port
 assert_eq "$_url" "http://127.0.0.1:37307/" "status URL comes from listen log, not poisoned url file"
 assert_eq "$_port" "37307" "status port comes from listen log, not poisoned url file"
 

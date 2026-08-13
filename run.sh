@@ -49,7 +49,11 @@ is_primary_reserved_port() {
 select_worktree_listen_port() {
   local requested="${1:-}"
   local saved="${2:-}"
+  # PORT=0 is the explicit OS-assigned request; keep it. Anything else must be
+  # a real TCP port and must not be the primary reserved port.
   if is_primary_reserved_port "$requested"; then
+    requested=""
+  elif [[ -n "$requested" && "$requested" != "0" ]] && ! is_valid_tcp_port "$requested"; then
     requested=""
   fi
   if [[ -z "$requested" ]] && is_valid_tcp_port "$saved" && ! is_primary_reserved_port "$saved"; then
@@ -82,6 +86,8 @@ configure_checkout_runtime() {
     fi
     if is_primary_reserved_port "$requested"; then
       echo "WARNING: ignoring PORT=$PRIMARY_PORT in linked worktree (reserved for the primary checkout)" >&2
+    elif [[ -n "$requested" && "$requested" != "0" ]] && ! is_valid_tcp_port "$requested"; then
+      echo "WARNING: ignoring invalid PORT=$requested in linked worktree" >&2
     elif [[ -z "$requested" ]] && is_primary_reserved_port "$saved"; then
       echo "WARNING: ignoring persisted port $PRIMARY_PORT in linked worktree (reserved for the primary checkout)" >&2
     fi
@@ -207,23 +213,6 @@ do_build() {
   echo "==> Build complete: $BIN_PATH"
 }
 
-# Probe whether the HTTP server answers (log may be empty on some
-# Windows launch paths; HTTP is an authoritative Ready signal when PORT is fixed).
-http_ready() {
-  local probe_url="$1"
-  if command -v curl >/dev/null 2>&1; then
-    curl -sf --max-time 1 "$probe_url" >/dev/null 2>&1
-    return
-  fi
-  if command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -Command \
-      "try { (Invoke-WebRequest -Uri '$probe_url' -UseBasicParsing -TimeoutSec 1).StatusCode -eq 200 } catch { \$false }" \
-      2>/dev/null | tr -d '\r' | grep -qi true
-    return
-  fi
-  return 1
-}
-
 # Start the binary detached from this shell so it survives shell exit.
 # Linux: nohup + setsid when available.
 # Windows/Git Bash: scripts/windows-start.ps1 via PowerShell -File
@@ -313,9 +302,9 @@ do_start() {
   local pid
   pid=$(cat "$PID_FILE")
 
-  # Wait for Ready: prefer the post-bind log line or this PID's ss listener.
-  # HTTP on the requested PORT is only proof when this PID owns that socket —
-  # another instance (usually primary :8080) may already answer there.
+  # Wait for Ready from this process only: the post-bind log line, or the
+  # listener ss attributes to this PID. Do not probe $PORT — another instance
+  # (usually primary :8080) may already answer there.
   local url attempt owned_port bound_port
   for ((attempt = 0; attempt < 300; attempt++)); do
     url=$(listening_url_from_file "$LOG_FILE")
@@ -325,11 +314,6 @@ do_start() {
     owned_port=$(process_port_from_ss "$pid")
     if [[ -z "$url" ]] && is_valid_tcp_port "$owned_port"; then
       url="http://127.0.0.1:$owned_port/"
-    fi
-    if [[ -z "$url" && "$PORT" != "0" && "$owned_port" == "$PORT" ]]; then
-      if http_ready "http://127.0.0.1:$PORT/"; then
-        url="http://127.0.0.1:$PORT/"
-      fi
     fi
     # Linked worktrees must never record the primary reserved port as Ready.
     if [[ -n "$url" && -n "${PORT_FILE:-}" ]]; then

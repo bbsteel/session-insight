@@ -8,6 +8,9 @@ import (
 )
 
 func TestRunShPortIsolation(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping run.sh port isolation test")
+	}
 	root, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
