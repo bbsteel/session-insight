@@ -110,8 +110,9 @@ See [BUILD.md](BUILD.md) for the full Windows build guide (requires MSYS2 + ming
 When `run.sh` is executed from a linked Git worktree, it uses an OS-assigned
 random loopback port on the first run and reuses the same port on subsequent
 restarts (persisted to `.runtime/session-insight.port`), with an isolated
-`.runtime/session-insight` data directory. The `Ready:` line reports the
-actual full application URL.
+`.runtime/session-insight` data directory. `PORT=8080` is ignored in a worktree
+because that port belongs to the primary checkout. The `Ready:` line reports the
+actual bound URL, not the requested port.
 
 ### Contributing localized UI
 
