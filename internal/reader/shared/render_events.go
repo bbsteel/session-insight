@@ -79,3 +79,69 @@ func HasTrailingInProgress(events []model.RenderEvent) bool {
 	last := events[len(events)-1]
 	return last.Type == "AgentSpecific" && last.Subtype == "in_progress"
 }
+
+// InterleaveToolResults moves each ToolResult directly after its parent
+// ToolInvocation. Agents that support parallel tool calls store one assistant
+// message carrying N tool_calls followed by N separate result records, so
+// raw stream order renders call1, call2, result1, result2 — the result boxes
+// detach from the invocation they belong to. Pairing by ParentEventID
+// restores call1, result1, call2, result2. Results whose parent invocation
+// is unknown or in another turn keep their stream position, and multiple
+// results under one invocation keep their relative order.
+func InterleaveToolResults(events []model.RenderEvent) []model.RenderEvent {
+	// One pass: index invocations and segment turns by TurnBoundary. A
+	// result may only move within its own turn — never across a boundary.
+	invocations := map[string]int{}
+	turnOf := make([]int, len(events))
+	turn := -1
+	for i, event := range events {
+		if event.Type == "TurnBoundary" {
+			turn++
+		}
+		turnOf[i] = turn
+		if event.Type == "ToolInvocation" {
+			invocations[event.EventID] = i
+		}
+	}
+	if len(invocations) == 0 {
+		return events
+	}
+	return spliceResultsAfterInvocations(events, invocations, turnOf)
+}
+
+// spliceResultsAfterInvocations rebuilds the stream with every ToolResult
+// emitted directly after its parent ToolInvocation. The collection pass
+// visits results in ascending index order, so movedIdxs is already sorted
+// and the emit pass can skip moved events with a cursor instead of an
+// O(n) moved-marker slice.
+func spliceResultsAfterInvocations(events []model.RenderEvent, invocations map[string]int, turnOf []int) []model.RenderEvent {
+	resultsByParent := map[string][]int{}
+	var movedIdxs []int
+	for i, event := range events {
+		if event.Type != "ToolResult" || event.ParentEventID == "" {
+			continue
+		}
+		parent, ok := invocations[event.ParentEventID]
+		if !ok || turnOf[parent] != turnOf[i] {
+			continue
+		}
+		resultsByParent[event.ParentEventID] = append(resultsByParent[event.ParentEventID], i)
+		movedIdxs = append(movedIdxs, i)
+	}
+	if len(movedIdxs) == 0 {
+		return events
+	}
+	out := make([]model.RenderEvent, 0, len(events))
+	next := 0
+	for i, event := range events {
+		if next < len(movedIdxs) && movedIdxs[next] == i {
+			next++
+			continue
+		}
+		out = append(out, event)
+		for _, resultIdx := range resultsByParent[event.EventID] {
+			out = append(out, events[resultIdx])
+		}
+	}
+	return out
+}
