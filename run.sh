@@ -30,33 +30,70 @@ win_path() {
   fi
 }
 
+# Reserved for the primary checkout. Linked worktrees must never bind, persist,
+# or report this port as their own — agent shells often export PORT=8080.
+PRIMARY_PORT=8080
+
+is_valid_tcp_port() {
+  local port="${1:-}"
+  [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]]
+}
+
+is_primary_reserved_port() {
+  [[ "${1:-}" == "$PRIMARY_PORT" ]]
+}
+
+# Worktree listen-port policy: honor an explicit PORT unless it is the primary
+# reserved port; otherwise reuse a persisted non-reserved port; else 0 (OS).
+# $1 = requested PORT (may be empty)  $2 = saved port from PORT_FILE (may be empty)
+select_worktree_listen_port() {
+  local requested="${1:-}"
+  local saved="${2:-}"
+  if is_primary_reserved_port "$requested"; then
+    requested=""
+  fi
+  if [[ -z "$requested" ]] && is_valid_tcp_port "$saved" && ! is_primary_reserved_port "$saved"; then
+    requested="$saved"
+  fi
+  printf '%s\n' "${requested:-0}"
+}
+
 # A linked worktree is an isolated development instance. Keep its mutable
 # application state inside the worktree. The first run picks a free OS-assigned
 # loopback port and persists it to .runtime/session-insight.port so subsequent
 # restarts in the same worktree reuse it — the port stays stable within a
 # worktree across restarts, while different worktrees remain isolated.
 # The primary checkout retains the historical 8080 + ~/.session-insight setup.
-if [[ -f "$ROOT_DIR/.git" ]]; then
-  RUNTIME_DIR="$ROOT_DIR/.runtime"
-  mkdir -p "$RUNTIME_DIR"
-  # Worktree-only: primary never sets or writes PORT_FILE (avoids a root-level
-  # untracked session-insight.port that is not gitignored).
-  PORT_FILE="$RUNTIME_DIR/session-insight.port"
-  # Reuse a previously-persisted port for this worktree; fall back to $PORT or
-  # 0 (OS-assigned) on the first run. A non-empty PORT env var always wins.
-  if [[ -z "${PORT:-}" && -f "$PORT_FILE" ]]; then
-    SAVED_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
-    if [[ "$SAVED_PORT" =~ ^[0-9]+$ && "$SAVED_PORT" -ge 1 && "$SAVED_PORT" -le 65535 ]]; then
-      PORT="$SAVED_PORT"
+configure_checkout_runtime() {
+  local requested saved
+  if [[ -f "$ROOT_DIR/.git" ]]; then
+    RUNTIME_DIR="$ROOT_DIR/.runtime"
+    mkdir -p "$RUNTIME_DIR"
+    # Worktree-only: primary never sets or writes PORT_FILE (avoids a root-level
+    # untracked session-insight.port that is not gitignored).
+    PORT_FILE="$RUNTIME_DIR/session-insight.port"
+    # Reuse a previously-persisted port for this worktree; fall back to $PORT or
+    # 0 (OS-assigned) on the first run. A non-empty PORT env var wins unless it
+    # is 8080 (reserved for the primary checkout; common in agent environments).
+    requested="${PORT:-}"
+    saved=""
+    if [[ -f "$PORT_FILE" ]]; then
+      saved="$(cat "$PORT_FILE" 2>/dev/null || true)"
     fi
+    if is_primary_reserved_port "$requested"; then
+      echo "WARNING: ignoring PORT=$PRIMARY_PORT in linked worktree (reserved for the primary checkout)" >&2
+    elif [[ -z "$requested" ]] && is_primary_reserved_port "$saved"; then
+      echo "WARNING: ignoring persisted port $PRIMARY_PORT in linked worktree (reserved for the primary checkout)" >&2
+    fi
+    PORT="$(select_worktree_listen_port "$requested" "$saved")"
+    SI_DATA_DIR="${SI_DATA_DIR:-$RUNTIME_DIR/session-insight}"
+  else
+    RUNTIME_DIR="$ROOT_DIR"
+    PORT="${PORT:-$PRIMARY_PORT}"
+    SI_DATA_DIR="${SI_DATA_DIR:-}"
   fi
-  PORT="${PORT:-0}"
-  SI_DATA_DIR="${SI_DATA_DIR:-$RUNTIME_DIR/session-insight}"
-else
-  RUNTIME_DIR="$ROOT_DIR"
-  PORT="${PORT:-8080}"
-  SI_DATA_DIR="${SI_DATA_DIR:-}"
-fi
+}
+configure_checkout_runtime
 
 PID_FILE="$RUNTIME_DIR/session-insight.pid"
 LOG_FILE="$RUNTIME_DIR/session-insight.log"
@@ -121,7 +158,8 @@ Linked worktrees automatically use an OS-assigned random loopback port on the
 first run and reuse the same port on subsequent restarts (persisted to
 .runtime/session-insight.port), with an isolated database under .runtime/. The
 primary checkout continues to use port 8080 and ~/.session-insight. PORT and
-SI_DATA_DIR may be set to override these defaults.
+SI_DATA_DIR may be set to override these defaults; PORT=8080 is ignored in a
+linked worktree because that port is reserved for the primary checkout.
 Instance numbers in status/kill are rebuilt each run and may change; always run
 status immediately before kill. Only related checkouts (this repo's worktrees)
 are killable; same-named binaries elsewhere are listed as non-killable.
@@ -275,28 +313,34 @@ do_start() {
   local pid
   pid=$(cat "$PID_FILE")
 
-  # Wait for Ready: prefer the post-bind log line; fall back to HTTP when PORT
-  # is known (Windows redirects sometimes leave the log empty).
-  local url attempt
+  # Wait for Ready: prefer the post-bind log line or this PID's ss listener.
+  # HTTP on the requested PORT is only proof when this PID owns that socket —
+  # another instance (usually primary :8080) may already answer there.
+  local url attempt owned_port bound_port
   for ((attempt = 0; attempt < 300; attempt++)); do
-    url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-    if [[ -z "$url" && -f "${LOG_FILE}.stderr" ]]; then
-      url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "${LOG_FILE}.stderr" 2>/dev/null | tail -1 || true)
+    url=$(listening_url_from_file "$LOG_FILE")
+    if [[ -z "$url" ]]; then
+      url=$(listening_url_from_file "${LOG_FILE}.stderr")
     fi
-    if [[ -z "$url" && "$PORT" != "0" ]]; then
+    owned_port=$(process_port_from_ss "$pid")
+    if [[ -z "$url" ]] && is_valid_tcp_port "$owned_port"; then
+      url="http://127.0.0.1:$owned_port/"
+    fi
+    if [[ -z "$url" && "$PORT" != "0" && "$owned_port" == "$PORT" ]]; then
       if http_ready "http://127.0.0.1:$PORT/"; then
         url="http://127.0.0.1:$PORT/"
       fi
     fi
+    # Linked worktrees must never record the primary reserved port as Ready.
+    if [[ -n "$url" && -n "${PORT_FILE:-}" ]]; then
+      bound_port=$(port_from_url "$url")
+      if is_primary_reserved_port "$bound_port"; then
+        url=""
+      fi
+    fi
     if [[ -n "$url" ]]; then
       printf '%s\n' "$url" >"$URL_FILE"
-      if [[ -n "${PORT_FILE:-}" ]]; then
-        local bound_port
-        bound_port=$(port_from_url "$url")
-        if [[ "$bound_port" =~ ^[0-9]+$ && "$bound_port" -ge 1 && "$bound_port" -le 65535 ]]; then
-          printf '%s\n' "$bound_port" >"$PORT_FILE"
-        fi
-      fi
+      persist_worktree_bound_port "$url"
       echo "    Ready: $url"
       return 0
     fi
@@ -461,39 +505,64 @@ port_from_url() {
   fi
 }
 
+listening_url_from_file() {
+  local file="${1:-}"
+  [[ -n "$file" && -f "$file" ]] || return 0
+  sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$file" 2>/dev/null | tail -1 || true
+}
+
+# Persist the actually bound worktree port. Never store the primary reserved
+# port — that is how a poisoned Ready URL used to pin later restarts to 8080.
+persist_worktree_bound_port() {
+  local url="$1"
+  [[ -n "${PORT_FILE:-}" ]] || return 0
+  local bound_port
+  bound_port=$(port_from_url "$url")
+  if is_valid_tcp_port "$bound_port" && ! is_primary_reserved_port "$bound_port"; then
+    printf '%s\n' "$bound_port" >"$PORT_FILE"
+  fi
+}
+
 resolve_instance_url_port() {
   # Sets globals _url and _port for the caller.
+  # Prefer the live listen address (ss, then post-bind log) over the URL file
+  # or the process PORT env — both of those can record a requested port that
+  # listenWithFallback never bound.
   local pid="$1"
   local url_file="$2"
   local log_file="${3:-}"
   _url=""
   _port=""
 
+  local ss_port log_url file_url env_port
+
+  ss_port=$(process_port_from_ss "$pid")
+  if is_valid_tcp_port "$ss_port"; then
+    _port="$ss_port"
+    _url="http://127.0.0.1:$ss_port/"
+    return
+  fi
+
+  log_url=$(listening_url_from_file "$log_file")
+  if [[ -n "$log_url" ]]; then
+    _url="$log_url"
+    _port=$(port_from_url "$_url")
+    if [[ -z "$_port" ]]; then
+      _port="-"
+    fi
+    return
+  fi
+
   if [[ -n "$url_file" && -s "$url_file" ]]; then
-    _url=$(tr -d '\r\n' <"$url_file")
+    file_url=$(tr -d '\r\n' <"$url_file")
+    _url="$file_url"
     _port=$(port_from_url "$_url")
   fi
 
   if [[ -z "$_port" || "$_port" == "0" ]]; then
-    local env_port
     env_port=$(process_port_from_environ "$pid")
-    if [[ -n "$env_port" && "$env_port" != "0" ]]; then
+    if [[ -n "$env_port" && "$env_port" != "0" ]] && is_valid_tcp_port "$env_port"; then
       _port="$env_port"
-    fi
-  fi
-
-  if [[ -z "$_port" || "$_port" == "0" ]]; then
-    local ss_port
-    ss_port=$(process_port_from_ss "$pid")
-    if [[ -n "$ss_port" ]]; then
-      _port="$ss_port"
-    fi
-  fi
-
-  if [[ -z "$_url" && -n "$log_file" && -f "$log_file" ]]; then
-    _url=$(sed -n 's/.*SessionInsight listening on \(http[^ ]*\).*/\1/p' "$log_file" 2>/dev/null | tail -1 || true)
-    if [[ -z "$_port" || "$_port" == "0" ]]; then
-      _port=$(port_from_url "$_url")
     fi
   fi
 
@@ -945,47 +1014,50 @@ do_maintain() {
   SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" --maintain-index
 }
 
-CMD="${1:-}"
-case "$CMD" in
-  build)
-    do_build
-    ;;
-  start)
-    do_start
-    ;;
-  stop)
-    do_stop
-    ;;
-  restart)
-    do_stop
-    do_start
-    ;;
-  status)
-    do_status
-    ;;
-  kill)
-    shift
-    do_kill "$@"
-    ;;
-  log)
-    do_log
-    ;;
-  maintain)
-    do_maintain
-    ;;
-  "")
-    usage
-    ;;
-  all)
-    do_build
-    do_start
-    ;;
-  -h|--help|help)
-    usage
-    ;;
-  *)
-    echo "ERROR: unknown command '$CMD'"
-    echo
-    usage
-    ;;
-esac
+# Allow `source run.sh` from tests without dispatching a command.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  CMD="${1:-}"
+  case "$CMD" in
+    build)
+      do_build
+      ;;
+    start)
+      do_start
+      ;;
+    stop)
+      do_stop
+      ;;
+    restart)
+      do_stop
+      do_start
+      ;;
+    status)
+      do_status
+      ;;
+    kill)
+      shift
+      do_kill "$@"
+      ;;
+    log)
+      do_log
+      ;;
+    maintain)
+      do_maintain
+      ;;
+    "")
+      usage
+      ;;
+    all)
+      do_build
+      do_start
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      echo "ERROR: unknown command '$CMD'"
+      echo
+      usage
+      ;;
+  esac
+fi

@@ -109,7 +109,8 @@ bash run.sh all
 
 从 linked Git worktree 执行 `run.sh` 时，脚本在首次运行使用操作系统分配的随机
 loopback 端口，并在后续重启时复用同一端口（持久化到 `.runtime/session-insight.port`），
-数据库隔离在 `.runtime/session-insight` 中。`Ready:` 行会输出实际可访问的完整应用地址。
+数据库隔离在 `.runtime/session-insight` 中。工作树会忽略 `PORT=8080`（该端口留给
+主 checkout）。`Ready:` 行报告实际绑定的地址，而不是请求的端口。
 
 ### 贡献双语界面
 
