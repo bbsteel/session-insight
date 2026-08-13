@@ -20,10 +20,18 @@ func (r *CopilotReader) copilotEvents(id string) ([]model.RenderEvent, error) {
 		return nil, fmt.Errorf("invalid copilot session id: %q", id)
 	}
 	eventsPath := filepath.Join(r.sessionDir, id, "events.jsonl")
-	if _, err := os.Stat(eventsPath); err != nil {
+	// Path-injection boundary (must stay inline for CodeQL): id is
+	// request-controlled, so prove the joined path stays under sessionDir
+	// before touching the filesystem.
+	if !strings.HasPrefix(eventsPath, filepath.Clean(r.sessionDir)+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("invalid copilot session id: %q", id)
+	}
+	f, err := os.Open(eventsPath)
+	if err != nil {
 		return nil, fmt.Errorf("copilot session not found %q: %w", id, err)
 	}
-	events, err := parseCopilotRenderEventsForSession(eventsPath, id)
+	defer f.Close()
+	events, err := parseCopilotRenderEventsForSession(f, id)
 	if err != nil {
 		return nil, err
 	}
@@ -45,19 +53,19 @@ func (r *CopilotReader) RenderANSI(id string, cols int) (string, error) {
 // parseCopilotRenderEvents parses a Copilot events.jsonl file into a flat
 // []model.RenderEvent stream suitable for render.FormatEvents.
 func parseCopilotRenderEvents(path string) ([]model.RenderEvent, error) {
-	return parseCopilotRenderEventsForSession(path, "")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return parseCopilotRenderEventsForSession(f, "")
 }
 
 // parseCopilotRenderEventsForSession additionally associates subagent
 // lifecycle events with their collaboration invocation when the session ID
 // is known. Parent-stream content stays root-associated: a reconstructed
 // time window is never exposed as exact child content.
-func parseCopilotRenderEventsForSession(path, sessionID string) ([]model.RenderEvent, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
+func parseCopilotRenderEventsForSession(f *os.File, sessionID string) ([]model.RenderEvent, error) {
 
 	var (
 		events       []model.RenderEvent
