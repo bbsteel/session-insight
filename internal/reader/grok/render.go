@@ -31,7 +31,7 @@ func (r *GrokReader) toRenderEvents(loc sessionLoc) ([]model.RenderEvent, error)
 		if open, ok := turnOpenFromEvents(filepath.Join(loc.Dir, "events.jsonl")); ok {
 			turnOpen = turnOpen || open
 		}
-		events = shared.DropEmptyRenderTurns(events)
+		events = shared.DropEmptyRenderTurns(shared.InterleaveToolResults(events))
 		lastWrite := r.lastContentWrite(loc.Dir)
 		turnIdx := 0
 		if len(events) > 0 {
@@ -54,7 +54,7 @@ func (r *GrokReader) toRenderEvents(loc sessionLoc) ([]model.RenderEvent, error)
 		if err != nil {
 			return nil, err
 		}
-		events = shared.DropEmptyRenderTurns(events)
+		events = shared.DropEmptyRenderTurns(shared.InterleaveToolResults(events))
 		return events, nil
 	}
 	return nil, fmt.Errorf("grok session has no updates.jsonl or chat_history.jsonl: %s", loc.ID)

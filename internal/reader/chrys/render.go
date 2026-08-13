@@ -166,6 +166,9 @@ func (r *ChrysReader) toRenderEvents(id string) ([]model.RenderEvent, error) {
 		}
 	}
 
+	// Chrys deliberately splices a subagent transcript between its launch
+	// invocation and the launch result, so the flat parallel-call interleave
+	// (shared.InterleaveToolResults) must not run here.
 	return shared.DropEmptyRenderTurns(rs.events), nil
 }
 

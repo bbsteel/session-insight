@@ -502,7 +502,10 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 
 	flushStream()
 
-	events = shared.DropEmptyRenderTurns(events)
+	// Parallel tool_use blocks in one assistant message arrive as batched
+	// invocations followed by batched results; pair each result with its
+	// invocation before dropping empty turns.
+	events = shared.DropEmptyRenderTurns(shared.InterleaveToolResults(events))
 
 	// Trailing "推理中…" row. Only for the main transcript (baseDepth==0):
 	// a subagent file's unclosed tail already shows through the parent's

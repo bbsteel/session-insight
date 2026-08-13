@@ -48,6 +48,7 @@ func (r *CodexReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
 	if err != nil {
 		return nil, err
 	}
+	events = shared.InterleaveToolResults(events)
 	// A subagent rollout rendered through its backing Session carries the
 	// child invocation ID on every event; root events stay unmarked (absent
 	// InvocationID means the root invocation).

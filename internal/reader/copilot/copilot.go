@@ -59,7 +59,11 @@ func (r *CopilotReader) copilotEvents(id string) ([]model.RenderEvent, error) {
 	if _, err := os.Stat(eventsPath); err != nil {
 		return nil, fmt.Errorf("copilot session not found %q: %w", id, err)
 	}
-	return parseCopilotRenderEventsForSession(eventsPath, id)
+	events, err := parseCopilotRenderEventsForSession(eventsPath, id)
+	if err != nil {
+		return nil, err
+	}
+	return shared.InterleaveToolResults(events), nil
 }
 
 func (r *CopilotReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {

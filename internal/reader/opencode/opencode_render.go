@@ -203,7 +203,7 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 		}
 	}
 
-	return events, nil
+	return shared.InterleaveToolResults(events), nil
 }
 
 type renderPartTool struct {
