@@ -416,13 +416,19 @@ func (db *DB) ResolveRootSessions(keys []struct{ AgentType, SessionID string }) 
 }
 
 // walkLineageToRoot follows parent_session_id hops until a root row. Each
-// unresolved parent reference is batch-fetched on demand; cycles and chains
-// longer than maxLineageHops report not-found.
+// unresolved parent reference is batch-fetched on demand; cycles, chains
+// longer than maxLineageHops, and partial lineage (a row still flagged
+// is_subagent but with an empty parent_session_id) report not-found — the
+// sidebar lists is_subagent = 0 rows only, so returning such a row as
+// "root" would silently strand the landing target again.
 func (db *DB) walkLineageToRoot(start lineageRow, cache map[string]lineageRow, cacheRow func(lineageRow)) (RootSessionRef, bool) {
 	current := start
 	for hop := 0; hop < maxLineageHops; hop++ {
-		if !current.isSubagent || current.parentSessionID == "" {
+		if !current.isSubagent {
 			return RootSessionRef{AgentType: current.agentType, SessionID: current.id, Name: current.name}, true
+		}
+		if current.parentSessionID == "" {
+			return RootSessionRef{}, false
 		}
 		parentKey := current.agentType + "\x00" + current.parentSessionID
 		parent, ok := cache[parentKey]

@@ -83,10 +83,27 @@ func TestResolveRootSessionsBrokenChain(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	// Partial lineage: mid chain row is still flagged subagent but has an
+	// empty parent_session_id. It is not sidebar-eligible (roots list
+	// is_subagent = 0 only), so the chain must report not-found rather than
+	// landing on it.
+	if err := db.UpsertSessionMetaWithHistoryAndLineage(
+		"codex", "rollout-dangling", "/cwd", "", "", "proj", "dangling", "model", "native-dangling", "", "", true,
+		1, 0, 0, 1, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertSessionMetaWithHistoryAndLineage(
+		"codex", "rollout-leaf-of-dangling", "/cwd", "", "", "proj", "leaf", "model", "native-leaf-x", "native-dangling", "", true,
+		1, 0, 0, 1, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	roots, err := db.ResolveRootSessions([]struct{ AgentType, SessionID string }{
 		{AgentType: "codex", SessionID: "rollout-orphan"},
 		{AgentType: "codex", SessionID: "rollout-loop"},
+		{AgentType: "codex", SessionID: "rollout-leaf-of-dangling"},
 	})
 	if err != nil {
 		t.Fatal(err)
