@@ -45,6 +45,7 @@ import {
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 import { openOnModifiedClick } from '../sessionLink'
 import ResumeTerminalControl from './ResumeTerminalControl'
+import { SearchIcon } from './icons'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -817,25 +818,49 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     }
   }, [sessionId])
 
-  // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
-  // helper textarea, which stops keydown propagation before the bubble phase.
+  // In-terminal search (toolbar Find or Ctrl/Cmd+F). Capture phase: focus
+  // usually sits in xterm's helper textarea, which stops keydown before bubble.
   const [searchOpen, setSearchOpen] = useState(false)
-  // Bumped on every Ctrl+F so an already-open bar pulls focus back to itself.
+  // Bumped on every open so an already-open bar pulls focus back to itself.
   const [searchFocusToken, setSearchFocusToken] = useState(0)
-  useEffect(() => { setSearchOpen(false) }, [sessionId, viewMode])
+  const openTerminalSearch = useCallback(() => {
+    setViewMode('terminal')
+    setSearchOpen(true)
+    setSearchFocusToken(t => t + 1)
+  }, [])
+  const toggleTerminalSearch = useCallback(() => {
+    if (viewMode === 'terminal' && searchOpen) {
+      setSearchOpen(false)
+      return
+    }
+    openTerminalSearch()
+  }, [viewMode, searchOpen, openTerminalSearch])
+  useEffect(() => { setSearchOpen(false) }, [sessionId])
+  useEffect(() => {
+    if (viewMode !== 'terminal') setSearchOpen(false)
+  }, [viewMode])
   useEffect(() => {
     if (!sessionId) return
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
-        if (viewMode !== 'terminal') return
+        const target = e.target
+        // Keep Ctrl+F when focus is in the find bar or xterm's helper textarea.
+        const inTerminalFind = target instanceof HTMLElement && !!target.closest(
+          '[data-testid="terminal-search-bar"], .xterm',
+        )
+        if (
+          !inTerminalFind
+          && (target instanceof HTMLInputElement
+            || target instanceof HTMLTextAreaElement
+            || (target instanceof HTMLElement && target.isContentEditable))
+        ) return
         e.preventDefault()
-        setSearchOpen(true)
-        setSearchFocusToken(t => t + 1)
+        openTerminalSearch()
       }
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [sessionId, viewMode])
+  }, [sessionId, openTerminalSearch])
 
   // Ctrl+C / Ctrl+Shift+C / Ctrl+Insert to copy terminal selection.
   // Capture phase: xterm's helper textarea stops keydown propagation before
@@ -1604,6 +1629,13 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     tenThousand: t('token.unit.tenThousand'),
     hundredMillion: t('token.unit.hundredMillion'),
   }
+  const uaPlatform = typeof navigator !== 'undefined'
+    ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+      || navigator.userAgent
+      || navigator.platform
+      || '')
+    : ''
+  const findShortcut = /Mac|iPhone|iPad|iPod/i.test(uaPlatform) ? '⌘F' : 'Ctrl+F'
   const tokenExactFull =
     tokenHeader.kind === 'value' ? formatTokenCount(locale, tokenHeader.total, 'full') : ''
   const tokenHeaderText =
@@ -1702,6 +1734,21 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             </span>
           )}
           <span className="text-[var(--border-default)]">|</span>
+          <button
+            type="button"
+            onClick={toggleTerminalSearch}
+            className={`h-7 rounded-md px-2 inline-flex items-center gap-1 text-nav ${
+              viewMode === 'terminal' && searchOpen
+                ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10'
+                : 'text-[var(--text-secondary)]'
+            } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title={t('replay.findTitle', { shortcut: findShortcut })}
+            aria-pressed={viewMode === 'terminal' && searchOpen}
+            data-testid="session-terminal-find-button"
+          >
+            <SearchIcon className="h-3.5 w-3.5" />
+            {t('replay.find')}
+          </button>
           <button
             onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
@@ -1862,6 +1909,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               {[
                 ['j / ↓', t('replay.shortcutNext')],
                 ['k / ↑', t('replay.shortcutPrevious')],
+                [findShortcut, t('replay.shortcutFind')],
                 ['?', t('replay.shortcutHelp')],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">
