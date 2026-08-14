@@ -1435,6 +1435,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   if (!session || !(session.turns?.length)) {
     const rec = session ? presentFromSession(session) : null
     const emptyKey = rec?.emptyStateKey
+    const emptyCapHint = session ? sessionCapabilityHeaderHint(session.agent_capabilities) : null
+    const emptyAgentTitle = session
+      ? (agentsCatalog.find(a => a.type === session.agent_type)?.display_name || session.agent_type || 'agent')
+      : ''
     return (
       <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
         <GlobalSearch onSelect={onSelect} />
@@ -1448,12 +1452,37 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                   void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
                 }
               }}
-              className="h-7 rounded-md border border-[var(--border-default)] px-1.5 inline-flex items-center gap-1 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
+              className="h-7 max-w-[8rem] rounded-md border border-[var(--border-default)] px-1.5 inline-flex items-center gap-1 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
               aria-label={t('capability.session.openButton')}
-              title={session.agent_type}
+              title={emptyAgentTitle}
               data-testid="session-agent-capability-button"
             >
               <AgentIcon agentType={session.agent_type} size={16} />
+              {emptyCapHint?.kind === 'calm' && session.agent_capabilities && (
+                <span
+                  className="shrink-0 text-meta font-medium text-[var(--accent-green)]"
+                  title={t('capability.session.hintCalm')}
+                  aria-label={t('capability.session.hintCalm')}
+                  data-testid="session-cap-hint-calm"
+                >
+                  ✓
+                </span>
+              )}
+              {emptyCapHint?.kind === 'missing' && (
+                <span className="shrink-0 text-meta text-[var(--warning)]">
+                  {t('capability.session.hintMissing', { n: emptyCapHint.count })}
+                </span>
+              )}
+              {emptyCapHint?.kind === 'estimated' && (
+                <span className="shrink-0 text-meta text-[var(--accent-blue)]">
+                  {t('capability.session.hintEstimated')}
+                </span>
+              )}
+              {emptyCapHint?.kind === 'unsupported' && (
+                <span className="shrink-0 text-meta text-[var(--error)]">
+                  {t('capability.session.hintUnsupported', { n: emptyCapHint.count })}
+                </span>
+              )}
             </button>
             {rec && (
               <button

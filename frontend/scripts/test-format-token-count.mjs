@@ -14,6 +14,14 @@ assert.equal(formatTokenCount('en', 1_200_000, 'compact'), '1.2M')
 assert.equal(formatTokenCount('en', 1_100_000_000, 'compact'), '1.1B')
 assert.equal(formatTokenCount('en', -2_000, 'compact'), '-2K')
 
+// Boundary promotion after rounding (no 1,000K / 1,000M)
+assert.equal(formatTokenCount('en', 999_950, 'compact'), '1M')
+assert.equal(formatTokenCount('en', -999_950, 'compact'), '-1M')
+assert.equal(formatTokenCount('en', 999_500, 'compact'), '999.5K')
+assert.equal(formatTokenCount('en', 999_950_000, 'compact'), '1B')
+assert.equal(formatTokenCount('en', -999_950_000, 'compact'), '-1B')
+assert.equal(formatTokenCount('en', 999_500_000, 'compact'), '999.5M')
+
 // compact zh-CN: wan / yi units supplied by caller (product uses i18n strings)
 const zhUnits = { wan: 'W', yi: 'Y' }
 assert.equal(formatTokenCount('zh-CN', 999, 'compact', zhUnits), '999')
@@ -21,6 +29,11 @@ assert.equal(formatTokenCount('zh-CN', 9_999, 'compact', zhUnits), '9,999')
 assert.equal(formatTokenCount('zh-CN', 12_000, 'compact', zhUnits), '1.2W')
 assert.equal(formatTokenCount('zh-CN', 1_200_000, 'compact', zhUnits), '120W')
 assert.equal(formatTokenCount('zh-CN', 150_000_000, 'compact', zhUnits), '1.5Y')
+
+// Boundary promotion: 10,000 wan → yi (no 10,000万)
+assert.equal(formatTokenCount('zh-CN', 99_999_500, 'compact', zhUnits), '1Y')
+assert.equal(formatTokenCount('zh-CN', -99_999_500, 'compact', zhUnits), '-1Y')
+assert.equal(formatTokenCount('zh-CN', 99_995_000, 'compact', zhUnits), '9,999.5W')
 
 // default mode is compact
 assert.equal(formatTokenCount('en', 2_000_000), '2M')
