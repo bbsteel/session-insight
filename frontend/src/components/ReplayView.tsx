@@ -103,12 +103,12 @@ interface Props {
 }
 
 function fmtTokens(
-  n: number,
+  tokenCount: number,
   locale: Locale,
   mode: TokenDisplayMode,
-  units: { wan: string; yi: string },
+  units: { tenThousand: string; hundredMillion: string },
 ): string {
-  return formatTokenCount(locale, n, mode, units)
+  return formatTokenCount(locale, tokenCount, mode, units)
 }
 
 function formatDuration(ms: number): string {
@@ -237,16 +237,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [noteEditorOpen, setNoteEditorOpen] = useState(false)
   const termControlRef = useRef<TerminalControl | null>(null)
   const handleToggleFollow = useCallback(() => {
-    setFollowOutput(v => {
-      const next = !v
-      if (next) {
-        const ctrl = termControlRef.current
-        if (ctrl) {
-          const metrics = ctrl.getMetrics()
-          ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
+    setFollowOutput(currentlyFollowing => {
+      const shouldFollow = !currentlyFollowing
+      if (shouldFollow) {
+        const terminal = termControlRef.current
+        if (terminal) {
+          const metrics = terminal.getMetrics()
+          terminal.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
         }
       }
-      return next
+      return shouldFollow
     })
   }, [])
   const miniMapControlRef = useRef<MiniMapControl | null>(null)
@@ -1582,7 +1582,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     session.agent_capabilities?.status?.tokens?.state,
     totalTokens,
   )
-  const tokenUnits = { wan: t('token.unit.wan'), yi: t('token.unit.yi') }
+  const tokenUnits = {
+    tenThousand: t('token.unit.tenThousand'),
+    hundredMillion: t('token.unit.hundredMillion'),
+  }
   const tokenExactFull =
     tokenHeader.kind === 'value' ? formatTokenCount(locale, tokenHeader.total, 'full') : ''
   const tokenHeaderText =
