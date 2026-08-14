@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 37
+const currentSchemaVersion = 38
 
 type DB struct {
 	conn *sql.DB
@@ -930,6 +930,16 @@ func migrate(conn *sql.DB) error {
 	// from optional hosted metadata and network approval.
 	if err := migrateGitAssociationV37(conn); err != nil {
 		return err
+	}
+
+	// Version 38: the Codex reader now parses paginated history mode
+	// (event_msg/item_completed) for user/assistant text. Codex sessions
+	// indexed under the legacy-only parser hold turns with empty message
+	// fields and no user/assistant FTS rows, so re-scan all of them once.
+	if maxVersion < 38 {
+		if _, err := conn.Exec(`DELETE FROM index_watermarks WHERE agent_type = 'codex'`); err != nil {
+			return fmt.Errorf("v38 clear codex watermarks: %w", err)
+		}
 	}
 
 	_, err = conn.Exec(

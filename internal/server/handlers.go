@@ -1018,9 +1018,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 					}
 					if seen[key] {
 						metas[key] = db.SessionMeta{
-							Project:   sess.Project,
-							Name:      sess.Name,
-							UpdatedAt: sess.UpdatedAt,
+							Project:         sess.Project,
+							Name:            sess.Name,
+							UpdatedAt:       sess.UpdatedAt,
+							ResumeID:        sess.ResumeID,
+							ParentSessionID: sess.ParentSessionID,
+							IsSubagent:      sess.IsSubagent,
 						}
 					}
 				}
@@ -1054,6 +1057,32 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		SourceMissing bool   `json:"source_missing,omitempty"`
 		// Stale is an alias signal for historical-index hits (source missing).
 		Stale bool `json:"stale,omitempty"`
+		// Subagent lineage: the sidebar lists root sessions only, so a
+		// subagent hit redirects its landing target to the root ancestor.
+		IsSubagent      bool   `json:"is_subagent,omitempty"`
+		RootSessionID   string `json:"root_session_id,omitempty"`
+		RootAgentType   string `json:"root_agent_type,omitempty"`
+		RootSessionName string `json:"root_session_name,omitempty"`
+	}
+	// Resolve root ancestors for subagent hits. Roots, unknown sessions, and
+	// broken chains stay absent — the frontend then keeps current behavior.
+	var rootRefs map[string]db.RootSessionRef
+	if s.DB != nil && len(results) > 0 {
+		keys := make([]struct{ AgentType, SessionID string }, 0, len(results))
+		seenKeys := make(map[string]bool, len(results))
+		for _, r := range results {
+			k := r.AgentType + "\x00" + r.SessionID
+			if seenKeys[k] {
+				continue
+			}
+			seenKeys[k] = true
+			keys = append(keys, struct{ AgentType, SessionID string }{r.AgentType, r.SessionID})
+		}
+		rootRefs, err = s.DB.ResolveRootSessions(keys)
+		if err != nil {
+			log.Printf("search: ResolveRootSessions: %v", err)
+			rootRefs = nil
+		}
 	}
 	out := make([]result, 0, len(results))
 	for _, r := range results {
@@ -1064,7 +1093,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		key := r.AgentType + "\x00" + r.SessionID
 		stale := staleKeys[key]
-		out = append(out, result{
+		entry := result{
 			SessionID:     r.SessionID,
 			AgentType:     r.AgentType,
 			Project:       meta.Project,
@@ -1073,7 +1102,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Match:         r.Match,
 			SourceMissing: stale,
 			Stale:         stale,
-		})
+		}
+		if meta.IsSubagent {
+			entry.IsSubagent = true
+			if root, ok := rootRefs[key]; ok {
+				entry.RootSessionID = root.SessionID
+				entry.RootAgentType = root.AgentType
+				entry.RootSessionName = root.Name
+			}
+		}
+		out = append(out, entry)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

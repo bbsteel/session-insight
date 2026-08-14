@@ -97,6 +97,9 @@ const COLLAB_TERMINAL_CODES = new Set(['session_not_found', 'collaboration_not_i
 interface Props {
   sessionId: string | null
   searchTarget?: { sessionId: string; agentType: string; query: string } | null
+  // Root ancestor of a subagent session opened from global search: drives the
+  // same back-to-parent breadcrumb as dock navigation.
+  searchRootRef?: { sessionId: string; childAgentType: string; root: { id: string; agentType: string; name: string } } | null
   onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
@@ -120,7 +123,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange }: Props) {
+export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, bookmarkChange, onBookmarkChange }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
@@ -685,6 +688,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       return null
     })
   }, [onSelect])
+
+  // Global-search landing on a subagent session reuses the dock breadcrumb:
+  // the main view shows the child transcript while the chip offers a jump
+  // back to the root parent (which is where the sidebar focus landed).
+  useEffect(() => {
+    if (searchRootRef && sessionId === searchRootRef.sessionId) {
+      setChildContext({
+        childId: searchRootRef.sessionId,
+        childAgentType: searchRootRef.childAgentType,
+        parentId: searchRootRef.root.id,
+        parentAgentType: searchRootRef.root.agentType,
+        parentLabel: searchRootRef.root.name || searchRootRef.root.id,
+      })
+    }
+  }, [searchRootRef, sessionId])
 
   // Jump actions resolve the frozen source anchors against the existing
   // replay positions (exact event_id → tool_call_id → turn → timestamp).

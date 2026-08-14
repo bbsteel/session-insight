@@ -115,6 +115,18 @@ func codexRenderAttemptVisible(a *codexRenderAttempt) bool {
 	return false
 }
 
+// renderAttemptHasText reports whether the attempt already carries assistant
+// text, so the task_complete last_agent_message fallback only fires when no
+// AgentMessage item was seen.
+func renderAttemptHasText(a *codexRenderAttempt) bool {
+	for _, evt := range a.events {
+		if evt.Type == "TextChunk" && evt.Text != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // codexToRenderEvents parses a Codex JSONL session file into a flat
 // []model.RenderEvent stream suitable for render.FormatEvents.
 func codexToRenderEvents(path string) ([]model.RenderEvent, error) {
@@ -235,7 +247,22 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 					pendingGoalTS = time.Time{}
 				}
 
-			case "task_complete", "turn_aborted":
+			case "task_complete":
+				turnOpen = false
+				// Defensive fallback: paginated history mode carries the final
+				// assistant text on task_complete. When no AgentMessage item
+				// arrived (aborted stream, partial flush), keep the text
+				// visible instead of dropping the turn.
+				if current != nil && p.LastAgentMessage != "" && !renderAttemptHasText(current) {
+					emit(model.RenderEvent{
+						Type:      "TextChunk",
+						Timestamp: ts,
+						TurnIndex: len(attempts) - 1,
+						Text:      p.LastAgentMessage,
+					})
+				}
+
+			case "turn_aborted":
 				turnOpen = false
 
 			case "thread_rolled_back":
@@ -287,6 +314,43 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 						TurnIndex: len(attempts) - 1,
 						Text:      p.Message,
 					})
+				}
+
+			case "item_completed":
+				// Paginated history mode (Codex CLI ~0.147+): text arrives as
+				// application-layer items instead of user_message/agent_message
+				// events. Only message items carry text; CommandExecution /
+				// FileChange items duplicate response_item tool records and are
+				// ignored here.
+				if current == nil || p.Item == nil {
+					continue
+				}
+				switch p.Item.Type {
+				case "UserMessage":
+					text := codexItemText(p.Item)
+					if text == "" {
+						continue
+					}
+					// Same goal-prompt supersession as the user_message branch.
+					if current.goalPromptEvent >= 0 {
+						current.events = append(current.events[:current.goalPromptEvent], current.events[current.goalPromptEvent+1:]...)
+						current.goalPromptEvent = -1
+					}
+					emit(model.RenderEvent{
+						Type:      "UserPrompt",
+						Timestamp: ts,
+						TurnIndex: len(attempts) - 1,
+						Text:      text,
+					})
+				case "AgentMessage":
+					if text := codexItemText(p.Item); text != "" {
+						emit(model.RenderEvent{
+							Type:      "TextChunk",
+							Timestamp: ts,
+							TurnIndex: len(attempts) - 1,
+							Text:      text,
+						})
+					}
 				}
 
 			case "patch_apply_end":

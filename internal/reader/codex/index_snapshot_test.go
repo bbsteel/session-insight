@@ -222,8 +222,8 @@ func TestCodexAuthoritativeEnvelopeSatisfiesProtocol(t *testing.T) {
 	var _ interface {
 		ReadIndexSnapshotEnvelope(context.Context, model.Session) (*model.IndexSnapshotEnvelope, error)
 	} = (*CodexReader)(nil)
-	if Capabilities().AdapterRevision != 5 {
-		t.Fatalf("adapter revision=%d want 5", Capabilities().AdapterRevision)
+	if Capabilities().AdapterRevision != 6 {
+		t.Fatalf("adapter revision=%d want 6", Capabilities().AdapterRevision)
 	}
 }
 

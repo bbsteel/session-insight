@@ -196,7 +196,7 @@ func TestV34UpgradeFromV33PreservesWatermarks(t *testing.T) {
 			revision INTEGER NOT NULL DEFAULT 0, indexed_at TEXT NOT NULL,
 			PRIMARY KEY (agent_type, session_id)
 		);
-		INSERT INTO index_watermarks VALUES ('codex','historical',42,'2026-08-11T00:00:00Z')`); err != nil {
+		INSERT INTO index_watermarks VALUES ('claude','historical',42,'2026-08-11T00:00:00Z')`); err != nil {
 		raw.Close()
 		t.Fatal(err)
 	}
@@ -210,14 +210,56 @@ func TestV34UpgradeFromV33PreservesWatermarks(t *testing.T) {
 	}
 	defer database.Close()
 	var revision int64
+	// Non-codex agent: v38 deliberately clears codex watermarks (paginated
+	// history reparse), so the preservation check uses an untouched agent.
 	if err := database.Conn().QueryRow(`
 		SELECT revision FROM index_watermarks
-		WHERE agent_type = 'codex' AND session_id = 'historical'`,
+		WHERE agent_type = 'claude' AND session_id = 'historical'`,
 	).Scan(&revision); err != nil {
 		t.Fatalf("v34 must not clear historical watermarks: %v", err)
 	}
 	if revision != 42 {
 		t.Fatalf("watermark revision = %d, want 42", revision)
+	}
+}
+
+// TestV38UpgradeClearsCodexWatermarks pins the reparse trigger for the Codex
+// paginated-history parser (AdapterRevision 6): pre-v38 codex rows indexed
+// empty message fields, so their watermarks must be cleared exactly once.
+func TestV38UpgradeClearsCodexWatermarks(t *testing.T) {
+	dir := makeRawV33Database(t)
+	raw, err := sql.Open("sqlite3", filepath.Join(dir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`
+		CREATE TABLE index_watermarks (
+			agent_type TEXT NOT NULL, session_id TEXT NOT NULL,
+			revision INTEGER NOT NULL DEFAULT 0, indexed_at TEXT NOT NULL,
+			PRIMARY KEY (agent_type, session_id)
+		);
+		INSERT INTO index_watermarks VALUES ('codex','paginated-session',42,'2026-08-11T00:00:00Z')`); err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var remaining int
+	if err := database.Conn().QueryRow(`
+		SELECT COUNT(*) FROM index_watermarks
+		WHERE agent_type = 'codex' AND session_id = 'paginated-session'`,
+	).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("v38 must clear codex watermarks, %d row(s) remain", remaining)
 	}
 }
 

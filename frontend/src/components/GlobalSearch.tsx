@@ -137,7 +137,7 @@ function ClockIcon() {
   )
 }
 
-export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void }) {
+export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => void }) {
   const { locale, t } = useI18n()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
@@ -307,7 +307,12 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
     recordQuery(query)
     // Include the agent because session IDs are only unique within an agent.
     // It also lets the sidebar reveal and focus the exact result.
-    onSelect?.(result.session_id, result.agent_type, true, query.trim())
+    // Subagent hits carry their root ancestor: the sidebar lists roots only,
+    // so its landing target is the root while the main view opens the child.
+    const rootRef = result.is_subagent && result.root_session_id && result.root_agent_type
+      ? { id: result.root_session_id, agentType: result.root_agent_type, name: result.root_session_name ?? '' }
+      : undefined
+    onSelect?.(result.session_id, result.agent_type, true, query.trim(), rootRef)
     setOpen(false)
     setQuery('')
   }
@@ -470,6 +475,15 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
                         <span className="min-w-0 flex-1 truncate text-helper text-[var(--text-primary)]">
                           {r.name || r.session_id}
                         </span>
+                        {r.is_subagent && (
+                          <span
+                            className="flex-shrink-0 rounded border border-[var(--accent-blue)]/40 bg-[var(--accent-blue)]/10 px-1.5 text-meta text-[var(--accent-blue)]"
+                            data-testid="search-hit-subagent"
+                            title={r.root_session_name ? t('search.subagentOf', { name: r.root_session_name }) : t('search.subagent')}
+                          >
+                            {t('search.subagent')}
+                          </span>
+                        )}
                         {(r.source_missing || r.stale) && (
                           <span
                             className="flex-shrink-0 rounded border border-[var(--error)]/40 bg-[var(--error)]/10 px-1.5 text-meta text-[var(--error)]"

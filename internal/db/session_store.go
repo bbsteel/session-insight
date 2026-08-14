@@ -10,10 +10,26 @@ import (
 
 // SessionMeta is the minimal metadata needed for search result enrichment.
 type SessionMeta struct {
-	Project   string
-	Name      string
-	UpdatedAt time.Time
+	Project         string
+	Name            string
+	UpdatedAt       time.Time
+	ResumeID        string
+	ParentSessionID string
+	IsSubagent      bool
 }
+
+// RootSessionRef identifies the root ancestor of a subagent session for
+// search-result landing: the sidebar lists roots only, so a subagent hit
+// redirects its focus target here.
+type RootSessionRef struct {
+	AgentType string
+	SessionID string
+	Name      string
+}
+
+// maxLineageHops bounds parent-chain walks so a malformed lineage cycle
+// terminates instead of looping forever.
+const maxLineageHops = 8
 
 func (db *DB) UpsertSessionMeta(agentType, id, cwd, repository, branch, project, name, modelName, resumeID string, turnCount, messageCount int, createdAt, updatedAt time.Time) error {
 	return db.UpsertSessionMetaWithHistoryAndProvider(agentType, id, cwd, repository, branch, project, name, modelName, "", resumeID,
@@ -314,7 +330,7 @@ func (db *DB) GetSessionMetas(keys []struct{ AgentType, SessionID string }) (map
 	}
 
 	query := fmt.Sprintf(
-		`SELECT agent_type, id, project, name, updated_at FROM sessions WHERE (agent_type, id) IN (%s)`,
+		`SELECT agent_type, id, project, name, updated_at, resume_id, parent_session_id, is_subagent FROM sessions WHERE (agent_type, id) IN (%s)`,
 		strings.Join(placeholders, ", "),
 	)
 
@@ -326,16 +342,143 @@ func (db *DB) GetSessionMetas(keys []struct{ AgentType, SessionID string }) (map
 
 	result := make(map[string]SessionMeta, len(keys))
 	for rows.Next() {
-		var agentType, sessionID, project, name, updatedStr string
-		if err := rows.Scan(&agentType, &sessionID, &project, &name, &updatedStr); err != nil {
+		var agentType, sessionID, project, name, updatedStr, resumeID, parentSessionID string
+		var isSubagent int
+		if err := rows.Scan(&agentType, &sessionID, &project, &name, &updatedStr, &resumeID, &parentSessionID, &isSubagent); err != nil {
 			return nil, fmt.Errorf("scan session meta: %w", err)
 		}
 		updatedAt, _ := time.Parse(time.RFC3339, updatedStr)
 		result[agentType+"\x00"+sessionID] = SessionMeta{
-			Project:   project,
-			Name:      name,
-			UpdatedAt: updatedAt,
+			Project:         project,
+			Name:            name,
+			UpdatedAt:       updatedAt,
+			ResumeID:        resumeID,
+			ParentSessionID: parentSessionID,
+			IsSubagent:      isSubagent != 0,
 		}
 	}
 	return result, rows.Err()
+}
+
+// lineageRow is the minimal sessions-row projection needed to walk a
+// parent chain.
+type lineageRow struct {
+	agentType       string
+	id              string
+	resumeID        string
+	parentSessionID string
+	isSubagent      bool
+	name            string
+}
+
+// ResolveRootSessions maps subagent session keys to their root ancestor.
+// The sidebar lists root sessions only, so a search hit on a subagent
+// session redirects its landing target to the root returned here.
+//
+// Parent linkage is adapter-specific: Codex records the parent's native
+// rollout UUID (the parent row's resume_id), while Grok records the parent
+// row's id. Both shapes are matched. Roots, unknown sessions, and broken
+// chains are absent from the result — callers keep their current behavior.
+func (db *DB) ResolveRootSessions(keys []struct{ AgentType, SessionID string }) (map[string]RootSessionRef, error) {
+	roots := make(map[string]RootSessionRef)
+	if len(keys) == 0 {
+		return roots, nil
+	}
+
+	// cache holds every fetched row, indexed by both id and resume_id so
+	// either parent-linkage shape resolves in O(1).
+	cache := make(map[string]lineageRow)
+	cacheRow := func(row lineageRow) {
+		cache[row.agentType+"\x00"+row.id] = row
+		if row.resumeID != "" {
+			cache[row.agentType+"\x00"+row.resumeID] = row
+		}
+	}
+
+	initial := make([]struct{ AgentType, SessionID string }, 0, len(keys))
+	initial = append(initial, keys...)
+	if err := db.fetchLineageRows(initial, cacheRow); err != nil {
+		return nil, err
+	}
+
+	for _, key := range keys {
+		mapKey := key.AgentType + "\x00" + key.SessionID
+		row, ok := cache[mapKey]
+		if !ok || !row.isSubagent || row.parentSessionID == "" {
+			continue
+		}
+		root, found := db.walkLineageToRoot(row, cache, cacheRow)
+		if found {
+			roots[mapKey] = root
+		}
+	}
+	return roots, nil
+}
+
+// walkLineageToRoot follows parent_session_id hops until a root row. Each
+// unresolved parent reference is batch-fetched on demand; cycles, chains
+// longer than maxLineageHops, and partial lineage (a row still flagged
+// is_subagent but with an empty parent_session_id) report not-found — the
+// sidebar lists is_subagent = 0 rows only, so returning such a row as
+// "root" would silently strand the landing target again.
+func (db *DB) walkLineageToRoot(start lineageRow, cache map[string]lineageRow, cacheRow func(lineageRow)) (RootSessionRef, bool) {
+	current := start
+	for hop := 0; hop < maxLineageHops; hop++ {
+		if !current.isSubagent {
+			return RootSessionRef{AgentType: current.agentType, SessionID: current.id, Name: current.name}, true
+		}
+		if current.parentSessionID == "" {
+			return RootSessionRef{}, false
+		}
+		parentKey := current.agentType + "\x00" + current.parentSessionID
+		parent, ok := cache[parentKey]
+		if !ok {
+			if err := db.fetchLineageRows([]struct{ AgentType, SessionID string }{
+				{AgentType: current.agentType, SessionID: current.parentSessionID},
+			}, cacheRow); err != nil {
+				return RootSessionRef{}, false
+			}
+			parent, ok = cache[parentKey]
+			if !ok {
+				return RootSessionRef{}, false
+			}
+		}
+		if parent.id == current.id {
+			return RootSessionRef{}, false // self-loop guard
+		}
+		current = parent
+	}
+	return RootSessionRef{}, false
+}
+
+// fetchLineageRows loads lineage projections for the given references,
+// matching each reference against either the id or the resume_id column.
+func (db *DB) fetchLineageRows(refs []struct{ AgentType, SessionID string }, visit func(lineageRow)) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	conditions := make([]string, len(refs))
+	args := make([]any, 0, len(refs)*3)
+	for i, ref := range refs {
+		conditions[i] = "(agent_type = ? AND (id = ? OR resume_id = ?))"
+		args = append(args, ref.AgentType, ref.SessionID, ref.SessionID)
+	}
+	rows, err := db.conn.Query(
+		`SELECT agent_type, id, resume_id, parent_session_id, is_subagent, name FROM sessions WHERE `+strings.Join(conditions, " OR "),
+		args...,
+	)
+	if err != nil {
+		return fmt.Errorf("fetch lineage rows: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var row lineageRow
+		var isSubagent int
+		if err := rows.Scan(&row.agentType, &row.id, &row.resumeID, &row.parentSessionID, &isSubagent, &row.name); err != nil {
+			return fmt.Errorf("scan lineage row: %w", err)
+		}
+		row.isSubagent = isSubagent != 0
+		visit(row)
+	}
+	return rows.Err()
 }
