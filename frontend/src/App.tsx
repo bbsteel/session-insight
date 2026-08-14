@@ -32,12 +32,19 @@ export default function App() {
     sessionRoute ? { id: sessionRoute.id, agentType: sessionRoute.agentType } : null,
   )
   const [searchTarget, setSearchTarget] = useState<{ sessionId: string; agentType: string; query: string } | null>(null)
+  // Root ancestor of a subagent session opened from global search: ReplayView
+  // shows the child transcript but offers a back-to-parent breadcrumb.
+  const [searchRootRef, setSearchRootRef] = useState<{ sessionId: string; childAgentType: string; root: { id: string; agentType: string; name: string } } | null>(null)
 
-  const selectSession = (id: string, agentType?: string, focusSidebar = false, searchQuery?: string) => {
+  const selectSession = (id: string, agentType?: string, focusSidebar = false, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => {
     setSelectedId(id)
     setSelectedAgentType(agentType ?? null)
-    setSidebarFocusTarget(focusSidebar && agentType ? { id, agentType } : null)
+    // The sidebar lists root sessions only: a subagent hit lands on its root
+    // ancestor (rootRef), everything else lands on itself.
+    const landing = rootRef && agentType ? { id: rootRef.id, agentType: rootRef.agentType } : { id, agentType: agentType ?? '' }
+    setSidebarFocusTarget(focusSidebar && agentType ? landing : null)
     setSearchTarget(focusSidebar && agentType && searchQuery ? { sessionId: id, agentType, query: searchQuery } : null)
+    setSearchRootRef(focusSidebar && rootRef && agentType ? { sessionId: id, childAgentType: agentType, root: rootRef } : null)
     setSidebarOpen(false)
   }
 
@@ -82,6 +89,7 @@ export default function App() {
         <ReplayView
           sessionId={selectedId}
           searchTarget={searchTarget}
+          searchRootRef={searchRootRef}
           onSelect={selectSession}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}

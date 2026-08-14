@@ -211,6 +211,14 @@ export interface SearchResult {
   /** True when hit comes from a source_missing tombstone (historical index). */
   source_missing?: boolean
   stale?: boolean
+  /**
+   * Subagent lineage. The sidebar lists root sessions only, so a subagent
+   * hit redirects its landing target to this root ancestor.
+   */
+  is_subagent?: boolean
+  root_session_id?: string
+  root_agent_type?: string
+  root_session_name?: string
 }
 
 /** Mutually exclusive record completeness states (independent of capability). */
