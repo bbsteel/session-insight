@@ -34,6 +34,10 @@ Built-in observability connects Agent capabilities, record provenance, collabora
 |:--:|:--:|
 | ![Combined user and assistant message navigation](assets/screenshots/en/interaction.png) | ![Settings center with UI and terminal font controls](assets/screenshots/en/settings.png) |
 
+| Tool-call observability |
+|:--:|
+| ![Filterable tool-call history with arguments, status, duration, and replay jumps](assets/screenshots/en/tool-calls.png) |
+
 | Session analytics | Structured code reader |
 |:--:|:--:|
 | ![Token, cache, tool usage, and anomaly analytics](assets/screenshots/en/analytics.png) | ![File tree, code view, search, and document outline](assets/screenshots/en/code-reader.png) |

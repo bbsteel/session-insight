@@ -58,6 +58,8 @@ const copy = locale === 'en' ? {
   analytics: 'Analytics',
   interactionClose: 'Close messages panel',
   interactionTitle: 'Messages',
+  toolCalls: 'Tool calls',
+  toolCallsClose: 'Close tool calls panel',
   jumpPrefix: 'Jump to terminal line',
   settings: 'Settings',
   fonts: 'Fonts',
@@ -69,6 +71,8 @@ const copy = locale === 'en' ? {
   analytics: '分析',
   interactionClose: '关闭交互消息面板',
   interactionTitle: '交互消息',
+  toolCalls: '工具调用',
+  toolCallsClose: '关闭工具调用面板',
   jumpPrefix: '跳转到终端第',
   settings: '设置',
   fonts: '字体',
@@ -196,6 +200,13 @@ try {
   await interactionPanel.locator(`div[title^="${copy.jumpPrefix}"]`).first().waitFor()
   await replay.screenshot({ path: resolve(outputDir, 'interaction.png') })
   await interactionPanel.getByRole('button', { name: copy.interactionClose }).click()
+
+  await replay.locator(`button[title="${copy.toolCalls}"]`).click()
+  const toolCallPanel = replay.locator(`aside:has(button[aria-label="${copy.toolCallsClose}"])`)
+  await toolCallPanel.waitFor({ state: 'visible' })
+  await toolCallPanel.getByRole('textbox').waitFor()
+  await replay.screenshot({ path: resolve(outputDir, 'tool-calls.png') })
+  await toolCallPanel.getByRole('button', { name: copy.toolCallsClose }).click()
 
   await replay.getByRole('button', { name: copy.analytics, exact: true }).click()
   await replay.waitForTimeout(1800)

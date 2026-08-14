@@ -34,6 +34,10 @@
 |:--:|:--:|
 | ![合并用户消息与助手回复的导航面板](assets/screenshots/zh-CN/interaction.png) | ![提供界面和终端字体控制的设置中心](assets/screenshots/zh-CN/settings.png) |
 
+| 工具调用可观测性 |
+|:--:|
+| ![可按工具筛选并查看参数、状态、耗时与回放跳转的工具调用历史](assets/screenshots/zh-CN/tool-calls.png) |
+
 | 会话分析 | 结构化代码阅读器 |
 |:--:|:--:|
 | ![Token、缓存、工具用量和异常分析](assets/screenshots/zh-CN/analytics.png) | ![文件树、代码视图、搜索和结构大纲](assets/screenshots/zh-CN/code-reader.png) |
