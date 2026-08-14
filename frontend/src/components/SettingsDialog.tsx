@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchSettings, fetchVersion, saveSettings, type VersionInfo } from '../api'
 import { getNavOpenPref, setNavOpenPref, type NavOpenPref } from '../navPrefs'
+import {
+  getTokenDisplayMode,
+  setTokenDisplayMode,
+  type TokenDisplayMode,
+} from '../tokenDisplayPrefs'
 import { AVATAR_MAX_BYTES, setUserAvatar } from '../userAvatar'
 import {
   DEFAULT_TERMINAL_FONT,
@@ -95,6 +100,7 @@ export default function SettingsDialog({
   const savedFileExtsRef = useRef('')
   const [tsKinds, setTsKinds] = useState<string[]>([])
   const [navOpenPref, setNavOpenPrefState] = useState<NavOpenPref>(getNavOpenPref)
+  const [tokenDisplayMode, setTokenDisplayModeState] = useState<TokenDisplayMode>(getTokenDisplayMode)
   const [uiFont, setUiFont] = useState(getUIFont)
   const [uiFontSize, setUiFontSize] = useState(getUIFontSize)
   const [terminalFont, setTerminalFont] = useState(getTerminalFont)
@@ -438,6 +444,28 @@ export default function SettingsDialog({
                   {avatarError && (
                     <div className="mt-2 text-helper text-[var(--accent-red)]" role="alert">{avatarError}</div>
                   )}
+                </div>
+                <div className={sectionBox}>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className={sectionTitle}>{t('settings.tokenDisplay')}</div>
+                      <div className={sectionDesc}>{t('settings.tokenDisplayHelp')}</div>
+                    </div>
+                    <select
+                      value={tokenDisplayMode}
+                      onChange={e => {
+                        const next = e.target.value as TokenDisplayMode
+                        setTokenDisplayMode(next)
+                        setTokenDisplayModeState(next)
+                      }}
+                      className={selectCls}
+                      aria-label={t('settings.tokenDisplayLabel')}
+                      data-testid="settings-token-display-mode"
+                    >
+                      <option value="compact">{t('settings.tokenDisplayCompact')}</option>
+                      <option value="full">{t('settings.tokenDisplayFull')}</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             )}
