@@ -58,9 +58,15 @@ async function findHighlightButton(bar) {
   return { btn: null, text: '', title: '' }
 }
 
-async function openSearch(page) {
-  await page.locator('.xterm').first().click({ force: true }).catch(() => {})
-  await page.keyboard.press('Control+f')
+async function openSearch(page, via = 'keyboard') {
+  if (via === 'toolbar') {
+    const findBtn = page.locator('[data-testid="session-terminal-find-button"]')
+    await findBtn.waitFor({ state: 'visible', timeout: 15_000 })
+    await findBtn.click()
+  } else {
+    await page.locator('.xterm').first().click({ force: true }).catch(() => {})
+    await page.keyboard.press('Control+f')
+  }
   await page.locator('[data-testid="terminal-search-bar"]').waitFor({ state: 'visible', timeout: 15_000 })
   return page.locator('[data-testid="terminal-search-bar"]')
 }
@@ -78,8 +84,20 @@ try {
   log('sessionSelected', true)
   await openSession(page, sessionId)
 
-  let bar = await openSearch(page)
-  log('searchBarOpen', true)
+  const enFind = page.locator('[data-testid="session-terminal-find-button"]')
+  await enFind.waitFor({ state: 'visible', timeout: 15_000 })
+  const enFindText = (await enFind.innerText()).trim()
+  const enFindTitle = await enFind.getAttribute('title')
+  log('enToolbarFind', enFindText)
+  log('enToolbarFindTitle', enFindTitle)
+  if (enFindText !== 'Find') throw new Error(`expected toolbar Find, got ${JSON.stringify(enFindText)}`)
+  if (!enFindTitle || !/Ctrl\+F|⌘F/.test(enFindTitle)) throw new Error(`expected Ctrl/⌘F in title, got ${JSON.stringify(enFindTitle)}`)
+
+  let bar = await openSearch(page, 'toolbar')
+  log('searchBarOpenViaToolbar', true)
+  if (await enFind.getAttribute('aria-pressed') !== 'true') {
+    throw new Error('expected toolbar Find aria-pressed=true after open')
+  }
   let hl = await findHighlightButton(bar)
   log('enShortLabel', hl.text)
   log('enTitle', hl.title)
@@ -143,7 +161,15 @@ try {
   // Chinese labels — set before navigation so init script does not clobber.
   await page.evaluate(() => localStorage.setItem('si-locale', 'zh-CN'))
   await openSession(page, sessionId)
-  bar = await openSearch(page)
+  const zhFind = page.locator('[data-testid="session-terminal-find-button"]')
+  await zhFind.waitFor({ state: 'visible', timeout: 15_000 })
+  const zhFindText = (await zhFind.innerText()).trim()
+  const zhFindTitle = await zhFind.getAttribute('title')
+  log('zhToolbarFind', zhFindText)
+  log('zhToolbarFindTitle', zhFindTitle)
+  if (zhFindText !== '查找') throw new Error(`expected toolbar 查找, got ${JSON.stringify(zhFindText)}`)
+  if (!zhFindTitle || !zhFindTitle.includes('查找')) throw new Error(`expected 查找 in title, got ${JSON.stringify(zhFindTitle)}`)
+  bar = await openSearch(page, 'toolbar')
   hl = await findHighlightButton(bar)
   log('zhShortLabel', hl.text)
   log('zhTitle', hl.title)
