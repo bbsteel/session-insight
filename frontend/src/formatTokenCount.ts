@@ -8,7 +8,9 @@ export type TokenCountMode = 'compact' | 'full'
 const THOUSAND = 1_000
 const MILLION = 1_000_000
 const BILLION = 1_000_000_000
+/** 10_000 — 中文「万」的量级（1 万 = 10_000）。 */
 const TEN_THOUSAND = 10_000
+/** 100_000_000 — 中文「亿」的量级（1 亿 = 100_000_000）。 */
 const HUNDRED_MILLION = 100_000_000
 
 /** Locale-native compact suffixes. Pass zh units from i18n (token.unit.tenThousand / .hundredMillion). */
@@ -16,9 +18,9 @@ export interface TokenCompactUnits {
   thousand?: string
   million?: string
   billion?: string
-  /** zh-CN suffix for ×10_000 (汉字「万」via i18n). */
+  /** zh-CN 后缀：×10_000，展示汉字「万」（来自 i18n）。 */
   tenThousand?: string
-  /** zh-CN suffix for ×100_000_000 (汉字「亿」via i18n). */
+  /** zh-CN 后缀：×100_000_000，展示汉字「亿」（来自 i18n）。 */
   hundredMillion?: string
 }
 
