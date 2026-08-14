@@ -101,9 +101,10 @@ function sanitized(text) {
     .replaceAll(repoRoot, publicRoot)
     .replaceAll(privateHome, publicHome)
     // ANSI styling can split a path around escape sequences before it reaches
-    // the browser. Replacing the username itself closes that remaining gap.
-    .replaceAll(privateUsername, 'user')
+    // the browser. Replace the hostname before the username because one may
+    // contain the other (for example, "deck" within "steamdeck").
     .replaceAll(privateHostname, 'host')
+    .replaceAll(privateUsername, 'user')
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, 'developer@example.com')
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9_-]+\b(?!\.)/gi, 'user@host')
 }

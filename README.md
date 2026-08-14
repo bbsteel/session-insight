@@ -4,6 +4,8 @@
 
 A local-first web app for browsing and analyzing AI coding agent sessions through terminal-native replay. It reconstructs ANSI-styled conversations, tool calls, and code output in an interactive terminal, while discovery, indexing, search, and replay stay on your machine. AI generation is opt-in and only uses a provider you configure.
 
+Built-in observability connects Agent capabilities, record provenance, collaboration timelines, Token and tool analytics, and Git/PR/MR evidence. Exact, estimated, missing, and unavailable states make the confidence of each conclusion visible instead of hiding uncertainty.
+
 [中文](README_ZH.md)
 
 ![Session replay with terminal find, tool calls, and semantic minimap](assets/screenshots/en/replay.png)
