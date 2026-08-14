@@ -1920,6 +1920,9 @@ const snapshotTerminal = () => {
       let lastCountKey = ''
       let lastKnownCount = 0
       let lastKnownIndex = -1
+      // When first/last jumps before the async count finishes, prefer the
+      // edge over a stale selection-mapped index from the previous pass.
+      let searchIndexHint: 'first' | 'last' | null = null
       let searchChromeGen = 0
       let searchChromeTimer: ReturnType<typeof setTimeout> | null = null
       const countKeyOf = (query: string, o: Pick<TerminalSearchOptions, 'caseSensitive' | 'wholeWord' | 'regex'>) =>
@@ -1961,8 +1964,15 @@ const snapshotTerminal = () => {
           // hits and would thrash the n/m display for seconds.
         }).then((r) => {
           if (disposed || gen !== searchChromeGen || lastSearchQuery !== query || lastCountKey !== key) return
-          // Prefer selection-mapped index; if unknown keep prior step index.
-          const index = r.index >= 0 ? r.index : (lastKnownIndex >= 0 ? lastKnownIndex : 0)
+          const hint = searchIndexHint
+          searchIndexHint = null
+          // Prefer an explicit first/last jump, then selection mapping, then
+          // the last stepped index.
+          const index = hint === 'first'
+            ? 0
+            : hint === 'last' && r.count > 0
+              ? r.count - 1
+              : r.index >= 0 ? r.index : (lastKnownIndex >= 0 ? lastKnownIndex : 0)
           reportSearchResults(index, r.count)
         })
       }
@@ -2002,6 +2012,87 @@ const snapshotTerminal = () => {
         }
       })
       disposeSearchResultsRef = disposeSearchResults
+
+      type SearchNavKind = 'next' | 'prev' | 'first' | 'last'
+      const runSearchNavigate = (query: string, opts: TerminalSearchOptions, kind: SearchNavKind): boolean => {
+        invalidateSearchOnOptionChange(opts)
+        applyHighlightAllClass(opts.highlightAll)
+        const key = countKeyOf(query, opts)
+        const isNewQuery = key !== lastCountKey
+        lastSearchQuery = query
+        lastSearchOpts = opts
+        try {
+          // First/last ignore the current selection so addon-search starts at
+          // the buffer top (findNext) or bottom (findPrevious).
+          if (kind === 'first' || kind === 'last') term.clearSelection()
+          const before = term.getSelectionPosition()
+          const reverse = kind === 'prev' || kind === 'last'
+          const found = reverse
+            ? searchAddon.findPrevious(query, baseSearchOpts(opts))
+            : searchAddon.findNext(query, baseSearchOpts(opts))
+          if (!found) {
+            cancelSearchChrome()
+            clearSearchDecorations(false)
+            lastCountKey = ''
+            reportSearchResults(-1, 0)
+            return false
+          }
+          const after = term.getSelectionPosition()
+          // Leave open-at-top mode so search scrolls are not yanked back to 0
+          // by the onScroll stick-to-top handler.
+          if (after) {
+            openAtTop = false
+            const row = after.start.y
+            term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
+          }
+          // Require a real post-find selection. (!before || !after) was true
+          // whenever selection was missing, so n/m advanced with no jump.
+          const moved = !!after && (
+            !before
+            || before.start.y !== after.start.y
+            || before.start.x !== after.start.x
+            || before.end.y !== after.end.y
+            || before.end.x !== after.end.x
+          )
+          const jumpToEdge = kind === 'first' || kind === 'last'
+          if (isNewQuery || (jumpToEdge && lastKnownCount === 0)) {
+            searchIndexHint = kind === 'first' ? 'first' : kind === 'last' ? 'last' : null
+            lastCountKey = key
+            lastKnownIndex = kind === 'last' ? -1 : 0
+            lastKnownCount = 0
+            searchResultsCb?.(-1, -1)
+            scheduleSearchChrome(query, opts, { recount: true })
+          } else if (jumpToEdge) {
+            searchIndexHint = null
+            reportSearchResults(kind === 'first' ? 0 : lastKnownCount - 1, lastKnownCount)
+            if (opts.highlightAll) {
+              scheduleSearchChrome(query, opts, { recount: false })
+            }
+          } else {
+            searchIndexHint = null
+            // Stepping: only advance n when the selection actually moved.
+            if (moved && lastKnownCount > 0) {
+              if (kind === 'next') {
+                const nextIdx = lastKnownIndex < 0 ? 0 : (lastKnownIndex + 1) % lastKnownCount
+                reportSearchResults(nextIdx, lastKnownCount)
+              } else {
+                const prevIdx = lastKnownIndex < 0
+                  ? lastKnownCount - 1
+                  : (lastKnownIndex - 1 + lastKnownCount) % lastKnownCount
+                reportSearchResults(prevIdx, lastKnownCount)
+              }
+            } else if (lastKnownCount > 0) {
+              reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
+            }
+            if (opts.highlightAll) {
+              scheduleSearchChrome(query, opts, { recount: false })
+            }
+          }
+          return true
+        } catch {
+          return false // invalid regex mid-typing
+        }
+      }
 
       if (controlRef) {
         controlRef.current = {
@@ -2073,124 +2164,15 @@ const snapshotTerminal = () => {
           hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
           setFoldsCollapsed,
           getCollapsedFoldKeys: () => [...collapsedKeys],
-          searchNext: (query, opts) => {
-            invalidateSearchOnOptionChange(opts)
-            applyHighlightAllClass(opts.highlightAll)
-            const key = countKeyOf(query, opts)
-            const isNewQuery = key !== lastCountKey
-            lastSearchQuery = query
-            lastSearchOpts = opts
-            try {
-              const before = term.getSelectionPosition()
-              // Always navigate without decorations — O(distance to next match).
-              const found = searchAddon.findNext(query, baseSearchOpts(opts))
-              if (!found) {
-                cancelSearchChrome()
-                clearSearchDecorations(false)
-                lastCountKey = ''
-                reportSearchResults(-1, 0)
-                return false
-              }
-              const after = term.getSelectionPosition()
-              // Leave open-at-top mode so search scrolls are not yanked back to 0
-              // by the onScroll stick-to-top handler.
-              if (after) {
-                openAtTop = false
-                const row = after.start.y
-                term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
-              }
-              // Require a real post-find selection. (!before || !after) was true
-              // whenever selection was missing, so n/m advanced with no jump.
-              const moved = !!after && (
-                !before
-                || before.start.y !== after.start.y
-                || before.start.x !== after.start.x
-                || before.end.y !== after.end.y
-                || before.end.x !== after.end.x
-              )
-              if (isNewQuery) {
-                lastCountKey = key
-                lastKnownIndex = 0
-                lastKnownCount = 0
-                searchResultsCb?.(-1, -1)
-                scheduleSearchChrome(query, opts, { recount: true })
-              } else {
-                // Stepping: only advance n when the selection actually moved.
-                if (moved && lastKnownCount > 0) {
-                  const nextIdx = lastKnownIndex < 0 ? 0 : (lastKnownIndex + 1) % lastKnownCount
-                  reportSearchResults(nextIdx, lastKnownCount)
-                } else if (lastKnownCount > 0) {
-                  reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
-                }
-                if (opts.highlightAll) {
-                  scheduleSearchChrome(query, opts, { recount: false })
-                }
-              }
-              return true
-            } catch {
-              return false // invalid regex mid-typing
-            }
-          },
-          searchPrev: (query, opts) => {
-            invalidateSearchOnOptionChange(opts)
-            applyHighlightAllClass(opts.highlightAll)
-            const key = countKeyOf(query, opts)
-            const isNewQuery = key !== lastCountKey
-            lastSearchQuery = query
-            lastSearchOpts = opts
-            try {
-              const before = term.getSelectionPosition()
-              const found = searchAddon.findPrevious(query, baseSearchOpts(opts))
-              if (!found) {
-                cancelSearchChrome()
-                clearSearchDecorations(false)
-                lastCountKey = ''
-                reportSearchResults(-1, 0)
-                return false
-              }
-              const after = term.getSelectionPosition()
-              if (after) {
-                openAtTop = false
-                const row = after.start.y
-                term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
-              }
-              // Require a real post-find selection. (!before || !after) was true
-              // whenever selection was missing, so n/m advanced with no jump.
-              const moved = !!after && (
-                !before
-                || before.start.y !== after.start.y
-                || before.start.x !== after.start.x
-                || before.end.y !== after.end.y
-                || before.end.x !== after.end.x
-              )
-              if (isNewQuery) {
-                lastCountKey = key
-                lastKnownIndex = 0
-                lastKnownCount = 0
-                searchResultsCb?.(-1, -1)
-                scheduleSearchChrome(query, opts, { recount: true })
-              } else {
-                if (moved && lastKnownCount > 0) {
-                  const prevIdx = lastKnownIndex < 0
-                    ? lastKnownCount - 1
-                    : (lastKnownIndex - 1 + lastKnownCount) % lastKnownCount
-                  reportSearchResults(prevIdx, lastKnownCount)
-                } else if (lastKnownCount > 0) {
-                  reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
-                }
-                if (opts.highlightAll) {
-                  scheduleSearchChrome(query, opts, { recount: false })
-                }
-              }
-              return true
-            } catch {
-              return false
-            }
-          },
+          searchNext: (query, opts) => runSearchNavigate(query, opts, 'next'),
+          searchPrev: (query, opts) => runSearchNavigate(query, opts, 'prev'),
+          searchFirst: (query, opts) => runSearchNavigate(query, opts, 'first'),
+          searchLast: (query, opts) => runSearchNavigate(query, opts, 'last'),
           searchClear: () => {
             cancelSearchChrome()
             lastSearchQuery = ''
             lastCountKey = ''
+            searchIndexHint = null
             clearSearchDecorations(false)
             term.clearSelection() // the active match is selection-backed
             reportSearchResults(-1, 0)

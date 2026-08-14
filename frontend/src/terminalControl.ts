@@ -89,6 +89,10 @@ export interface TerminalControl {
   // all-match highlights and n/m counting are deferred/async.
   searchNext: (query: string, opts: TerminalSearchOptions) => boolean
   searchPrev: (query: string, opts: TerminalSearchOptions) => boolean
+  /** Jump to the first (topmost) match. */
+  searchFirst: (query: string, opts: TerminalSearchOptions) => boolean
+  /** Jump to the last (bottommost) match. */
+  searchLast: (query: string, opts: TerminalSearchOptions) => boolean
   searchClear: () => void
   /**
    * Toggle all-match highlights. When turning on with an active query, rebuilds

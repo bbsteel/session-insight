@@ -85,24 +85,54 @@ try {
   log('enTitle', hl.title)
   if (hl.text !== 'HL') throw new Error(`expected HL, got ${JSON.stringify(hl.text)}`)
 
+  const firstBtn = bar.locator('[data-testid="terminal-search-first"]')
+  const lastBtn = bar.locator('[data-testid="terminal-search-last"]')
+  await firstBtn.waitFor({ state: 'visible' })
+  await lastBtn.waitFor({ state: 'visible' })
+  const enFirstTitle = await firstBtn.getAttribute('title')
+  const enLastTitle = await lastBtn.getAttribute('title')
+  log('enFirstTitle', enFirstTitle)
+  log('enLastTitle', enLastTitle)
+  if (enFirstTitle !== 'First match') throw new Error(`expected First match, got ${JSON.stringify(enFirstTitle)}`)
+  if (enLastTitle !== 'Last match') throw new Error(`expected Last match, got ${JSON.stringify(enLastTitle)}`)
+  const firstBox = await firstBtn.boundingBox()
+  const lastBox = await lastBtn.boundingBox()
+  if (!firstBox || firstBox.width < 8 || firstBox.height < 8) throw new Error('first button has no box')
+  if (!lastBox || lastBox.width < 8 || lastBox.height < 8) throw new Error('last button has no box')
+
   const input = bar.locator('input')
   await input.click()
   await input.fill('')
   const t0 = Date.now()
   await input.type('function', { delay: 25 })
-  // debounce 180ms + full buffer scan
-  await page.waitForTimeout(2_000)
+  const countEl = bar.locator('[data-testid="terminal-search-count"]')
+  await countEl.waitFor({ state: 'visible', timeout: 15_000 })
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="terminal-search-count"]')
+    return !!el && /\d+\s*\/\s*\d+|No results|无结果/.test(el.textContent || '')
+  }, { timeout: 15_000 })
   const elapsed = Date.now() - t0
-  let countText = ''
-  const spans = bar.locator('span')
-  for (let i = 0; i < await spans.count(); i++) {
-    const t = (await spans.nth(i).innerText()).trim()
-    if (t) countText = t
-  }
+  const countText = (await countEl.innerText()).trim()
   log('searchResultText', countText)
   log('typeAndSearchMs', elapsed)
   // Soft budget: typing+debounce+search should not freeze multi-second UI
   if (elapsed > 12_000) throw new Error(`search too slow: ${elapsed}ms`)
+
+  const parsed = countText.match(/^(\d+)\s*\/\s*(\d+)$/)
+  if (!parsed) throw new Error(`expected n/m count, got ${JSON.stringify(countText)}`)
+  const total = Number(parsed[2])
+  await lastBtn.click()
+  await page.waitForFunction((expected) => {
+    const el = document.querySelector('[data-testid="terminal-search-count"]')
+    return !!el && (el.textContent || '').trim() === expected
+  }, `${total}/${total}`, { timeout: 8_000 })
+  log('afterLast', `${total}/${total}`)
+  await firstBtn.click()
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="terminal-search-count"]')
+    return !!el && /^1\s*\/\s*\d+$/.test((el.textContent || '').trim())
+  }, { timeout: 8_000 })
+  log('afterFirst', (await countEl.innerText()).trim())
 
   const t2 = Date.now()
   await hl.btn.click()
@@ -118,6 +148,12 @@ try {
   log('zhShortLabel', hl.text)
   log('zhTitle', hl.title)
   if (hl.text !== '高亮') throw new Error(`expected 高亮, got ${JSON.stringify(hl.text)}`)
+  const zhFirst = await bar.locator('[data-testid="terminal-search-first"]').getAttribute('title')
+  const zhLast = await bar.locator('[data-testid="terminal-search-last"]').getAttribute('title')
+  log('zhFirstTitle', zhFirst)
+  log('zhLastTitle', zhLast)
+  if (zhFirst !== '最上一条') throw new Error(`expected 最上一条, got ${JSON.stringify(zhFirst)}`)
+  if (zhLast !== '最下一条') throw new Error(`expected 最下一条, got ${JSON.stringify(zhLast)}`)
 
   fs.mkdirSync(SHOT_DIR, { recursive: true })
   const shot = path.join(SHOT_DIR, 'terminal-search-zh.png')

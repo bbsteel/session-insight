@@ -128,6 +128,14 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
     else ctrl.searchPrev(q, optsRef.current)
   }
 
+  const jump = (edge: 'first' | 'last') => {
+    const ctrl = controlRef.current
+    const q = queryRef.current
+    if (!ctrl || !q) return
+    if (edge === 'first') ctrl.searchFirst(q, optsRef.current)
+    else ctrl.searchLast(q, optsRef.current)
+  }
+
   const toggle = (key: keyof TerminalSearchOptions) =>
     setOpts(prev => ({ ...prev, [key]: !prev[key] }))
 
@@ -170,7 +178,7 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
       <button onClick={() => toggle('wholeWord')} title={t('terminalSearch.wholeWord')} aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
       <button onClick={() => toggle('regex')} title={t('terminalSearch.regex')} aria-pressed={opts.regex} className={toggleCls(opts.regex)}>.*</button>
       <button onClick={() => toggle('highlightAll')} title={t('terminalSearch.highlightAll')} aria-pressed={opts.highlightAll} className={toggleCls(opts.highlightAll)}>{t('terminalSearch.highlightAllShort')}</button>
-      <span className={`min-w-[52px] flex-none text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
+      <span data-testid="terminal-search-count" className={`min-w-[52px] flex-none text-right text-meta tabular-nums ${invalidRegex ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
         {invalidRegex
           ? t('terminalSearch.invalidRegex')
           : query
@@ -182,16 +190,49 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
             : ''}
       </span>
       <button
+        type="button"
+        data-testid="terminal-search-first"
+        onClick={() => jump('first')}
+        title={t('terminalSearch.first')}
+        aria-label={t('terminalSearch.first')}
+        className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+      >
+        <span className="mx-auto flex h-4 w-3.5 flex-col items-center justify-center gap-px leading-none" aria-hidden>
+          <span className="block h-[2px] w-3 rounded-[1px] bg-current" />
+          <span className="text-[11px] leading-none">↑</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        data-testid="terminal-search-prev"
         onClick={() => step(-1)}
         title={t('terminalSearch.previous')}
+        aria-label={t('terminalSearch.previous')}
         className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >↑</button>
       <button
+        type="button"
+        data-testid="terminal-search-next"
         onClick={() => step(1)}
         title={t('terminalSearch.next')}
+        aria-label={t('terminalSearch.next')}
         className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
       >↓</button>
       <button
+        type="button"
+        data-testid="terminal-search-last"
+        onClick={() => jump('last')}
+        title={t('terminalSearch.last')}
+        aria-label={t('terminalSearch.last')}
+        className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
+      >
+        <span className="mx-auto flex h-4 w-3.5 flex-col items-center justify-center gap-px leading-none" aria-hidden>
+          <span className="text-[11px] leading-none">↓</span>
+          <span className="block h-[2px] w-3 rounded-[1px] bg-current" />
+        </span>
+      </button>
+      <button
+        type="button"
         onClick={onClose}
         title={t('terminalSearch.close')}
         className="h-6 w-6 flex-none rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]"
