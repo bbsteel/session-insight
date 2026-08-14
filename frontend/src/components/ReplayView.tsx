@@ -36,6 +36,12 @@ import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysContainingTarget, foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { isSessionLive, LIVE_WINDOW_MS, getAgentLabel } from '../sidebarRows'
 import { getNavOpenPref } from '../navPrefs'
+import { formatTokenCount } from '../formatTokenCount'
+import {
+  getTokenDisplayMode,
+  onTokenDisplayModeChange,
+  type TokenDisplayMode,
+} from '../tokenDisplayPrefs'
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 import { openOnModifiedClick } from '../sessionLink'
 import ResumeTerminalControl from './ResumeTerminalControl'
@@ -99,8 +105,13 @@ interface Props {
   onBookmarkChange?: (change: BookmarkChange) => void
 }
 
-function fmtTokens(n: number, locale: Locale): string {
-  return formatNumber(locale, n)
+function fmtTokens(
+  tokenCount: number,
+  locale: Locale,
+  mode: TokenDisplayMode,
+  units: { tenThousand: string; hundredMillion: string },
+): string {
+  return formatTokenCount(locale, tokenCount, mode, units)
 }
 
 function formatDuration(ms: number): string {
@@ -119,6 +130,8 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const [recordPanelOpen, setRecordPanelOpen] = useState(false)
   const [gitPanelOpen, setGitPanelOpen] = useState(false)
   const [degradedBannerDismissed, setDegradedBannerDismissed] = useState(false)
+  const [tokenDisplayMode, setTokenDisplayModeState] = useState<TokenDisplayMode>(getTokenDisplayMode)
+  useEffect(() => onTokenDisplayModeChange(setTokenDisplayModeState), [])
   useEffect(() => {
     setDegradedBannerDismissed(false)
     setRecordPanelOpen(false)
@@ -226,6 +239,19 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const [bookmarkError, setBookmarkError] = useState<string | null>(null)
   const [noteEditorOpen, setNoteEditorOpen] = useState(false)
   const termControlRef = useRef<TerminalControl | null>(null)
+  const handleToggleFollow = useCallback(() => {
+    setFollowOutput(currentlyFollowing => {
+      const shouldFollow = !currentlyFollowing
+      if (shouldFollow) {
+        const terminal = termControlRef.current
+        if (terminal) {
+          const metrics = terminal.getMetrics()
+          terminal.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
+        }
+      }
+      return shouldFollow
+    })
+  }, [])
   const miniMapControlRef = useRef<MiniMapControl | null>(null)
   const scrollToIndexRef = useRef<((index: number, behavior?: ReplayScrollBehavior) => void) | null>(null)
   const scrollToTopRef = useRef<((top: number, behavior?: ScrollBehavior) => void) | null>(null)
@@ -879,18 +905,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       setCtxMenu(null)
     }
     const toggleFollow = () => {
-      setFollowOutput(v => {
-        const next = !v
-        if (next) {
-          // Turning on: jump to the tail immediately, like enabling tail -f.
-          const ctrl = termControlRef.current
-          if (ctrl) {
-            const metrics = ctrl.getMetrics()
-            ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
-          }
-        }
-        return next
-      })
+      handleToggleFollow()
       setCtxMenu(null)
     }
     const sessionCwd = (session as (SessionDetail & { cwd?: string }) | null)?.cwd ?? ''
@@ -1058,7 +1073,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       ],
     })
     return sections
-  }, [bookmarkBusy, ctxMenu, fileTarget, folds, followOutput, jump, positionsData, session, sessionIsLive, t, toggleBookmark])
+  }, [bookmarkBusy, ctxMenu, fileTarget, folds, followOutput, handleToggleFollow, jump, positionsData, session, sessionIsLive, t, toggleBookmark])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -1438,6 +1453,10 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   if (!session || !(session.turns?.length)) {
     const rec = session ? presentFromSession(session) : null
     const emptyKey = rec?.emptyStateKey
+    const emptyCapHint = session ? sessionCapabilityHeaderHint(session.agent_capabilities) : null
+    const emptyAgentTitle = session
+      ? (agentsCatalog.find(a => a.type === session.agent_type)?.display_name || session.agent_type || 'agent')
+      : ''
     return (
       <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
         <GlobalSearch onSelect={onSelect} />
@@ -1451,22 +1470,48 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                   void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
                 }
               }}
-              className="h-7 max-w-[11rem] rounded-md border border-[var(--border-default)] px-2 inline-flex items-center gap-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
+              className="h-7 max-w-[8rem] rounded-md border border-[var(--border-default)] px-1.5 inline-flex items-center gap-1 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]"
               aria-label={t('capability.session.openButton')}
+              title={emptyAgentTitle}
               data-testid="session-agent-capability-button"
             >
               <AgentIcon agentType={session.agent_type} size={16} />
-              <span className="truncate">{session.agent_type}</span>
+              {emptyCapHint?.kind === 'calm' && session.agent_capabilities && (
+                <span
+                  className="shrink-0 text-meta font-medium text-[var(--accent-green)]"
+                  title={t('capability.session.hintCalm')}
+                  aria-label={t('capability.session.hintCalm')}
+                  data-testid="session-cap-hint-calm"
+                >
+                  ✓
+                </span>
+              )}
+              {emptyCapHint?.kind === 'missing' && (
+                <span className="shrink-0 text-meta text-[var(--warning)]">
+                  {t('capability.session.hintMissing', { n: emptyCapHint.count })}
+                </span>
+              )}
+              {emptyCapHint?.kind === 'estimated' && (
+                <span className="shrink-0 text-meta text-[var(--accent-blue)]">
+                  {t('capability.session.hintEstimated')}
+                </span>
+              )}
+              {emptyCapHint?.kind === 'unsupported' && (
+                <span className="shrink-0 text-meta text-[var(--error)]">
+                  {t('capability.session.hintUnsupported', { n: emptyCapHint.count })}
+                </span>
+              )}
             </button>
             {rec && (
               <button
                 type="button"
                 onClick={() => setRecordPanelOpen(true)}
-                className={`h-7 max-w-[12rem] rounded-md border px-2 inline-flex items-center gap-1.5 text-nav ${toneClass(rec.tone)}`}
+                className={`h-7 rounded-md border px-2 inline-flex items-center gap-1.5 text-nav ${toneClass(rec.tone)}`}
                 aria-label={t('record.pill.open')}
+                title={recordStatusLabel(rec, t)}
                 data-testid="session-record-status-button"
               >
-                <span className="truncate">{recordStatusLabel(rec, t)}</span>
+                <span className="truncate">{t('record.pill.label')}</span>
               </button>
             )}
             <button
@@ -1555,6 +1600,12 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     session.agent_capabilities?.status?.tokens?.state,
     totalTokens,
   )
+  const tokenUnits = {
+    tenThousand: t('token.unit.tenThousand'),
+    hundredMillion: t('token.unit.hundredMillion'),
+  }
+  const tokenExactFull =
+    tokenHeader.kind === 'value' ? formatTokenCount(locale, tokenHeader.total, 'full') : ''
   const tokenHeaderText =
     tokenHeader.kind === 'missing'
       ? t('capability.session.tokensMissing')
@@ -1564,7 +1615,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           ? t('capability.session.tokensNA')
           : tokenHeader.kind === 'unknown'
             ? t('capability.session.tokensUnknown')
-            : `${fmtTokens(tokenHeader.total, locale)} ${t('replay.tokens')}`
+            : `${fmtTokens(tokenHeader.total, locale, tokenDisplayMode, tokenUnits)} ${t('replay.tokens')}`
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
@@ -1580,12 +1631,12 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
               }
             }}
-            className="h-7 max-w-[11rem] rounded-md border border-[var(--border-default)] px-2 inline-flex items-center gap-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="h-7 max-w-[8rem] rounded-md border border-[var(--border-default)] px-1.5 inline-flex items-center gap-1 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             aria-label={t('capability.session.openButton')}
+            title={agentDisplayName}
             data-testid="session-agent-capability-button"
           >
             <AgentIcon agentType={session.agent_type} size={16} />
-            <span className="truncate">{agentDisplayName}</span>
             {capHint.kind === 'calm' && session.agent_capabilities && (
               <span
                 className="shrink-0 text-meta font-medium text-[var(--accent-green)]"
@@ -1618,11 +1669,12 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               <button
                 type="button"
                 onClick={() => setRecordPanelOpen(true)}
-                className={`h-7 max-w-[12rem] rounded-md border px-2 inline-flex items-center gap-1.5 text-nav hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${toneClass(rec.tone)}`}
+                className={`h-7 rounded-md border px-2 inline-flex items-center gap-1.5 text-nav hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${toneClass(rec.tone)}`}
                 aria-label={t('record.pill.open')}
+                title={recordStatusLabel(rec, t)}
                 data-testid="session-record-status-button"
               >
-                <span className="truncate">{recordStatusLabel(rec, t)}</span>
+                <span className="truncate">{t('record.pill.label')}</span>
               </button>
             )
           })()}
@@ -1655,38 +1707,6 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
             {t('replay.analytics')}
-          </button>
-          <span className="text-[var(--border-default)]">|</span>
-          <button
-            onClick={() => {
-              setFollowOutput(v => {
-                const next = !v
-                if (next) {
-                  const ctrl = termControlRef.current
-                  if (ctrl) {
-                    const metrics = ctrl.getMetrics()
-                    ctrl.scrollToLine(Math.floor(metrics.scrollHeight / TERMINAL_LINE_HEIGHT))
-                  }
-                }
-                return next
-              })
-            }}
-            disabled={!sessionIsLive}
-            className={`h-7 rounded-md px-2 inline-flex items-center gap-1 text-nav ${followOutput ? 'text-[var(--accent-green)] bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)]' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
-            title={
-              !sessionIsLive
-                ? t('replay.followUnavailable')
-                : followOutput
-                  ? t('replay.followOn')
-                  : t('replay.followOff')
-            }
-            aria-pressed={followOutput}
-            aria-label={followOutput ? t('replay.followOn') : t('replay.followOff')}
-          >
-            {followOutput && (
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />
-            )}
-            {t('replay.follow')}
           </button>
           <span className="text-[var(--border-default)]">|</span>
           <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{t('replay.export')}</a>
@@ -1737,7 +1757,12 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               {t('replay.importedFrom', { agent: getAgentLabel(session.import_info.original_agent_type), host: session.import_info.origin_host })}
             </span>
           )}
-          <span data-testid="session-token-header">{modelName} · {tokenHeaderText} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}</span>
+          <span
+            data-testid="session-token-header"
+            title={tokenExactFull ? `${tokenExactFull} ${t('replay.tokens')}` : undefined}
+          >
+            {modelName} · {tokenHeaderText} · {formatNumber(locale, session.turn_count)} {t('replay.turns')}
+          </span>
           {(session.rolled_back_turn_count ?? 0) > 0 && (
             <span className="text-[var(--warning)]"> · +{formatNumber(locale, session.rolled_back_turn_count ?? 0)} {t('replay.rolledBack')}</span>
           )}
@@ -1973,10 +1998,34 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 onScrollMetrics={handleTerminalScrollMetrics}
                 onColsReady={handleColsReady}
                 controlRef={termControlRef}
+                expectedLines={positionsData?.total_lines}
                 userPositions={userHighlightRanges}
                 onJumpToUserMessage={handlePanelJump}
               />
             </Suspense>
+          )}
+          {sessionIsLive && viewMode === 'terminal' && (
+            <button
+              type="button"
+              data-testid="follow-fab"
+              onClick={handleToggleFollow}
+              className={`absolute bottom-3 z-[var(--z-sticky)] h-9 rounded-full border px-3.5 inline-flex items-center gap-1.5 text-nav shadow-md backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                followOutput
+                  ? 'border-[var(--accent-green)]/40 bg-[color-mix(in_srgb,var(--accent-green)_18%,var(--bg-surface))] text-[var(--accent-green)]'
+                  : 'border-[var(--border-default)] bg-[var(--bg-surface)]/95 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+              }`}
+              style={{
+                right: 12 + (navPinned && (showUserPanel || showToolPanel) ? navPanelWidth : 0),
+              }}
+              title={followOutput ? t('replay.followFabOn') : t('replay.followFabOff')}
+              aria-pressed={followOutput}
+              aria-label={followOutput ? t('replay.followFabOn') : t('replay.followFabOff')}
+            >
+              {followOutput && (
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />
+              )}
+              {t('replay.follow')}
+            </button>
           )}
           {viewMode === 'terminal' && showUserPanel && (
             <UserMessagePanel
