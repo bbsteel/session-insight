@@ -198,10 +198,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
   // WebGL renderer degraded to the DOM fallback (no hardware acceleration /
-  // WebGL2 unavailable / context lost). The DOM renderer can't hold CJK
-  // box-drawing borders in alignment (the terminal font has no CJK glyphs, so
-  // Chinese falls back to a system font whose advance isn't exactly 2 cells),
-  // so we surface a dismissible hint. WebGL users never see it.
+  // WebGL2 unavailable / context lost). On Windows, "Animation effects" off
+  // (Settings → Accessibility → Visual effects) maps to prefers-reduced-motion
+  // and can also make getContext('webgl2') fail — that is a common cause of
+  // this banner. The DOM renderer can't hold CJK box-drawing borders in
+  // alignment (the terminal font has no CJK glyphs, so Chinese falls back to
+  // a system font whose advance isn't exactly 2 cells). WebGL users never see it.
   const [webglDegraded, setWebglDegraded] = useState(false)
   const [warnDismissed, setWarnDismissed] = useState(
     () => localStorage.getItem('si-webgl-warn-dismissed') === '1',
@@ -2566,7 +2568,7 @@ const snapshotTerminal = () => {
           }}
         >
           <span style={{ flex: 1 }}>
-            ⚠ {t('terminal.webglWarning')}
+            ⚠ {t(prefersReducedMotion() ? 'terminal.webglWarningReducedMotion' : 'terminal.webglWarning')}
           </span>
           <button
             onClick={dismissWebglWarn}
