@@ -1980,6 +1980,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 onScrollMetrics={handleTerminalScrollMetrics}
                 onColsReady={handleColsReady}
                 controlRef={termControlRef}
+                expectedLines={positionsData?.total_lines}
                 userPositions={userHighlightRanges}
                 onJumpToUserMessage={handlePanelJump}
               />

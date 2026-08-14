@@ -9,6 +9,7 @@ import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffset
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, resolveMatcherTooltip, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type TerminalSearchOptions, type UserHighlightRange } from '../terminalControl'
+import { DEFAULT_TERMINAL_SCROLLBACK, ensureTerminalScrollback, estimateRenderedLineCount } from '../terminalScrollback'
 import { countTerminalMatches } from '../terminalSearchCount'
 import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
@@ -128,6 +129,9 @@ interface Props {
   onScrollMetrics?: (m: ScrollMetrics) => void
   onColsReady?: (cols: number) => void
   controlRef?: React.MutableRefObject<TerminalControl | null>
+  // Cached positions.total_lines, when known, so scrollback can grow before
+  // the first large write instead of after xterm has already trimmed the top.
+  expectedLines?: number
   // User-message ranges (from positions API) to highlight with a background
   // decoration. Re-applied after every buffer rewrite / fold change so the
   // highlight tracks the rows as display rows shift.
@@ -164,7 +168,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, userPositions, onJumpToUserMessage }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, expectedLines, userPositions, onJumpToUserMessage }: Props) {
   const { t } = useI18n()
   const translatorRef = useRef(t)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -221,6 +225,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   // remount the terminal; only the next live-tail poll needs the new value.
   const followOutputRef = useRef(followOutput)
   followOutputRef.current = followOutput
+  const expectedLinesRef = useRef(expectedLines ?? 0)
+  expectedLinesRef.current = expectedLines ?? 0
   // Assigned inside the mount effect; invoked on either follow edge: the
   // rising edge leaves open-at-top mode and jumps to the tail, and both
   // edges re-apply the follow-pause chip next to the hourglass (created on
@@ -254,7 +260,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       fontSize: terminalFontSize,
       lineHeight: lineH,
       allowProposedApi: true,
-      scrollback: 20000,
+      scrollback: DEFAULT_TERMINAL_SCROLLBACK,
       convertEol: true,
       disableStdin: true,
       screenReaderMode: false,
@@ -268,6 +274,13 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT })
     term.loadAddon(searchAddon)
     termRef.current = term
+    // Raise xterm scrollback before a write can overflow the ring buffer.
+    // Minimap / positions use the full render's line count; if the buffer
+    // trims the top, those two coordinate spaces drift and the viewport
+    // indicator stops tracking.
+    const growScrollback = (neededLines: number) => {
+      ensureTerminalScrollback(term, Math.max(neededLines, expectedLinesRef.current))
+    }
 
     let disposeOnScroll: { dispose(): void } | null = null
     let disposeOnSelectionChange: { dispose(): void } | null = null
@@ -430,12 +443,11 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     }
     // Resolve a user-message position to a buffer row. Prefer logical_start
     // (exact under fold badge wrap drift) but only when the logical line is
-    // actually present in the xterm buffer — sessions longer than scrollback
-    // (20000 rows) will have logicalRows shorter than the render's logical
-    // line count, and logicalToDisplayLine clamps out-of-range indices to
-    // the last entry, making every out-of-range highlight pile up on the
-    // same row. Fall back to display-line mapping (toDisplayLine) which at
-    // worst places the marker off-screen rather than on the wrong row.
+    // actually present in the xterm buffer — a live positions snapshot can
+    // race ahead of the render, and logicalToDisplayLine clamps out-of-range
+    // indices to the last entry, making every out-of-range highlight pile
+    // up on the same row. Fall back to display-line mapping (toDisplayLine)
+    // which at worst places the marker off-screen rather than on the wrong row.
     const resolveUserRow = (origLine: number, logical?: number): number => {
       if (typeof logical === 'number' && logical < logicalRows.length) {
         return logicalToDisplayLine(logical)
@@ -474,8 +486,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         const endRow = resolveUserEndRow(endOrig, endLogical, buf)
         const first = Math.max(0, Math.min(startRow, endRow))
         const last = Math.max(startRow, endRow)
-        // Skip ranges entirely outside the buffer (e.g. scrolled out of
-        // scrollback) so we don't paint a stray highlight at the buffer edge.
+        // Skip ranges entirely outside the buffer (e.g. not written yet)
+        // so we don't paint a stray highlight at the buffer edge.
         if (first >= buf.length && last >= buf.length) continue
         for (let row = first; row <= last; row++) {
           if (row < 0 || row >= buf.length) continue
@@ -1421,11 +1433,13 @@ const snapshotTerminal = () => {
         clearProgress()
         clearUserHighlights()
         const rewriteStart = performance.now()
-        const wroteBytes = (foldView?.text ?? rawAnsi).length
+        const wroteText = foldView?.text ?? rawAnsi
+        const wroteBytes = wroteText.length
+        growScrollback(estimateRenderedLineCount(wroteText, term.cols))
         writingContent = true
         term.reset()
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
-        term.write(foldView?.text ?? rawAnsi, () => {
+        term.write(wroteText, () => {
           // A newer writeComposed may have already reset+written; do not
           // inject/scroll/finishPaint for this stale completion.
           if (disposed || generation !== repaintGeneration) return
@@ -1731,6 +1745,10 @@ const snapshotTerminal = () => {
         scrollHeight: term.buffer.active.length * TERMINAL_LINE_HEIGHT,
         clientHeight: term.rows * TERMINAL_LINE_HEIGHT,
       })
+      const publishBufferSize = () => {
+        container.dataset.bufferLines = String(term.buffer.active.length)
+        container.dataset.scrollback = String(term.options.scrollback ?? '')
+      }
       let lastMetrics: ScrollMetrics | undefined
       metricsBatcher = createFrameBatcher(metrics => {
         if (
@@ -1742,6 +1760,7 @@ const snapshotTerminal = () => {
           return
         }
         lastMetrics = metrics
+        publishBufferSize()
         onScrollMetricsRef.current?.(metrics)
       })
       const queueMetrics = () => metricsBatcher?.push(getMetrics())
@@ -1791,10 +1810,14 @@ const snapshotTerminal = () => {
             writingContent = true
             rawAnsi = ''
             foldView = null
+            let streamedLineEstimate = 0
+            growScrollback(expectedLinesRef.current)
             term.reset()
             await writeChunk('\x1b[3J')
             const ansi = await streamRenderANSI(sessionId, cols, tsKinds, async chunk => {
               if (!isCurrent()) return
+              streamedLineEstimate += estimateRenderedLineCount(chunk, cols)
+              growScrollback(streamedLineEstimate)
               await writeChunk(chunk)
               queueMetrics()
               if (firstChunk) {
@@ -2210,6 +2233,7 @@ const snapshotTerminal = () => {
             if (collapsedKeys.size === 0 && !foldView && ansi.startsWith(rawAnsi)) {
               const suffix = ansi.slice(rawAnsi.length)
               rawAnsi = ansi
+              growScrollback(term.buffer.active.length + estimateRenderedLineCount(suffix, currentCols))
               await new Promise<void>(resolve => term.write(suffix, () => {
                 scanBuffer()
                 injectFoldRows()
@@ -2434,6 +2458,11 @@ const snapshotTerminal = () => {
   useEffect(() => {
     applyFoldsRef.current?.(folds ?? [])
   }, [folds])
+
+  useEffect(() => {
+    if (!termRef.current || !expectedLines) return
+    ensureTerminalScrollback(termRef.current, expectedLines)
+  }, [expectedLines])
 
   // Re-apply user-message highlight decorations when the prop changes. The
   // mount effect owns the decoration closures; this just routes the new
