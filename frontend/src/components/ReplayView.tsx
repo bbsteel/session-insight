@@ -19,7 +19,7 @@ import { resolveAnchorJump } from '../collaboration/jumpTargets'
 import type { SourceAnchorDTO } from '../collaboration/types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
-import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange, type ViewportAnchor } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import GitEvidencePanel from './GitEvidencePanel'
@@ -213,8 +213,10 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const autoFollowSessionRef = useRef<string | null>(null)
   // Per-session view memory: follow choice + scroll position, saved when
   // switching away so switching back restores where the user left instead of
-  // re-opening at the default (top / auto-follow tail).
-  const sessionViewMemoryRef = useRef(new Map<string, { follow: boolean; wasLive: boolean; viewportLine: number | null }>())
+  // re-opening at the default (top / auto-follow tail). The content-stable
+  // viewportAnchor (original logical line) supersedes the legacy display-row
+  // viewportLine, which drifts with fold state.
+  const sessionViewMemoryRef = useRef(new Map<string, { follow: boolean; wasLive: boolean; viewportLine: number | null; viewportAnchor?: ViewportAnchor | null }>())
   const prevSessionIdRef = useRef<string | null>(null)
   // Mirror read by the session-switch effect (it saves the outgoing
   // session's effective follow value; state setters in the same render
@@ -229,6 +231,32 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   // One-shot scroll target passed to TerminalPanel when revisiting a session
   // with follow off (buffer line the user left at); null = default position.
   const [restoreScrollLine, setRestoreScrollLine] = useState<number | null>(null)
+  // One-shot content anchor for the same purpose; survives fold-state and
+  // re-wrap differences between save and restore. Also refreshed by the
+  // terminal's cleanup report (analytics detour, mid-session unmount).
+  const [restoreViewportAnchor, setRestoreViewportAnchor] = useState<ViewportAnchor | null>(null)
+  // Initial render still streaming: drives the header status chip's 加载中 state.
+  const [terminalLoading, setTerminalLoading] = useState(true)
+  // Current session id as a ref so the terminal's cleanup-time anchor report
+  // (which echoes its own sessionId) can tell a same-session unmount from a
+  // switch-away.
+  const sessionIdRef = useRef(sessionId)
+  sessionIdRef.current = sessionId
+  // TerminalPanel cleanup reports the final reading position here. Passive
+  // effect destroys all run before any create in the same commit, so on a
+  // session switch this lands under the OUTGOING id before the switch effect
+  // merges it into that session's memory entry.
+  const handleSaveViewportAnchor = useCallback((anchorSessionId: string, anchor: ViewportAnchor) => {
+    const memory = sessionViewMemoryRef.current
+    const prior = memory.get(anchorSessionId)
+    memory.set(anchorSessionId, {
+      follow: prior?.follow ?? false,
+      wasLive: prior?.wasLive ?? false,
+      viewportLine: prior?.viewportLine ?? null,
+      viewportAnchor: anchor,
+    })
+    if (sessionIdRef.current === anchorSessionId) setRestoreViewportAnchor(anchor)
+  }, [])
   // 时间戳前缀设置(后端 ts 渲染参数);null = 设置未加载,先不挂终端,
   // 避免渲染与 positions 用了不同的 ts 导致行号错位。
   const [tsKinds, setTsKinds] = useState<string | null>(null)
@@ -716,6 +744,37 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     [folds, positionsData],
   )
 
+  // Locate a Diff-modal edit in the terminal: same contract as the collab
+  // jump — open collapsed ancestor folds first, then resolve the position
+  // through its logical line so the landing row survives fold-badge wraps.
+  const locateEditInTerminal = useCallback(
+    (editIdx: number) => {
+      const positions = positionsData?.positions
+      const control = termControlRef.current
+      if (!positions || !control) return
+      // Edit positions are indexed by ascending line_start — the same order
+      // the ctx-menu path uses to map a clicked row to initialDiffIdx, and
+      // the order of the edits array the Diff modal steps through.
+      const target = positions
+        .filter((p) => p.kind === 'edit')
+        .sort((a, b) => a.line_start - b.line_start)[editIdx]
+      if (!target) return
+      const payloadLogical = target.payload?.['logical_start']
+      const logicalStart = typeof payloadLogical === 'number' ? payloadLogical : undefined
+      setShowDiffModal(false)
+      const ancestorFoldKeys = foldKeysContainingTarget(folds, target.line_start, logicalStart)
+      const collapsed = new Set(control.getCollapsedFoldKeys())
+      const toOpen = ancestorFoldKeys.filter((key) => collapsed.has(key))
+      const jump = () => control.jumpToPosition(target.line_start, logicalStart)
+      if (toOpen.length > 0) {
+        control.setFoldsCollapsed(toOpen, false, target.line_start, jump)
+      } else {
+        jump()
+      }
+    },
+    [folds, positionsData],
+  )
+
   // Session switch: save the outgoing session's view (follow choice + scroll
   // position) and restore the incoming one's. A memory saved while the
   // session was LIVE suppresses auto-follow on return — the user's explicit
@@ -734,12 +793,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         ? isSessionLive(prevDetail, Date.now())
         : followOutputRef.current
       const m = lastMetricsRef.current
+      // Merge, don't replace: the terminal's cleanup already stored the
+      // content anchor for this outgoing session earlier in the same commit.
+      const priorMemory = sessionViewMemoryRef.current.get(prevId)
       sessionViewMemoryRef.current.set(prevId, {
         follow: followOutputRef.current,
         wasLive: outgoingLive,
         viewportLine: m && lastMetricsSessionIdRef.current === prevId && m.scrollHeight > m.clientHeight
           ? Math.round(m.scrollTop / TERMINAL_LINE_HEIGHT)
           : null,
+        viewportAnchor: priorMemory?.viewportAnchor ?? null,
       })
     }
     prevSessionIdRef.current = sessionId
@@ -747,6 +810,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     autoFollowSessionRef.current = saved?.wasLive ? sessionId : null
     setFollowOutput(saved?.wasLive ? saved.follow : false)
     setRestoreScrollLine(saved?.viewportLine ?? null)
+    setRestoreViewportAnchor(saved?.viewportAnchor ?? null)
+    setTerminalLoading(true)
   }, [sessionId])
   // The id guard keeps the previous session's detail from leaking its
   // liveness into the header/follow state while the new session loads.
@@ -1726,9 +1791,29 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           )}
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
-          {isSessionLive(session, now) && (
-            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" aria-label={t('replay.active')}>
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.active')}
+          {/*
+            Explicit live-state chip: the four states the replay can be in.
+            加载中 wins while the initial render streams; for a live session
+            the follow toggle decides 追尾中 vs 已暂停; a session whose source
+            stopped writing shows 来源已停止 instead of silently losing the badge.
+          */}
+          {viewMode === 'terminal' && terminalLoading ? (
+            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-blue)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-blue)]" data-testid="replay-status" data-state="loading">
+              {t('replay.statusLoading')}
+            </span>
+          ) : sessionIsLive ? (
+            followOutput ? (
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" data-testid="replay-status" data-state="following">
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.statusFollowing')}
+              </span>
+            ) : (
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-amber,#d29922)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-amber,#d29922)]" data-testid="replay-status" data-state="paused">
+                {t('replay.statusPaused')}
+              </span>
+            )
+          ) : (
+            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[var(--bg-surface-hover)] px-1.5 text-meta font-medium text-[var(--text-muted)]" data-testid="replay-status" data-state="ended">
+              {t('replay.statusEnded')}
             </span>
           )}
           {session.import_info && (
@@ -1858,7 +1943,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       )}
 
       {showDiffModal && session && (
-        <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} initialIdx={initialDiffIdx} />
+        <DiffModal sessionId={session.id} onClose={() => setShowDiffModal(false)} initialIdx={initialDiffIdx} onLocateInTerminal={locateEditInTerminal} />
       )}
 
       {gitPanelOpen && session && (
@@ -1974,6 +2059,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 followOutput={followOutput && sessionIsLive}
                 onFollowDisable={() => setFollowOutput(false)}
                 initialScrollLine={restoreScrollLine}
+                initialViewportAnchor={restoreViewportAnchor}
+                onSaveViewportAnchor={handleSaveViewportAnchor}
+                onLoadingChange={setTerminalLoading}
                 onFoldChange={handleFoldChange}
                 onFoldPathActivate={(bufLine, meta) => openFilePopover(bufLine, meta, null)}
                 onContextMenu={handleTerminalContextMenu}
