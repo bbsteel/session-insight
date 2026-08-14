@@ -8,7 +8,7 @@ Use a completed session from this repository that shows representative terminal 
 
 The current set intentionally contains:
 
-1. `replay.png` — the primary replay UI, tool calls, filters, and semantic minimap.
+1. `replay.png` — the primary replay UI, terminal find, tool calls, filters, and semantic minimap.
 2. `interaction.png` — combined user/assistant message navigation over terminal replay.
 3. `settings.png` — the settings center's UI and terminal font controls.
 4. `analytics.png` — token/cache totals, tool usage, findings, and per-turn charts.
@@ -23,11 +23,11 @@ Start the full application first, then install Playwright's Chromium build once 
 ```bash
 ./run.sh all
 npm --prefix frontend exec -- playwright install chromium
-npm --prefix frontend run capture:screenshots -- --locale en --session-title "<exact session title>"
-npm --prefix frontend run capture:screenshots -- --locale zh-CN --session-title "<exact session title>"
+npm --prefix frontend run capture:screenshots -- --locale en --session-title "<exact session title>" --terminal-query "<representative query>"
+npm --prefix frontend run capture:screenshots -- --locale zh-CN --session-title "<exact session title>" --terminal-query "<representative query>"
 ```
 
-The script fixes the viewport and light theme, filters the sidebar to the chosen session, replaces the repository and home paths, replaces email addresses, and limits the code-reader tree to Git-tracked files. It writes five PNG files under the selected locale directory.
+The script fixes the viewport and light theme, filters the sidebar to the chosen session, opens terminal find when a query is supplied, replaces the repository and home paths, replaces email addresses, and limits the code-reader tree to Git-tracked files. It writes five PNG files under the selected locale directory.
 
 ## Privacy check
 

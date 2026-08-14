@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
@@ -32,6 +32,7 @@ Options:
   --session-title  Exact title of the local session to capture (required)
   --base-url       Running Session Insight URL (default: http://127.0.0.1:8080)
   --locale         Interface locale: en or zh-CN (default: en)
+  --terminal-query Optional query shown in the replay screenshot
   --public-root    Path displayed instead of the real repository path
                    (default: /workspace/session-insight)`)
   process.exit(0)
@@ -41,11 +42,13 @@ const sessionTitle = options.get('--session-title')
 if (!sessionTitle) throw new Error('--session-title is required; run with --help for usage')
 
 const baseURL = options.get('--base-url') ?? 'http://127.0.0.1:8080'
+const terminalQuery = options.get('--terminal-query')
 const locale = options.get('--locale') ?? 'en'
 if (locale !== 'en' && locale !== 'zh-CN') throw new Error('--locale must be en or zh-CN')
 const publicRoot = options.get('--public-root') ?? '/workspace/session-insight'
 const privateHome = homedir()
 const privateUsername = basename(privateHome)
+const privateHostname = hostname()
 const publicHome = '/home/user'
 const outputDir = resolve(repoRoot, 'assets/screenshots', locale)
 mkdirSync(outputDir, { recursive: true })
@@ -60,6 +63,7 @@ const copy = locale === 'en' ? {
   fonts: 'Fonts',
   uiFont: 'Interface font',
   find: 'Find',
+  terminalFind: 'Find in terminal',
 } : {
   filter: /过滤会话/,
   analytics: '分析',
@@ -70,6 +74,7 @@ const copy = locale === 'en' ? {
   fonts: '字体',
   uiFont: '界面字体',
   find: '查找',
+  terminalFind: '在终端中查找',
 }
 
 let trackedRootEntries = null
@@ -98,7 +103,9 @@ function sanitized(text) {
     // ANSI styling can split a path around escape sequences before it reaches
     // the browser. Replacing the username itself closes that remaining gap.
     .replaceAll(privateUsername, 'user')
+    .replaceAll(privateHostname, 'host')
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, 'developer@example.com')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9_-]+\b(?!\.)/gi, 'user@host')
 }
 
 async function installSanitizer(page) {
@@ -167,10 +174,21 @@ try {
   if (await interactionPanel.isVisible()) {
     await interactionPanel.getByRole('button', { name: copy.interactionClose }).click()
   }
+  if (terminalQuery) {
+    await replay.getByTestId('session-terminal-find-button').click()
+    await replay.getByPlaceholder(copy.terminalFind).fill(terminalQuery)
+    await replay.waitForFunction(() => {
+      const matchCount = document.querySelector('[data-testid="terminal-search-count"]')?.textContent ?? ''
+      return /\d+\s*\/\s*\d+/.test(matchCount)
+    })
+  }
   await replay.screenshot({
     path: resolve(outputDir, 'replay.png'),
     clip: { x: 0, y: 0, width: 1600, height: 640 },
   })
+  if (terminalQuery) {
+    await replay.getByTestId('session-terminal-find-button').click()
+  }
 
   await replay.locator(`button[title="${copy.interactionTitle}"]`).click()
   await interactionPanel.waitFor({ state: 'visible' })
@@ -194,7 +212,8 @@ try {
 
   const reader = await context.newPage()
   await installSanitizer(reader)
-  const file = `${publicRoot}/README.md`
+  const readmeFileName = locale === 'en' ? 'README.md' : 'README_ZH.md'
+  const file = `${publicRoot}/${readmeFileName}`
   const fileRoute = `#/file?path=${encodeURIComponent(file)}&cwd=${encodeURIComponent(publicRoot)}&line=20`
   await reader.goto(`${baseURL}/${fileRoute}`, { waitUntil: 'domcontentloaded' })
   await reader.getByRole('button', { name: copy.find, exact: true }).waitFor()
