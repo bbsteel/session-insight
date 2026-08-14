@@ -158,10 +158,8 @@ export async function findTerminalMatch(
     return y
   }
 
-  const matchesOnBlock = (blockRow: number): TerminalMatchPos[] => {
-    const block = unwrappedLineText(term, blockRow)
-    if (!block) return []
-    return matchSpansInLine(block.text, query, opts).map(span => {
+  const matchesOnBlock = (blockRow: number, text: string): TerminalMatchPos[] => {
+    return matchSpansInLine(text, query, opts).map(span => {
       const pos = offsetToBufferPos(blockRow, span.offset, cols)
       return { row: pos.row, col: pos.col, length: span.length }
     })
@@ -182,7 +180,7 @@ export async function findTerminalMatch(
         y++
         rowsVisited++
       } else {
-        const hits = matchesOnBlock(y)
+        const hits = matchesOnBlock(y, block.text)
         const hit = hits.find(m => posAtOrAfter(m.row, m.col, fromRow, fromCol, inclusive))
         if (hit) return hit
         y += block.rowCount
@@ -211,7 +209,7 @@ export async function findTerminalMatch(
         y--
         rowsVisited++
       } else {
-        const hits = matchesOnBlock(y)
+        const hits = matchesOnBlock(y, block.text)
         for (let i = hits.length - 1; i >= 0; i--) {
           const hit = hits[i]!
           if (posAtOrBefore(hit.row, hit.col, fromRow, fromCol, inclusive)) return hit
@@ -234,7 +232,7 @@ export async function findTerminalMatch(
   }
   const hit = await scanBackward(startRow, startCol, spec.inclusive, null)
   if (hit || !spec.wrap || isCancelled()) return hit
-  return scanBackward(length - 1, cols, true, startRow)
+  return scanBackward(length - 1, cols, true, unwrappedStart(startRow))
 }
 
 /**

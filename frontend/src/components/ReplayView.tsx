@@ -843,6 +843,17 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     if (!sessionId) return
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+        const target = e.target
+        // Keep Ctrl+F when focus is in the find bar or xterm's helper textarea.
+        const inTerminalFind = target instanceof HTMLElement && !!target.closest(
+          '[data-testid="terminal-search-bar"], .xterm',
+        )
+        if (
+          !inTerminalFind
+          && (target instanceof HTMLInputElement
+            || target instanceof HTMLTextAreaElement
+            || (target instanceof HTMLElement && target.isContentEditable))
+        ) return
         e.preventDefault()
         openTerminalSearch()
       }
@@ -1618,9 +1629,13 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     tenThousand: t('token.unit.tenThousand'),
     hundredMillion: t('token.unit.hundredMillion'),
   }
-  const findShortcut = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
-    ? '⌘F'
-    : 'Ctrl+F'
+  const uaPlatform = typeof navigator !== 'undefined'
+    ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+      || navigator.userAgent
+      || navigator.platform
+      || '')
+    : ''
+  const findShortcut = /Mac|iPhone|iPad|iPod/i.test(uaPlatform) ? '⌘F' : 'Ctrl+F'
   const tokenExactFull =
     tokenHeader.kind === 'value' ? formatTokenCount(locale, tokenHeader.total, 'full') : ''
   const tokenHeaderText =
@@ -1894,7 +1909,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               {[
                 ['j / ↓', t('replay.shortcutNext')],
                 ['k / ↑', t('replay.shortcutPrevious')],
-                ['Ctrl+F', t('replay.shortcutFind')],
+                [findShortcut, t('replay.shortcutFind')],
                 ['?', t('replay.shortcutHelp')],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">

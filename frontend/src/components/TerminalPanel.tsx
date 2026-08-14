@@ -677,6 +677,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // Shared by initial open() load and Windows post-rewrite reattach so
       // preserveDrawingBuffer / context-loss handling cannot drift apart.
       let recoveringWebgl = false
+      let webglRecoveries = 0
+      const MAX_WEBGL_RECOVERIES = 2
       const attachWebgl = (): boolean => {
         try {
           // preserveDrawingBuffer: true so the anti-flicker snapshot
@@ -692,12 +694,13 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
             // A heavy search on a huge buffer can evict the GPU context.
             // Disposing without a refresh left a dead canvas (blank terminal).
             if (disposed) return
-            if (recoveringWebgl) {
+            if (recoveringWebgl || webglRecoveries >= MAX_WEBGL_RECOVERIES) {
               setWebglDegraded(true)
               try { term.refresh(0, Math.max(0, term.rows - 1)) } catch { /* */ }
               return
             }
             recoveringWebgl = true
+            webglRecoveries++
             try {
               if (attachWebgl()) {
                 fitAddon.fit()
@@ -2117,7 +2120,7 @@ const snapshotTerminal = () => {
               if (kind === 'next') {
                 return isNewQuery
                   ? { direction: 'next' as const, startRow: before.start.y, startCol: before.start.x, inclusive: true, wrap: true }
-                  : { direction: 'next' as const, startRow: before.end.y, startCol: before.end.x, inclusive: false, wrap: true }
+                  : { direction: 'next' as const, startRow: before.end.y, startCol: before.end.x, inclusive: true, wrap: true }
               }
               return {
                 direction: 'prev' as const,
