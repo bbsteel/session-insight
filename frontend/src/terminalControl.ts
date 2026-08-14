@@ -83,10 +83,10 @@ export interface TerminalControl {
   // back to the snapshot-covered full rewrite. Pins the viewport to the
   // bottom when it was already there, or when live-follow (tail -f) is on.
   refreshContent: () => Promise<'appended' | 'rewritten' | 'unchanged'>
-  // In-terminal search (xterm addon-search). Searches the composed buffer,
-  // so content inside collapsed tool groups is not matched until expanded.
-  // Navigation is always decoration-free (fast on multi-10k-line buffers);
-  // all-match highlights and n/m counting are deferred/async.
+  // In-terminal search. Matches the composed buffer, so collapsed tool groups
+  // are not found until expanded. Navigation is time-sliced (does not block
+  // typing/backspace on multi-10k-line buffers). All-match highlights and
+  // n/m counting stay deferred/async.
   searchNext: (query: string, opts: TerminalSearchOptions) => boolean
   searchPrev: (query: string, opts: TerminalSearchOptions) => boolean
   /** Jump to the first (topmost) match. */

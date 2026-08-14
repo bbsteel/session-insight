@@ -25,6 +25,8 @@ async function chooseSession(page) {
   const fromEnv = typeof process.env.SI_SESSION_ID === 'string' ? process.env.SI_SESSION_ID.trim() : ''
   if (fromEnv) return fromEnv
   const summaries = await (await page.request.get(new URL('/api/sessions', BASE_URL).toString())).json()
+  const reported = summaries.find(s => typeof s.id === 'string' && s.id.endsWith('019feea9-32f5-7810-b403-3a39a6c0cf7d'))
+  if (reported) return reported.id
   const ranked = [...summaries]
     .filter(s => !s.is_live)
     .sort((a, b) => (b.message_count ?? 0) - (a.message_count ?? 0))
@@ -41,9 +43,10 @@ async function openSession(page, sessionId) {
   const row = page.locator(`[data-session-id="${sessionId}"]`)
   await row.waitFor({ state: 'visible', timeout: 15_000 })
   await row.click()
-  await page.locator('.xterm-viewport').waitFor({ state: 'visible', timeout: 60_000 })
-  // Large sessions need stream time
-  await page.waitForTimeout(4_000)
+  await page.locator('.xterm-viewport').waitFor({ state: 'visible', timeout: 90_000 })
+  // Large / live sessions need stream time before search walks the buffer.
+  const longSession = sessionId.includes('019feea9-32f5-7810-b403-3a39a6c0cf7d')
+  await page.waitForTimeout(longSession ? 20_000 : 4_000)
 }
 
 async function findHighlightButton(bar) {
@@ -98,6 +101,13 @@ try {
   if (await enFind.getAttribute('aria-pressed') !== 'true') {
     throw new Error('expected toolbar Find aria-pressed=true after open')
   }
+  await enFind.click()
+  await page.locator('[data-testid="terminal-search-bar"]').waitFor({ state: 'hidden', timeout: 5_000 })
+  log('searchBarClosedViaToolbar', true)
+  if (await enFind.getAttribute('aria-pressed') === 'true') {
+    throw new Error('expected toolbar Find aria-pressed=false after second click')
+  }
+  bar = await openSearch(page, 'toolbar')
   let hl = await findHighlightButton(bar)
   log('enShortLabel', hl.text)
   log('enTitle', hl.title)
@@ -151,6 +161,20 @@ try {
     return !!el && /^1\s*\/\s*\d+$/.test((el.textContent || '').trim())
   }, { timeout: 8_000 })
   log('afterFirst', (await countEl.innerText()).trim())
+
+  const longQuery = 'https://github.com/bbsteel/session-insight/pull/13'
+  await input.fill(longQuery)
+  await page.waitForTimeout(400)
+  const beforeBackspace = Date.now()
+  await input.press('Backspace')
+  const afterPaint = await input.inputValue()
+  const backspaceMs = Date.now() - beforeBackspace
+  log('backspaceValue', afterPaint)
+  log('backspaceMs', backspaceMs)
+  if (afterPaint !== longQuery.slice(0, -1)) {
+    throw new Error(`backspace did not update input: ${JSON.stringify(afterPaint)}`)
+  }
+  if (backspaceMs > 1500) throw new Error(`backspace froze input for ${backspaceMs}ms`)
 
   const t2 = Date.now()
   await hl.btn.click()

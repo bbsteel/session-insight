@@ -828,6 +828,13 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     setSearchOpen(true)
     setSearchFocusToken(t => t + 1)
   }, [])
+  const toggleTerminalSearch = useCallback(() => {
+    if (viewMode === 'terminal' && searchOpen) {
+      setSearchOpen(false)
+      return
+    }
+    openTerminalSearch()
+  }, [viewMode, searchOpen, openTerminalSearch])
   useEffect(() => { setSearchOpen(false) }, [sessionId])
   useEffect(() => {
     if (viewMode !== 'terminal') setSearchOpen(false)
@@ -1714,7 +1721,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           <span className="text-[var(--border-default)]">|</span>
           <button
             type="button"
-            onClick={openTerminalSearch}
+            onClick={toggleTerminalSearch}
             className={`h-7 rounded-md px-2 inline-flex items-center gap-1 text-nav ${
               viewMode === 'terminal' && searchOpen
                 ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10'
