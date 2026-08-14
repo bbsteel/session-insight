@@ -39,11 +39,11 @@ export function estimateRenderedLineCount(text: string, cols: number): number {
   let lines = 1
   let col = 0
   for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i)
-    if (code === 10) {
+    const ch = text[i]
+    if (ch === '\n') {
       lines++
       col = 0
-    } else if (code === 13) {
+    } else if (ch === '\r') {
       col = 0
     } else {
       if (col >= width) {

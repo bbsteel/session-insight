@@ -27,6 +27,8 @@ assert.equal(estimateRenderedLineCount('', 80), 0)
 assert.equal(estimateRenderedLineCount('hello', 80), 1)
 assert.equal(estimateRenderedLineCount('hello\nworld', 80), 2)
 assert.equal(estimateRenderedLineCount('hello\n', 80), 2)
+assert.equal(estimateRenderedLineCount('hello\rworld', 80), 1)
+assert.equal(estimateRenderedLineCount('hello\r\nworld', 80), 2)
 assert.equal(estimateRenderedLineCount('abcd', 2), 2)
 assert.equal(estimateRenderedLineCount('abcdef', 2), 3)
 
