@@ -676,6 +676,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       let webglAddon: WebglAddon | null = null
       // Shared by initial open() load and Windows post-rewrite reattach so
       // preserveDrawingBuffer / context-loss handling cannot drift apart.
+      let recoveringWebgl = false
       const attachWebgl = (): boolean => {
         try {
           // preserveDrawingBuffer: true so the anti-flicker snapshot
@@ -686,9 +687,28 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           const webgl = new WebglAddon(true)
           webgl.onContextLoss(() => {
             dbg('webgl-context-loss')
-            webgl.dispose()
+            try { webgl.dispose() } catch { /* already torn down */ }
             if (webglAddon === webgl) webglAddon = null
-            setWebglDegraded(true)
+            // A heavy search on a huge buffer can evict the GPU context.
+            // Disposing without a refresh left a dead canvas (blank terminal).
+            if (disposed) return
+            if (recoveringWebgl) {
+              setWebglDegraded(true)
+              try { term.refresh(0, Math.max(0, term.rows - 1)) } catch { /* */ }
+              return
+            }
+            recoveringWebgl = true
+            try {
+              if (attachWebgl()) {
+                fitAddon.fit()
+                term.refresh(0, Math.max(0, term.rows - 1))
+              } else {
+                setWebglDegraded(true)
+                term.refresh(0, Math.max(0, term.rows - 1))
+              }
+            } finally {
+              recoveringWebgl = false
+            }
           })
           term.loadAddon(webgl)
           webglAddon = webgl
@@ -2131,9 +2151,13 @@ const snapshotTerminal = () => {
               reportSearchResults(-1, 0)
               return
             }
-            term.select(found.col, found.row, found.length)
+            const bufLen = term.buffer.active.length
+            const row = Math.max(0, Math.min(found.row, Math.max(0, bufLen - 1)))
+            const col = Math.max(0, Math.min(found.col, Math.max(0, term.cols - 1)))
+            term.select(col, row, Math.max(1, found.length))
             openAtTop = false
-            term.scrollToLine(Math.max(0, found.row - Math.floor(term.rows / 2)))
+            term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
+            forceViewportRepaint('search-select', { soft: true })
             const after = term.getSelectionPosition()
             const moved = !!after && (
               !before
@@ -2236,6 +2260,7 @@ const snapshotTerminal = () => {
             clearSearchDecorations(false)
             term.clearSelection() // the active match is selection-backed
             reportSearchResults(-1, 0)
+            forceViewportRepaint('search-clear', { soft: true })
           },
           setSearchHighlightAll: (on) => {
             applyHighlightAllClass(on)
