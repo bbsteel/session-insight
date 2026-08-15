@@ -67,8 +67,8 @@ type plainReader struct {
 	parses atomic.Int32
 }
 
-func (r *plainReader) AgentType() string                    { return "plain" }
-func (r *plainReader) DisplayName() string                  { return "plain" }
+func (r *plainReader) AgentType() string                      { return "plain" }
+func (r *plainReader) DisplayName() string                    { return "plain" }
 func (r *plainReader) ListSessions() ([]model.Session, error) { return nil, nil }
 func (r *plainReader) GetSession(id string) (*model.SessionDetail, error) {
 	return nil, errors.New("not implemented")

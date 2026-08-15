@@ -76,12 +76,12 @@ func newReplayCache() *replayCache {
 		}
 	}
 	return &replayCache{
-		events:   make(map[string]*replayEventsEntry),
+		events:    make(map[string]*replayEventsEntry),
 		eventsLRU: list.New(),
-		ansi:     make(map[string]*replayANSIEntry),
-		ansiLRU:  list.New(),
-		inflight: make(map[string]*replayParseCall),
-		maxBytes: maxMB << 20,
+		ansi:      make(map[string]*replayANSIEntry),
+		ansiLRU:   list.New(),
+		inflight:  make(map[string]*replayParseCall),
+		maxBytes:  maxMB << 20,
 	}
 }
 

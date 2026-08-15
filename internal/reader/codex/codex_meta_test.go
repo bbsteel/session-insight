@@ -37,10 +37,10 @@ func TestGetSessionMetaMatchesGetSessionRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if !meta.UpdatedAt.Equal(detail.Session.UpdatedAt) {
-		t.Errorf("UpdatedAt mismatch: meta=%v detail=%v", meta.UpdatedAt, detail.Session.UpdatedAt)
+	if !meta.UpdatedAt.Equal(detail.UpdatedAt) {
+		t.Errorf("UpdatedAt mismatch: meta=%v detail=%v", meta.UpdatedAt, detail.UpdatedAt)
 	}
-	if meta.ID != detail.Session.ID || meta.AgentType != detail.Session.AgentType {
+	if meta.ID != detail.ID || meta.AgentType != detail.AgentType {
 		t.Errorf("identity mismatch: meta=%+v detail=%+v", meta, detail.Session)
 	}
 	if _, err := r.GetSessionMeta("rollout-2026-07-12T10-09-30-does-not-exist"); err == nil {
