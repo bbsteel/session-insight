@@ -111,7 +111,8 @@ func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.resolveTerminalStatus(runtime).State == "active" {
+	switch s.resolveTerminalStatus(runtime).State {
+	case "active", "launching":
 		writeResumeJSONError(w, http.StatusConflict, "session_running", "the Agent session is already running in a known terminal")
 		return
 	}

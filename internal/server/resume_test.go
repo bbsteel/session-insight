@@ -162,6 +162,32 @@ func TestResumeRefusesWhenKnownTerminalIsActive(t *testing.T) {
 	}
 }
 
+func TestResumeRefusesWhenKnownTerminalIsLaunching(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	cwd := t.TempDir()
+	rd := stoppedClaudeReader(cwd)
+	if err := database.UpsertTerminalBinding(db.TerminalBindingRecord{
+		AgentType: "claude", SessionID: "s1", TerminalID: "konsole", TerminalName: "Konsole",
+		Confidence: terminal.ConfidenceExact, State: "launching", LaunchedAt: time.Now().UTC(), Focusable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	launcher := &fakeTerminalLauncher{}
+	srv := New(database, []reader.BaseSessionReader{rd})
+	srv.terminalLauncher = launcher
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/s1/resume?agent=claude", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict || launcher.launches != 0 || !strings.Contains(w.Body.String(), "session_running") {
+		t.Fatalf("status=%d launches=%d body=%s", w.Code, launcher.launches, w.Body.String())
+	}
+}
+
 func TestResumeAllowsLiveSessionWhenTerminalUnknown(t *testing.T) {
 	cwd := t.TempDir()
 	rd := stoppedClaudeReader(cwd)

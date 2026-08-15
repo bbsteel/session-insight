@@ -9,7 +9,7 @@ export const SESSION_WRITING_WINDOW_MS = 20_000
 export function isSessionWriting(updatedAt: string | undefined, now: number): boolean {
   if (!updatedAt) return false
   const timestamp = Date.parse(updatedAt)
-  return Number.isFinite(timestamp) && now - timestamp < SESSION_WRITING_WINDOW_MS
+  return Number.isFinite(timestamp) && timestamp <= now && now - timestamp < SESSION_WRITING_WINDOW_MS
 }
 
 export interface ResumeControlFlags {
@@ -44,11 +44,13 @@ function planCanLaunch(plan: ResumePlan | null): boolean {
 function continueBlockedReasonKey(
   canLaunch: boolean,
   knownTerminalRunning: boolean,
+  launching: boolean,
   emitting: boolean,
   plan: ResumePlan | null,
 ): string | undefined {
   if (canLaunch) return undefined
   if (knownTerminalRunning) return 'resume.continueBlockedRunning'
+  if (launching) return 'resume.continueBlockedLaunching'
   if (emitting) return 'resume.continueBlockedWriting'
   if (plan?.status === 'cwd_unavailable') return 'resume.workspaceMissing'
   return 'resume.unavailable'
@@ -63,12 +65,13 @@ export function presentResumeControl(
   const emitting = flags.emitting === true
   const state = deriveBindingState(terminal)
   const knownTerminalRunning = state === 'active'
+  const launching = state === 'launching'
   const running = knownTerminalRunning || state === 'active_unknown'
   const active = running
   const canFocus = state === 'active' && terminal?.focusable === true
   const ready = planCanLaunch(plan)
-  const canLaunch = ready && !knownTerminalRunning && !emitting
-  const blockedReason = continueBlockedReasonKey(canLaunch, knownTerminalRunning, emitting, plan)
+  const canLaunch = ready && !knownTerminalRunning && !launching && !emitting
+  const blockedReason = continueBlockedReasonKey(canLaunch, knownTerminalRunning, launching, emitting, plan)
   const base = {
     state, active, canFocus, ready, canLaunch, running, emitting,
     continueBlockedReasonKey: blockedReason,
