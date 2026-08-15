@@ -79,12 +79,13 @@ func parseApplyPatch(turnIndex int, input map[string]any) []EditCall {
 
 	var calls []EditCall
 	var curFile string
+	var prevFile string
 	var hunks []hunk
 	var cur *hunk
 	inPatch := false
 
 	flush := func() {
-		if curFile == "" || len(hunks) == 0 {
+		if curFile == "" || (len(hunks) == 0 && prevFile == "") {
 			return
 		}
 		var oldParts, newParts []string
@@ -93,12 +94,14 @@ func parseApplyPatch(turnIndex int, input map[string]any) []EditCall {
 			newParts = append(newParts, h.new...)
 		}
 		calls = append(calls, EditCall{
-			TurnIndex: turnIndex,
-			FilePath:  curFile,
-			OldString: strings.Join(oldParts, "\n"),
-			NewString: strings.Join(newParts, "\n"),
+			TurnIndex:    turnIndex,
+			FilePath:     curFile,
+			OldString:    strings.Join(oldParts, "\n"),
+			NewString:    strings.Join(newParts, "\n"),
+			PreviousPath: prevFile,
 		})
 		curFile = ""
+		prevFile = ""
 		hunks = nil
 		cur = nil
 	}
@@ -131,6 +134,11 @@ func parseApplyPatch(turnIndex int, input map[string]any) []EditCall {
 			hunks = append(hunks, h)
 			cur = &hunks[len(hunks)-1]
 		case strings.HasPrefix(line, "*** Move to: "):
+			// A "Move to" directive renames the file from the preceding
+			// "Update File" section. Track the source path in parser state so
+			// the next flush records PreviousPath on the emitted call; a pure
+			// rename (no content hunks) still emits a call.
+			prevFile = curFile
 			curFile = strings.TrimPrefix(line, "*** Move to: ")
 		case strings.HasPrefix(line, "@@"):
 			h := hunk{}

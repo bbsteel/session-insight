@@ -35,3 +35,47 @@ func TestSavePositionCachePrunesStaleRevisionsAndWidths(t *testing.T) {
 		t.Fatalf("cache count after revision change=%d, want 1", count)
 	}
 }
+
+// TestOutlineKindRoundTrip proves the widened CHECK accepts 'outline'
+// positions and that the read path returns them with payload and stable
+// tie-breaker ordering intact.
+func TestOutlineKindRoundTrip(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	end := 12
+	positions := []PositionEntry{
+		{PositionKey: "tool:0:9", Kind: "tool", TurnIndex: 0, LineStart: 9},
+		{PositionKey: "outline:anomaly:tool_failed:0:c1:0", Kind: "outline", TurnIndex: 0, LineStart: 10,
+			Label: "go test ./...", Severity: "error",
+			Payload: map[string]any{"category": "anomaly", "code": "tool_failed", "precision": "exact"}},
+		{PositionKey: "outline:file_change:file_modified:0:c2:0", Kind: "outline", TurnIndex: 0, LineStart: 10,
+			LineEnd: &end, Label: "a.go",
+			Payload: map[string]any{"category": "file_change", "code": "file_modified", "file_path": "a.go"}},
+	}
+	if err := database.SavePositionCache("test", "s1", 1, 100, 42, positions); err != nil {
+		t.Fatalf("SavePositionCache with outline kind: %v", err)
+	}
+	cached, err := database.GetPositionCache("test", "s1", 1, 100)
+	if err != nil || cached == nil {
+		t.Fatalf("GetPositionCache: %v, nil=%v", err, cached == nil)
+	}
+	if cached.TotalLines != 42 {
+		t.Fatalf("TotalLines = %d, want 42", cached.TotalLines)
+	}
+	if len(cached.Positions) != 3 {
+		t.Fatalf("positions = %d, want 3", len(cached.Positions))
+	}
+	// Same line_start ordered by (line_end, position_key): the no-end anomaly
+	// sorts before the end=12 file change.
+	if cached.Positions[1].Payload["code"] != "tool_failed" || cached.Positions[2].Payload["code"] != "file_modified" {
+		t.Fatalf("tie-breaker order wrong: %s then %s",
+			cached.Positions[1].PositionKey, cached.Positions[2].PositionKey)
+	}
+	if cached.Positions[2].Payload["file_path"] != "a.go" {
+		t.Fatalf("payload lost: %+v", cached.Positions[2].Payload)
+	}
+}

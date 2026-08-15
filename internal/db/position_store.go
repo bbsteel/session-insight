@@ -130,7 +130,7 @@ func (db *DB) GetPositionCache(agentType, sessionID string, revision int64, cols
 		        label, severity, payload_json
 		 FROM session_positions
 		 WHERE agent_type = ? AND session_id = ? AND revision = ? AND cols = ?
-		 ORDER BY line_start`,
+		 ORDER BY line_start, line_end, position_key`,
 		agentType, sessionID, revision, cols,
 	)
 	if err != nil {

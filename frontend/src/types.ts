@@ -278,7 +278,7 @@ export interface RecordStatus {
 }
 
 export interface MiniMapPosition {
-  kind: 'turn' | 'user' | 'assistant' | 'error' | 'compaction' | 'edit' | 'fold' | 'trunc' | 'tool'
+  kind: 'turn' | 'user' | 'assistant' | 'error' | 'compaction' | 'edit' | 'fold' | 'trunc' | 'tool' | 'outline'
   position_key: string
   turn_index: number
   line_start: number
@@ -286,6 +286,24 @@ export interface MiniMapPosition {
   label: string
   severity?: string
   payload?: Record<string, unknown>
+}
+
+// Semantic key-event outline (v0.6.1). The backend classifier emits stable
+// machine codes; all display copy comes from i18n, never from the payload.
+export type OutlineCategory = 'anomaly' | 'context' | 'file_change' | 'key_result'
+
+export interface OutlinePayload {
+  category: OutlineCategory
+  code: string
+  precision: 'exact' | 'estimated'
+  summary?: string
+  source_position_key?: string
+  logical_start?: number
+  ts_ms?: number
+  tool_name?: string
+  file_path?: string
+  previous_file_path?: string
+  duration_ms?: number
 }
 
 export interface PositionsResponse {

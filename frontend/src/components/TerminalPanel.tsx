@@ -2229,6 +2229,16 @@ const snapshotTerminal = () => {
           toDisplayLine,
           logicalToDisplayLine,
           toOriginalLine,
+          getViewportAnchor: () => {
+            if (disposed) return null
+            try {
+              const buf = term.buffer.active
+              const center = buf.viewportY + Math.floor(term.rows / 2)
+              return toOriginalLine(center)
+            } catch {
+              return null
+            }
+          },
           jumpToPosition: (lineStart, logicalStart) => {
             if (execJump(lineStart, logicalStart, false)) {
               // Immediate success supersedes any older deferred jump — without

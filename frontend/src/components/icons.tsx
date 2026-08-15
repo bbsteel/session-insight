@@ -210,3 +210,55 @@ export function InfoIcon({ className, ...rest }: IconProps) {
   )
 }
 
+
+/** Warning triangle: anomaly outline events. */
+export function AlertTriangleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 2.5 15 13.5H1Z" />
+      <path d="M8 6.5v3.5" />
+      <circle cx="8" cy="11.8" r="0.4" fill="currentColor" stroke="none" />
+    </Icon>
+  )
+}
+
+/** Stacked layers: context boundary events (compaction / rollback). */
+export function LayersIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 1.5 14.5 5 8 8.5 1.5 5Z" />
+      <path d="M1.5 8.5 8 12l6.5-3.5" />
+    </Icon>
+  )
+}
+
+/** File with edit pencil: file-change outline events. */
+export function FileEditIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 1.5h5l3 3v10H4Z" />
+      <path d="M9 1.5v3h3" />
+      <path d="M6 11.5l3.5-3.5 1.5 1.5L7.5 13H6Z" />
+    </Icon>
+  )
+}
+
+/** Check in circle: key-result outline events. */
+export function CheckCircleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="6.5" />
+      <path d="M5 8.2 7.2 10.4 11 6" />
+    </Icon>
+  )
+}
+
+/** Crosshair: locate the current position inside the outline list. */
+export function CrosshairIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="5" />
+      <path d="M8 1v3M8 12v3M1 8h3M12 8h3" />
+    </Icon>
+  )
+}

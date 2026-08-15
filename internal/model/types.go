@@ -216,6 +216,9 @@ type EditCall struct {
 	OldString  string `json:"old_string"`
 	NewString  string `json:"new_string"`
 	ReplaceAll bool   `json:"replace_all,omitempty"`
+	// PreviousPath is the source path when the edit renames a file
+	// (apply_patch "Move to"); empty for non-rename edits.
+	PreviousPath string `json:"previous_path,omitempty"`
 }
 
 type AnomalySummary struct {
