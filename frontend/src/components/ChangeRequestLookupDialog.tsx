@@ -8,9 +8,12 @@ import {
   resolveChangeRequest,
 } from '../api'
 import {
+  canLoadChangeRequestHostedDetails,
   canSelectHostedAuthority,
-  changeRequestSessionGroups,
   changeRequestDisplayName,
+  changeRequestHostNeedsApproval,
+  changeRequestLookupPresentation,
+  changeRequestSessionGroups,
   type ChangeHostPreview,
   type ChangeRequestCreationSessionMatch,
   type ChangeRequestLookup,
@@ -247,11 +250,9 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
     }
   }
 
-  const hostNeedsApproval = result?.assessment.reason_code === 'change_host_not_approved'
-  const canLoadHostedDetails = result && !hostNeedsApproval &&
-    result.matches.length === 0 &&
-    (result.assessment.state === 'exact' || result.assessment.reason_code === 'change_request_not_found') &&
-    (result.reference.provider === 'github' || result.reference.provider === 'gitlab')
+  const hostNeedsApproval = changeRequestHostNeedsApproval(result)
+  const lookupPresentation = result ? changeRequestLookupPresentation(result) : null
+  const canLoadHostedDetails = canLoadChangeRequestHostedDetails(result)
 
   return createPortal(
     <div
@@ -368,21 +369,22 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
             </div>
           )}
 
-          {result && !hostNeedsApproval && result.matches.length === 0 && result.creation_sessions.length === 0 && (
+          {result && !hostNeedsApproval && lookupPresentation &&
+            lookupPresentation.hostedLookups.length === 0 && lookupPresentation.creationSessions.length === 0 && (
             <div className="py-10 text-center text-helper text-[var(--text-muted)]">{t('git.lookup.empty')}</div>
           )}
 
           <div className="space-y-3">
-            {result && (
+            {lookupPresentation && (
               <CreationSessionGroup
-                matches={result.creation_sessions}
+                matches={lookupPresentation.creationSessions}
                 onSelect={match => {
                   onSelectSession?.(match.root_session_id, match.root_agent_type, true)
                   onClose()
                 }}
               />
             )}
-            {result?.matches.map(lookup => {
+            {lookupPresentation?.hostedLookups.map(lookup => {
               const sessionGroups = changeRequestSessionGroups(lookup)
               const snapshot = lookup.change.snapshot
               const exclusiveAvailable = canSelectHostedAuthority(lookup.change, repositoryKey)
@@ -503,7 +505,7 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
               )
             })}
             {canLoadHostedDetails && (
-              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-primary)] p-4">
+              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-primary)] p-4" data-testid="change-request-hosted-details">
                 <h3 className="text-body font-medium text-[var(--text-primary)]">{t('git.lookup.hostedDetailsTitle')}</h3>
                 <p className="mt-1 text-helper text-[var(--text-secondary)]">{t('git.lookup.hostedDetailsHelp')}</p>
                 <button

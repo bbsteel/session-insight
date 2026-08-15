@@ -47,10 +47,18 @@ func TestPublicParsersRejectSecretBearingAndAmbiguousInputs(t *testing.T) {
 		remote bool
 	}{
 		{name: "GitHub query", parser: GitHubParser{}, raw: "https://github.com/acme/widgets/pull/42?token=secret"},
-		{name: "GitHub credential", parser: GitHubParser{}, raw: "https://user:secret@github.com/acme/widgets.git", remote: true},
+		{name: "GitHub fragment", parser: GitHubParser{}, raw: "https://github.com/acme/widgets/pull/42#discussion"},
+		{name: "GitHub credentials", parser: GitHubParser{}, raw: "https://user:secret@github.com/acme/widgets/pull/42"},
+		{name: "GitHub port", parser: GitHubParser{}, raw: "https://github.com:8443/acme/widgets/pull/42"},
+		{name: "GitHub HTTP", parser: GitHubParser{}, raw: "http://github.com/acme/widgets/pull/42"},
 		{name: "GitHub encoded slash", parser: GitHubParser{}, raw: "https://github.com/acme%2Fother/widgets/pull/42"},
+		{name: "GitHub zero", parser: GitHubParser{}, raw: "https://github.com/acme/widgets/pull/0"},
+		{name: "GitHub negative", parser: GitHubParser{}, raw: "https://github.com/acme/widgets/pull/-1"},
 		{name: "GitLab query", parser: GitLabParser{}, raw: "https://gitlab.com/group/widgets/-/merge_requests/7?private_token=secret"},
+		{name: "GitLab fragment", parser: GitLabParser{}, raw: "https://gitlab.com/group/widgets/-/merge_requests/7#note"},
 		{name: "GitLab wrong marker", parser: GitLabParser{}, raw: "https://gitlab.com/group/widgets/merge_requests/7"},
+		{name: "GitLab HTTP", parser: GitLabParser{}, raw: "http://gitlab.com/group/widgets/-/merge_requests/7"},
+		{name: "GitLab non-positive", parser: GitLabParser{}, raw: "https://gitlab.com/group/widgets/-/merge_requests/0"},
 		{name: "SSH unexpected user", parser: GitLabParser{}, raw: "ssh://admin@gitlab.com/group/widgets.git", remote: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

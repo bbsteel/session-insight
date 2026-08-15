@@ -240,7 +240,27 @@ export function changeRequestSessionGroups(lookup: ChangeRequestLookup): {
   candidates: ChangeRequestSessionMatch[]
 } {
   return {
-    linked: [...lookup.linked_sessions],
-    candidates: [...lookup.candidate_sessions],
+    linked: [...(lookup.linked_sessions ?? [])],
+    candidates: [...(lookup.candidate_sessions ?? [])],
   }
+}
+
+export function changeRequestLookupPresentation(result: ChangeRequestResolveResponse): {
+  creationSessions: ChangeRequestCreationSessionMatch[]
+  hostedLookups: ChangeRequestLookup[]
+} {
+  return {
+    creationSessions: [...(result.creation_sessions ?? [])],
+    hostedLookups: [...(result.matches ?? [])],
+  }
+}
+
+export function changeRequestHostNeedsApproval(result: ChangeRequestResolveResponse | null | undefined): boolean {
+  return result?.assessment.reason_code === 'change_host_not_approved'
+}
+
+export function canLoadChangeRequestHostedDetails(result: ChangeRequestResolveResponse | null | undefined): boolean {
+  if (!result || changeRequestHostNeedsApproval(result) || (result.matches?.length ?? 0) !== 0) return false
+  if (result.reference.provider !== 'github' && result.reference.provider !== 'gitlab') return false
+  return result.assessment.state === 'exact' || result.assessment.reason_code === 'change_request_not_found'
 }
