@@ -10,7 +10,10 @@ import "github.com/bbsteel/session-insight/internal/reader/capability"
 //   - tokens: structured usage on assistant messages → TokenUsage / RenderTokenUsage
 //   - tool_results: ToolInvocation↔ToolResult pairing (incl. subagent dual queue)
 //   - diff: Edit / str_replace_editor tool input → ExtractEditCalls
-//   - subtasks: ParseClaudeRenderEventsWithSubagents splices agent-*.jsonl
+//   - subtasks: ParseClaudeRenderEventsWithSubagents splices agent-*.jsonl;
+//     ReadCollaboration normalizes Agent/Task + TaskOutput + sidecar
+//     meta.toolUseId / agentId into the shared collaboration graph
+//     (collaboration.go + fixtures + suite)
 //   - resume: session UUID is the CLI --resume argument; declaration below
 //     owns the executable and safe/unsafe argument templates
 //   - delete: SessionDeleter.DeleteSession + delete tests
@@ -19,7 +22,7 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "claude",
 		DisplayName:     "Claude Code",
-		AdapterRevision: 3,
+		AdapterRevision: 4,
 		ResumeCommand: &capability.ResumeCommandDeclaration{
 			Executable:   "claude",
 			StandardArgs: []string{"--resume", "{id}"},

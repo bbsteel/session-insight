@@ -84,6 +84,11 @@ func claudeEvidenceCases() []adaptertest.EvidenceCase {
 					SessionID: id, FilePathSub: "a.go", OldSub: "old", NewSub: "new",
 				})
 				adaptertest.AssertSubtasks(t, r, adaptertest.SubtaskExpect{SessionID: id, MinSubagents: 1})
+				adaptertest.RunCollaboration(t, r, adaptertest.CollaborationExpect{
+					RootSession:          model.Session{ID: id, AgentType: "claude"},
+					MinChildren:          1,
+					ForbidBackingSession: true,
+				})
 				adaptertest.AssertResume(t, r, adaptertest.ResumeExpect{SessionID: id, ExactID: id, RejectSuffix: ".jsonl"})
 			},
 		},

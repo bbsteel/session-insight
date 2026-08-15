@@ -1,0 +1,2 @@
+{"type":"user","uuid":"su1","timestamp":"2026-01-03T00:00:06Z","message":{"role":"user","content":"look around the sanitized fixture"}}
+{"type":"assistant","uuid":"sa1","timestamp":"2026-01-03T00:00:10Z","message":{"role":"assistant","model":"claude-sonnet-4","stop_reason":"end_turn","content":[{"type":"text","text":"sidecar transcript body"}]}}
