@@ -806,12 +806,20 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 
 		// The semantic outline also uses session-detail facts; when the
 		// meta fast path was taken above, fetch the detail lazily — only
-		// the cache-miss build path pays for it.
+		// the cache-miss build path pays for it. A failure here means the
+		// session became unreadable mid-request; fail the build rather
+		// than degrade to a detail-less outline.
 		detail := sessDetail
 		if detail == nil {
-			if d, derr := foundReader.GetSession(id); derr == nil {
-				detail = d
+			d, derr := foundReader.GetSession(id)
+			if derr != nil || d == nil {
+				if derr == nil {
+					derr = fmt.Errorf("session detail unavailable: %s", id)
+				}
+				ch <- buildResult{err: derr}
+				return
 			}
+			detail = d
 		}
 
 		// Merge the sparse key-event outline into the core positions and order

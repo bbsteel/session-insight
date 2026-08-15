@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bbsteel/session-insight/internal/render"
 )
 
 // TestGetSessionMetaMatchesGetSessionRevision locks the contract the
@@ -42,6 +44,12 @@ func TestGetSessionMetaMatchesGetSessionRevision(t *testing.T) {
 	}
 	if meta.ID != detail.ID || meta.AgentType != detail.AgentType {
 		t.Errorf("identity mismatch: meta=%+v detail=%+v", meta, detail.Session)
+	}
+	// The server's position cache keys on render.PositionsRevision; the meta
+	// fast path must produce the identical revision as the full parse.
+	opts := render.Options{TimestampUser: true}
+	if got, want := render.PositionsRevision(*meta, opts), render.PositionsRevision(detail.Session, opts); got != want {
+		t.Errorf("PositionsRevision mismatch: meta=%d detail=%d", got, want)
 	}
 	if _, err := r.GetSessionMeta("rollout-2026-07-12T10-09-30-does-not-exist"); err == nil {
 		t.Error("expected error for unknown session id")

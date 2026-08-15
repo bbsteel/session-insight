@@ -44,7 +44,9 @@ type replayCache struct {
 	// session share one parse instead of stampeding the reader.
 	inflight map[string]*replayParseCall
 
-	maxBytes int64 // per sub-cache (events and ANSI each)
+	// maxBytes applies independently to each sub-cache (events and ANSI), so
+	// the effective memory ceiling is ~2× this value (default 2×256MB).
+	maxBytes int64
 }
 
 type replayEventsEntry struct {
@@ -62,6 +64,7 @@ type replayANSIEntry struct {
 
 type replayParseCall struct {
 	done   chan struct{}
+	rev    int64 // the revision the leader parsed at; waiters must report this
 	events []model.RenderEvent
 	err    error
 }
@@ -86,7 +89,10 @@ func newReplayCache() *replayCache {
 }
 
 // estimateEventsBytes approximates the retained size of an event slice:
-// a per-event struct/header allowance plus the big string fields.
+// a per-event struct/header allowance plus the big string fields. It
+// undercounts — maps, slices, and smaller string fields are not measured —
+// so real usage can exceed the configured budget; the LRU bound is a
+// backstop, not an exact limit.
 func estimateEventsBytes(events []model.RenderEvent) int64 {
 	total := int64(len(events)) * 256
 	for i := range events {
@@ -134,9 +140,13 @@ func (c *replayCache) eventsFor(rd reader.BaseSessionReader, id string) ([]model
 		if call.err != nil {
 			return nil, 0, call.err
 		}
-		return slices.Clone(call.events), rev, nil
+		// Report the leader's revision, not the waiter's own observation:
+		// the file may have grown between the two LiveRevision calls, and
+		// keying a downstream ANSI cache entry on the waiter's newer rev
+		// would pin stale content under a current revision.
+		return slices.Clone(call.events), call.rev, nil
 	}
-	call := &replayParseCall{done: make(chan struct{})}
+	call := &replayParseCall{done: make(chan struct{}), rev: rev}
 	c.inflight[key] = call
 	c.mu.Unlock()
 
@@ -221,23 +231,32 @@ func (s *Server) renderANSIFor(rd reader.BaseSessionReader, id string, cols int,
 
 	c.mu.Lock()
 	bytes := int64(len(ansi))
-	if bytes <= c.maxBytes/2 {
+	// Existence guard: the lock was dropped during the format pass, so a
+	// concurrent caller may already have inserted this key. Inserting again
+	// would duplicate the LRU element and double-count bytes, and eviction
+	// would later pop the stale element and dereference a nil map entry.
+	if _, exists := c.ansi[key]; !exists && bytes <= c.maxBytes/2 {
 		entry := &replayANSIEntry{ansi: ansi, bytes: bytes}
 		entry.lruElem = c.ansiLRU.PushFront(key)
 		c.ansi[key] = entry
 		c.ansiBytes += bytes
-		for c.ansiBytes > c.maxBytes {
-			tail := c.ansiLRU.Back()
-			if tail == nil {
-				break
-			}
-			victimKey := tail.Value.(string)
-			victim := c.ansi[victimKey]
-			c.ansiBytes -= victim.bytes
-			delete(c.ansi, victimKey)
-			c.ansiLRU.Remove(tail)
-		}
+		c.evictANSILocked()
 	}
 	c.mu.Unlock()
 	return ansi, nil
+}
+
+func (c *replayCache) evictANSILocked() {
+	for c.ansiBytes > c.maxBytes {
+		tail := c.ansiLRU.Back()
+		if tail == nil {
+			return
+		}
+		victimKey := tail.Value.(string)
+		if victim, ok := c.ansi[victimKey]; ok {
+			c.ansiBytes -= victim.bytes
+			delete(c.ansi, victimKey)
+		}
+		c.ansiLRU.Remove(tail)
+	}
 }

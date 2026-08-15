@@ -38,11 +38,9 @@ func (r *CodexReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
 }
 
 func (r *CodexReader) RenderANSI(id string, cols int) (string, error) {
-	path := r.findSessionFile(id)
-	if path == "" {
-		return "", fmt.Errorf("codex session not found: %s", id)
-	}
-	events, err := codexToRenderEvents(path)
+	// Delegate to GetRenderEvents so this path gets the same tool-result
+	// interleaving and child invocation IDs as the server's render path.
+	events, err := r.GetRenderEvents(id)
 	if err != nil {
 		return "", err
 	}

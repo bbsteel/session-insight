@@ -24,12 +24,18 @@ type countingReader struct {
 
 	rev      atomic.Int64
 	parses   atomic.Int32
+	revCalls atomic.Int32
 	parseErr error
 
 	// bumpRevDuringParse simulates a live-tailing session that grows while
 	// GetRenderEvents is running; the parsed result must be served but not
 	// cached.
 	bumpRevDuringParse atomic.Bool
+
+	// parseStarted/parseRelease let a test suspend the parse mid-flight to
+	// orchestrate singleflight timing. Nil channels disable the hooks.
+	parseStarted chan<- struct{}
+	parseRelease <-chan struct{}
 }
 
 func (r *countingReader) AgentType() string { return r.agentType }
@@ -44,12 +50,17 @@ func (r *countingReader) RenderANSI(id string, cols int) (string, error) {
 	return "", errors.New("not implemented")
 }
 func (r *countingReader) LiveRevision(id string) (int64, error) {
+	r.revCalls.Add(1)
 	return r.rev.Load(), nil
 }
 func (r *countingReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
 	r.parses.Add(1)
 	if r.parseErr != nil {
 		return nil, r.parseErr
+	}
+	if r.parseStarted != nil {
+		r.parseStarted <- struct{}{}
+		<-r.parseRelease
 	}
 	if r.bumpRevDuringParse.Load() {
 		r.rev.Add(1)
@@ -237,6 +248,106 @@ func TestRenderEventsMidParseGrowthNotCached(t *testing.T) {
 	}
 	if got := rd.parses.Load(); got != 2 {
 		t.Errorf("parses = %d, want 2 (mid-parse growth must not be cached)", got)
+	}
+}
+
+// TestRenderEventsSingleflightReportsLeaderRevision: the file grows between
+// the leader's LiveRevision and the waiter's LiveRevision. The waiter shares
+// the leader's parse and must report the leader's revision — reporting its
+// own newer revision would let renderANSIFor key stale content under a
+// current revision.
+func TestRenderEventsSingleflightReportsLeaderRevision(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	rd := &countingReader{agentType: "fake", parseStarted: started, parseRelease: release}
+	rd.rev.Store(1)
+	c := newReplayCache()
+
+	leaderRev := make(chan int64, 1)
+	go func() {
+		_, rev, err := c.eventsFor(rd, "s1")
+		if err != nil {
+			t.Errorf("leader: %v", err)
+		}
+		leaderRev <- rev
+	}()
+	<-started // leader is inside GetRenderEvents
+
+	rd.rev.Store(2) // file grows while the leader parses
+
+	waiterRev := make(chan int64, 1)
+	go func() {
+		_, rev, err := c.eventsFor(rd, "s1")
+		if err != nil {
+			t.Errorf("waiter: %v", err)
+		}
+		waiterRev <- rev
+	}()
+	// Wait until the waiter has observed the new revision (its LiveRevision
+	// is the second call), then give it a scheduling window to block on the
+	// inflight call before releasing the leader's parse.
+	for rd.revCalls.Load() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	if got := <-leaderRev; got != 1 {
+		t.Errorf("leader rev = %d, want 1", got)
+	}
+	if got := <-waiterRev; got != 1 {
+		t.Errorf("waiter rev = %d, want 1 (leader's revision)", got)
+	}
+	if got := rd.parses.Load(); got != 1 {
+		t.Errorf("parses = %d, want 1", got)
+	}
+	// The stale parse must not have been cached: the next call at rev 2
+	// re-parses.
+	if _, rev, err := c.eventsFor(rd, "s1"); err != nil || rev != 2 {
+		t.Errorf("follow-up rev = %d, err = %v; want 2, nil", rev, err)
+	}
+	if got := rd.parses.Load(); got != 2 {
+		t.Errorf("parses = %d, want 2 (stale singleflight result not cached)", got)
+	}
+}
+
+// TestRenderANSIConcurrentMissSingleEntry: concurrent ANSI builds for the
+// same key must not duplicate the LRU element or double-count bytes.
+func TestRenderANSIConcurrentMissSingleEntry(t *testing.T) {
+	rd := &countingReader{agentType: "fake"}
+	rd.rev.Store(9)
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	srv := New(database, nil)
+
+	const callers = 8
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := srv.renderANSIFor(rd, "s1", 120, render.Options{}); err != nil {
+				t.Errorf("renderANSIFor: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := len(srv.replay.ansi); got != 1 {
+		t.Errorf("ansi entries = %d, want 1", got)
+	}
+	if got := srv.replay.ansiLRU.Len(); got != 1 {
+		t.Errorf("ansi LRU elements = %d, want 1 (no duplicates)", got)
+	}
+	var wantBytes int64
+	for _, entry := range srv.replay.ansi {
+		wantBytes = entry.bytes
+	}
+	if srv.replay.ansiBytes != wantBytes {
+		t.Errorf("ansiBytes = %d, want %d (no double-counting)", srv.replay.ansiBytes, wantBytes)
 	}
 }
 
