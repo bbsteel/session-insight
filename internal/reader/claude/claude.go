@@ -422,6 +422,25 @@ func resolveSessionName(aiTitle, lastPrompt, firstUserMsg string, createdAt time
 	return "Session"
 }
 
+// GetSessionMeta returns the cheap head/tail-scan metadata for a session —
+// the same readSessionMeta call GetSession builds its Session from, so
+// UpdatedAt-derived revisions match bit-for-bit. It skips the full transcript
+// parse and exists for callers (e.g. the position-cache revision check) that
+// only need metadata.
+func (r *ClaudeReader) GetSessionMeta(id string) (*model.Session, error) {
+	jsonlPath := r.findSessionFile(id)
+	if jsonlPath == "" {
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("claude session not found: %s", id))
+	}
+	session, ok := readSessionMeta(jsonlPath, id)
+	if !ok {
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("failed to read session: %s", id))
+	}
+	return &session, nil
+}
+
 // ---- GetSession ----
 
 func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
