@@ -143,8 +143,9 @@ function memStorage(initial) {
 {
   assert.deepEqual(loadOutlineCategories(memStorage({})), ['anomaly', 'context', 'file_change', 'key_result'], 'missing key → all on')
   assert.deepEqual(loadOutlineCategories(memStorage({ 'si-outline-categories': 'not json' })), ['anomaly', 'context', 'file_change', 'key_result'], 'corrupt → all on')
-  assert.deepEqual(loadOutlineCategories(memStorage({ 'si-outline-categories': '[]' })), ['anomaly', 'context', 'file_change', 'key_result'], 'empty array (legacy) → all on')
+  assert.deepEqual(loadOutlineCategories(memStorage({ 'si-outline-categories': '[]' })), [], 'explicit all-off selection is restored')
   assert.deepEqual(loadOutlineCategories(memStorage({ 'si-outline-categories': '["anomaly","bogus"]' })), ['anomaly'], 'unknown entries dropped')
+  assert.deepEqual(loadOutlineCategories(memStorage({ 'si-outline-categories': '["bogus"]' })), ['anomaly', 'context', 'file_change', 'key_result'], 'fully invalid → all on')
   const s = memStorage({})
   persistOutlineCategories(s, ['context'])
   assert.deepEqual(loadOutlineCategories(s), ['context'], 'round-trip persists choice')

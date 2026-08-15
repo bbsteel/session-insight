@@ -300,6 +300,12 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
   useEffect(() => {
     if (!controlRef) return
     controlRef.current = { updateViewport }
+    // Re-applying the latest metrics refreshes the imperative range label —
+    // re-registration alone (e.g. after a locale change) would leave it stale
+    // until the next terminal scroll event.
+    if (scrollMetricsRef.current) {
+      updateViewport(scrollMetricsRef.current, visibleRangeRef.current)
+    }
     return () => {
       if (controlRef.current?.updateViewport === updateViewport) controlRef.current = null
     }
@@ -311,7 +317,13 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
 
     const updateTrackLength = () => {
       const next = container.getBoundingClientRect().height
+      const changed = next !== trackLengthRef.current
       trackLengthRef.current = next
+      // PositionModeContent receives the track height via props, so a resize
+      // must re-render it even when the content offset (0 at the top) does
+      // not change — otherwise cost segments keep stale geometry while the
+      // viewport frame uses the new height.
+      if (changed) setContentOffsetVersion(v => v + 1)
       if (scrollMetricsRef.current) {
         updateViewport(scrollMetricsRef.current, visibleRangeRef.current)
       }

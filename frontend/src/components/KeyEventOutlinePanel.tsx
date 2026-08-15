@@ -292,8 +292,16 @@ export default function KeyEventOutlinePanel({
               style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px', borderLeft: `2px solid ${meta.color}` } as React.CSSProperties}
             >
               <div
-                className="flex cursor-pointer items-stretch hover:bg-[var(--bg-surface-hover)]"
+                className="flex cursor-pointer items-stretch hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
                 onClick={() => jump(item)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={ev => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault()
+                    jump(item)
+                  }
+                }}
                 title={t('panel.jumpLineTurn', { line: item.line, turn: item.turnIndex + 1 })}
               >
                 <div className="w-[58px] flex-shrink-0 border-r border-[var(--border-muted)] px-1 pt-1.5 text-center text-meta tabular-nums text-[var(--text-muted)]">

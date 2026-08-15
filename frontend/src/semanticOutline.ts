@@ -202,6 +202,11 @@ export function loadOutlineCategories(storage: Pick<Storage, 'getItem'>): Outlin
     if (Array.isArray(parsed)) {
       const valid = parsed.filter((c): c is OutlineCategory =>
         typeof c === 'string' && (OUTLINE_CATEGORIES as string[]).includes(c))
+      // A fully valid array round-trips as-is — an empty one is the
+      // legitimate "all categories off" state the panel renders explicitly.
+      if (valid.length === parsed.length) return valid
+      // Partially invalid arrays (e.g. codes from a newer build) keep their
+      // recognizable entries rather than resetting the user's choice.
       if (valid.length > 0) return valid
     }
   } catch { /* corrupt local state falls back to defaults */ }

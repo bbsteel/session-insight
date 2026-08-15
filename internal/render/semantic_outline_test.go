@@ -144,6 +144,11 @@ func TestOutlineKeyResultAllowlist(t *testing.T) {
 		"curl https://example.com",
 		"make deploy",
 		"tsc", // without --noEmit this emits output; not a check
+		// Single-& (background operator or quoted arg) makes the recorded
+		// status unattributable to the matched segment → reject conservatively.
+		"go test ./... & echo done",
+		"echo done & go test ./...",
+		"go test ./... -run 'TestA&B'",
 	}
 	for _, cmd := range negative {
 		t.Run("noise/"+cmd, func(t *testing.T) {

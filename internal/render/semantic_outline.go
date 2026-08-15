@@ -541,14 +541,24 @@ var npmLikeSubcommands = map[string]string{
 // conservatively match the allowlist, or "" for everything else. It handles
 // whitespace normalization, simple `cd <dir> &&` prefixes, and `&&`/`;`
 // command chains; it is not a general shell parser and never will be.
+//
+// A single `&` (background operator) or one inside a quoted argument makes
+// the outcome status unattributable to the matched segment — e.g. in
+// `go test ./... & echo done` the recorded status belongs to `echo done`.
+// Conservative rule: any `&` outside `&&` rejects the command (a false
+// negative), never a guessed key result.
 func classifyVerificationCommand(input map[string]any) string {
 	cmd := extractCommand(input)
 	if cmd == "" {
 		return ""
 	}
+	if strings.Contains(strings.ReplaceAll(cmd, "&&", ""), "&") {
+		return ""
+	}
 	// Split chained commands; each segment is matched independently so
-	// `cd x && go test ./...` resolves via its second segment.
-	for _, segment := range strings.FieldsFunc(cmd, func(r rune) bool { return r == ';' || r == '&' }) {
+	// `cd x && go test ./...` resolves via its second segment. The single-&
+	// rejection above makes this normalization safe.
+	for _, segment := range strings.FieldsFunc(strings.ReplaceAll(cmd, "&&", ";"), func(r rune) bool { return r == ';' }) {
 		if kind := matchVerificationSegment(segment); kind != "" {
 			return kind
 		}
