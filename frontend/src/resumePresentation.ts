@@ -13,7 +13,6 @@ export function isSessionWriting(updatedAt: string | undefined, now: number): bo
 }
 
 export interface ResumeControlFlags {
-  sessionLive?: boolean
   emitting?: boolean
 }
 
@@ -31,24 +30,25 @@ export interface ResumeControlPresentation {
   preferTerminalLabel: boolean
 }
 
-function deriveBindingState(
-  terminal: SessionTerminalStatus | null,
-  running: boolean,
-): TerminalBindingState {
-  const raw = terminal?.state
-  if (raw === 'launching' || raw === 'active' || raw === 'active_unknown') return raw
-  if (running) return 'active_unknown'
-  return raw ?? 'none'
+function deriveBindingState(terminal: SessionTerminalStatus | null): TerminalBindingState {
+  return terminal?.state ?? 'none'
+}
+
+function planCanLaunch(plan: ResumePlan | null): boolean {
+  if (!plan) return false
+  if (plan.status === 'cwd_unavailable') return false
+  if (plan.status === 'ready') return true
+  return plan.status === 'session_running' && !!plan.command
 }
 
 function continueBlockedReasonKey(
   canLaunch: boolean,
-  running: boolean,
+  knownTerminalRunning: boolean,
   emitting: boolean,
   plan: ResumePlan | null,
 ): string | undefined {
   if (canLaunch) return undefined
-  if (running) return 'resume.continueBlockedRunning'
+  if (knownTerminalRunning) return 'resume.continueBlockedRunning'
   if (emitting) return 'resume.continueBlockedWriting'
   if (plan?.status === 'cwd_unavailable') return 'resume.workspaceMissing'
   return 'resume.unavailable'
@@ -60,16 +60,15 @@ export function presentResumeControl(
   busy: boolean,
   flags: ResumeControlFlags = {},
 ): ResumeControlPresentation {
-  const running = plan?.status === 'session_running'
-    || plan?.liveness?.is_live === true
-    || flags.sessionLive === true
   const emitting = flags.emitting === true
-  const state = deriveBindingState(terminal, running)
-  const active = state === 'active' || state === 'active_unknown'
+  const state = deriveBindingState(terminal)
+  const knownTerminalRunning = state === 'active'
+  const running = knownTerminalRunning || state === 'active_unknown'
+  const active = running
   const canFocus = state === 'active' && terminal?.focusable === true
-  const ready = plan?.status === 'ready'
-  const canLaunch = ready && !running && !emitting
-  const blockedReason = continueBlockedReasonKey(canLaunch, running, emitting, plan)
+  const ready = planCanLaunch(plan)
+  const canLaunch = ready && !knownTerminalRunning && !emitting
+  const blockedReason = continueBlockedReasonKey(canLaunch, knownTerminalRunning, emitting, plan)
   const base = {
     state, active, canFocus, ready, canLaunch, running, emitting,
     continueBlockedReasonKey: blockedReason,
@@ -79,14 +78,14 @@ export function presentResumeControl(
   if (busy) return { ...base, primaryLabelKey: 'resume.working' }
   if (state === 'launching') return { ...base, primaryLabelKey: 'resume.starting' }
   if (canFocus) return { ...base, primaryLabelKey: 'resume.returnTerminal', preferTerminalLabel: true }
-  if (active && terminal?.terminal_name) {
+  if (knownTerminalRunning && terminal?.terminal_name) {
     return {
       ...base,
       primaryLabelKey: 'resume.runningIn',
       primaryLabelVars: { terminal: terminal.terminal_name },
     }
   }
-  if (active) return { ...base, primaryLabelKey: 'resume.runningUnknown' }
+  if (knownTerminalRunning) return { ...base, primaryLabelKey: 'resume.runningUnknown' }
   if (emitting) return { ...base, primaryLabelKey: 'resume.writing' }
   if (canLaunch) return { ...base, primaryLabelKey: 'resume.continue' }
   if (plan?.status === 'cwd_unavailable') {

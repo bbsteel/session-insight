@@ -20,7 +20,10 @@ const justNow = new Date().toISOString()
 
 const idleId = 'fixture-resume-idle'
 const writingId = 'fixture-resume-writing'
-const liveId = 'fixture-resume-live'
+const liveUnknownId = 'fixture-resume-live-unknown'
+const knownRunningId = 'fixture-resume-known-running'
+
+const twoMinutesAgo = new Date(Date.now() - 2 * 60_000).toISOString()
 
 function terminalNone() {
   return {
@@ -74,7 +77,7 @@ function detail(id, { isLive, updatedAt }) {
   }
 }
 
-function planFor(id, { running, live }) {
+function planFor(id, { running, live, terminal }) {
   return {
     status: running ? 'session_running' : 'ready',
     agent_type: 'claude',
@@ -87,7 +90,7 @@ function planFor(id, { running, live }) {
       state: live ? 'estimated' : 'exact',
       reason_code: live ? 'timestamp_heuristic' : 'session_not_live',
     },
-    terminal: terminalNone(),
+    terminal: terminal ?? terminalNone(),
   }
 }
 
@@ -100,9 +103,25 @@ const fixtures = {
     detail: detail(writingId, { isLive: false, updatedAt: justNow }),
     plan: planFor(writingId, { running: false, live: false }),
   },
-  [liveId]: {
-    detail: detail(liveId, { isLive: true, updatedAt: justNow }),
-    plan: planFor(liveId, { running: true, live: true }),
+  [liveUnknownId]: {
+    detail: detail(liveUnknownId, { isLive: true, updatedAt: twoMinutesAgo }),
+    plan: planFor(liveUnknownId, { running: true, live: true }),
+  },
+  [knownRunningId]: {
+    detail: detail(knownRunningId, { isLive: true, updatedAt: twoMinutesAgo }),
+    plan: planFor(knownRunningId, {
+      running: true,
+      live: true,
+      terminal: {
+        state: 'active',
+        session_live: true,
+        liveness_state: 'exact',
+        terminal_name: 'Konsole',
+        tab_id: '9',
+        confidence: 'exact',
+        focusable: true,
+      },
+    }),
   },
 }
 
@@ -234,7 +253,7 @@ function copy(locale) {
       unsafe: '跳过权限检查继续…',
       writing: '正在输出',
       writingHint: '会话正在输出消息，此时无法在这里继续工作。',
-      running: '会话运行中 · 终端未知',
+      runningIn: 'Konsole',
       runningHint: '会话仍在运行。请返回对应终端，不要再启动一份。',
     }
     : {
@@ -245,7 +264,7 @@ function copy(locale) {
       unsafe: 'Continue without permission checks…',
       writing: 'Writing…',
       writingHint: 'This session is currently writing messages, so it cannot be continued here.',
-      running: 'Running · terminal unknown',
+      runningIn: 'Konsole',
       runningHint: 'This session is still running. Return to its terminal instead of starting another copy.',
     }
 }
@@ -258,7 +277,13 @@ async function openSession(page, locale, id) {
   await page.goto(`${ready}/#/session/claude/${id}`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   try {
     await page.locator('[data-testid="session-toolbar"]').waitFor({ state: 'visible', timeout: 20_000 })
-    await page.locator('[data-testid="resume-primary-button"]').waitFor({ state: 'visible', timeout: 10_000 })
+    const primary = page.locator('[data-testid="resume-primary-button"]')
+    await primary.waitFor({ state: 'visible', timeout: 10_000 })
+    await primary.waitFor({ state: 'attached', timeout: 10_000 })
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[data-testid="resume-primary-button"]')
+      return button instanceof HTMLButtonElement && !button.disabled
+    }, null, { timeout: 10_000 })
   } catch (err) {
     await page.screenshot({ path: join(outDir, `open-failed-${locale}-${id}.png`) })
     const body = (await page.locator('body').innerText().catch(() => '')).slice(0, 800)
@@ -296,6 +321,8 @@ async function assertHierarchy(menu, labels) {
   assert((await continueBtn.innerText()).includes(labels.continue), `continue label: ${await continueBtn.innerText()}`)
   assert((await copyBtn.innerText()).includes(labels.copy), `copy label: ${await copyBtn.innerText()}`)
   assert((await unsafeBtn.innerText()).includes(labels.unsafe), `unsafe label: ${await unsafeBtn.innerText()}`)
+  const separators = await menu.locator('[data-testid="resume-menu-separator"]').count()
+  assert(separators >= 2, `expected status/actions and unsafe separators, got ${separators}`)
 
   const statusTitleColor = await menu.locator('[data-testid="resume-menu-status-title"]').evaluate(el => getComputedStyle(el).color)
   const continueColor = await continueBtn.evaluate(el => getComputedStyle(el).color)
@@ -340,19 +367,31 @@ async function runLocale(browser, locale) {
   await writingPage.screenshot({ path: join(outDir, `writing-${locale}.png`) })
   await writingPage.close()
 
-  const livePage = await browser.newPage({ viewport: { width: 1400, height: 900 } })
-  livePage.on('pageerror', e => errors.push(String(e)))
-  await openSession(livePage, locale, liveId)
-  const livePrimary = (await livePage.locator('[data-testid="resume-primary-button"]').innerText()).trim()
-  assert(livePrimary.includes(labels.running), `${locale} live primary should be running-unknown, got "${livePrimary}"`)
-  const liveMenu = await openMenu(livePage)
-  const live = await assertHierarchy(liveMenu, labels)
-  assert(!(await live.continueBtn.isEnabled()), `${locale} live continue should be disabled`)
-  assert(await live.copyBtn.isEnabled(), `${locale} live copy should stay enabled`)
-  const liveNote = (await livePage.locator('[data-testid="resume-menu-blocked"]').innerText()).trim()
-  assert(liveNote === labels.runningHint, `${locale} live hint mismatch: ${liveNote}`)
-  await livePage.screenshot({ path: join(outDir, `live-${locale}.png`) })
-  await livePage.close()
+  const liveUnknownPage = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  liveUnknownPage.on('pageerror', e => errors.push(String(e)))
+  await openSession(liveUnknownPage, locale, liveUnknownId)
+  const liveUnknownPrimary = (await liveUnknownPage.locator('[data-testid="resume-primary-button"]').innerText()).trim()
+  assert(liveUnknownPrimary.includes(labels.continue), `${locale} live-unknown primary should stay continue, got "${liveUnknownPrimary}"`)
+  const liveUnknownMenu = await openMenu(liveUnknownPage)
+  const liveUnknown = await assertHierarchy(liveUnknownMenu, labels)
+  assert(await liveUnknown.continueBtn.isEnabled(), `${locale} live-unknown continue should stay enabled when not writing`)
+  assert(await liveUnknownPage.locator('[data-testid="resume-menu-blocked"]').count() === 0, `${locale} live-unknown menu should not show a blocked note`)
+  await liveUnknownPage.screenshot({ path: join(outDir, `live-unknown-${locale}.png`) })
+  await liveUnknownPage.close()
+
+  const knownPage = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  knownPage.on('pageerror', e => errors.push(String(e)))
+  await openSession(knownPage, locale, knownRunningId)
+  const knownPrimary = (await knownPage.locator('[data-testid="resume-primary-button"]').innerText()).trim()
+  assert(knownPrimary.includes(labels.runningIn), `${locale} known-running primary should name the terminal, got "${knownPrimary}"`)
+  const knownMenu = await openMenu(knownPage)
+  const known = await assertHierarchy(knownMenu, labels)
+  assert(!(await known.continueBtn.isEnabled()), `${locale} known-running continue should be disabled`)
+  assert(await known.copyBtn.isEnabled(), `${locale} known-running copy should stay enabled`)
+  const knownNote = (await knownPage.locator('[data-testid="resume-menu-blocked"]').innerText()).trim()
+  assert(knownNote === labels.runningHint, `${locale} known-running hint mismatch: ${knownNote}`)
+  await knownPage.screenshot({ path: join(outDir, `known-running-${locale}.png`) })
+  await knownPage.close()
 
   if (errors.length) throw new Error(`${locale} page errors:\n${errors.join('\n')}`)
   console.log(`${locale} resume menu checks passed`)

@@ -37,20 +37,29 @@ assert.equal(presentation.primaryLabelKey, 'resume.returnTerminal')
 assert.equal(presentation.preferTerminalLabel, true)
 
 presentation = presentResumeControl({ ...plan, status: 'session_running' }, null, false)
-assert.equal(presentation.state, 'active_unknown')
-assert.equal(presentation.running, true)
-assert.equal(presentation.canLaunch, false)
-assert.equal(presentation.primaryLabelKey, 'resume.runningUnknown')
+assert.equal(presentation.state, 'none')
+assert.equal(presentation.canLaunch, true)
+assert.equal(presentation.primaryLabelKey, 'resume.continue')
 
-// A live plan with a "none" binding must not look idle / continuable.
+// Live / session_running with an unknown terminal is not precise enough to block.
 presentation = presentResumeControl({ ...plan, status: 'session_running' }, terminal, false)
-assert.equal(presentation.state, 'active_unknown')
+assert.equal(presentation.state, 'none')
+assert.equal(presentation.canLaunch, true)
+assert.equal(presentation.primaryLabelKey, 'resume.continue')
+assert.equal(presentation.continueBlockedReasonKey, undefined)
+
+// Known terminal + running must block Continue even when not writing.
+const knownRunning = {
+  ...terminal, state: 'active', terminal_name: 'Konsole', tab_id: '9', confidence: 'exact', focusable: false,
+}
+presentation = presentResumeControl({ ...plan, status: 'session_running' }, knownRunning, false)
 assert.equal(presentation.canLaunch, false)
-assert.equal(presentation.primaryLabelKey, 'resume.runningUnknown')
+assert.equal(presentation.primaryLabelKey, 'resume.runningIn')
 assert.equal(presentation.continueBlockedReasonKey, 'resume.continueBlockedRunning')
 
 presentation = presentResumeControl({ ...plan, status: 'cwd_unavailable' }, terminal, false)
 assert.equal(presentation.primaryLabelKey, 'resume.workspaceMissing')
+assert.equal(presentation.canLaunch, false)
 assert.equal(presentResumeControl(plan, terminal, true).primaryLabelKey, 'resume.working')
 
 // Process-liveness false-negative while the transcript is still growing.
@@ -61,17 +70,12 @@ assert.equal(presentation.emitting, true)
 assert.equal(presentation.primaryLabelKey, 'resume.writing')
 assert.equal(presentation.continueBlockedReasonKey, 'resume.continueBlockedWriting')
 
-// Session detail says live even if the resume plan is still "ready".
-presentation = presentResumeControl(plan, terminal, false, { sessionLive: true })
-assert.equal(presentation.running, true)
-assert.equal(presentation.canLaunch, false)
-assert.equal(presentation.primaryLabelKey, 'resume.runningUnknown')
+// Known-terminal running takes precedence over writing for the blocked reason.
+presentation = presentResumeControl(plan, {
+  ...terminal, state: 'active', terminal_name: 'Konsole', confidence: 'exact', focusable: true,
+}, false, { emitting: true })
 assert.equal(presentation.continueBlockedReasonKey, 'resume.continueBlockedRunning')
-
-// Running takes precedence over writing for the blocked reason.
-presentation = presentResumeControl(plan, terminal, false, { sessionLive: true, emitting: true })
-assert.equal(presentation.continueBlockedReasonKey, 'resume.continueBlockedRunning')
-assert.equal(presentation.primaryLabelKey, 'resume.runningUnknown')
+assert.equal(presentation.primaryLabelKey, 'resume.returnTerminal')
 
 const now = Date.parse('2026-08-15T12:00:00.000Z')
 assert.equal(isSessionWriting(new Date(now - 1_000).toISOString(), now), true)

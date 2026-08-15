@@ -111,8 +111,8 @@ func (s *Server) handleResumeSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if runtime.caps.Liveness.IsLive {
-		writeResumeJSONError(w, http.StatusConflict, "session_running", "the Agent session is already running")
+	if s.resolveTerminalStatus(runtime).State == "active" {
+		writeResumeJSONError(w, http.StatusConflict, "session_running", "the Agent session is already running in a known terminal")
 		return
 	}
 	command, err := buildResumeCommand(runtime, request.SkipPermissions)
