@@ -19,6 +19,7 @@ type capsAPIReader struct {
 	live    *bool
 	liveErr error
 	hasRev  bool
+	pids    []int
 }
 
 func (r *capsAPIReader) AgentType() string {
@@ -60,6 +61,9 @@ func (r *capsAPIReader) LiveRevision(id string) (int64, error) {
 		return 0, nil
 	}
 	return 7, nil
+}
+func (r *capsAPIReader) SessionProcesses(id string) ([]int, error) {
+	return r.pids, nil
 }
 
 var (

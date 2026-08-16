@@ -108,6 +108,14 @@ export default function ResumeTerminalControl({ session }: Props) {
     return () => window.clearInterval(timer)
   }, [session.agent_type, session.id, t, terminal?.state])
 
+  // Success/info feedback fades after a short dwell; errors stay until the
+  // next action so a failed resume never silently reverts to "Continue work".
+  useEffect(() => {
+    if (!feedback) return
+    const timer = window.setTimeout(() => setFeedback(''), 6000)
+    return () => window.clearTimeout(timer)
+  }, [feedback])
+
   useEffect(() => {
     if (!menuOpen) return
     const closeOutside = (event: MouseEvent) => {
@@ -155,7 +163,17 @@ export default function ResumeTerminalControl({ session }: Props) {
       const result = await resumeSession(session.id, session.agent_type, unsafe)
       setTerminal(result.terminal)
       setFeedback(t('resume.terminalOpened', { terminal: result.terminal.terminal_name || t('resume.terminal') }))
-      await refresh().catch(() => {})
+      const next = await refresh().catch(() => null)
+      if (next && (next.terminal.state === 'active' || next.terminal.state === 'active_unknown')) {
+        // Verification can land before the launching-state poll observes it.
+        setFeedback(t('resume.verified'))
+      } else if (next && next.terminal.state === 'stopped') {
+        // A binding already observed stopped right after launch means the agent
+        // exited before verification — the launching-state poll never starts,
+        // so surface the failure here instead of reverting silently.
+        setFeedback('')
+        setError(t('resume.notVerified'))
+      }
     } catch (err) {
       setFeedback('')
       setError(errorMessage(err, t))
@@ -255,6 +273,17 @@ export default function ResumeTerminalControl({ session }: Props) {
       >
         ▾
       </button>
+      {(error || feedback) && (
+        <span
+          role="status"
+          aria-live="polite"
+          data-testid="resume-feedback"
+          title={error || feedback}
+          className={`ml-2 max-w-[16rem] truncate text-meta ${error ? 'text-[var(--error)]' : 'text-[var(--accent-green)]'}`}
+        >
+          {error || feedback}
+        </span>
+      )}
       {menuOpen && plan && createPortal(
         <div
           ref={menuRef}
