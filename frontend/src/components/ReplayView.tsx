@@ -1886,31 +1886,28 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {/*
-            Explicit live-state indicator: the four states the replay can be
-            in. 加载中 wins while the initial render streams; for a live
-            session the follow toggle decides 追尾中 vs 已暂停; a session
-            whose source stopped writing shows 来源已停止 instead of silently
-            losing the badge. Deliberately chromeless (no pill background, no
-            hover, default cursor): it sits inside the meta text run as a
-            colored-dot status readout, not a button.
+            Explicit live-state chip: the four states the replay can be in.
+            加载中 wins while the initial render streams; for a live session
+            the follow toggle decides 追尾中 vs 已暂停; a session whose source
+            stopped writing shows 来源已停止 instead of silently losing the badge.
           */}
           {viewMode === 'terminal' && terminalLoading ? (
-            <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--accent-blue)]" data-testid="replay-status" data-state="loading">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent-blue)]" />{t('replay.statusLoading')}
+            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-blue)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-blue)]" data-testid="replay-status" data-state="loading">
+              {t('replay.statusLoading')}
             </span>
           ) : sessionIsLive ? (
             followOutput ? (
-              <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--accent-green)]" data-testid="replay-status" data-state="following">
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" data-testid="replay-status" data-state="following">
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.statusFollowing')}
               </span>
             ) : (
-              <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--accent-amber)]" data-testid="replay-status" data-state="paused">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent-amber)]" />{t('replay.statusPaused')}
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-amber,#d29922)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-amber,#d29922)]" data-testid="replay-status" data-state="paused">
+                {t('replay.statusPaused')}
               </span>
             )
           ) : (
-            <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--text-muted)]" data-testid="replay-status" data-state="ended">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--text-muted)]" />{t('replay.statusEnded')}
+            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[var(--bg-surface-hover)] px-1.5 text-meta font-medium text-[var(--text-muted)]" data-testid="replay-status" data-state="ended">
+              {t('replay.statusEnded')}
             </span>
           )}
           {session.import_info && (
