@@ -604,12 +604,11 @@ func (s *Server) handleRenderSession(w http.ResponseWriter, r *http.Request) {
 
 	var lastErr error
 	for _, rd := range s.Readers {
-		events, err := rd.GetRenderEvents(id)
+		ansi, err := s.renderANSIFor(rd, id, cols, opts)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		ansi := render.FormatEventsOpts(events, cols, opts)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(ansi))
 		return
@@ -629,7 +628,7 @@ func (s *Server) handleSessionEdits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, rd := range s.Readers {
-		events, err := rd.GetRenderEvents(id)
+		events, err := s.renderEventsFor(rd, id)
 		if err != nil {
 			continue
 		}
@@ -661,7 +660,7 @@ func (s *Server) handleSessionToolOutputs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for _, rd := range s.Readers {
-		events, err := rd.GetRenderEvents(id)
+		events, err := s.renderEventsFor(rd, id)
 		if err != nil {
 			continue
 		}
@@ -740,13 +739,23 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 		cols = render.TermWidth
 	}
 
-	// Find session and its reader.
+	// Find session and its reader. Prefer the cheap head/tail meta scan when
+	// the reader offers it: the revision below only needs UpdatedAt, and a
+	// full GetSession parse of a long session costs seconds even when the
+	// position cache then hits.
 	var sess *model.Session
 	var sessDetail *model.SessionDetail
-	var foundReader interface {
-		GetRenderEvents(id string) ([]model.RenderEvent, error)
-	}
+	var foundReader reader.BaseSessionReader
 	for _, rd := range s.Readers {
+		if mp, ok := rd.(reader.SessionMetaProvider); ok {
+			meta, err := mp.GetSessionMeta(id)
+			if err != nil || meta == nil {
+				continue
+			}
+			sess = meta
+			foundReader = rd
+			break
+		}
 		detail, err := rd.GetSession(id)
 		if err != nil || detail == nil {
 			continue
@@ -788,18 +797,36 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 	dbRef := s.DB
 
 	go func() {
-		events, err := foundReader.GetRenderEvents(id)
+		events, err := s.renderEventsFor(foundReader, id)
 		if err != nil {
 			ch <- buildResult{err: err}
 			return
 		}
 		fr := render.FormatEventsResultOpts(events, cols, opts)
 
+		// The semantic outline also uses session-detail facts; when the
+		// meta fast path was taken above, fetch the detail lazily — only
+		// the cache-miss build path pays for it. A failure here means the
+		// session became unreadable mid-request; fail the build rather
+		// than degrade to a detail-less outline.
+		detail := sessDetail
+		if detail == nil {
+			d, derr := foundReader.GetSession(id)
+			if derr != nil || d == nil {
+				if derr == nil {
+					derr = fmt.Errorf("session detail unavailable: %s", id)
+				}
+				ch <- buildResult{err: derr}
+				return
+			}
+			detail = d
+		}
+
 		// Merge the sparse key-event outline into the core positions and order
 		// the combined set with the shared tie-breaker.
 		outline, ostats := render.BuildSemanticOutline(render.SemanticOutlineInput{
 			Events:        events,
-			Detail:        sessDetail,
+			Detail:        detail,
 			CorePositions: fr.Positions,
 		})
 		rpositions := append(fr.Positions, outline...)
