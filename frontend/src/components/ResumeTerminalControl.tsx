@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { APIError, fetchResumePlan, fetchSessionTerminal, focusSessionTerminal, resumeSession } from '../api'
 import type { ResumePlan, SessionDetail, SessionTerminalStatus } from '../types'
 import { useI18n } from '../i18n'
-import { presentResumeControl } from '../resumePresentation'
-
+import {
+  isSessionWriting,
+  presentResumeControl,
+  presentResumeMenu,
+  resumeBindingLabelKey,
+  type ResumeMenuActionKind,
+} from '../resumePresentation'
 interface Props {
   session: SessionDetail
 }
@@ -12,6 +17,13 @@ interface Props {
 function terminalLabel(status: SessionTerminalStatus, t: (key: string, vars?: Record<string, string | number>) => string): string {
   if (!status.terminal_name) return ''
   return status.tab_id ? t('resume.tabLabel', { terminal: status.terminal_name, tab: status.tab_id }) : status.terminal_name
+}
+
+const actionTestId: Record<ResumeMenuActionKind, string> = {
+  focus: 'resume-menu-focus',
+  continue: 'resume-menu-continue',
+  copy: 'resume-menu-copy',
+  unsafe: 'resume-menu-unsafe',
 }
 
 export default function ResumeTerminalControl({ session }: Props) {
@@ -24,6 +36,7 @@ export default function ResumeTerminalControl({ session }: Props) {
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 })
+  const [now, setNow] = useState(() => Date.now())
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
@@ -32,11 +45,6 @@ export default function ResumeTerminalControl({ session }: Props) {
     const rect = rootRef.current?.getBoundingClientRect()
     if (rect) setMenuPosition({ left: rect.left, top: rect.bottom + 4 })
   }, [])
-
-  const openMenu = useCallback(() => {
-    positionMenu()
-    setMenuOpen(true)
-  }, [positionMenu])
 
   const closeMenu = useCallback((restoreFocus: boolean) => {
     setMenuOpen(false)
@@ -50,6 +58,12 @@ export default function ResumeTerminalControl({ session }: Props) {
     setTerminal(next.terminal)
     return next
   }, [session.agent_type, session.id])
+
+  const openMenu = useCallback(() => {
+    positionMenu()
+    setMenuOpen(true)
+    void refresh().catch(err => setError(errorMessage(err, t)))
+  }, [positionMenu, refresh, t])
 
   useEffect(() => {
     let cancelled = false
@@ -68,6 +82,17 @@ export default function ResumeTerminalControl({ session }: Props) {
       })
     return () => { cancelled = true }
   }, [session.agent_type, session.id, t])
+
+  useEffect(() => {
+    if (!isSessionWriting(session.updated_at, Date.now())) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => {
+      const current = Date.now()
+      setNow(current)
+      if (!isSessionWriting(session.updated_at, current)) window.clearInterval(timer)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [session.updated_at])
 
   useEffect(() => {
     if (terminal?.state !== 'launching') return
@@ -110,7 +135,18 @@ export default function ResumeTerminalControl({ session }: Props) {
     }
   }, [closeMenu, menuOpen, positionMenu])
 
+  const presentation = presentResumeControl(plan, terminal, busy, {
+    emitting: isSessionWriting(session.updated_at, now),
+  })
+  const { state, canFocus, canLaunch, emitting } = presentation
+  const knownTerminalRunning = state === 'active'
+  const menuActions = presentResumeMenu(plan, presentation)
+  const primaryLabel = presentation.preferTerminalLabel && terminal
+    ? terminalLabel(terminal, t) || t(presentation.primaryLabelKey, presentation.primaryLabelVars)
+    : t(presentation.primaryLabelKey, presentation.primaryLabelVars)
+
   const launch = async (unsafe: boolean) => {
+    if (!canLaunch) return
     setBusy(true)
     setError('')
     setFeedback(t('resume.starting'))
@@ -153,17 +189,38 @@ export default function ResumeTerminalControl({ session }: Props) {
     }
   }
 
-  const presentation = presentResumeControl(plan, terminal, busy)
-  const { state, active, canFocus, ready } = presentation
-  const primaryLabel = presentation.preferTerminalLabel && terminal
-    ? terminalLabel(terminal, t) || t(presentation.primaryLabelKey, presentation.primaryLabelVars)
-    : t(presentation.primaryLabelKey, presentation.primaryLabelVars)
+  const runAction = (kind: ResumeMenuActionKind) => {
+    if (kind === 'focus') void focus()
+    else if (kind === 'continue') void launch(false)
+    else if (kind === 'copy') void copyCommand()
+    else setConfirmUnsafe(true)
+  }
+
+  const actionLabel = (kind: ResumeMenuActionKind): ReactNode => {
+    if (kind === 'focus') return t('resume.returnTerminal')
+    if (kind === 'continue') return t('resume.continue')
+    if (kind === 'copy') return t('resume.copyCommand')
+    return (
+      <>
+        {t('resume.continueUnsafe')}
+        <span className="ml-1.5 text-meta text-[var(--warning)]">{t('sidebar.unsafe')}</span>
+      </>
+    )
+  }
 
   const primary = () => {
     if (canFocus) void focus()
-    else if (ready && !active) void launch(false)
+    else if (canLaunch) void launch(false)
     else openMenu()
   }
+
+  const statusDot = state === 'launching' || (emitting && !knownTerminalRunning)
+    ? 'animate-pulse bg-[var(--accent-blue)]'
+    : knownTerminalRunning
+      ? 'bg-[var(--accent-green)]'
+      : canLaunch
+        ? 'bg-[var(--text-muted)]'
+        : 'bg-[var(--warning)]'
 
   return (
     <div ref={rootRef} className="relative inline-flex items-center" data-testid="resume-terminal-control">
@@ -172,14 +229,14 @@ export default function ResumeTerminalControl({ session }: Props) {
         onClick={primary}
         disabled={busy || !plan}
         className={`h-7 rounded-l-md border border-r-0 px-2 inline-flex max-w-[13rem] items-center gap-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 ${
-          active
+          knownTerminalRunning
             ? 'border-[color-mix(in_srgb,var(--accent-green)_45%,var(--border-default))] bg-[color-mix(in_srgb,var(--accent-green)_12%,transparent)] text-[var(--accent-green)]'
             : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
         }`}
         title={error || feedback || primaryLabel}
         data-testid="resume-primary-button"
       >
-        <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${state === 'launching' ? 'animate-pulse bg-[var(--accent-blue)]' : active ? 'bg-[var(--accent-green)]' : ready ? 'bg-[var(--text-muted)]' : 'bg-[var(--warning)]'}`} />
+        <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusDot}`} />
         <span className="truncate">{primaryLabel}</span>
       </button>
       <button
@@ -201,51 +258,67 @@ export default function ResumeTerminalControl({ session }: Props) {
       {menuOpen && plan && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[10000] w-80 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] p-2 shadow-xl"
+          className="fixed z-[10000] w-80 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] py-1.5 shadow-xl"
           style={menuPosition}
           role="menu"
           data-testid="resume-menu"
         >
-          <div className="px-2 py-1.5">
-            <div className="text-nav font-medium text-[var(--text-primary)]">
+          <div className="px-2.5 pb-2 pt-1 select-none" data-testid="resume-menu-status">
+            <div className="text-meta text-[var(--text-muted)]">{t('resume.sectionStatus')}</div>
+            <div className="mt-1 text-nav text-[var(--text-secondary)]" data-testid="resume-menu-status-title">
               {terminal?.terminal_name ? terminalLabel(terminal, t) : t('resume.terminalUnknown')}
             </div>
             <div className="mt-0.5 truncate text-meta text-[var(--text-muted)]" title={plan.cwd}>{plan.cwd || t('resume.noWorkspace')}</div>
-            <div className="mt-1 text-meta text-[var(--text-secondary)]">
-              {terminal?.confidence === 'exact'
-                ? t('resume.bindingExact')
-                : terminal?.confidence === 'instance'
-                  ? t('resume.bindingInstance')
-                  : t('resume.bindingUnknown')}
-            </div>
+            <div className="mt-1 text-meta text-[var(--text-muted)]">{t(resumeBindingLabelKey(terminal))}</div>
           </div>
+          <div className="my-1 border-t border-[var(--border-default)]" role="separator" data-testid="resume-menu-separator" />
           {(error || feedback) && (
-            <div className={`mx-2 mb-1 rounded px-2 py-1 text-meta ${error ? 'bg-[color-mix(in_srgb,var(--error)_12%,transparent)] text-[var(--error)]' : 'bg-[color-mix(in_srgb,var(--accent-green)_12%,transparent)] text-[var(--accent-green)]'}`} role="status">
+            <div className={`mx-2 my-1 rounded px-2 py-1 text-meta ${error ? 'bg-[color-mix(in_srgb,var(--error)_12%,transparent)] text-[var(--error)]' : 'bg-[color-mix(in_srgb,var(--accent-green)_12%,transparent)] text-[var(--accent-green)]'}`} role="status">
               {error || feedback}
             </div>
           )}
-          {canFocus && (
-            <button type="button" onClick={() => void focus()} className="w-full rounded px-2 py-1.5 text-left text-nav text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]" role="menuitem">
-              {t('resume.returnTerminal')}
-            </button>
+          {!canLaunch && presentation.continueBlockedReasonKey && (
+            <div
+              className="mx-2 my-1 rounded bg-[var(--bg-inset)] px-2 py-1 text-meta text-[var(--text-muted)]"
+              role="note"
+              data-testid="resume-menu-blocked"
+            >
+              {t(presentation.continueBlockedReasonKey)}
+            </div>
           )}
-          {ready && !active && (
-            <button type="button" onClick={() => void launch(false)} className="w-full rounded px-2 py-1.5 text-left text-nav text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]" role="menuitem">
-              {t('resume.continue')}
-            </button>
-          )}
-          {plan.command && (
-            <button type="button" onClick={() => void copyCommand()} className="w-full rounded px-2 py-1.5 text-left text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]" role="menuitem">
-              {t('resume.copyCommand')}
-            </button>
-          )}
-          {plan.supports_unsafe && ready && !active && !confirmUnsafe && (
-            <button type="button" onClick={() => setConfirmUnsafe(true)} className="w-full rounded px-2 py-1.5 text-left text-nav text-[var(--warning)] hover:bg-[var(--bg-surface-hover)]" role="menuitem">
-              {t('resume.continueUnsafe')}
-            </button>
-          )}
+          {(!canLaunch && presentation.continueBlockedReasonKey) || error || feedback ? (
+            <div className="my-1 border-t border-[var(--border-default)]" role="separator" data-testid="resume-menu-separator" />
+          ) : null}
+          <div className="px-2.5 pb-0.5 pt-1.5 text-meta text-[var(--text-muted)] select-none" data-testid="resume-menu-actions-label">
+            {t('resume.sectionActions')}
+          </div>
+          {menuActions.map(action => {
+            if (action.kind === 'unsafe' && confirmUnsafe) return null
+            return (
+              <div key={action.kind}>
+                {action.kind === 'unsafe' && (
+                  <div className="my-1 border-t border-[var(--border-default)]" role="separator" data-testid="resume-menu-separator" />
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!action.enabled}
+                  onClick={() => { if (action.enabled) runAction(action.kind) }}
+                  data-testid={actionTestId[action.kind]}
+                  aria-disabled={!action.enabled}
+                  className={`mx-1 w-[calc(100%-0.5rem)] rounded px-2 py-1.5 text-left text-nav ${
+                    action.enabled
+                      ? 'text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
+                      : 'cursor-not-allowed text-[var(--text-muted)]'
+                  }`}
+                >
+                  {actionLabel(action.kind)}
+                </button>
+              </div>
+            )
+          })}
           {confirmUnsafe && (
-            <div className="mt-1 rounded border border-[color-mix(in_srgb,var(--warning)_45%,var(--border-default))] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] p-2">
+            <div className="mx-2 mt-1 rounded border border-[color-mix(in_srgb,var(--warning)_45%,var(--border-default))] bg-[color-mix(in_srgb,var(--warning)_10%,transparent)] p-2">
               <p className="text-meta text-[var(--warning)]">{t('resume.unsafeWarning')}</p>
               <div className="mt-2 flex justify-end gap-2">
                 <button type="button" onClick={() => setConfirmUnsafe(false)} className="rounded px-2 py-1 text-meta text-[var(--text-secondary)]">{t('common.cancel')}</button>

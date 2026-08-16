@@ -1152,6 +1152,25 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	return detail, nil
 }
 
+// GetSessionMeta returns the cheap head/tail-scan metadata for a session —
+// the same readSessionMeta call GetSession builds its Session from, so
+// UpdatedAt-derived revisions match bit-for-bit. It skips the full transcript
+// parse and exists for callers (e.g. the position-cache revision check) that
+// only need metadata.
+func (r *CodexReader) GetSessionMeta(id string) (*model.Session, error) {
+	jsonlPath := r.findSessionFile(id)
+	if jsonlPath == "" {
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("codex session not found: %s", id))
+	}
+	session, ok := readSessionMeta(jsonlPath)
+	if !ok {
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("failed to read codex session: %s", id))
+	}
+	return &session, nil
+}
+
 func (r *CodexReader) findSessionFile(sessionID string) string {
 	r.pathsMu.RLock()
 	cached := r.paths[sessionID]

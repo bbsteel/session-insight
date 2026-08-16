@@ -53,6 +53,11 @@ type Server struct {
 	listRev   atomic.Int64
 	startNano int64
 
+	// replay caches parsed render events and rendered ANSI for the session
+	// open path (render/edits/tool-outputs/positions), keyed by agent type +
+	// session id and validated by the stat-only LiveRevision.
+	replay *replayCache
+
 	terminalLauncher terminal.Launcher
 	resumeMu         sync.Mutex
 	resumeInFlight   map[string]bool
@@ -115,6 +120,7 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 		Mux:              http.NewServeMux(),
 		events:           newEventHub(),
 		startNano:        time.Now().UnixNano(),
+		replay:           newReplayCache(),
 		terminalLauncher: terminal.NewSystemLauncher(),
 		resumeInFlight:   make(map[string]bool),
 		changeRegistry:   changehost.NewDefaultRegistry(),
