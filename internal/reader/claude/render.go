@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bbsteel/session-insight/internal/collaboration"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 	"github.com/bbsteel/session-insight/internal/render"
@@ -464,7 +465,7 @@ func ParseClaudeRenderEvents(path string, baseDepth int, parentEventID string) (
 					// fallback, and the later ToolResult match must resolve
 					// to that fallback, not to an empty string that links
 					// to nothing.
-					if block.Name == "Agent" {
+					if isClaudeDelegationTool(block.Name) {
 						pendingAgentToolIDs = append(pendingAgentToolIDs, invID)
 					} else {
 						pendingToolIDs = append(pendingToolIDs, invID)
@@ -556,6 +557,7 @@ func ParseClaudeRenderEventsWithSubagents(mainPath string) ([]model.RenderEvent,
 	}
 
 	sessionDir := strings.TrimSuffix(mainPath, ".jsonl")
+	rootSessionID := strings.TrimSuffix(filepath.Base(mainPath), ".jsonl")
 	subagentsDir := filepath.Join(sessionDir, "subagents")
 	if info, err := os.Stat(subagentsDir); err != nil || !info.IsDir() {
 		return mainEvents, modelName, nil
@@ -589,6 +591,16 @@ func ParseClaudeRenderEventsWithSubagents(mainPath string) ([]model.RenderEvent,
 				if _, statErr := os.Stat(subPath); statErr == nil {
 					subEvents, _, subErr := ParseClaudeRenderEvents(subPath, e.Depth+1, e.ParentEventID)
 					if subErr == nil {
+						// Associate spliced events with the child invocation
+						// so embedded invocation render can filter them.
+						if rootSessionID != "" && safeClaudeAgentID(agentID) {
+							invID := collaboration.ChildInvocationID("claude", rootSessionID, agentID)
+							for i := range subEvents {
+								if subEvents[i].InvocationID == "" {
+									subEvents[i].InvocationID = invID
+								}
+							}
+						}
 						// Splice the subagent's full transcript in before
 						// the summary ToolResult line, so reading order is:
 						// ToolInvocation(Agent) -> [subagent transcript] ->
