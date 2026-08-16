@@ -37,7 +37,7 @@ async function chooseSession(page) {
 
 async function openSession(page, sessionId) {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
-  const filter = page.locator('input[placeholder="过滤会话..."]')
+  const filter = page.locator('input[placeholder="过滤会话…"]')
   await filter.waitFor({ state: 'visible', timeout: 15_000 })
   await filter.fill(sessionId)
   const row = page.locator(`[data-session-id="${sessionId}"]`)
