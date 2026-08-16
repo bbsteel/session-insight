@@ -279,7 +279,7 @@ func TestClaudeReadCollaborationUnlinkedSidecar(t *testing.T) {
 	}
 	agentID := "orphan0001"
 	if err := os.WriteFile(filepath.Join(subDir, "agent-"+agentID+".jsonl"), []byte(
-		`{"type":"user","uuid":"su1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":"orphan"}}\n`,
+		`{"type":"user","uuid":"su1","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":"orphan"}}`+"\n",
 	), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -390,4 +390,76 @@ func writeClaudeAsyncOpenFixture(t *testing.T) (projectsDir, sessionID, agentID 
 		t.Fatal(err)
 	}
 	return projectsDir, sessionID, agentID
+}
+
+func TestClaudeTimePrecisionEndOnly(t *testing.T) {
+	got := claudeTimePrecision(false, true)
+	if got.State != collaboration.EvidenceEstimated || got.ReasonCode != collaboration.ReasonSourceNotRecorded {
+		t.Fatalf("end-only precision = %+v, want estimated/source_not_recorded", got)
+	}
+	if claudeTimePrecision(false, false).State != collaboration.EvidenceMissing {
+		t.Fatal("neither boundary must stay missing")
+	}
+}
+
+func TestClaudeReadCollaborationTaskOutputOutOfOrder(t *testing.T) {
+	dir := t.TempDir()
+	sessionID := "eeeeeeee-ffff-0000-1111-222222222222"
+	firstID, secondID := "a333explore0003", "a444plan0004"
+	proj := filepath.Join(dir, "-tmp-proj")
+	subDir := filepath.Join(proj, sessionID, "subagents")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := `{"type":"user","uuid":"u1","timestamp":"2026-01-03T00:00:00Z","cwd":"/tmp/proj","sessionId":"` + sessionID + `","message":{"role":"user","content":"delegate two"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-03T00:00:01Z","message":{"role":"assistant","model":"claude-sonnet-4","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_first","name":"Agent","input":{"description":"First child","subagent_type":"Explore","prompt":"one"}},{"type":"tool_use","id":"toolu_second","name":"Agent","input":{"description":"Second child","subagent_type":"Plan","prompt":"two"}}]}}
+{"type":"user","uuid":"r1","timestamp":"2026-01-03T00:00:02Z","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"` + firstID + `","description":"First child"}}
+{"type":"user","uuid":"r2","timestamp":"2026-01-03T00:00:03Z","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"` + secondID + `","description":"Second child"}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-01-03T00:00:04Z","message":{"role":"assistant","model":"claude-sonnet-4","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_wait_first","name":"TaskOutput","input":{"task_id":"` + firstID + `","block":true}},{"type":"tool_use","id":"toolu_wait_second","name":"TaskOutput","input":{"task_id":"` + secondID + `","block":true}}]}}
+{"type":"user","uuid":"done-second","timestamp":"2026-01-03T00:00:10Z","toolUseResult":{"task":{"task_id":"` + secondID + `","status":"completed"}}}
+{"type":"user","uuid":"done-first","timestamp":"2026-01-03T00:00:11Z","toolUseResult":{"task":{"task_id":"` + firstID + `","status":"completed"}}}
+`
+	if err := os.WriteFile(filepath.Join(proj, sessionID+".jsonl"), []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeChild := func(id, role, desc, toolUseID string) {
+		t.Helper()
+		meta, _ := json.Marshal(map[string]string{"agentType": role, "description": desc, "toolUseId": toolUseID})
+		if err := os.WriteFile(filepath.Join(subDir, "agent-"+id+".meta.json"), meta, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"type":"user","uuid":"su-` + id + `","timestamp":"2026-01-03T00:00:05Z","message":{"role":"user","content":"` + desc + `"}}` + "\n"
+		if err := os.WriteFile(filepath.Join(subDir, "agent-"+id+".jsonl"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeChild(firstID, "Explore", "First child", "toolu_first")
+	writeChild(secondID, "Plan", "Second child", "toolu_second")
+
+	r := New(dir)
+	g, err := r.ReadCollaboration(context.Background(), collabListed(t, r, sessionID))
+	if err != nil {
+		t.Fatalf("ReadCollaboration: %v", err)
+	}
+	if len(g.Delegations) != 2 {
+		t.Fatalf("delegations = %d, want 2", len(g.Delegations))
+	}
+	byChild := map[string]collaboration.Delegation{}
+	for _, d := range g.Delegations {
+		byChild[d.ChildInvocationID] = d
+	}
+	first := byChild[collaboration.ChildInvocationID("claude", sessionID, firstID)]
+	second := byChild[collaboration.ChildInvocationID("claude", sessionID, secondID)]
+	if first.Result == nil || first.Result.ToolCallID != "toolu_wait_first" {
+		t.Errorf("first result ToolCallID = %+v, want toolu_wait_first (exact task_id, not FIFO)", first.Result)
+	}
+	if second.Result == nil || second.Result.ToolCallID != "toolu_wait_second" {
+		t.Errorf("second result ToolCallID = %+v, want toolu_wait_second", second.Result)
+	}
+	if first.Result != nil && first.Result.EventID != "done-first-toolresult" {
+		t.Errorf("first result EventID = %q", first.Result.EventID)
+	}
+	if second.Result != nil && second.Result.EventID != "done-second-toolresult" {
+		t.Errorf("second result EventID = %q", second.Result.EventID)
+	}
 }

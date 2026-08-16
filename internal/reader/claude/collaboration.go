@@ -283,10 +283,7 @@ func scanClaudeParentCollaboration(ctx context.Context, path string) (*claudePar
 					ts:      ts,
 					eventID: resultEventID,
 				}
-				if len(pendingTaskWaits) > 0 {
-					tr.toolUseID = pendingTaskWaits[0].toolUseID
-					pendingTaskWaits = pendingTaskWaits[1:]
-				}
+				pendingTaskWaits, tr.toolUseID = takeClaudeTaskWait(pendingTaskWaits, tr.taskID)
 				scan.taskResults = append(scan.taskResults, tr)
 			}
 		}
@@ -650,15 +647,11 @@ func mapClaudeChild(rootSessionID, rootInvID string, child claudeEmbeddedChild, 
 		}
 		del.Result = anchor
 		del.Evidence.Result = collaboration.ExactFact()
-	} else if child.asyncLaunch || child.launch != nil {
+	} else {
+		// launch is non-nil here; an open child has a start but no completion.
 		del.Evidence.Result = collaboration.FactEvidence{
 			State:      collaboration.EvidenceMissing,
 			ReasonCode: collaboration.ReasonCompletionNotRecorded,
-		}
-	} else {
-		del.Evidence.Result = collaboration.FactEvidence{
-			State:      collaboration.EvidenceMissing,
-			ReasonCode: collaboration.ReasonSourceNotRecorded,
 		}
 	}
 	return inv, del
@@ -695,12 +688,35 @@ func claudeTimePrecision(hasStart, hasEnd bool) collaboration.FactEvidence {
 			State:      collaboration.EvidenceEstimated,
 			ReasonCode: collaboration.ReasonCompletionNotRecorded,
 		}
+	case hasEnd:
+		// Completion timestamp is recorded; the launch clock is not.
+		return collaboration.FactEvidence{
+			State:      collaboration.EvidenceEstimated,
+			ReasonCode: collaboration.ReasonSourceNotRecorded,
+		}
 	default:
 		return collaboration.FactEvidence{
 			State:      collaboration.EvidenceMissing,
 			ReasonCode: collaboration.ReasonSourceNotRecorded,
 		}
 	}
+}
+
+// takeClaudeTaskWait joins a TaskOutput result to its wait. An exact task_id
+// match wins; otherwise the oldest unmatched wait is used (FIFO fallback).
+func takeClaudeTaskWait(pending []claudeTaskWait, taskID string) ([]claudeTaskWait, string) {
+	if len(pending) == 0 {
+		return pending, ""
+	}
+	idx := 0
+	for i, w := range pending {
+		if w.taskID != "" && w.taskID == taskID {
+			idx = i
+			break
+		}
+	}
+	id := pending[idx].toolUseID
+	return append(pending[:idx], pending[idx+1:]...), id
 }
 
 func isClaudeDelegationTool(name string) bool {
