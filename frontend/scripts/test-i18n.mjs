@@ -18,6 +18,22 @@ assert.equal(translate('zh-CN', 'bookmark.noteTitle'), '收藏备注')
 assert.equal(translate('en', 'sidebar.bookmarksOnly', { count: 2 }), 'Show bookmarked sessions only (2)')
 assert.equal(translate('zh-CN', 'sidebar.bookmarksOnly', { count: 2 }), '只看收藏（2）')
 assert.equal(
+  translate('en', 'git.host.enableTitle', { provider: 'GitHub' }),
+  'Allow SessionInsight to contact GitHub?',
+)
+assert.equal(
+  translate('zh-CN', 'git.host.enableTitle', { provider: 'GitHub' }),
+  '允许 SessionInsight 向 GitHub 发请求？',
+)
+assert.equal(
+  translate('en', 'git.host.enableHelp', { provider: 'GitLab' }).includes('GitLab'),
+  true,
+)
+assert.equal(
+  translate('zh-CN', 'git.host.enableHelp', { provider: 'GitLab' }).includes('GitLab'),
+  true,
+)
+assert.equal(
   translate('en', 'replay.openLink', { url: 'https://www.kimi.com/code/#pricing' }),
   'Open link in new tab\nhttps://www.kimi.com/code/#pricing',
 )
