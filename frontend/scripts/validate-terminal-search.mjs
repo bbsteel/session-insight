@@ -25,6 +25,8 @@ async function chooseSession(page) {
   const fromEnv = typeof process.env.SI_SESSION_ID === 'string' ? process.env.SI_SESSION_ID.trim() : ''
   if (fromEnv) return fromEnv
   const summaries = await (await page.request.get(new URL('/api/sessions', BASE_URL).toString())).json()
+  const reported = summaries.find(s => typeof s.id === 'string' && s.id.endsWith('019feea9-32f5-7810-b403-3a39a6c0cf7d'))
+  if (reported) return reported.id
   const ranked = [...summaries]
     .filter(s => !s.is_live)
     .sort((a, b) => (b.message_count ?? 0) - (a.message_count ?? 0))
@@ -41,9 +43,10 @@ async function openSession(page, sessionId) {
   const row = page.locator(`[data-session-id="${sessionId}"]`)
   await row.waitFor({ state: 'visible', timeout: 15_000 })
   await row.click()
-  await page.locator('.xterm-viewport').waitFor({ state: 'visible', timeout: 60_000 })
-  // Large sessions need stream time
-  await page.waitForTimeout(4_000)
+  await page.locator('.xterm-viewport').waitFor({ state: 'visible', timeout: 90_000 })
+  // Large / live sessions need stream time before search walks the buffer.
+  const longSession = sessionId.includes('019feea9-32f5-7810-b403-3a39a6c0cf7d')
+  await page.waitForTimeout(longSession ? 20_000 : 4_000)
 }
 
 async function findHighlightButton(bar) {
@@ -58,9 +61,15 @@ async function findHighlightButton(bar) {
   return { btn: null, text: '', title: '' }
 }
 
-async function openSearch(page) {
-  await page.locator('.xterm').first().click({ force: true }).catch(() => {})
-  await page.keyboard.press('Control+f')
+async function openSearch(page, via = 'keyboard') {
+  if (via === 'toolbar') {
+    const findBtn = page.locator('[data-testid="session-terminal-find-button"]')
+    await findBtn.waitFor({ state: 'visible', timeout: 15_000 })
+    await findBtn.click()
+  } else {
+    await page.locator('.xterm').first().click({ force: true }).catch(() => {})
+    await page.keyboard.press('Control+f')
+  }
   await page.locator('[data-testid="terminal-search-bar"]').waitFor({ state: 'visible', timeout: 15_000 })
   return page.locator('[data-testid="terminal-search-bar"]')
 }
@@ -78,31 +87,94 @@ try {
   log('sessionSelected', true)
   await openSession(page, sessionId)
 
-  let bar = await openSearch(page)
-  log('searchBarOpen', true)
+  const enFind = page.locator('[data-testid="session-terminal-find-button"]')
+  await enFind.waitFor({ state: 'visible', timeout: 15_000 })
+  const enFindText = (await enFind.innerText()).trim()
+  const enFindTitle = await enFind.getAttribute('title')
+  log('enToolbarFind', enFindText)
+  log('enToolbarFindTitle', enFindTitle)
+  if (enFindText !== 'Find') throw new Error(`expected toolbar Find, got ${JSON.stringify(enFindText)}`)
+  if (!enFindTitle || !/Ctrl\+F|⌘F/.test(enFindTitle)) throw new Error(`expected Ctrl/⌘F in title, got ${JSON.stringify(enFindTitle)}`)
+
+  let bar = await openSearch(page, 'toolbar')
+  log('searchBarOpenViaToolbar', true)
+  if (await enFind.getAttribute('aria-pressed') !== 'true') {
+    throw new Error('expected toolbar Find aria-pressed=true after open')
+  }
+  await enFind.click()
+  await page.locator('[data-testid="terminal-search-bar"]').waitFor({ state: 'hidden', timeout: 5_000 })
+  log('searchBarClosedViaToolbar', true)
+  if (await enFind.getAttribute('aria-pressed') === 'true') {
+    throw new Error('expected toolbar Find aria-pressed=false after second click')
+  }
+  bar = await openSearch(page, 'toolbar')
   let hl = await findHighlightButton(bar)
   log('enShortLabel', hl.text)
   log('enTitle', hl.title)
   if (hl.text !== 'HL') throw new Error(`expected HL, got ${JSON.stringify(hl.text)}`)
+
+  const firstBtn = bar.locator('[data-testid="terminal-search-first"]')
+  const lastBtn = bar.locator('[data-testid="terminal-search-last"]')
+  await firstBtn.waitFor({ state: 'visible' })
+  await lastBtn.waitFor({ state: 'visible' })
+  const enFirstTitle = await firstBtn.getAttribute('title')
+  const enLastTitle = await lastBtn.getAttribute('title')
+  log('enFirstTitle', enFirstTitle)
+  log('enLastTitle', enLastTitle)
+  if (enFirstTitle !== 'First match') throw new Error(`expected First match, got ${JSON.stringify(enFirstTitle)}`)
+  if (enLastTitle !== 'Last match') throw new Error(`expected Last match, got ${JSON.stringify(enLastTitle)}`)
+  const firstBox = await firstBtn.boundingBox()
+  const lastBox = await lastBtn.boundingBox()
+  if (!firstBox || firstBox.width < 8 || firstBox.height < 8) throw new Error('first button has no box')
+  if (!lastBox || lastBox.width < 8 || lastBox.height < 8) throw new Error('last button has no box')
 
   const input = bar.locator('input')
   await input.click()
   await input.fill('')
   const t0 = Date.now()
   await input.type('function', { delay: 25 })
-  // debounce 180ms + full buffer scan
-  await page.waitForTimeout(2_000)
+  const countEl = bar.locator('[data-testid="terminal-search-count"]')
+  await countEl.waitFor({ state: 'visible', timeout: 15_000 })
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="terminal-search-count"]')
+    return !!el && /\d+\s*\/\s*\d+|No results|无结果/.test(el.textContent || '')
+  }, { timeout: 15_000 })
   const elapsed = Date.now() - t0
-  let countText = ''
-  const spans = bar.locator('span')
-  for (let i = 0; i < await spans.count(); i++) {
-    const t = (await spans.nth(i).innerText()).trim()
-    if (t) countText = t
-  }
+  const countText = (await countEl.innerText()).trim()
   log('searchResultText', countText)
   log('typeAndSearchMs', elapsed)
   // Soft budget: typing+debounce+search should not freeze multi-second UI
   if (elapsed > 12_000) throw new Error(`search too slow: ${elapsed}ms`)
+
+  const parsed = countText.match(/^(\d+)\s*\/\s*(\d+)$/)
+  if (!parsed) throw new Error(`expected n/m count, got ${JSON.stringify(countText)}`)
+  const total = Number(parsed[2])
+  await lastBtn.click()
+  await page.waitForFunction((expected) => {
+    const el = document.querySelector('[data-testid="terminal-search-count"]')
+    return !!el && (el.textContent || '').trim() === expected
+  }, `${total}/${total}`, { timeout: 8_000 })
+  log('afterLast', `${total}/${total}`)
+  await firstBtn.click()
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="terminal-search-count"]')
+    return !!el && /^1\s*\/\s*\d+$/.test((el.textContent || '').trim())
+  }, { timeout: 8_000 })
+  log('afterFirst', (await countEl.innerText()).trim())
+
+  const longQuery = 'https://github.com/bbsteel/session-insight/pull/13'
+  await input.fill(longQuery)
+  await page.waitForTimeout(400)
+  const beforeBackspace = Date.now()
+  await input.press('Backspace')
+  const afterPaint = await input.inputValue()
+  const backspaceMs = Date.now() - beforeBackspace
+  log('backspaceValue', afterPaint)
+  log('backspaceMs', backspaceMs)
+  if (afterPaint !== longQuery.slice(0, -1)) {
+    throw new Error(`backspace did not update input: ${JSON.stringify(afterPaint)}`)
+  }
+  if (backspaceMs > 1500) throw new Error(`backspace froze input for ${backspaceMs}ms`)
 
   const t2 = Date.now()
   await hl.btn.click()
@@ -113,11 +185,25 @@ try {
   // Chinese labels — set before navigation so init script does not clobber.
   await page.evaluate(() => localStorage.setItem('si-locale', 'zh-CN'))
   await openSession(page, sessionId)
-  bar = await openSearch(page)
+  const zhFind = page.locator('[data-testid="session-terminal-find-button"]')
+  await zhFind.waitFor({ state: 'visible', timeout: 15_000 })
+  const zhFindText = (await zhFind.innerText()).trim()
+  const zhFindTitle = await zhFind.getAttribute('title')
+  log('zhToolbarFind', zhFindText)
+  log('zhToolbarFindTitle', zhFindTitle)
+  if (zhFindText !== '查找') throw new Error(`expected toolbar 查找, got ${JSON.stringify(zhFindText)}`)
+  if (!zhFindTitle || !zhFindTitle.includes('查找')) throw new Error(`expected 查找 in title, got ${JSON.stringify(zhFindTitle)}`)
+  bar = await openSearch(page, 'toolbar')
   hl = await findHighlightButton(bar)
   log('zhShortLabel', hl.text)
   log('zhTitle', hl.title)
   if (hl.text !== '高亮') throw new Error(`expected 高亮, got ${JSON.stringify(hl.text)}`)
+  const zhFirst = await bar.locator('[data-testid="terminal-search-first"]').getAttribute('title')
+  const zhLast = await bar.locator('[data-testid="terminal-search-last"]').getAttribute('title')
+  log('zhFirstTitle', zhFirst)
+  log('zhLastTitle', zhLast)
+  if (zhFirst !== '最上一条') throw new Error(`expected 最上一条, got ${JSON.stringify(zhFirst)}`)
+  if (zhLast !== '最下一条') throw new Error(`expected 最下一条, got ${JSON.stringify(zhLast)}`)
 
   fs.mkdirSync(SHOT_DIR, { recursive: true })
   const shot = path.join(SHOT_DIR, 'terminal-search-zh.png')

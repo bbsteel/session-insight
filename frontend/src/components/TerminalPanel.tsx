@@ -10,7 +10,7 @@ import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, resolveMatcherTooltip, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type TerminalSearchOptions, type UserHighlightRange } from '../terminalControl'
 import { DEFAULT_TERMINAL_SCROLLBACK, ensureTerminalScrollback, estimateRenderedLineCount } from '../terminalScrollback'
-import { countTerminalMatches } from '../terminalSearchCount'
+import { countTerminalMatches, findTerminalMatch, selectionTextMatchesQuery } from '../terminalSearchCount'
 import { composeFoldView, foldSuccessorKeys, type FoldRange, type FoldView } from '../terminalFolds'
 import { captureViewportAnchor, resolveViewportAnchor, type ViewportAnchor } from '../viewportAnchor'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
@@ -786,6 +786,9 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       let webglAddon: WebglAddon | null = null
       // Shared by initial open() load and Windows post-rewrite reattach so
       // preserveDrawingBuffer / context-loss handling cannot drift apart.
+      let recoveringWebgl = false
+      let webglRecoveries = 0
+      const MAX_WEBGL_RECOVERIES = 2
       const attachWebgl = (): boolean => {
         try {
           // preserveDrawingBuffer: true so the anti-flicker snapshot
@@ -796,9 +799,29 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           const webgl = new WebglAddon(true)
           webgl.onContextLoss(() => {
             dbg('webgl-context-loss')
-            webgl.dispose()
+            try { webgl.dispose() } catch { /* already torn down */ }
             if (webglAddon === webgl) webglAddon = null
-            setWebglDegraded(true)
+            // A heavy search on a huge buffer can evict the GPU context.
+            // Disposing without a refresh left a dead canvas (blank terminal).
+            if (disposed) return
+            if (recoveringWebgl || webglRecoveries >= MAX_WEBGL_RECOVERIES) {
+              setWebglDegraded(true)
+              try { term.refresh(0, Math.max(0, term.rows - 1)) } catch { /* */ }
+              return
+            }
+            recoveringWebgl = true
+            webglRecoveries++
+            try {
+              if (attachWebgl()) {
+                fitAddon.fit()
+                term.refresh(0, Math.max(0, term.rows - 1))
+              } else {
+                setWebglDegraded(true)
+                term.refresh(0, Math.max(0, term.rows - 1))
+              }
+            } finally {
+              recoveringWebgl = false
+            }
           })
           term.loadAddon(webgl)
           webglAddon = webgl
@@ -1516,6 +1539,10 @@ const snapshotTerminal = () => {
 
       const writeComposed = (afterWrite?: () => void) => {
         const generation = ++repaintGeneration
+        // Render generation this write belongs to: a superseded write's
+        // callback may fire while a NEWER loadRender is in flight, and must
+        // not lower that render's in-flight shield.
+        const ownerRenderGeneration = renderGeneration
         // Supersede any pending finishPaint / coalesced hard from a prior
         // rewrite before we install a new snapshot.
         if (finishPaintTimeout) {
@@ -1544,10 +1571,11 @@ const snapshotTerminal = () => {
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
         term.write(wroteText, () => {
           if (disposed || generation !== repaintGeneration) {
-            // Superseded by a newer rewrite: that rewrite owns the buffer
-            // now, so the render-in-flight shield must not stay up (it would
-            // defer every future fold update forever).
-            renderInFlight = false
+            // Superseded by a newer rewrite. Lower the render-in-flight
+            // shield only when no newer render owns it — clearing blindly
+            // here (while a newer loadRender's fetch/write is still pending)
+            // would let a fold recompose race that render's anchor restore.
+            if (renderGeneration === ownerRenderGeneration) renderInFlight = false
             return
           }
           hasWrittenOnce = true
@@ -2117,6 +2145,10 @@ const snapshotTerminal = () => {
       let lastCountKey = ''
       let lastKnownCount = 0
       let lastKnownIndex = -1
+      // When first/last jumps before the async count finishes, prefer the
+      // edge over a stale selection-mapped index from the previous pass.
+      let searchIndexHint: 'first' | 'last' | null = null
+      let searchNavGen = 0
       let searchChromeGen = 0
       let searchChromeTimer: ReturnType<typeof setTimeout> | null = null
       const countKeyOf = (query: string, o: Pick<TerminalSearchOptions, 'caseSensitive' | 'wholeWord' | 'regex'>) =>
@@ -2158,8 +2190,15 @@ const snapshotTerminal = () => {
           // hits and would thrash the n/m display for seconds.
         }).then((r) => {
           if (disposed || gen !== searchChromeGen || lastSearchQuery !== query || lastCountKey !== key) return
-          // Prefer selection-mapped index; if unknown keep prior step index.
-          const index = r.index >= 0 ? r.index : (lastKnownIndex >= 0 ? lastKnownIndex : 0)
+          const hint = searchIndexHint
+          searchIndexHint = null
+          // Prefer an explicit first/last jump, then selection mapping, then
+          // the last stepped index.
+          const index = hint === 'first'
+            ? 0
+            : hint === 'last' && r.count > 0
+              ? r.count - 1
+              : r.index >= 0 ? r.index : (lastKnownIndex >= 0 ? lastKnownIndex : 0)
           reportSearchResults(index, r.count)
         })
       }
@@ -2199,6 +2238,149 @@ const snapshotTerminal = () => {
         }
       })
       disposeSearchResultsRef = disposeSearchResults
+
+      type SearchNavKind = 'next' | 'prev' | 'first' | 'last'
+      const reportAfterNavigate = (
+        kind: SearchNavKind,
+        isNewQuery: boolean,
+        key: string,
+        query: string,
+        opts: TerminalSearchOptions,
+        moved: boolean,
+      ) => {
+        const jumpToEdge = kind === 'first' || kind === 'last'
+        if (isNewQuery || (jumpToEdge && lastKnownCount === 0)) {
+          searchIndexHint = kind === 'first' ? 'first' : kind === 'last' ? 'last' : null
+          lastCountKey = key
+          lastKnownIndex = kind === 'last' ? -1 : 0
+          lastKnownCount = 0
+          searchResultsCb?.(-1, -1)
+          scheduleSearchChrome(query, opts, { recount: true })
+        } else if (jumpToEdge) {
+          searchIndexHint = null
+          reportSearchResults(kind === 'first' ? 0 : lastKnownCount - 1, lastKnownCount)
+          if (opts.highlightAll) {
+            scheduleSearchChrome(query, opts, { recount: false })
+          }
+        } else {
+          searchIndexHint = null
+          if (moved && lastKnownCount > 0) {
+            if (kind === 'next') {
+              const nextIdx = lastKnownIndex < 0 ? 0 : (lastKnownIndex + 1) % lastKnownCount
+              reportSearchResults(nextIdx, lastKnownCount)
+            } else {
+              const prevIdx = lastKnownIndex < 0
+                ? lastKnownCount - 1
+                : (lastKnownIndex - 1 + lastKnownCount) % lastKnownCount
+              reportSearchResults(prevIdx, lastKnownCount)
+            }
+          } else if (lastKnownCount > 0) {
+            reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
+          }
+          if (opts.highlightAll) {
+            scheduleSearchChrome(query, opts, { recount: false })
+          }
+        }
+      }
+      const runSearchNavigate = (query: string, opts: TerminalSearchOptions, kind: SearchNavKind): boolean => {
+        invalidateSearchOnOptionChange(opts)
+        applyHighlightAllClass(opts.highlightAll)
+        const key = countKeyOf(query, opts)
+        const isNewQuery = key !== lastCountKey
+        lastSearchQuery = query
+        lastSearchOpts = opts
+        const gen = ++searchNavGen
+        try {
+          const jumpToEdge = kind === 'first' || kind === 'last'
+          const before = term.getSelectionPosition()
+          // Backspace/edit: if the current hit still contains the new query,
+          // keep it. A sync addon-search walk of a 7k-message buffer froze the
+          // input on every keystroke.
+          if (
+            !jumpToEdge
+            && isNewQuery
+            && selectionTextMatchesQuery(term.getSelection(), query, baseSearchOpts(opts))
+          ) {
+            reportAfterNavigate(kind, true, key, query, opts, false)
+            return true
+          }
+          const bufLen = term.buffer.active.length
+          const start = (() => {
+            if (kind === 'first') {
+              return { direction: 'next' as const, startRow: 0, startCol: 0, inclusive: true, wrap: false }
+            }
+            if (kind === 'last') {
+              return {
+                direction: 'prev' as const,
+                startRow: Math.max(0, bufLen - 1),
+                startCol: term.cols,
+                inclusive: true,
+                wrap: false,
+              }
+            }
+            if (before) {
+              if (kind === 'next') {
+                return isNewQuery
+                  ? { direction: 'next' as const, startRow: before.start.y, startCol: before.start.x, inclusive: true, wrap: true }
+                  : { direction: 'next' as const, startRow: before.end.y, startCol: before.end.x, inclusive: true, wrap: true }
+              }
+              return {
+                direction: 'prev' as const,
+                startRow: before.start.y,
+                startCol: before.start.x,
+                inclusive: false,
+                wrap: true,
+              }
+            }
+            if (kind === 'prev') {
+              return {
+                direction: 'prev' as const,
+                startRow: Math.max(0, bufLen - 1),
+                startCol: term.cols,
+                inclusive: true,
+                wrap: true,
+              }
+            }
+            return { direction: 'next' as const, startRow: 0, startCol: 0, inclusive: true, wrap: true }
+          })()
+          void findTerminalMatch(term, query, baseSearchOpts(opts), {
+            ...start,
+            linesPerSlice: 400,
+            isCancelled: () => disposed || gen !== searchNavGen || lastSearchQuery !== query,
+          }).then(found => {
+            if (disposed || gen !== searchNavGen || lastSearchQuery !== query) return
+            if (!found) {
+              cancelSearchChrome()
+              clearSearchDecorations(false)
+              lastCountKey = ''
+              reportSearchResults(-1, 0)
+              return
+            }
+            const bufLen = term.buffer.active.length
+            const row = Math.max(0, Math.min(found.row, Math.max(0, bufLen - 1)))
+            const col = Math.max(0, Math.min(found.col, Math.max(0, term.cols - 1)))
+            term.select(col, row, Math.max(1, found.length))
+            openAtTop = false
+            term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
+            forceViewportRepaint('search-select', { soft: true })
+            const after = term.getSelectionPosition()
+            const moved = !!after && (
+              !before
+              || before.start.y !== after.start.y
+              || before.start.x !== after.start.x
+              || before.end.y !== after.end.y
+              || before.end.x !== after.end.x
+            )
+            reportAfterNavigate(kind, isNewQuery, key, query, opts, moved)
+          }).catch(() => {
+            if (gen !== searchNavGen) return
+            // invalid regex mid-typing
+          })
+          return true
+        } catch {
+          return false
+        }
+      }
 
       if (controlRef) {
         controlRef.current = {
@@ -2249,6 +2431,16 @@ const snapshotTerminal = () => {
           toDisplayLine,
           logicalToDisplayLine,
           toOriginalLine,
+          getViewportAnchor: () => {
+            if (disposed) return null
+            try {
+              const buf = term.buffer.active
+              const center = buf.viewportY + Math.floor(term.rows / 2)
+              return toOriginalLine(center)
+            } catch {
+              return null
+            }
+          },
           jumpToPosition: (lineStart, logicalStart) => {
             if (execJump(lineStart, logicalStart, false)) {
               // Immediate success supersedes any older deferred jump — without
@@ -2271,127 +2463,20 @@ const snapshotTerminal = () => {
           captureViewportAnchor: () => captureAnchor(),
           setFoldsCollapsed,
           getCollapsedFoldKeys: () => [...collapsedKeys],
-          searchNext: (query, opts) => {
-            invalidateSearchOnOptionChange(opts)
-            applyHighlightAllClass(opts.highlightAll)
-            const key = countKeyOf(query, opts)
-            const isNewQuery = key !== lastCountKey
-            lastSearchQuery = query
-            lastSearchOpts = opts
-            try {
-              const before = term.getSelectionPosition()
-              // Always navigate without decorations — O(distance to next match).
-              const found = searchAddon.findNext(query, baseSearchOpts(opts))
-              if (!found) {
-                cancelSearchChrome()
-                clearSearchDecorations(false)
-                lastCountKey = ''
-                reportSearchResults(-1, 0)
-                return false
-              }
-              const after = term.getSelectionPosition()
-              // Leave open-at-top mode so search scrolls are not yanked back to 0
-              // by the onScroll stick-to-top handler.
-              if (after) {
-                openAtTop = false
-                const row = after.start.y
-                term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
-              }
-              // Require a real post-find selection. (!before || !after) was true
-              // whenever selection was missing, so n/m advanced with no jump.
-              const moved = !!after && (
-                !before
-                || before.start.y !== after.start.y
-                || before.start.x !== after.start.x
-                || before.end.y !== after.end.y
-                || before.end.x !== after.end.x
-              )
-              if (isNewQuery) {
-                lastCountKey = key
-                lastKnownIndex = 0
-                lastKnownCount = 0
-                searchResultsCb?.(-1, -1)
-                scheduleSearchChrome(query, opts, { recount: true })
-              } else {
-                // Stepping: only advance n when the selection actually moved.
-                if (moved && lastKnownCount > 0) {
-                  const nextIdx = lastKnownIndex < 0 ? 0 : (lastKnownIndex + 1) % lastKnownCount
-                  reportSearchResults(nextIdx, lastKnownCount)
-                } else if (lastKnownCount > 0) {
-                  reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
-                }
-                if (opts.highlightAll) {
-                  scheduleSearchChrome(query, opts, { recount: false })
-                }
-              }
-              return true
-            } catch {
-              return false // invalid regex mid-typing
-            }
-          },
-          searchPrev: (query, opts) => {
-            invalidateSearchOnOptionChange(opts)
-            applyHighlightAllClass(opts.highlightAll)
-            const key = countKeyOf(query, opts)
-            const isNewQuery = key !== lastCountKey
-            lastSearchQuery = query
-            lastSearchOpts = opts
-            try {
-              const before = term.getSelectionPosition()
-              const found = searchAddon.findPrevious(query, baseSearchOpts(opts))
-              if (!found) {
-                cancelSearchChrome()
-                clearSearchDecorations(false)
-                lastCountKey = ''
-                reportSearchResults(-1, 0)
-                return false
-              }
-              const after = term.getSelectionPosition()
-              if (after) {
-                openAtTop = false
-                const row = after.start.y
-                term.scrollToLine(Math.max(0, row - Math.floor(term.rows / 2)))
-              }
-              // Require a real post-find selection. (!before || !after) was true
-              // whenever selection was missing, so n/m advanced with no jump.
-              const moved = !!after && (
-                !before
-                || before.start.y !== after.start.y
-                || before.start.x !== after.start.x
-                || before.end.y !== after.end.y
-                || before.end.x !== after.end.x
-              )
-              if (isNewQuery) {
-                lastCountKey = key
-                lastKnownIndex = 0
-                lastKnownCount = 0
-                searchResultsCb?.(-1, -1)
-                scheduleSearchChrome(query, opts, { recount: true })
-              } else {
-                if (moved && lastKnownCount > 0) {
-                  const prevIdx = lastKnownIndex < 0
-                    ? lastKnownCount - 1
-                    : (lastKnownIndex - 1 + lastKnownCount) % lastKnownCount
-                  reportSearchResults(prevIdx, lastKnownCount)
-                } else if (lastKnownCount > 0) {
-                  reportSearchResults(lastKnownIndex < 0 ? 0 : lastKnownIndex, lastKnownCount)
-                }
-                if (opts.highlightAll) {
-                  scheduleSearchChrome(query, opts, { recount: false })
-                }
-              }
-              return true
-            } catch {
-              return false
-            }
-          },
+          searchNext: (query, opts) => runSearchNavigate(query, opts, 'next'),
+          searchPrev: (query, opts) => runSearchNavigate(query, opts, 'prev'),
+          searchFirst: (query, opts) => runSearchNavigate(query, opts, 'first'),
+          searchLast: (query, opts) => runSearchNavigate(query, opts, 'last'),
           searchClear: () => {
+            searchNavGen++
             cancelSearchChrome()
             lastSearchQuery = ''
             lastCountKey = ''
+            searchIndexHint = null
             clearSearchDecorations(false)
             term.clearSelection() // the active match is selection-backed
             reportSearchResults(-1, 0)
+            forceViewportRepaint('search-clear', { soft: true })
           },
           setSearchHighlightAll: (on) => {
             applyHighlightAllClass(on)

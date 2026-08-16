@@ -46,6 +46,11 @@ export interface TerminalControl {
   // line-height variants); used to preserve the logical visible position
   // across layout changes that only alter the container height.
   getViewportTopLine: () => number
+  // Original render row (positions line_start space) at the viewport center,
+  // resolved through xterm's own buffer state + the fold mapping. Drives the
+  // key-event outline's current-position tracking; null when no terminal is
+  // attached yet.
+  getViewportAnchor: () => number | null
   setLineMatchers: (matchers: TerminalLineMatcher<unknown>[]) => void
   // Briefly highlight buffer lines after a programmatic jump so the user can
   // see where they landed. Rendered via xterm marker/decoration (AGENTS.md:
@@ -90,12 +95,16 @@ export interface TerminalControl {
   // back to the snapshot-covered full rewrite. Pins the viewport to the
   // bottom when it was already there, or when live-follow (tail -f) is on.
   refreshContent: () => Promise<'appended' | 'rewritten' | 'unchanged'>
-  // In-terminal search (xterm addon-search). Searches the composed buffer,
-  // so content inside collapsed tool groups is not matched until expanded.
-  // Navigation is always decoration-free (fast on multi-10k-line buffers);
-  // all-match highlights and n/m counting are deferred/async.
+  // In-terminal search. Matches the composed buffer, so collapsed tool groups
+  // are not found until expanded. Navigation is time-sliced (does not block
+  // typing/backspace on multi-10k-line buffers). All-match highlights and
+  // n/m counting stay deferred/async.
   searchNext: (query: string, opts: TerminalSearchOptions) => boolean
   searchPrev: (query: string, opts: TerminalSearchOptions) => boolean
+  /** Jump to the first (topmost) match. */
+  searchFirst: (query: string, opts: TerminalSearchOptions) => boolean
+  /** Jump to the last (bottommost) match. */
+  searchLast: (query: string, opts: TerminalSearchOptions) => boolean
   searchClear: () => void
   /**
    * Toggle all-match highlights. When turning on with an active query, rebuilds

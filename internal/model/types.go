@@ -216,6 +216,14 @@ type EditCall struct {
 	OldString  string `json:"old_string"`
 	NewString  string `json:"new_string"`
 	ReplaceAll bool   `json:"replace_all,omitempty"`
+	// ToolCallID links the edit back to its tool invocation. The render
+	// pipeline emits "edit" positions with the same id, so the frontend can
+	// match modal entries to terminal positions even when the two lists are
+	// ordered differently (nested Chrys events are re-paired for render).
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	// PreviousPath is the source path when the edit renames a file
+	// (apply_patch "Move to"); empty for non-rename edits.
+	PreviousPath string `json:"previous_path,omitempty"`
 }
 
 type AnomalySummary struct {

@@ -604,12 +604,11 @@ func (s *Server) handleRenderSession(w http.ResponseWriter, r *http.Request) {
 
 	var lastErr error
 	for _, rd := range s.Readers {
-		events, err := rd.GetRenderEvents(id)
+		ansi, err := s.renderANSIFor(rd, id, cols, opts)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		ansi := render.FormatEventsOpts(events, cols, opts)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(ansi))
 		return
@@ -629,7 +628,7 @@ func (s *Server) handleSessionEdits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, rd := range s.Readers {
-		events, err := rd.GetRenderEvents(id)
+		events, err := s.renderEventsFor(rd, id)
 		if err != nil {
 			continue
 		}
@@ -661,7 +660,7 @@ func (s *Server) handleSessionToolOutputs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for _, rd := range s.Readers {
-		events, err := rd.GetRenderEvents(id)
+		events, err := s.renderEventsFor(rd, id)
 		if err != nil {
 			continue
 		}
@@ -740,18 +739,30 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 		cols = render.TermWidth
 	}
 
-	// Find session and its reader.
+	// Find session and its reader. Prefer the cheap head/tail meta scan when
+	// the reader offers it: the revision below only needs UpdatedAt, and a
+	// full GetSession parse of a long session costs seconds even when the
+	// position cache then hits.
 	var sess *model.Session
-	var foundReader interface {
-		GetRenderEvents(id string) ([]model.RenderEvent, error)
-	}
+	var sessDetail *model.SessionDetail
+	var foundReader reader.BaseSessionReader
 	for _, rd := range s.Readers {
+		if mp, ok := rd.(reader.SessionMetaProvider); ok {
+			meta, err := mp.GetSessionMeta(id)
+			if err != nil || meta == nil {
+				continue
+			}
+			sess = meta
+			foundReader = rd
+			break
+		}
 		detail, err := rd.GetSession(id)
 		if err != nil || detail == nil {
 			continue
 		}
 		s := detail.Session
 		sess = &s
+		sessDetail = detail
 		foundReader = rd
 		break
 	}
@@ -786,14 +797,48 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 	dbRef := s.DB
 
 	go func() {
-		events, err := foundReader.GetRenderEvents(id)
+		events, err := s.renderEventsFor(foundReader, id)
 		if err != nil {
 			ch <- buildResult{err: err}
 			return
 		}
-		_, rpositions := render.FormatEventsWithPositionsOpts(events, cols, opts)
+		fr := render.FormatEventsResultOpts(events, cols, opts)
 
-		totalLines := 0
+		// The semantic outline also uses session-detail facts; when the
+		// meta fast path was taken above, fetch the detail lazily — only
+		// the cache-miss build path pays for it. A failure here means the
+		// session became unreadable mid-request; fail the build rather
+		// than degrade to a detail-less outline.
+		detail := sessDetail
+		if detail == nil {
+			d, derr := foundReader.GetSession(id)
+			if derr != nil || d == nil {
+				if derr == nil {
+					derr = fmt.Errorf("session detail unavailable: %s", id)
+				}
+				ch <- buildResult{err: derr}
+				return
+			}
+			detail = d
+		}
+
+		// Merge the sparse key-event outline into the core positions and order
+		// the combined set with the shared tie-breaker.
+		outline, ostats := render.BuildSemanticOutline(render.SemanticOutlineInput{
+			Events:        events,
+			Detail:        detail,
+			CorePositions: fr.Positions,
+		})
+		rpositions := append(fr.Positions, outline...)
+		render.SortPositions(rpositions)
+		if ostats.Emitted > 0 || ostats.SkippedNoLanding > 0 {
+			log.Printf("positions build %s: outline candidates=%d emitted=%d skipped_no_landing=%d by_category=%v",
+				id, ostats.Candidates, ostats.Emitted, ostats.SkippedNoLanding, ostats.ByCategory)
+		}
+
+		// TotalLines is the formatter's exact line-tracker result — output
+		// after the last marker counts too.
+		totalLines := fr.TotalLines
 		entries := make([]db.PositionEntry, 0, len(rpositions))
 		for _, rp := range rpositions {
 			entries = append(entries, db.PositionEntry{
@@ -806,11 +851,7 @@ func (s *Server) handleSessionPositions(w http.ResponseWriter, r *http.Request) 
 				Severity:    rp.Severity,
 				Payload:     rp.Payload,
 			})
-			if rp.LineStart > totalLines {
-				totalLines = rp.LineStart
-			}
 		}
-		totalLines++ // convert max line_start to total count
 
 		if err := dbRef.SavePositionCache(agentType, id, revision, cols, totalLines, entries); err != nil {
 			ch <- buildResult{err: err}
@@ -1018,9 +1059,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 					}
 					if seen[key] {
 						metas[key] = db.SessionMeta{
-							Project:   sess.Project,
-							Name:      sess.Name,
-							UpdatedAt: sess.UpdatedAt,
+							Project:         sess.Project,
+							Name:            sess.Name,
+							UpdatedAt:       sess.UpdatedAt,
+							ResumeID:        sess.ResumeID,
+							ParentSessionID: sess.ParentSessionID,
+							IsSubagent:      sess.IsSubagent,
 						}
 					}
 				}
@@ -1054,6 +1098,32 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		SourceMissing bool   `json:"source_missing,omitempty"`
 		// Stale is an alias signal for historical-index hits (source missing).
 		Stale bool `json:"stale,omitempty"`
+		// Subagent lineage: the sidebar lists root sessions only, so a
+		// subagent hit redirects its landing target to the root ancestor.
+		IsSubagent      bool   `json:"is_subagent,omitempty"`
+		RootSessionID   string `json:"root_session_id,omitempty"`
+		RootAgentType   string `json:"root_agent_type,omitempty"`
+		RootSessionName string `json:"root_session_name,omitempty"`
+	}
+	// Resolve root ancestors for subagent hits. Roots, unknown sessions, and
+	// broken chains stay absent — the frontend then keeps current behavior.
+	var rootRefs map[string]db.RootSessionRef
+	if s.DB != nil && len(results) > 0 {
+		keys := make([]struct{ AgentType, SessionID string }, 0, len(results))
+		seenKeys := make(map[string]bool, len(results))
+		for _, r := range results {
+			k := r.AgentType + "\x00" + r.SessionID
+			if seenKeys[k] {
+				continue
+			}
+			seenKeys[k] = true
+			keys = append(keys, struct{ AgentType, SessionID string }{r.AgentType, r.SessionID})
+		}
+		rootRefs, err = s.DB.ResolveRootSessions(keys)
+		if err != nil {
+			log.Printf("search: ResolveRootSessions: %v", err)
+			rootRefs = nil
+		}
 	}
 	out := make([]result, 0, len(results))
 	for _, r := range results {
@@ -1064,7 +1134,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		key := r.AgentType + "\x00" + r.SessionID
 		stale := staleKeys[key]
-		out = append(out, result{
+		entry := result{
 			SessionID:     r.SessionID,
 			AgentType:     r.AgentType,
 			Project:       meta.Project,
@@ -1073,7 +1143,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Match:         r.Match,
 			SourceMissing: stale,
 			Stale:         stale,
-		})
+		}
+		if meta.IsSubagent {
+			entry.IsSubagent = true
+			if root, ok := rootRefs[key]; ok {
+				entry.RootSessionID = root.SessionID
+				entry.RootAgentType = root.AgentType
+				entry.RootSessionName = root.Name
+			}
+		}
+		out = append(out, entry)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -31,9 +31,12 @@ import TerminalContextMenu, { type TerminalMenuSection } from './TerminalContext
 import TerminalSearchBar from './TerminalSearchBar'
 import ToolCallPanel from './ToolCallPanel'
 import UserMessagePanel from './UserMessagePanel'
+import KeyEventOutlinePanel from './KeyEventOutlinePanel'
 import { getVisibleTurnRange, isSameVisibleRange, type VisibleTurnRange } from '../scrollSync'
+import { nearestOutlineKey, outlineItemsFromPositions } from '../semanticOutline'
 import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysContainingTarget, foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
+import { editIndexForRow, editPositionForIndex, editPositionsSorted } from '../editPositionMatch'
 import { isSessionLive, LIVE_WINDOW_MS, getAgentLabel } from '../sidebarRows'
 import { getNavOpenPref } from '../navPrefs'
 import { formatTokenCount } from '../formatTokenCount'
@@ -45,6 +48,7 @@ import {
 import { formatDate, formatNumber, useI18n, type Locale } from '../i18n'
 import { openOnModifiedClick } from '../sessionLink'
 import ResumeTerminalControl from './ResumeTerminalControl'
+import { SearchIcon } from './icons'
 
 const AnalyticsView = lazy(() => import('./AnalyticsView'))
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
@@ -97,6 +101,9 @@ const COLLAB_TERMINAL_CODES = new Set(['session_not_found', 'collaboration_not_i
 interface Props {
   sessionId: string | null
   searchTarget?: { sessionId: string; agentType: string; query: string } | null
+  // Root ancestor of a subagent session opened from global search: drives the
+  // same back-to-parent breadcrumb as dock navigation.
+  searchRootRef?: { sessionId: string; childAgentType: string; root: { id: string; agentType: string; name: string } } | null
   onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
@@ -120,7 +127,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, searchTarget, onSelect, bookmarkChange, onBookmarkChange }: Props) {
+export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, bookmarkChange, onBookmarkChange }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
@@ -147,8 +154,16 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const [foldVersion, setFoldVersion] = useState(0)
   const [outputModalIdx, setOutputModalIdx] = useState<number | null>(null)
   const [edits, setEdits] = useState<EditCall[]>([])
+  // Ref mirror for the edit-header matcher: it is registered once per session
+  // but must resolve rows against the latest edits payload.
+  const editsRef = useRef(edits)
+  editsRef.current = edits
   const [showToolPanel, setShowToolPanel] = useState(false)
   const [showUserPanel, setShowUserPanel] = useState(false)
+  const [showOutlinePanel, setShowOutlinePanel] = useState(false)
+  // Terminal viewport anchor (original render row at the viewport center) for
+  // the outline's current-position tracking; updated from scroll metrics.
+  const [outlineAnchor, setOutlineAnchor] = useState<number | null>(null)
   // When pinned, click-outside does not close the nav overlay.
   // Auto-open+pin only when settings "open on session" is not off.
   const [navPinned, setNavPinned] = useState(false)
@@ -373,10 +388,8 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         onActivate: (bufLine: number, _data: unknown, matchIndex: number, meta?: TerminalActivateMeta) => {
           const ctrl = termControlRef.current
           const orig = ctrl ? ctrl.toOriginalLine(bufLine) : bufLine
-          const editPositions = (positionsRef.current?.positions ?? [])
-            .filter(p => p.kind === 'edit')
-            .sort((a, b) => a.line_start - b.line_start)
-          const idx = editPositions.findIndex(p => p.line_start === orig)
+          const editPositions = editPositionsSorted(positionsRef.current?.positions ?? [])
+          const idx = editIndexForRow(editsRef.current, editPositions, orig)
           openFilePopover(bufLine, meta, idx >= 0 ? idx : matchIndex)
         },
       },
@@ -714,6 +727,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     })
   }, [onSelect])
 
+  // Global-search landing on a subagent session reuses the dock breadcrumb:
+  // the main view shows the child transcript while the chip offers a jump
+  // back to the root parent (which is where the sidebar focus landed).
+  useEffect(() => {
+    if (searchRootRef && sessionId === searchRootRef.sessionId) {
+      setChildContext({
+        childId: searchRootRef.sessionId,
+        childAgentType: searchRootRef.childAgentType,
+        parentId: searchRootRef.root.id,
+        parentAgentType: searchRootRef.root.agentType,
+        parentLabel: searchRootRef.root.name || searchRootRef.root.id,
+      })
+    }
+  }, [searchRootRef, sessionId])
+
   // Jump actions resolve the frozen source anchors against the existing
   // replay positions (exact event_id → tool_call_id → turn → timestamp).
   // Launch and result use distinct coordinates even though both share one
@@ -752,12 +780,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       const positions = positionsData?.positions
       const control = termControlRef.current
       if (!positions || !control) return
-      // Edit positions are indexed by ascending line_start — the same order
-      // the ctx-menu path uses to map a clicked row to initialDiffIdx, and
-      // the order of the edits array the Diff modal steps through.
-      const target = positions
-        .filter((p) => p.kind === 'edit')
-        .sort((a, b) => a.line_start - b.line_start)[editIdx]
+      // The edits array (raw event order) and the edit positions (render
+      // order) can diverge on nested Chrys events; match via tool_call_id.
+      const target = editPositionForIndex(edits, editPositionsSorted(positions), editIdx)
       if (!target) return
       const payloadLogical = target.payload?.['logical_start']
       const logicalStart = typeof payloadLogical === 'number' ? payloadLogical : undefined
@@ -772,7 +797,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         jump()
       }
     },
-    [folds, positionsData],
+    [folds, positionsData, edits],
   )
 
   // Session switch: save the outgoing session's view (follow choice + scroll
@@ -842,9 +867,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     // Drop analytics-driven tool filters when leaving a session so they do not
     // stick to a later manual open of the tool panel.
     setToolFilterRequest(null)
+    setOutlineAnchor(null)
     if (!sessionId) {
       setShowUserPanel(false)
       setShowToolPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(false)
       return
     }
@@ -852,37 +879,64 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     if (pref === 'user') {
       setShowUserPanel(true)
       setShowToolPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(true)
     } else if (pref === 'tool') {
       setShowToolPanel(true)
       setShowUserPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(true)
     } else {
       setShowUserPanel(false)
       setShowToolPanel(false)
+      setShowOutlinePanel(false)
       setNavPinned(false)
     }
   }, [sessionId])
 
-  // Ctrl+F in-terminal search. Capture phase: focus usually sits in xterm's
-  // helper textarea, which stops keydown propagation before the bubble phase.
+  // In-terminal search (toolbar Find or Ctrl/Cmd+F). Capture phase: focus
+  // usually sits in xterm's helper textarea, which stops keydown before bubble.
   const [searchOpen, setSearchOpen] = useState(false)
-  // Bumped on every Ctrl+F so an already-open bar pulls focus back to itself.
+  // Bumped on every open so an already-open bar pulls focus back to itself.
   const [searchFocusToken, setSearchFocusToken] = useState(0)
-  useEffect(() => { setSearchOpen(false) }, [sessionId, viewMode])
+  const openTerminalSearch = useCallback(() => {
+    setViewMode('terminal')
+    setSearchOpen(true)
+    setSearchFocusToken(t => t + 1)
+  }, [])
+  const toggleTerminalSearch = useCallback(() => {
+    if (viewMode === 'terminal' && searchOpen) {
+      setSearchOpen(false)
+      return
+    }
+    openTerminalSearch()
+  }, [viewMode, searchOpen, openTerminalSearch])
+  useEffect(() => { setSearchOpen(false) }, [sessionId])
+  useEffect(() => {
+    if (viewMode !== 'terminal') setSearchOpen(false)
+  }, [viewMode])
   useEffect(() => {
     if (!sessionId) return
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
-        if (viewMode !== 'terminal') return
+        const target = e.target
+        // Keep Ctrl+F when focus is in the find bar or xterm's helper textarea.
+        const inTerminalFind = target instanceof HTMLElement && !!target.closest(
+          '[data-testid="terminal-search-bar"], .xterm',
+        )
+        if (
+          !inTerminalFind
+          && (target instanceof HTMLInputElement
+            || target instanceof HTMLTextAreaElement
+            || (target instanceof HTMLElement && target.isContentEditable))
+        ) return
         e.preventDefault()
-        setSearchOpen(true)
-        setSearchFocusToken(t => t + 1)
+        openTerminalSearch()
       }
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [sessionId, viewMode])
+  }, [sessionId, openTerminalSearch])
 
   // Ctrl+C / Ctrl+Shift+C / Ctrl+Insert to copy terminal selection.
   // Capture phase: xterm's helper textarea stops keydown propagation before
@@ -920,11 +974,9 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
       setFileTarget({ path, label: path.split('/').pop() ?? path, line, search })
     }
 
-    const editPositions = (positionsData?.positions ?? [])
-      .filter(p => p.kind === 'edit')
-      .sort((a, b) => a.line_start - b.line_start)
+    const editPositions = editPositionsSorted(positionsData?.positions ?? [])
     const editIdx = ctxMenu.originalRow !== null
-      ? editPositions.findIndex(p => p.line_start === ctxMenu.originalRow)
+      ? editIndexForRow(edits, editPositions, ctxMenu.originalRow)
       : -1
     if (editIdx >= 0 && edits[editIdx]) {
       const e = edits[editIdx]
@@ -1326,6 +1378,20 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     [positionsData],
   )
 
+  const outlineItems = useMemo(
+    () => outlineItemsFromPositions(positionsData?.positions),
+    [positionsData],
+  )
+
+  // Current position = outline event nearest the viewport center. Computed
+  // against ALL outline items — the panel decides afterwards whether the
+  // active filters hide it, so disabling a category never silently retargets
+  // "current" onto a different event.
+  const currentOutlineKey = useMemo(
+    () => (outlineAnchor === null ? null : nearestOutlineKey(outlineItems, outlineAnchor)),
+    [outlineItems, outlineAnchor],
+  )
+
   // User-message ranges for the terminal: highlight decoration + sticky top
   // bar. Mapped from positions (kind === 'user') to the shape TerminalPanel
   // consumes. line_end / logical_end come from the backend (set when the user
@@ -1361,6 +1427,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     setToolFilterRequest(prev => ({ name, token: (prev?.token ?? 0) + 1 }))
     setShowToolPanel(true)
     setShowUserPanel(false)
+    setShowOutlinePanel(false)
     setNavPinned(false)
     setViewMode('terminal')
   }, [])
@@ -1447,6 +1514,11 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
   const handleTerminalScrollMetrics = useCallback((metrics: ScrollMetrics) => {
     lastMetricsRef.current = metrics
     lastMetricsSessionIdRef.current = sessionDetailRef.current?.id ?? null
+    // Viewport anchor for the outline's current-position tracking. The
+    // metrics callback already rides TerminalPanel's rAF-batched
+    // scroll/resize/render lifecycle; only commit state on change.
+    const anchor = termControlRef.current?.getViewportAnchor() ?? null
+    setOutlineAnchor(prev => (prev === anchor ? prev : anchor))
     const range = getVisibleTurnRange(metrics, turns.length)
     miniMapControlRef?.current?.updateViewport(metrics, range)
     if (range && !isSameVisibleRange(visibleRangeRef.current, range)) {
@@ -1651,6 +1723,13 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
     tenThousand: t('token.unit.tenThousand'),
     hundredMillion: t('token.unit.hundredMillion'),
   }
+  const uaPlatform = typeof navigator !== 'undefined'
+    ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+      || navigator.userAgent
+      || navigator.platform
+      || '')
+    : ''
+  const findShortcut = /Mac|iPhone|iPad|iPod/i.test(uaPlatform) ? '⌘F' : 'Ctrl+F'
   const tokenExactFull =
     tokenHeader.kind === 'value' ? formatTokenCount(locale, tokenHeader.total, 'full') : ''
   const tokenHeaderText =
@@ -1750,6 +1829,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
           )}
           <span className="text-[var(--border-default)]">|</span>
           <button
+            type="button"
+            onClick={toggleTerminalSearch}
+            className={`h-7 rounded-md px-2 inline-flex items-center gap-1 text-nav ${
+              viewMode === 'terminal' && searchOpen
+                ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10'
+                : 'text-[var(--text-secondary)]'
+            } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title={t('replay.findTitle', { shortcut: findShortcut })}
+            aria-pressed={viewMode === 'terminal' && searchOpen}
+            data-testid="session-terminal-find-button"
+          >
+            <SearchIcon className="h-3.5 w-3.5" />
+            {t('replay.find')}
+          </button>
+          <button
             onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
@@ -1792,28 +1886,31 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
         </div>
         <span className="flex-1 text-center text-helper text-[var(--text-secondary)] truncate px-2">
           {/*
-            Explicit live-state chip: the four states the replay can be in.
-            加载中 wins while the initial render streams; for a live session
-            the follow toggle decides 追尾中 vs 已暂停; a session whose source
-            stopped writing shows 来源已停止 instead of silently losing the badge.
+            Explicit live-state indicator: the four states the replay can be
+            in. 加载中 wins while the initial render streams; for a live
+            session the follow toggle decides 追尾中 vs 已暂停; a session
+            whose source stopped writing shows 来源已停止 instead of silently
+            losing the badge. Deliberately chromeless (no pill background, no
+            hover, default cursor): it sits inside the meta text run as a
+            colored-dot status readout, not a button.
           */}
           {viewMode === 'terminal' && terminalLoading ? (
-            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-blue)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-blue)]" data-testid="replay-status" data-state="loading">
-              {t('replay.statusLoading')}
+            <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--accent-blue)]" data-testid="replay-status" data-state="loading">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent-blue)]" />{t('replay.statusLoading')}
             </span>
           ) : sessionIsLive ? (
             followOutput ? (
-              <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-green)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-green)]" data-testid="replay-status" data-state="following">
+              <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--accent-green)]" data-testid="replay-status" data-state="following">
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent-green)]" />{t('replay.statusFollowing')}
               </span>
             ) : (
-              <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[color-mix(in_srgb,var(--accent-amber,#d29922)_15%,transparent)] px-1.5 text-meta font-medium text-[var(--accent-amber,#d29922)]" data-testid="replay-status" data-state="paused">
-                {t('replay.statusPaused')}
+              <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--accent-amber)]" data-testid="replay-status" data-state="paused">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--accent-amber)]" />{t('replay.statusPaused')}
               </span>
             )
           ) : (
-            <span className="mr-1.5 inline-flex items-center gap-1 rounded-sm bg-[var(--bg-surface-hover)] px-1.5 text-meta font-medium text-[var(--text-muted)]" data-testid="replay-status" data-state="ended">
-              {t('replay.statusEnded')}
+            <span className="mr-1.5 inline-flex cursor-default items-center gap-1 text-meta text-[var(--text-muted)]" data-testid="replay-status" data-state="ended">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--text-muted)]" />{t('replay.statusEnded')}
             </span>
           )}
           {session.import_info && (
@@ -1853,13 +1950,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               const next = !v
               if (next) {
                 setShowToolPanel(false)
+                setShowOutlinePanel(false)
                 setToolFilterRequest(null)
               } else {
                 setNavPinned(false)
               }
               return next
             })}
-            className={`h-7 rounded-md border px-2 text-nav ${
+            className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showUserPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -1873,13 +1971,14 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               const next = !v
               if (next) {
                 setShowUserPanel(false)
+                setShowOutlinePanel(false)
               } else {
                 setToolFilterRequest(null)
                 setNavPinned(false)
               }
               return next
             })}
-            className={`h-7 rounded-md border px-2 text-nav ${
+            className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showToolPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -1887,6 +1986,27 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
             title={t('replay.toolCalls')}
           >
             {t('replay.toolCalls')}{toolCallCount > 0 ? ` ${formatNumber(locale, toolCallCount)}` : ''}
+          </button>
+          <button
+            onClick={() => setShowOutlinePanel(v => {
+              const next = !v
+              if (next) {
+                setShowUserPanel(false)
+                setShowToolPanel(false)
+                setToolFilterRequest(null)
+              } else {
+                setNavPinned(false)
+              }
+              return next
+            })}
+            className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
+              showOutlinePanel
+                ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
+                : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            title={t('replay.outline')}
+          >
+            {t('replay.outline')}{outlineItems.length > 0 ? ` ${formatNumber(locale, outlineItems.length)}` : ''}
           </button>
         </div>
         <span ref={visibleRangeLabelRef} className="flex-shrink-0 text-meta text-[var(--text-muted)]">
@@ -1929,6 +2049,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               {[
                 ['j / ↓', t('replay.shortcutNext')],
                 ['k / ↑', t('replay.shortcutPrevious')],
+                [findShortcut, t('replay.shortcutFind')],
                 ['?', t('replay.shortcutHelp')],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">
@@ -2041,7 +2162,7 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
               controlRef={termControlRef}
               refreshToken={foldVersion}
               focusToken={searchFocusToken}
-              rightInset={navPinned && (showUserPanel || showToolPanel) ? navPanelWidth : 0}
+              rightInset={navPinned && (showUserPanel || showToolPanel || showOutlinePanel) ? navPanelWidth : 0}
               onClose={() => setSearchOpen(false)}
             />
           )}
@@ -2129,6 +2250,21 @@ export default function ReplayView({ sessionId, searchTarget, onSelect, bookmark
                 // 面板生命周期结束,清掉分析页带来的筛选请求,
                 // 避免下次手动打开时又套用旧筛选。
                 setToolFilterRequest(null)
+              }}
+            />
+          )}
+          {viewMode === 'terminal' && showOutlinePanel && (
+            <KeyEventOutlinePanel
+              positions={positionsData}
+              building={positionsBuilding}
+              currentKey={currentOutlineKey}
+              pinned={navPinned}
+              onPinnedChange={setNavPinned}
+              onWidthChange={setNavPanelWidth}
+              onJump={handlePanelJump}
+              onClose={() => {
+                setShowOutlinePanel(false)
+                setNavPinned(false)
               }}
             />
           )}

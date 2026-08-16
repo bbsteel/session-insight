@@ -1,11 +1,9 @@
-import type { TurnVM } from './types'
+// Pure MiniMap logic: relative cost-pressure tone and fallback-mode layout.
+// v0.6.1 removed the event-marker mapping (hasCompaction /
+// getMiniMapEventKind): precise event discovery and jumping now live in the
+// key-event outline panel, and the MiniMap is a passive overview.
 
 export type TokenPressureTone = 'empty' | 'low' | 'medium' | 'high' | 'critical'
-export type MiniMapEventKind = 'anomaly' | 'compaction' | 'rollback' | 'user'
-
-export function hasCompaction(turn: TurnVM): boolean {
-  return turn.anomalies?.some(a => a.includes('compaction') || a.includes('compression')) ?? false
-}
 
 export function getTokenPressureTone(ratio: number): TokenPressureTone {
   if (ratio <= 0) return 'empty'
@@ -13,15 +11,6 @@ export function getTokenPressureTone(ratio: number): TokenPressureTone {
   if (ratio >= 0.75) return 'high'
   if (ratio >= 0.4) return 'medium'
   return 'low'
-}
-
-export function getMiniMapEventKind(turn: TurnVM): MiniMapEventKind | null {
-  if (hasCompaction(turn)) return 'compaction'
-  // 续跑是行为质量标记而非技术故障，不占用红色异常点位
-  const hasFailure = turn.anomalies?.some(a => a !== 'continuation_nudge') ?? false
-  if (hasFailure || turn.error_count > 0) return 'anomaly'
-  if (turn.user_message) return 'user'
-  return null
 }
 
 export function getMiniMapTurnPositionPercent(index: number, turnCount: number): number {

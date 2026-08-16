@@ -4,9 +4,11 @@
 
 A local-first web app for browsing and analyzing AI coding agent sessions through terminal-native replay. It reconstructs ANSI-styled conversations, tool calls, and code output in an interactive terminal, while discovery, indexing, search, and replay stay on your machine. AI generation is opt-in and only uses a provider you configure.
 
+Built-in observability connects Agent capabilities, record provenance, collaboration timelines, Token and tool analytics, and Git/PR/MR evidence. Exact, estimated, missing, and unavailable states make the confidence of each conclusion visible instead of hiding uncertainty.
+
 [中文](README_ZH.md)
 
-![Session replay with tool calls and semantic minimap](assets/screenshots/en/replay.png)
+![Session replay with terminal find, tool calls, and semantic minimap](assets/screenshots/en/replay.png)
 
 <p align="center"><sub>Real development session shown with personal paths and contact details sanitized.</sub></p>
 
@@ -16,20 +18,25 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 - **Agent capability transparency** — inspect each Agent's support for discovery, replay, realtime updates, tokens, tools, diffs, subtasks, resume, deletion, and termination, with session-level exact, estimated, or missing states
 - **Session record completeness** — see whether SI fully read a session (complete, degraded, metadata-only, or source-missing), inspect provenance and source files, and open them in your editor
 - **Sub-agent collaboration** — when an Agent records nested work, open a horizontal collaboration dock with a zoomable timeline and jump from each launch or result back into the terminal evidence (Grok, Codex, Chrys, and Copilot)
-- **Terminal-native replay** — preserve ANSI output, formatted assistant text, tool calls, code, and errors; fold noisy details and follow active sessions as they grow
-- **Fast session navigation** — start at the first prompt, keep the current user message visible while scrolling, jump to the next user message, open clickable terminal links, use the semantic minimap, or browse the combined user/assistant interaction panel
-- **Search and organization** — search metadata, prompts, assistant replies, skills, tool inputs, and errors across sessions while background indexing reports progress; narrow results by project or agent and keep bookmarks with notes
+- **Terminal-native replay** — preserve ANSI output, formatted assistant text, tool calls, code, and errors; keep parallel tool results beside their invocations, fold noisy details, and follow active sessions as they grow
+- **Fast session navigation** — start at the first prompt, keep the current user message visible while scrolling, search inside the terminal with first/last-match jumps, open clickable links, use the semantic minimap, or browse the combined user/assistant interaction panel
+- **Search and organization** — search metadata, prompts, assistant replies, skills, tool inputs, and errors across sessions while background indexing reports progress; narrow results by project or agent, sort projects by name, session count, or recent activity, and keep bookmarks with notes
+- **Git and Change Request evidence** — inspect repository-scoped local changes, retained patches, candidate commits, and replay edit anchors; link fixed GitHub PR or GitLab MR snapshots with explicit evidence quality and revocable read-only host approval
 - **Tool, diff, and code inspection** — filter tool calls and jump to their source turn; inspect inline or side-by-side diffs; open referenced files in the structured code reader or your editor
 - **Usage analytics** — inspect prompt, output, and cache tokens, cost estimates, tool usage, errors, anomalies, continuation pressure, and per-turn trends
 - **Session lifecycle tools** — export Markdown or portable `.sibundle` packs for offline migration, resume sessions in place (or copy a shell command), and safely delete with running-process protection and supported force-stop flows
 - **Optional AI assistance** — generate summaries, titles, and handoff prompts on historical or live sessions through a configured OpenAI-compatible API or local ACP agent
-- **Desktop personalization** — use light or dark themes, recognizable agent icons, a custom user avatar, resizable panels, and independent UI/terminal font and size controls
+- **Desktop personalization** — use light or dark themes, recognizable agent icons, a custom user avatar, resizable panels, localized compact or exact Token totals, and independent UI/terminal font and size controls
 
 ## More Screenshots
 
 | Interaction messages | Settings and fonts |
 |:--:|:--:|
 | ![Combined user and assistant message navigation](assets/screenshots/en/interaction.png) | ![Settings center with UI and terminal font controls](assets/screenshots/en/settings.png) |
+
+| Tool-call observability |
+|:--:|
+| ![Filterable tool-call history with arguments, status, duration, and replay jumps](assets/screenshots/en/tool-calls.png) |
 
 | Session analytics | Structured code reader |
 |:--:|:--:|

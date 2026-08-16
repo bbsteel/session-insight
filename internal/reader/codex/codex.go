@@ -288,6 +288,12 @@ type codexPayload struct {
 	NumTurns int `json:"num_turns"`
 	// thread_goal_updated
 	Goal *codexGoal `json:"goal"`
+	// item_completed (paginated history mode, Codex CLI ~0.147+): the
+	// application-layer item carries the user/assistant text that legacy
+	// user_message / agent_message events used to carry.
+	Item *codexItem `json:"item"`
+	// task_complete
+	LastAgentMessage string `json:"last_agent_message"`
 	// function_call arguments (JSON string)
 	Arguments string `json:"arguments"`
 	// custom_tool_call input (raw string)
@@ -296,6 +302,39 @@ type codexPayload struct {
 
 type codexGoal struct {
 	Objective string `json:"objective"`
+}
+
+// codexItem is the application-layer item carried by event_msg/item_completed
+// in paginated history mode. Only UserMessage / AgentMessage items are
+// consumed for text; CommandExecution / FileChange items duplicate the
+// response_item tool records and are deliberately ignored.
+type codexItem struct {
+	Type    string             `json:"type"`
+	Content []codexItemContent `json:"content"`
+}
+
+// codexItemContent is one text block of an item. Codex writes "Text" for
+// AgentMessage blocks and "text" for UserMessage blocks; matching is
+// case-insensitive and blocks with empty text are skipped either way.
+type codexItemContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// codexItemText joins the text blocks of an item_completed payload item.
+// Returns "" for nil items, non-message item types, and empty content.
+func codexItemText(item *codexItem) string {
+	if item == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, block := range item.Content {
+		if !strings.EqualFold(block.Type, "text") {
+			continue
+		}
+		b.WriteString(block.Text)
+	}
+	return b.String()
 }
 
 type codexTokenCountInfo struct {
@@ -542,12 +581,21 @@ func codexSessionFromReader(path string, source io.Reader, discovery model.Sessi
 			}
 		case "event_msg":
 			var payload codexPayload
-			if json.Unmarshal(evt.Payload, &payload) == nil && payload.Type == "user_message" && payload.Message != "" {
+			if json.Unmarshal(evt.Payload, &payload) != nil {
+				continue
+			}
+			userText := ""
+			if payload.Type == "user_message" {
+				userText = payload.Message
+			} else if payload.Type == "item_completed" && payload.Item != nil && payload.Item.Type == "UserMessage" {
+				userText = codexItemText(payload.Item)
+			}
+			if userText != "" {
 				if firstUserMsg == "" {
-					firstUserMsg = payload.Message
+					firstUserMsg = userText
 				}
 				if len(userMessages) < 5 {
-					userMessages = append(userMessages, payload.Message)
+					userMessages = append(userMessages, userText)
 				}
 			}
 		case "turn_context":
@@ -952,12 +1000,18 @@ func readSessionMeta(jsonlPath string) (model.Session, bool) {
 			if json.Unmarshal(evt.Payload, &p) != nil {
 				continue
 			}
-			if p.Type == "user_message" && p.Message != "" {
+			userText := ""
+			if p.Type == "user_message" {
+				userText = p.Message
+			} else if p.Type == "item_completed" && p.Item != nil && p.Item.Type == "UserMessage" {
+				userText = codexItemText(p.Item)
+			}
+			if userText != "" {
 				if firstUserMsg == "" {
-					firstUserMsg = p.Message
+					firstUserMsg = userText
 				}
 				if len(userMessages) < 5 {
-					userMessages = append(userMessages, p.Message)
+					userMessages = append(userMessages, userText)
 				}
 			}
 
@@ -1096,6 +1150,25 @@ func (r *CodexReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail.Provenance = &p
 
 	return detail, nil
+}
+
+// GetSessionMeta returns the cheap head/tail-scan metadata for a session —
+// the same readSessionMeta call GetSession builds its Session from, so
+// UpdatedAt-derived revisions match bit-for-bit. It skips the full transcript
+// parse and exists for callers (e.g. the position-cache revision check) that
+// only need metadata.
+func (r *CodexReader) GetSessionMeta(id string) (*model.Session, error) {
+	jsonlPath := r.findSessionFile(id)
+	if jsonlPath == "" {
+		return nil, readerr.New(readerr.SourceMissing, "source_missing",
+			fmt.Errorf("codex session not found: %s", id))
+	}
+	session, ok := readSessionMeta(jsonlPath)
+	if !ok {
+		return nil, readerr.New(readerr.SourceUnreadable, "source_unreadable",
+			fmt.Errorf("failed to read codex session: %s", id))
+	}
+	return &session, nil
 }
 
 func (r *CodexReader) findSessionFile(sessionID string) string {
@@ -1271,6 +1344,24 @@ func parseCodexEventsReader(source io.Reader) (codexParsedTurns, string, string,
 					current.turn.AssistantMessage += p.Message
 				}
 
+			case "item_completed":
+				// Paginated history mode (Codex CLI ~0.147+): text arrives as
+				// application-layer items instead of user_message/agent_message
+				// events. Only message items carry text; CommandExecution /
+				// FileChange items duplicate response_item tool records and are
+				// ignored here.
+				if current == nil || p.Item == nil {
+					continue
+				}
+				switch p.Item.Type {
+				case "UserMessage":
+					if text := codexItemText(p.Item); text != "" {
+						current.turn.UserMessage = text
+					}
+				case "AgentMessage":
+					current.turn.AssistantMessage += codexItemText(p.Item)
+				}
+
 			case "token_count":
 				if current != nil && p.Info != nil {
 					current.turn.RequestCount++
@@ -1318,6 +1409,13 @@ func parseCodexEventsReader(source io.Reader) (codexParsedTurns, string, string,
 						Timestamp: evt.Timestamp,
 						Data:      map[string]any{},
 					})
+					// Defensive fallback: paginated history mode carries the
+					// final assistant text on task_complete. When no
+					// AgentMessage item arrived (aborted stream, partial
+					// flush), keep the turn's text recoverable.
+					if current.turn.AssistantMessage == "" && p.LastAgentMessage != "" {
+						current.turn.AssistantMessage = p.LastAgentMessage
+					}
 				}
 
 			case "turn_aborted":

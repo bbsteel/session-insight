@@ -112,6 +112,17 @@ type LiveRevisionProvider interface {
 	LiveRevision(id string) (int64, error)
 }
 
+// SessionMetaProvider is an optional reader capability: the session metadata
+// (UpdatedAt, agent type, counts available from a cheap scan) without parsing
+// the whole transcript. Implementations must use the same head/tail scan that
+// GetSession uses for its Session fields, so revisions derived from either
+// path stay identical. Callers use it where only metadata is needed (e.g.
+// position-cache revision checks) to avoid a full parse of long sessions;
+// readers without it fall back to GetSession.
+type SessionMetaProvider interface {
+	GetSessionMeta(id string) (*model.Session, error)
+}
+
 // InsightEvidenceProvider is an optional reader capability: agent-specific
 // facts that the unified SessionDetail discards but Deep Insight causal
 // analysis needs (e.g. Copilot subagent delegation descriptions, models,

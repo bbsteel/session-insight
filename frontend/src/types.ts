@@ -199,6 +199,9 @@ export interface EditCall {
   old_string: string
   new_string: string
   replace_all?: boolean
+  // Invocation id linking this edit to its "edit" position in the render;
+  // see editPositionMatch.ts for why index-only matching is not enough.
+  tool_call_id?: string
 }
 
 export interface SearchResult {
@@ -211,6 +214,14 @@ export interface SearchResult {
   /** True when hit comes from a source_missing tombstone (historical index). */
   source_missing?: boolean
   stale?: boolean
+  /**
+   * Subagent lineage. The sidebar lists root sessions only, so a subagent
+   * hit redirects its landing target to this root ancestor.
+   */
+  is_subagent?: boolean
+  root_session_id?: string
+  root_agent_type?: string
+  root_session_name?: string
 }
 
 /** Mutually exclusive record completeness states (independent of capability). */
@@ -270,7 +281,7 @@ export interface RecordStatus {
 }
 
 export interface MiniMapPosition {
-  kind: 'turn' | 'user' | 'assistant' | 'error' | 'compaction' | 'edit' | 'fold' | 'trunc' | 'tool'
+  kind: 'turn' | 'user' | 'assistant' | 'error' | 'compaction' | 'edit' | 'fold' | 'trunc' | 'tool' | 'outline'
   position_key: string
   turn_index: number
   line_start: number
@@ -278,6 +289,24 @@ export interface MiniMapPosition {
   label: string
   severity?: string
   payload?: Record<string, unknown>
+}
+
+// Semantic key-event outline (v0.6.1). The backend classifier emits stable
+// machine codes; all display copy comes from i18n, never from the payload.
+export type OutlineCategory = 'anomaly' | 'context' | 'file_change' | 'key_result'
+
+export interface OutlinePayload {
+  category: OutlineCategory
+  code: string
+  precision: 'exact' | 'estimated'
+  summary?: string
+  source_position_key?: string
+  logical_start?: number
+  ts_ms?: number
+  tool_name?: string
+  file_path?: string
+  previous_file_path?: string
+  duration_ms?: number
 }
 
 export interface PositionsResponse {
