@@ -69,6 +69,19 @@ func TestExtractCreationEvidenceDeduplicatesRepeatedNormalizedURL(t *testing.T) 
 	}
 }
 
+func TestExtractCreationEvidenceDoesNotPromoteEscapedQuotedCreate(t *testing.T) {
+	events := []model.RenderEvent{
+		{EventID: "invoke", Type: "ToolInvocation", ToolInput: map[string]any{
+			"command": `echo "https://github.com/acme/widgets/pull/42 \" && gh pr create --fill"`,
+		}},
+		{Type: "ToolResult", ParentEventID: "invoke", Timestamp: time.Now().UTC(),
+			Stdout: "https://github.com/acme/widgets/pull/42 \" && gh pr create --fill\n"},
+	}
+	if got := ExtractCreationEvidence(events, "sha256:source"); len(got) != 0 {
+		t.Fatalf("escaped quoted create was promoted: %+v", got)
+	}
+}
+
 func TestExtractCreationEvidenceDoesNotPromoteCommandMention(t *testing.T) {
 	events := []model.RenderEvent{
 		{EventID: "invoke", Type: "ToolInvocation", ToolInput: map[string]any{"command": "echo gh pr create"}},

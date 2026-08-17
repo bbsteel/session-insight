@@ -377,7 +377,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		}
 		collabCurrentKnown = true
 		gitCurrent := true
-		storedSourceRevision, creationCurrent, hasCreationEvidence, readErr := ix.db.SessionChangeRequestCreationIndexState(agentType, sess.ID)
+		storedSourceRevision, creationCurrent, _, readErr := ix.db.SessionChangeRequestCreationIndexState(agentType, sess.ID)
 		if readErr != nil {
 			return false, readErr
 		}
@@ -389,7 +389,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 					return false, readErr
 				}
 			}
-			if creationCurrent && (hasCreationEvidence || gitEvidenceCurrent) {
+			if creationCurrent {
 				snapshotStarted := time.Now()
 				authoritativeEnvelope, readErr = authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
 				detailElapsed = time.Since(snapshotStarted)

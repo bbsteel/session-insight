@@ -112,7 +112,7 @@ func unquotedStatements(command string) []string {
 			escape = false
 			continue
 		}
-		if quote == 0 && r == '\\' {
+		if (quote == 0 || quote == '"') && r == '\\' {
 			buf.WriteRune(r)
 			escape = true
 			continue
