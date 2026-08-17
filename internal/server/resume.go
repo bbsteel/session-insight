@@ -82,14 +82,15 @@ func (s *Server) handleGetResumePlan(w http.ResponseWriter, r *http.Request) {
 	if buildErr != nil {
 		status = resumeErrorCode(buildErr)
 	}
-	if runtime.caps.Liveness.IsLive {
+	liveness, _ := processEvidenceLiveness(runtime)
+	if liveness.IsLive {
 		status = "session_running"
 	}
 	terminalStatus := s.resolveTerminalStatus(runtime)
 	response := resumePlanResponse{
 		Status: status, AgentType: runtime.detail.AgentType, SessionID: runtime.detail.ID,
 		CWD: runtime.detail.CWD, SupportsUnsafe: runtime.static.ResumeCommand != nil && runtime.static.ResumeCommand.UnsafeArgs != nil,
-		Liveness: runtime.caps.Liveness, Terminal: terminalStatus,
+		Liveness: liveness, Terminal: terminalStatus,
 	}
 	if buildErr == nil {
 		response.Command = terminal.FormatCommand(command)
@@ -250,18 +251,41 @@ func shortSessionID(id string) string {
 	return id[:8]
 }
 
+// processEvidenceLiveness promotes timestamp-based liveness with exact process
+// evidence when the reader can enumerate live session processes (heartbeat
+// files, open fds). A just-resumed agent idling at its prompt appends nothing
+// to the transcript, so the mtime heuristic alone reports it stopped and the
+// launch verification flips the terminal binding back to "stopped" — the live
+// process is the authoritative signal that the session is running.
+func processEvidenceLiveness(runtime sessionRuntime) (capability.SessionLivenessStatus, []int) {
+	liveness := runtime.caps.Liveness
+	finder, ok := runtime.reader.(reader.SessionProcessFinder)
+	if !ok {
+		return liveness, nil
+	}
+	pids, err := finder.SessionProcesses(runtime.detail.ID)
+	if err != nil || len(pids) == 0 {
+		return liveness, nil
+	}
+	if !liveness.IsLive {
+		liveness = capability.SessionLivenessStatus{IsLive: true, State: capability.CapabilityExact}
+	}
+	return liveness, pids
+}
+
 func (s *Server) resolveTerminalStatus(runtime sessionRuntime) terminalStatusResponse {
-	live := runtime.caps.Liveness.IsLive
-	quality := string(runtime.caps.Liveness.State)
+	liveness, processPIDs := processEvidenceLiveness(runtime)
+	live := liveness.IsLive
+	quality := string(liveness.State)
 	if s.DB == nil {
-		if status, ok := externalTerminalStatus(runtime); ok {
+		if status, ok := externalTerminalStatus(liveness, processPIDs); ok {
 			return status
 		}
 		return terminalStatusResponse{State: terminalStateWithoutBinding(live), SessionLive: live, LivenessState: quality, Confidence: terminal.ConfidenceUnknown}
 	}
 	record, ok, err := s.DB.GetTerminalBinding(runtime.detail.AgentType, runtime.detail.ID)
 	if err != nil || !ok {
-		if status, ok := externalTerminalStatus(runtime); ok {
+		if status, ok := externalTerminalStatus(liveness, processPIDs); ok {
 			return status
 		}
 		return terminalStatusResponse{State: terminalStateWithoutBinding(live), SessionLive: live, LivenessState: quality, Confidence: terminal.ConfidenceUnknown}
@@ -269,7 +293,7 @@ func (s *Server) resolveTerminalStatus(runtime sessionRuntime) terminalStatusRes
 	// A later externally-started run must not inherit a stale exact tab from a
 	// previous SI launch that was already observed stopped.
 	if live && record.State == "stopped" {
-		if status, ok := externalTerminalStatus(runtime); ok {
+		if status, ok := externalTerminalStatus(liveness, processPIDs); ok {
 			return status
 		}
 		return terminalStatusResponse{State: "active_unknown", SessionLive: true, LivenessState: quality, Confidence: terminal.ConfidenceUnknown}
@@ -285,11 +309,9 @@ func (s *Server) resolveTerminalStatus(runtime sessionRuntime) terminalStatusRes
 	pidChanged := false
 	verificationDue := false
 	if live {
-		if finder, ok := runtime.reader.(reader.SessionProcessFinder); ok {
-			if pids, err := finder.SessionProcesses(runtime.detail.ID); err == nil && len(pids) > 0 {
-				pidChanged = record.AgentPID != pids[0]
-				record.AgentPID = pids[0]
-			}
+		if len(processPIDs) > 0 {
+			pidChanged = record.AgentPID != processPIDs[0]
+			record.AgentPID = processPIDs[0]
 		}
 		verificationDue = record.LastVerifiedAt.IsZero() || now.Sub(record.LastVerifiedAt) >= terminalVerificationPersistInterval
 		if stateChanged || pidChanged || verificationDue {
@@ -306,24 +328,16 @@ func (s *Server) resolveTerminalStatus(runtime sessionRuntime) terminalStatusRes
 	return status
 }
 
-func externalTerminalStatus(runtime sessionRuntime) (terminalStatusResponse, bool) {
-	if !runtime.caps.Liveness.IsLive {
+func externalTerminalStatus(liveness capability.SessionLivenessStatus, processPIDs []int) (terminalStatusResponse, bool) {
+	if !liveness.IsLive || len(processPIDs) == 0 {
 		return terminalStatusResponse{}, false
 	}
-	finder, ok := runtime.reader.(reader.SessionProcessFinder)
-	if !ok {
-		return terminalStatusResponse{}, false
-	}
-	pids, err := finder.SessionProcesses(runtime.detail.ID)
-	if err != nil || len(pids) == 0 {
-		return terminalStatusResponse{}, false
-	}
-	if binding, ok := terminal.DetectFromAgentPID(pids[0]); ok {
-		return terminalStatusFromBinding(binding, "active", true, runtime.caps.Liveness.State), true
+	if binding, ok := terminal.DetectFromAgentPID(processPIDs[0]); ok {
+		return terminalStatusFromBinding(binding, "active", true, liveness.State), true
 	}
 	return terminalStatusResponse{
-		State: "active_unknown", SessionLive: true, LivenessState: string(runtime.caps.Liveness.State),
-		AgentPID: pids[0], Confidence: terminal.ConfidenceUnknown,
+		State: "active_unknown", SessionLive: true, LivenessState: string(liveness.State),
+		AgentPID: processPIDs[0], Confidence: terminal.ConfidenceUnknown,
 	}, true
 }
 
