@@ -45,3 +45,28 @@ func TestReplaceAndReverseLookupChangeRequestCreationEvidence(t *testing.T) {
 		t.Fatalf("empty replacement index current=%v err=%v", current, err)
 	}
 }
+
+func TestReplaceAndReverseLookupGenericChangeRequestURL(t *testing.T) {
+	database := openTestDB(t)
+	insertTestSession(t, database, "grok", "mentioned-pr")
+	now := time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC)
+	evidence := model.ChangeRequestCreationEvidence{
+		EvidenceID: "cr-create-url",
+		Reference: model.ChangeRequestReference{
+			Provider: model.ChangeProviderGeneric, DisplayOrigin: "https://gitee.com",
+			TargetRepositorySlug: "acme/widgets", DisplayNumber: "12",
+			NormalizedURL: "https://gitee.com/acme/widgets/pulls/12",
+		},
+		CommandKind: "change_request_url", ToolName: "message", EventID: "assistant",
+		TurnIndex: 2, RecordedAt: now,
+		SourceRevision: "index:grok:mentioned-pr:1", Assessment: model.ExactGitEvidence(),
+	}
+	if err := database.ReplaceSessionChangeRequestCreationEvidence("grok", "mentioned-pr", evidence.SourceRevision, []model.ChangeRequestCreationEvidence{evidence}); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := database.ChangeRequestCreationSessions(evidence.Reference.NormalizedURL, 100)
+	if err != nil || len(matches) != 1 || matches[0].RootSessionID != "mentioned-pr" ||
+		matches[0].Evidence.CommandKind != "change_request_url" {
+		t.Fatalf("unexpected generic URL matches: %+v err=%v", matches, err)
+	}
+}

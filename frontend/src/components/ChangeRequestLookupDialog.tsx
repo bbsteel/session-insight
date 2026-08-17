@@ -33,6 +33,13 @@ function providerKey(provider: string): string {
   return `git.provider.${provider}`
 }
 
+function creationMatchLabel(commandKind: string): 'git.match.created' | 'git.match.mentioned' {
+  if (commandKind === 'github_cli_pr_create' || commandKind === 'gitlab_cli_mr_create') {
+    return 'git.match.created'
+  }
+  return 'git.match.mentioned'
+}
+
 function SessionMatchGroup({
   kind,
   matches,
@@ -116,7 +123,9 @@ function CreationSessionGroup({
               <span className="font-medium">{match.root_agent_type}</span>
               <span className="ml-1 font-mono text-meta">{match.root_session_id.slice(0, 16)}</span>
             </span>
-            <span className="text-meta text-[var(--text-muted)]">{t('git.match.created')}</span>
+            <span className="text-meta text-[var(--text-muted)]">
+              {t(creationMatchLabel(match.evidence.command_kind))}
+            </span>
             <span className="rounded border border-[var(--accent-green)]/30 px-1.5 py-0.5 text-meta text-[var(--accent-green)]">
               {t('git.state.exact')}
             </span>

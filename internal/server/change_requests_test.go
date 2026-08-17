@@ -138,6 +138,40 @@ func TestAutomaticResolveFindsLocalCreationEvidenceWithoutHostApproval(t *testin
 	}
 }
 
+func TestResolveFindsGenericReviewURLWithoutHostApproval(t *testing.T) {
+	database := openCollabAPIDB(t)
+	seedCollabSession(t, database, "grok", "mentioned", false)
+	reference := model.ChangeRequestReference{
+		Provider: model.ChangeProviderGeneric, DisplayOrigin: "https://gitee.com",
+		TargetRepositorySlug: "acme/widgets", DisplayNumber: "12",
+		NormalizedURL: "https://gitee.com/acme/widgets/pulls/12",
+	}
+	evidence := model.ChangeRequestCreationEvidence{
+		EvidenceID: "cr-create-gitee", Reference: reference,
+		CommandKind: "change_request_url", ToolName: "message", EventID: "assistant",
+		RecordedAt:     time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC),
+		SourceRevision: "index:grok:mentioned:1", Assessment: model.ExactGitEvidence(),
+	}
+	if err := database.ReplaceSessionChangeRequestCreationEvidence("grok", "mentioned", evidence.SourceRevision, []model.ChangeRequestCreationEvidence{evidence}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(database, nil)
+	response := serveChangeRequestAPI(server, "POST", "/api/change-requests/resolve", `{
+		"reference":"https://gitee.com/acme/widgets/pulls/12"
+	}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var resolved changeRequestResolveResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Assessment.State != model.GitEvidenceExact || resolved.Reference.Provider != model.ChangeProviderGeneric ||
+		len(resolved.CreationSessions) != 1 || resolved.CreationSessions[0].RootSessionID != "mentioned" {
+		t.Fatalf("unexpected generic URL resolve: %+v", resolved)
+	}
+}
+
 func TestExclusiveChangeRequestBindSelectsAuthorityAndServesPatch(t *testing.T) {
 	server, changeKey, version, fileKey := seededChangeRequestAPIServer(t)
 	bindBody := fmt.Sprintf(`{

@@ -19,6 +19,7 @@ type mockReader struct {
 	agentType       string
 	sessions        []model.Session
 	details         map[string]*model.SessionDetail
+	renderEvents    map[string][]model.RenderEvent
 	listErr         error
 	getSessionErr   error
 	getSessionCalls *int32
@@ -89,7 +90,12 @@ func (m *mockReader) GetSession(id string) (*model.SessionDetail, error) {
 
 func (m *mockReader) RenderANSI(id string, cols int) (string, error) { return "", nil }
 
-func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) { return nil, nil }
+func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	if m.renderEvents == nil {
+		return nil, nil
+	}
+	return m.renderEvents[id], nil
+}
 
 type authoritativeMockReader struct {
 	*mockReader
@@ -253,6 +259,38 @@ func TestIndexerPrefersAuthoritativeSnapshotEnvelope(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
 		t.Fatalf("authoritative calls after unchanged-timestamp rewrite = %d, want 2", got)
+	}
+}
+
+func TestIndexerIndexesReviewURLsWithoutCLI(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s-url", AgentType: "grok", UpdatedAt: time.Unix(0, 100)}
+	r := &mockReader{
+		agentType: "grok",
+		sessions:  []model.Session{session},
+		details: map[string]*model.SessionDetail{
+			"s-url": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, AssistantMessage: "opened a PR"}}},
+		},
+		renderEvents: map[string][]model.RenderEvent{
+			"s-url": {{
+				EventID: "assistant", Type: "TextChunk",
+				Timestamp: time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC),
+				Text:      "Opened https://gitee.com/acme/widgets/pulls/12",
+			}},
+		},
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := database.ChangeRequestCreationSessions("https://gitee.com/acme/widgets/pulls/12", 10)
+	if err != nil || len(matches) != 1 || matches[0].RootSessionID != "s-url" ||
+		matches[0].Evidence.CommandKind != "change_request_url" {
+		t.Fatalf("URL mention was not indexed: matches=%+v err=%v", matches, err)
 	}
 }
 
