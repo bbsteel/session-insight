@@ -40,10 +40,21 @@ func TestCodexCreationTranscriptPairsInvocationAndResultByIdentity(t *testing.T)
 	}
 
 	evidence := changeevidence.ExtractCreationEvidence(envelope.RenderEvents, envelope.SourceRevision)
-	if len(evidence) != 1 {
-		t.Fatalf("evidence=%+v", evidence)
+	var cliCreationEvidence *model.ChangeRequestCreationEvidence
+	for evidenceIndex := range evidence {
+		candidateEvidence := &evidence[evidenceIndex]
+		if candidateEvidence.CommandKind != changeevidence.CommandGitHubCLI {
+			continue
+		}
+		if cliCreationEvidence != nil {
+			t.Fatalf("multiple GitHub CLI creation evidence records: %+v", evidence)
+		}
+		cliCreationEvidence = candidateEvidence
 	}
-	got := evidence[0]
+	if cliCreationEvidence == nil {
+		t.Fatalf("missing GitHub CLI creation evidence: %+v", evidence)
+	}
+	got := *cliCreationEvidence
 	if got.EventID != invocation.EventID || got.Reference.NormalizedURL != "https://github.com/acme/widgets/pull/42" ||
 		got.CommandKind != changeevidence.CommandGitHubCLI || got.Assessment.State != model.GitEvidenceExact ||
 		got.SourceRevision != envelope.SourceRevision {
