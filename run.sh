@@ -157,7 +157,7 @@ Commands:
   status      Show this worktree status and list all instances (# / PID / port / start time)
   kill <n…>   Stop instances by their status list numbers (numbers are recalculated each run; run status before kill; e.g. kill 1 3)
   stopall     Stop every related-checkout instance (primary + worktrees) and remove stale PID records
-  upgrade     Full reset to latest: stopall + fast-forward main from origin + rebuild + start on 8080 (primary checkout only)
+  converge    Converge to one latest instance: stopall + fast-forward main from origin + rebuild + start on 8080 (primary checkout only)
   all         Build + run
   maintain    Stop-free index maintenance: checkpoint WAL, optimize FTS, vacuum
   log         View background log
@@ -172,9 +172,9 @@ Instance numbers in status/kill are rebuilt each run and may change; always run
 status immediately before kill. Only related checkouts (this repo's worktrees)
 are killable; same-named binaries elsewhere are listed as non-killable. stopall
 stops every killable instance at once and also removes stale PID records left
-behind by dead processes. upgrade runs the full "reset to latest" flow from the
-primary checkout: stopall, fast-forward main from origin, rebuild, and start
-fresh on the primary port.
+behind by dead processes. converge consolidates everything onto the primary
+checkout: stopall, fast-forward main from origin, rebuild, and start a single
+fresh instance on the primary port.
 EOF
   exit 0
 }
@@ -1010,24 +1010,25 @@ do_stopall() {
   return "$failed"
 }
 
-# Full "reset to latest" flow for the primary checkout: stop every instance,
-# fast-forward main to origin/main, rebuild, and start fresh on the primary
-# port. Linked worktrees are refused — they never pull main or bind 8080.
-do_upgrade() {
+# Converge every scattered instance onto a single up-to-date primary instance:
+# stop everything, fast-forward main to origin/main, rebuild, and start fresh
+# on the primary port. Linked worktrees are refused — they never pull main or
+# bind 8080.
+do_converge() {
   if [[ -f "$ROOT_DIR/.git" ]]; then
-    echo "ERROR: upgrade must run from the primary checkout (it fast-forwards main and binds port $PRIMARY_PORT)"
+    echo "ERROR: converge must run from the primary checkout (it fast-forwards main and binds port $PRIMARY_PORT)"
     return 1
   fi
 
   local current_branch
   current_branch=$(git -C "$ROOT_DIR" symbolic-ref --short HEAD 2>/dev/null || true)
   if [[ "$current_branch" != "main" ]]; then
-    echo "ERROR: upgrade requires the primary checkout on branch main (currently: ${current_branch:-detached HEAD})"
+    echo "ERROR: converge requires the primary checkout on branch main (currently: ${current_branch:-detached HEAD})"
     return 1
   fi
 
   if ! do_stopall; then
-    echo "ERROR: failed to stop one or more instances; aborting upgrade"
+    echo "ERROR: failed to stop one or more instances; aborting converge"
     return 1
   fi
 
@@ -1118,8 +1119,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     stopall)
       do_stopall
       ;;
-    upgrade)
-      do_upgrade
+    converge)
+      do_converge
       ;;
     log)
       do_log
