@@ -157,6 +157,7 @@ Commands:
   status      Show this worktree status and list all instances (# / PID / port / start time)
   kill <n…>   Stop instances by their status list numbers (numbers are recalculated each run; run status before kill; e.g. kill 1 3)
   stopall     Stop every related-checkout instance (primary + worktrees) and remove stale PID records
+  upgrade     Full reset to latest: stopall + fast-forward main from origin + rebuild + start on 8080 (primary checkout only)
   all         Build + run
   maintain    Stop-free index maintenance: checkpoint WAL, optimize FTS, vacuum
   log         View background log
@@ -171,7 +172,9 @@ Instance numbers in status/kill are rebuilt each run and may change; always run
 status immediately before kill. Only related checkouts (this repo's worktrees)
 are killable; same-named binaries elsewhere are listed as non-killable. stopall
 stops every killable instance at once and also removes stale PID records left
-behind by dead processes.
+behind by dead processes. upgrade runs the full "reset to latest" flow from the
+primary checkout: stopall, fast-forward main from origin, rebuild, and start
+fresh on the primary port.
 EOF
   exit 0
 }
@@ -958,7 +961,7 @@ do_kill() {
 do_stopall() {
   collect_instances
   local count="${#INSTANCE_PIDS[@]}"
-  local i failed=0 stopped=0
+  local i failed=0 stopped=0 skipped=0
 
   if [[ "$count" -eq 0 ]]; then
     echo "No running SessionInsight instances found"
@@ -966,6 +969,7 @@ do_stopall() {
     for ((i = 0; i < count; i++)); do
       if [[ "${INSTANCE_KILLABLE[$i]:-0}" != "1" ]]; then
         echo "Skipping external non-killable instance: PID=${INSTANCE_PIDS[$i]} ${INSTANCE_BINS[$i]}"
+        skipped=$((skipped + 1))
         continue
       fi
       if stop_listed_instance "$i"; then
@@ -974,7 +978,11 @@ do_stopall() {
         failed=1
       fi
     done
-    echo "==> Stopped $stopped of $count related instance(s)"
+    if [[ "$skipped" -gt 0 ]]; then
+      echo "==> Stopped $stopped related instance(s); skipped $skipped external non-killable"
+    else
+      echo "==> Stopped $stopped related instance(s)"
+    fi
   fi
 
   # Remove stale runtime records whose processes are already gone. A PID file
@@ -1000,6 +1008,38 @@ do_stopall() {
   done < <(list_related_checkouts)
 
   return "$failed"
+}
+
+# Full "reset to latest" flow for the primary checkout: stop every instance,
+# fast-forward main to origin/main, rebuild, and start fresh on the primary
+# port. Linked worktrees are refused — they never pull main or bind 8080.
+do_upgrade() {
+  if [[ -f "$ROOT_DIR/.git" ]]; then
+    echo "ERROR: upgrade must run from the primary checkout (it fast-forwards main and binds port $PRIMARY_PORT)"
+    return 1
+  fi
+
+  local current_branch
+  current_branch=$(git -C "$ROOT_DIR" symbolic-ref --short HEAD 2>/dev/null || true)
+  if [[ "$current_branch" != "main" ]]; then
+    echo "ERROR: upgrade requires the primary checkout on branch main (currently: ${current_branch:-detached HEAD})"
+    return 1
+  fi
+
+  if ! do_stopall; then
+    echo "ERROR: failed to stop one or more instances; aborting upgrade"
+    return 1
+  fi
+
+  echo "==> Updating main from origin"
+  git -C "$ROOT_DIR" fetch origin
+  if ! git -C "$ROOT_DIR" pull --ff-only origin main; then
+    echo "ERROR: could not fast-forward main to origin/main; resolve the checkout and retry"
+    return 1
+  fi
+
+  do_build
+  do_start
 }
 
 do_status() {
@@ -1077,6 +1117,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
       ;;
     stopall)
       do_stopall
+      ;;
+    upgrade)
+      do_upgrade
       ;;
     log)
       do_log
