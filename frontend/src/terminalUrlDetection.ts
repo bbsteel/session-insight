@@ -3,10 +3,24 @@
 // a click-to-launch affordance.
 const HTTP_URL_START = /https?:\/\//gi
 
+// RFC 3986 unreserved + reserved characters that belong in an http(s) URL.
+// Brackets, quotes, and angle brackets stay delimiters — terminal prose uses
+// them as wrappers. Parentheses are tracked separately so a_(b) stays intact.
+const URL_ASCII_BODY = /[A-Za-z0-9\-._~:/?#@!$&*+,;=%]/
+const UNICODE_LETTER_OR_NUMBER = /[\p{L}\p{N}]/u
+
 interface UrlMatch {
   value: string
   start: number
   end: number
+}
+
+function isUrlBodyChar(ch: string): boolean {
+  if (URL_ASCII_BODY.test(ch)) return true
+  // IRIs may include letters/numbers outside ASCII (Wikipedia paths, etc.).
+  // Unicode punctuation such as fullwidth （） must stop the match — those
+  // characters percent-encode into 404s when glued onto an otherwise valid URL.
+  return ch > '\u007f' && UNICODE_LETTER_OR_NUMBER.test(ch)
 }
 
 function terminalUrls(lineText: string): UrlMatch[] {
@@ -18,12 +32,16 @@ function terminalUrls(lineText: string): UrlMatch[] {
     let parenDepth = 0
     for (; end < lineText.length; end++) {
       const ch = lineText[end]
-      if (/\s|[<>{}"']/.test(ch) || ch === '[' || ch === ']') break
-      if (ch === '(') parenDepth++
+      if (ch === '(') {
+        parenDepth++
+        continue
+      }
       if (ch === ')') {
         if (parenDepth === 0) break
         parenDepth--
+        continue
       }
+      if (!isUrlBodyChar(ch)) break
     }
     // Sentence delimiters are commonly attached to a URL in prose. Keep ! and
     // ? intact: both are meaningful URL characters in paths and query values.
