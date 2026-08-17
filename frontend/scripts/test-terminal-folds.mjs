@@ -1,4 +1,4 @@
-import { foldsFromPositions, composeFoldView, foldKeysContainingTarget, foldKeysInTurn } from '/tmp/session-insight-terminal-folds/terminalFolds.js'
+import { foldsFromPositions, composeFoldView, foldKeysContainingTarget, foldKeysInTurn, foldSuccessorKeys } from '/tmp/session-insight-terminal-folds/terminalFolds.js'
 
 let failures = 0
 function assertEq(actual, expected, label) {
@@ -78,6 +78,30 @@ assertEq(ab.toDisplay(8), 3, 'hidden B body maps to B header display row')
 assertEq(ab.toOriginal(4), 9, 'toOriginal tail both')
 assertEq(ab.toOriginal(3), 6, 'toOriginal B header')
 
+// toOriginalLogical: inverse of toComposedLogical in original-logical space.
+// Viewport anchors are captured in composed space but stored in original
+// space, so this round-trip is what keeps the reading position stable when
+// the fold state changes between capture and restore (live growth).
+assertEq(a.toComposedLogical(5), 2, 'collapse A: toComposedLogical text row')
+assertEq(a.toOriginalLogical(2), 5, 'collapse A: toOriginalLogical inverts it')
+assertEq(a.toOriginalLogical(0), 0, 'collapse A: first line identity')
+assertEq(a.toOriginalLogical(1), 1, 'collapse A: header line identity')
+assertEq(a.toOriginalLogical(6), 9, 'collapse A: tail unshifts by 3')
+assertEq(ab.toOriginalLogical(2), 5, 'collapse A+B: text between folds')
+assertEq(ab.toOriginalLogical(3), 6, 'collapse A+B: B header')
+assertEq(ab.toOriginalLogical(4), 9, 'collapse A+B: tail unshifts by 5')
+// Round-trip holds for every original line outside hidden bodies; lines
+// inside a hidden body intentionally collapse onto their header (lossy).
+for (let o = 0; o < 10; o++) {
+  const inHiddenBody = (o >= 2 && o < 5) || (o >= 7 && o < 9)
+  const roundTrip = ab.toOriginalLogical(ab.toComposedLogical(o))
+  if (inHiddenBody) {
+    assertEq(roundTrip, o < 5 ? 1 : 6, `round-trip body line ${o} → its header`)
+  } else {
+    assertEq(roundTrip, o, `round-trip visible line ${o}`)
+  }
+}
+
 // foldKeysInTurn: turn banners at original display rows 0 and 6 → turn 0
 // spans [0,6) holding fold A, turn 1 spans [6,∞) holding fold B.
 const turnStarts = [0, 6]
@@ -100,6 +124,27 @@ const nested = foldsFromPositions([
 assertEq(foldKeysContainingTarget(nested, 101, 76), ['group:1:100', 'tool:1:101'], 'tool anchor opens group and tool ancestors')
 assertEq(foldKeysContainingTarget(nested, 110, 100), ['group:1:100', 'tool:1:101'], 'nested tool body opens both ancestors')
 assertEq(foldKeysContainingTarget(nested, 200, undefined), [], 'outside target opens no fold')
+
+// foldSuccessorKeys: a cols-change re-render renames every fold key (keys
+// embed display rows). Collapse state survives via the content-stable
+// identity: same turn, same ordinal among that turn's folds.
+const prevCols = foldsFromPositions([
+  { kind: 'fold', position_key: 'tfold:0:5', turn_index: 0, line_start: 5, label: 'A', payload: { display_start: 6, display_end: 9, logical_start: 5, logical_end: 8, header_logical: 4 } },
+  { kind: 'fold', position_key: 'tfold:0:12', turn_index: 0, line_start: 12, label: 'B', payload: { display_start: 13, display_end: 15, logical_start: 9, logical_end: 11, header_logical: 8 } },
+  { kind: 'fold', position_key: 'tfold:1:30', turn_index: 1, line_start: 30, label: 'C', payload: { display_start: 31, display_end: 33, logical_start: 20, logical_end: 22, header_logical: 19 } },
+])
+const nextCols = foldsFromPositions([
+  { kind: 'fold', position_key: 'tfold:0:4', turn_index: 0, line_start: 4, label: 'A', payload: { display_start: 5, display_end: 8, logical_start: 5, logical_end: 8, header_logical: 4 } },
+  { kind: 'fold', position_key: 'tfold:0:9', turn_index: 0, line_start: 9, label: 'B', payload: { display_start: 10, display_end: 12, logical_start: 9, logical_end: 11, header_logical: 8 } },
+  { kind: 'fold', position_key: 'tfold:1:25', turn_index: 1, line_start: 25, label: 'C', payload: { display_start: 26, display_end: 28, logical_start: 19, logical_end: 21, header_logical: 18 } },
+  { kind: 'fold', position_key: 'tfold:1:40', turn_index: 1, line_start: 40, label: 'D', payload: { display_start: 41, display_end: 43, logical_start: 25, logical_end: 27, header_logical: 24 } },
+])
+const successors = foldSuccessorKeys(prevCols, nextCols)
+assertEq(successors.get('tfold:0:5'), 'tfold:0:4', 'successor: first fold of turn 0 renames')
+assertEq(successors.get('tfold:0:12'), 'tfold:0:9', 'successor: second fold of turn 0 keeps its ordinal')
+assertEq(successors.get('tfold:1:30'), 'tfold:1:25', 'successor: turn 1 fold maps despite an appended fold')
+assertEq(successors.has('tfold:1:40'), false, 'successor: genuinely new fold has no predecessor')
+assertEq(foldSuccessorKeys([], nextCols).size, 0, 'successor: empty prev → no mappings')
 
 if (failures > 0) {
   console.error(`${failures} failure(s)`)

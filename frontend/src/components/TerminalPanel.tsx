@@ -11,7 +11,8 @@ import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, resolveMatcherTooltip, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type TerminalSearchOptions, type UserHighlightRange } from '../terminalControl'
 import { DEFAULT_TERMINAL_SCROLLBACK, ensureTerminalScrollback, estimateRenderedLineCount } from '../terminalScrollback'
 import { countTerminalMatches, findTerminalMatch, selectionTextMatchesQuery } from '../terminalSearchCount'
-import { composeFoldView, type FoldRange, type FoldView } from '../terminalFolds'
+import { composeFoldView, foldSuccessorKeys, type FoldRange, type FoldView } from '../terminalFolds'
+import { captureViewportAnchor, resolveViewportAnchor, type ViewportAnchor } from '../viewportAnchor'
 import { onBannerColorChange, terminalTheme, useIsDark } from '../terminalTheme'
 import {
   getTerminalFontStack,
@@ -121,6 +122,18 @@ interface Props {
   // revisiting a session with follow off (the position the user left at).
   // Ignored when follow is on — the tail pin wins. Read once at mount.
   initialScrollLine?: number | null
+  // Content-stable anchor (original logical line + wrap offset) to land on
+  // after the first write. Wins over initialScrollLine: display rows drift
+  // with fold state and re-wraps, logical lines do not. Read once at mount.
+  initialViewportAnchor?: ViewportAnchor | null
+  // Cleanup-time report of the final reading position, so the parent can
+  // restore it across a full remount (analytics detour, session switch).
+  // sessionId is echoed back so a switch can't misattribute the outgoing
+  // session's anchor to the incoming one.
+  onSaveViewportAnchor?: (sessionId: string, anchor: ViewportAnchor) => void
+  // Initial-render streaming state for the header status chip: true from
+  // mount until the first write completes (or fails).
+  onLoadingChange?: (loading: boolean) => void
   onFoldChange?: () => void
   // Path-bearing fold headers (e.g. ◆ write … /path): open file menu instead
   // of only toggling the fold. foldKey is set so the menu can still expand.
@@ -168,7 +181,7 @@ type XtermCoreWithMouse = {
   }
 }
 
-export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, expectedLines, userPositions, onJumpToUserMessage }: Props) {
+export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '', followOutput = false, onFollowDisable, initialScrollLine = null, initialViewportAnchor = null, onSaveViewportAnchor, onLoadingChange, onFoldChange, onFoldPathActivate, onContextMenu, onScrollMetrics, onColsReady, controlRef, expectedLines, userPositions, onJumpToUserMessage }: Props) {
   const { t } = useI18n()
   const translatorRef = useRef(t)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -221,6 +234,17 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
   // Read once at mount (revisit restore); not a mount-effect dep.
   const initialScrollLineRef = useRef(initialScrollLine)
   initialScrollLineRef.current = initialScrollLine
+  const initialViewportAnchorRef = useRef(initialViewportAnchor)
+  initialViewportAnchorRef.current = initialViewportAnchor
+  const onSaveViewportAnchorRef = useRef(onSaveViewportAnchor)
+  onSaveViewportAnchorRef.current = onSaveViewportAnchor
+  const onLoadingChangeRef = useRef(onLoadingChange)
+  onLoadingChangeRef.current = onLoadingChange
+  // Anchor captured by the previous mount's cleanup. Survives effect re-runs
+  // (font family/size change) where the component instance — and this ref —
+  // lives on; a full unmount (analytics detour) reports through
+  // onSaveViewportAnchor instead.
+  const remountAnchorRef = useRef<ViewportAnchor | null>(null)
   // Live follow is read from a ref inside refreshContent so toggling does not
   // remount the terminal; only the next live-tail poll needs the new value.
   const followOutputRef = useRef(followOutput)
@@ -335,11 +359,70 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // lines: display-row prediction drifts once the spliced fold badge makes
     // collapsed headers soft-wrap, logical lines cannot.
     let logicalRows: number[] = []
+    // Rebuild logicalRows from xterm's own isWrapped flags. Called by the
+    // post-write buffer scan and by anchor capture (a cols change reflows the
+    // buffer before the debounced re-render reads these rows).
+    const refreshLogicalRows = () => {
+      const buf = term.buffer.active
+      const rows: number[] = []
+      for (let i = 0; i < buf.length; i++) {
+        if (!buf.getLine(i)?.isWrapped) rows.push(i)
+      }
+      logicalRows = rows
+    }
     const logicalToDisplayLine = (orig: number): number => {
       const composed = foldView ? foldView.toComposedLogical(orig) : orig
       if (logicalRows.length === 0) return composed
       return logicalRows[Math.max(0, Math.min(composed, logicalRows.length - 1))]
     }
+
+    // Viewport anchor capture/restore. Every rewrite trigger that would
+    // otherwise park xterm at the tail — fold recompose from live growth,
+    // cols-change re-render, font remount, analytics round-trip — captures
+    // the reading position in original-logical space first and restores it
+    // after the post-write buffer scan rebuilds logicalRows.
+    const captureAnchor = (): ViewportAnchor | null => {
+      if (!hasWrittenOnce) return null
+      // Re-scan, don't reuse the last post-write logicalRows: xterm reflows
+      // soft wraps the moment cols change, while the debounced re-render that
+      // captures this anchor runs ~150ms later against the reflowed buffer.
+      refreshLogicalRows()
+      if (logicalRows.length === 0) return null
+      const anchor = captureViewportAnchor(
+        logicalRows,
+        term.buffer.active.viewportY,
+        (composed) => (foldView ? foldView.toOriginalLogical(composed) : composed),
+      )
+      dbg('anchor-capture', {
+        ...anchor,
+        viewportY: term.buffer.active.viewportY,
+        logicalRowCount: logicalRows.length,
+        rowText: term.buffer.active.getLine(term.buffer.active.viewportY)?.translateToString(true).slice(0, 30),
+      })
+      return anchor
+    }
+    const restoreAnchor = (anchor: ViewportAnchor) => {
+      openAtTop = false
+      const row = resolveViewportAnchor(
+        anchor,
+        logicalRows,
+        term.buffer.active.length,
+        (orig) => (foldView ? foldView.toComposedLogical(orig) : orig),
+      )
+      term.scrollToLine(row)
+      dbg('anchor-restore', {
+        ...anchor,
+        row,
+        viewportY: term.buffer.active.viewportY,
+        logicalRowCount: logicalRows.length,
+        rowText: term.buffer.active.getLine(row)?.translateToString(true).slice(0, 30),
+      })
+    }
+    // True while the user is (or follow mode keeps them) pinned to the tail;
+    // such rewrites re-pin the bottom instead of restoring a stale anchor.
+    const isTailPinned = (): boolean =>
+      !openAtTop
+      && (followOutputRef.current || term.buffer.active.viewportY >= term.buffer.active.baseY)
     let tooltipEl: HTMLDivElement | null = null
     let hoverDecoration: IDecoration | null = null
     let hoverMarker: IMarker | null = null
@@ -640,13 +723,40 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     // rewrite (and its anchor scroll) has painted.
     let removeSnapshot: (() => void) | null = null
     let hasWrittenOnce = false
+    // A loadRender fetch+write is in flight. A fold recompose must not race
+    // it: recomposing mid-flight slices the old ANSI with the new fold ranges
+    // and then supersedes the render's writeComposed callback (generation
+    // check), silently dropping its anchor restore. applyFolds defers to
+    // foldRecomposeDeferred instead; the next completed write flushes it.
+    let renderInFlight = false
+    let foldRecomposeDeferred = false
+    // Reading position captured in the ResizeObserver BEFORE fit()'s lossy
+    // reflow shifts viewportY; consumed by the cols-change re-render.
+    let preResizeViewport: { anchor: ViewportAnchor | null; tailPinned: boolean } | null = null
+    let lastObservedWidth = 0
+    // Initial-render streaming state for the header status chip: set at mount,
+    // cleared (idempotently) by the first completed or failed write.
+    let initialLoadingFinished = false
+    const finishInitialLoading = () => {
+      if (initialLoadingFinished) return
+      initialLoadingFinished = true
+      onLoadingChangeRef.current?.(false)
+    }
+    onLoadingChangeRef.current?.(true)
     // Opening a session should land at the start (top). Cleared once the user
     // scrolls away, jumps, or live-follow pins the viewport to the bottom.
     // When follow is already on at mount (auto-follow for an active session),
-    // start pinned to the tail instead; when revisiting with a saved scroll
-    // position (follow off), restore that line after the first write.
-    let pendingInitialScrollLine = followOutputRef.current ? null : initialScrollLineRef.current
-    let openAtTop = !followOutputRef.current && pendingInitialScrollLine == null
+    // start pinned to the tail instead; when revisiting with a saved view
+    // (follow off), restore it after the first write. The content-stable
+    // anchor (remount > parent-saved) wins over the legacy display-row line.
+    let pendingInitialAnchor = followOutputRef.current
+      ? null
+      : (remountAnchorRef.current ?? initialViewportAnchorRef.current)
+    remountAnchorRef.current = null
+    let pendingInitialScrollLine = followOutputRef.current || pendingInitialAnchor
+      ? null
+      : initialScrollLineRef.current
+    let openAtTop = !followOutputRef.current && pendingInitialAnchor == null && pendingInitialScrollLine == null
     // While rewriting, xterm briefly parks at the bottom; ignore those scrolls
     // so they don't cancel open-at-top before we re-anchor to line 0.
     let writingContent = false
@@ -1039,14 +1149,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       // Scan the xterm.js buffer for all registered matchers and populate interactionMap.
       // Called after every render so buffer lines are the source of truth (no Go lineStart dependency).
       const scanBuffer = () => {
-        {
-          const buf = term.buffer.active
-          const rows: number[] = []
-          for (let i = 0; i < buf.length; i++) {
-            if (!buf.getLine(i)?.isWrapped) rows.push(i)
-          }
-          logicalRows = rows
-        }
+        refreshLogicalRows()
         flushPendingJump()
         interactionMap.clear()
         rowValidity.clear()
@@ -1436,6 +1539,10 @@ const snapshotTerminal = () => {
 
       const writeComposed = (afterWrite?: () => void) => {
         const generation = ++repaintGeneration
+        // Render generation this write belongs to: a superseded write's
+        // callback may fire while a NEWER loadRender is in flight, and must
+        // not lower that render's in-flight shield.
+        const ownerRenderGeneration = renderGeneration
         // Supersede any pending finishPaint / coalesced hard from a prior
         // rewrite before we install a new snapshot.
         if (finishPaintTimeout) {
@@ -1463,10 +1570,16 @@ const snapshotTerminal = () => {
         term.reset()
         term.write('\x1b[3J') // clear accumulated scrollback so buffer lines start at 0
         term.write(wroteText, () => {
-          // A newer writeComposed may have already reset+written; do not
-          // inject/scroll/finishPaint for this stale completion.
-          if (disposed || generation !== repaintGeneration) return
+          if (disposed || generation !== repaintGeneration) {
+            // Superseded by a newer rewrite. Lower the render-in-flight
+            // shield only when no newer render owns it — clearing blindly
+            // here (while a newer loadRender's fetch/write is still pending)
+            // would let a fold recompose race that render's anchor restore.
+            if (renderGeneration === ownerRenderGeneration) renderInFlight = false
+            return
+          }
           hasWrittenOnce = true
+          finishInitialLoading()
           scanBuffer()
           injectFoldRows()
           injectProgressRow()
@@ -1477,7 +1590,10 @@ const snapshotTerminal = () => {
           // Revisit restore (first write only): land on the line the user
           // left at. Runs while writingContent is still true and before the
           // grace window, so the scroll handlers don't fight it.
-          if (pendingInitialScrollLine != null) {
+          if (pendingInitialAnchor) {
+            restoreAnchor(pendingInitialAnchor)
+            pendingInitialAnchor = null
+          } else if (pendingInitialScrollLine != null) {
             openAtTop = false
             term.scrollToLine(pendingInitialScrollLine)
             pendingInitialScrollLine = null
@@ -1495,6 +1611,26 @@ const snapshotTerminal = () => {
           writingContent = false
           scheduleFinishPaint(generation, 'post-rewrite')
           dbg('rewrite-done', { ms: Math.round(performance.now() - rewriteStart), bytes: wroteBytes, bufLen: term.buffer.active.length })
+          // A fold update that arrived mid-render was deferred rather than
+          // raced against term.reset(); the buffer is whole again, so the
+          // recompose (with its own anchor capture) runs now.
+          if (foldRecomposeDeferred) {
+            foldRecomposeDeferred = false
+            recomposePreservingViewport()
+          }
+        })
+      }
+
+      // Anchor-preserving fold recompose: live growth (new folds default to
+      // collapsed) and deferred fold updates land here. Without the anchor
+      // xterm parks at the tail and yanks a mid-history reader away — the
+      // same contract as toggleFold / setFoldsCollapsed.
+      const recomposePreservingViewport = () => {
+        const tailPinned = isTailPinned()
+        const anchor = openAtTop || tailPinned ? null : captureAnchor()
+        recompose(() => {
+          if (tailPinned) term.scrollToBottom()
+          else if (anchor) restoreAnchor(anchor)
         })
       }
 
@@ -1597,15 +1733,36 @@ const snapshotTerminal = () => {
 
       applyFoldsRef.current = (next: FoldRange[]) => {
         const prev = foldRanges
+        // A positions rebuild (202 → null → refetch, e.g. right after a cols
+        // change) transiently reports zero folds. Treating that as "all folds
+        // gone" wipes the collapse state and the remap predecessors, so keep
+        // the current view until real ranges arrive.
+        if (next.length === 0 && prev.length > 0) {
+          dbg('apply-folds-skip-empty', { prevCount: prev.length })
+          return
+        }
         foldRanges = next
-        // Drop collapsed state for folds that no longer exist (session grew).
+        // Fold keys embed display rows, so a cols-change re-render renames
+        // every fold. Remap both state sets through the content-stable
+        // successor identity (same turn, same ordinal) — otherwise every
+        // resize/font change silently resets the user's collapse state to
+        // all-collapsed, and only folds that truly vanished count as dropped.
+        const successors = foldSuccessorKeys(prev, next)
         const valid = new Set(next.map(f => f.key))
         let dropped = false
+        const collapsedBeforeRemap = collapsedKeys.size
         for (const k of [...collapsedKeys]) {
-          if (!valid.has(k)) { collapsedKeys.delete(k); dropped = true }
+          if (valid.has(k)) continue
+          collapsedKeys.delete(k)
+          const renamed = successors.get(k)
+          if (renamed) collapsedKeys.add(renamed)
+          else dropped = true
         }
         for (const k of [...defaultedKeys]) {
-          if (!valid.has(k)) defaultedKeys.delete(k)
+          if (valid.has(k)) continue
+          defaultedKeys.delete(k)
+          const renamed = successors.get(k)
+          if (renamed) defaultedKeys.add(renamed)
         }
         // Default every newly-seen fold to collapsed (group, tool, rollback).
         let addedDefault = false
@@ -1625,9 +1782,28 @@ const snapshotTerminal = () => {
         const foldSig = (rs: FoldRange[]) =>
           rs.map(f => `${f.key}:${f.headerLogical}:${f.logicalStart}:${f.logicalEnd}:${f.displayStart}:${f.displayEnd}`).join('|')
         const rangesChanged = foldSig(prev) !== foldSig(next)
+        dbg('apply-folds', {
+          prevCount: prev.length, nextCount: next.length,
+          collapsedBeforeRemap, collapsedAfterRemap: collapsedKeys.size,
+          successorCount: successors.size, dropped, rangesChanged,
+          hasRawAnsi: Boolean(rawAnsi),
+        })
         if (dropped || addedDefault || rangesChanged) {
-          if (collapsedKeys.size > 0 || foldView || addedDefault || dropped) recompose()
-          else { injectFoldRows(); injectProgressRow(); injectUserHighlights() }
+          if (collapsedKeys.size > 0 || foldView || addedDefault || dropped) {
+            if (writingContent || renderInFlight) {
+              // A render rewrite owns the buffer right now; its completion
+              // recomposes with the ranges/state we just updated. Racing it
+              // would slice the old ANSI with the new ranges and supersede
+              // the render's anchor restore.
+              foldRecomposeDeferred = true
+            } else {
+              recomposePreservingViewport()
+            }
+          } else {
+            injectFoldRows()
+            injectProgressRow()
+            injectUserHighlights()
+          }
         } else {
           injectFoldRows()
           injectProgressRow()
@@ -1771,6 +1947,9 @@ const snapshotTerminal = () => {
       const publishBufferSize = () => {
         container.dataset.bufferLines = String(term.buffer.active.length)
         container.dataset.scrollback = String(term.options.scrollback ?? '')
+        // Test/diagnostic observability: the DOM scroller's scrollTop does not
+        // reflect xterm's buffer viewport, so publish the source of truth.
+        container.dataset.viewportY = String(term.buffer.active.viewportY)
       }
       let lastMetrics: ScrollMetrics | undefined
       metricsBatcher = createFrameBatcher(metrics => {
@@ -1792,13 +1971,17 @@ const snapshotTerminal = () => {
 
       const finalizeInitialStream = (generation: number) => {
         hasWrittenOnce = true
+        finishInitialLoading()
         scanBuffer()
         injectFoldRows()
         injectProgressRow()
         injectUserHighlights()
         updateStickyUserMsg()
         queueMetrics()
-        if (pendingInitialScrollLine != null) {
+        if (pendingInitialAnchor) {
+          restoreAnchor(pendingInitialAnchor)
+          pendingInitialAnchor = null
+        } else if (pendingInitialScrollLine != null) {
           openAtTop = false
           term.scrollToLine(pendingInitialScrollLine)
           pendingInitialScrollLine = null
@@ -1816,6 +1999,7 @@ const snapshotTerminal = () => {
         renderAbort = controller
         const generation = ++renderGeneration
         const isCurrent = () => !disposed && !controller.signal.aborted && generation === renderGeneration
+        renderInFlight = true
 
         try {
           if (!hasWrittenOnce) {
@@ -1865,23 +2049,41 @@ const snapshotTerminal = () => {
             if (collapsedKeys.size > 0) {
               writingContent = false
               foldView = composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines'))
-              writeComposed(() => onFoldChangeRef.current?.())
+              writeComposed(() => {
+                renderInFlight = false
+                onFoldChangeRef.current?.()
+              })
             } else {
+              renderInFlight = false
               finalizeInitialStream(streamRepaintGeneration)
             }
             return
           }
 
+          // Cols-change re-render (panel/window resize): the re-wrapped buffer
+          // bears no row relation to the old one, and xterm would park at the
+          // tail. The anchor comes from the ResizeObserver's pre-reflow
+          // capture when available (fit() already shifted viewportY by the
+          // time this debounced render runs); live capture is the fallback.
+          const preResize = preResizeViewport
+          preResizeViewport = null
+          const tailPinned = preResize ? preResize.tailPinned : isTailPinned()
+          const anchor = preResize ? preResize.anchor : (openAtTop || tailPinned ? null : captureAnchor())
           const ansi = await fetchRenderANSI(sessionId, cols, tsKinds, controller.signal)
           if (!isCurrent()) return
           rawAnsi = ansi
           foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
           writeComposed(() => {
+            renderInFlight = false
             if (foldView) onFoldChangeRef.current?.()
+            if (tailPinned) term.scrollToBottom()
+            else if (anchor) restoreAnchor(anchor)
           })
         } catch (err) {
           if (!isCurrent()) return
           writingContent = false
+          renderInFlight = false
+          finishInitialLoading()
           const message = err instanceof Error ? err.message : String(err)
           term.write(`\x1b[31mError loading render: ${message}\x1b[0m`)
         }
@@ -2258,6 +2460,7 @@ const snapshotTerminal = () => {
             }, 15000)
           },
           hiddenLineCount: () => foldView?.hiddenTotal ?? 0,
+          captureViewportAnchor: () => captureAnchor(),
           setFoldsCollapsed,
           getCollapsedFoldKeys: () => [...collapsedKeys],
           searchNext: (query, opts) => runSearchNavigate(query, opts, 'next'),
@@ -2329,6 +2532,7 @@ const snapshotTerminal = () => {
             }
 
             const keepRow = buf.viewportY
+            const anchor = captureAnchor()
             rawAnsi = ansi
             foldView = collapsedKeys.size > 0 ? composeFoldView(rawAnsi, foldRanges, collapsedKeys, translatorRef.current('terminal.lines')) : null
             await new Promise<void>(resolve => writeComposed(() => {
@@ -2337,12 +2541,19 @@ const snapshotTerminal = () => {
                 term.scrollToBottom()
               } else if (openAtTop) {
                 term.scrollToLine(0)
+              } else if (anchor) {
+                // Structural live rewrite: restore the reading position in
+                // logical space; the old display row (keepRow) can point at
+                // different content once upstream counters/folds shifted.
+                restoreAnchor(anchor)
               } else {
                 term.scrollToLine(keepRow)
               }
               resolve()
             }))
-            if (foldView) onFoldChangeRef.current?.()
+            // Unconditional: even without a fold-shape change the rewrite
+            // shifted rows, so the search bar's n/m and highlights re-run.
+            onFoldChangeRef.current?.()
             return 'rewritten'
           },
           setSearchResultsListener: (cb) => { searchResultsCb = cb },
@@ -2414,6 +2625,17 @@ const snapshotTerminal = () => {
         // we can confirm or rule it out.
         const er = entries[0]?.contentRect
         dbg('resize', { w: er?.width, h: er?.height, containerW: container.clientWidth, containerH: container.clientHeight })
+        // fit() reflows soft wraps and shifts viewportY by a row or more —
+        // that reflow is lossy, so the reading position must be captured
+        // BEFORE it. Only width changes can alter cols, and only the first
+        // pre-reflow capture of a resize burst is content-accurate.
+        if (hasWrittenOnce && er && er.width > 0 && er.width !== lastObservedWidth && !preResizeViewport) {
+          preResizeViewport = {
+            anchor: openAtTop ? null : captureAnchor(),
+            tailPinned: isTailPinned(),
+          }
+        }
+        lastObservedWidth = er?.width ?? lastObservedWidth
         fitAddon.fit()
         queueMetrics()
         const newCols = term.cols
@@ -2426,6 +2648,10 @@ const snapshotTerminal = () => {
           renderAbort?.abort()
           renderGeneration++
           scheduleRender(newCols, 150)
+        } else {
+          // Height-only resize: no re-render follows, so the pre-reflow
+          // capture would go stale. Drop it.
+          preResizeViewport = null
         }
       })
       observer.observe(container)
@@ -2466,6 +2692,16 @@ const snapshotTerminal = () => {
 
     return () => {
       disposed = true
+      // Hand the final reading position to the next mount: remountAnchorRef
+      // covers effect re-runs (font family/size change, same component
+      // instance); the parent callback covers full unmounts (analytics
+      // detour, session switch) where this ref dies with the component.
+      const exitAnchor = captureAnchor()
+      if (exitAnchor) {
+        remountAnchorRef.current = exitAnchor
+        onSaveViewportAnchorRef.current?.(sessionId, exitAnchor)
+      }
+      if (!initialLoadingFinished) onLoadingChangeRef.current?.(false)
       renderAbort?.abort()
       if (initialLoadFrame !== null) cancelAnimationFrame(initialLoadFrame)
       if (resizeDebounce) clearTimeout(resizeDebounce)

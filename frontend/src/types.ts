@@ -199,6 +199,9 @@ export interface EditCall {
   old_string: string
   new_string: string
   replace_all?: boolean
+  // Invocation id linking this edit to its "edit" position in the render;
+  // see editPositionMatch.ts for why index-only matching is not enough.
+  tool_call_id?: string
 }
 
 export interface SearchResult {

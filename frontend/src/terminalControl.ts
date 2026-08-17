@@ -1,4 +1,7 @@
 import type { ScrollMetrics } from './minimapGeometry'
+import type { ViewportAnchor } from './viewportAnchor'
+
+export type { ViewportAnchor }
 
 export const TERMINAL_LINE_HEIGHT = 14 // base; grok uses even denser via xterm lineHeight option (see TerminalPanel)
 
@@ -72,6 +75,10 @@ export interface TerminalControl {
   // rewrite that contains it, instead of clamping to the buffer tail and
   // flashing the wrong row.
   jumpToPosition: (lineStart: number, logicalStart?: number) => void
+  // Capture the current reading position as a content-stable anchor (original
+  // logical line + wrap offset) that survives rewrites and remounts. Null
+  // while no content has been written.
+  captureViewportAnchor: () => ViewportAnchor | null
   hiddenLineCount: () => number
   // Batch collapse/expand fold groups in a single rewrite. anchorOriginalRow
   // (original render row, e.g. the right-clicked row) stays put on screen;

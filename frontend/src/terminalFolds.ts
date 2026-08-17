@@ -13,6 +13,7 @@ export interface FoldRange {
   key: string
   label: string
   level: 'group' | 'tool' | 'rollback' // rollback = abandoned Codex turn segment
+  turnIndex: number
   headerDisplay: number // display row of the "▼ …" header line
   headerLogical: number
   displayStart: number // body extent, display rows [start, end)
@@ -41,6 +42,7 @@ export function foldsFromPositions(positions: MiniMapPosition[] | undefined | nu
       key: p.position_key,
       label: p.label,
       level,
+      turnIndex: p.turn_index,
       headerDisplay: p.line_start,
       headerLogical,
       displayStart,
@@ -92,8 +94,38 @@ export function foldKeysContainingTarget(
     .map((fold) => fold.key)
 }
 
-export interface FoldView {
-  text: string
+/**
+ * Map fold keys across a re-render. Fold keys embed display rows, so a
+ * cols-change re-render renames every fold and collapse state keyed by them
+ * would silently reset to all-collapsed. A fold's content-stable identity is
+ * its turn plus its ordinal among that turn's folds: tool order cannot
+ * change between renders of the same session even though row numbers can.
+ * Folds without a counterpart (genuinely added/removed) are simply absent.
+ */
+export function foldSuccessorKeys(prev: FoldRange[], next: FoldRange[]): Map<string, string> {
+  const groupByTurn = (ranges: FoldRange[]) => {
+    const groups = new Map<number, FoldRange[]>()
+    for (const f of ranges) {
+      const group = groups.get(f.turnIndex)
+      if (group) group.push(f)
+      else groups.set(f.turnIndex, [f])
+    }
+    for (const group of groups.values()) group.sort((a, b) => a.headerLogical - b.headerLogical)
+    return groups
+  }
+  const prevByTurn = groupByTurn(prev)
+  const nextByTurn = groupByTurn(next)
+  const successors = new Map<string, string>()
+  for (const [turnIndex, prevFolds] of prevByTurn) {
+    const nextFolds = nextByTurn.get(turnIndex) ?? []
+    for (let i = 0; i < prevFolds.length && i < nextFolds.length; i++) {
+      successors.set(prevFolds[i].key, nextFolds[i].key)
+    }
+  }
+  return successors
+}
+
+export interface FoldView {  text: string
   hiddenTotal: number
   /** Original display row → current display row (collapsed bodies map to their header row). */
   toDisplay(orig: number): number
@@ -106,6 +138,13 @@ export interface FoldView {
    * jump targets should resolve through this and xterm's isWrapped state.
    */
   toComposedLogical(orig: number): number
+  /**
+   * Composed logical line → original logical line (inverse of
+   * toComposedLogical). Viewport anchors are captured in composed space but
+   * must be stored in original space so they survive a fold-state change
+   * between capture and restore.
+   */
+  toOriginalLogical(composed: number): number
 }
 
 export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: ReadonlySet<string>, lineUnit = 'lines'): FoldView {
@@ -200,5 +239,16 @@ export function composeFoldView(ansi: string, folds: FoldRange[], collapsed: Rea
     return orig - hidden
   }
 
-  return { text, hiddenTotal, toDisplay, toOriginal, toComposedLogical }
+  const toOriginalLogical = (composed: number): number => {
+    let hidden = 0
+    for (const r of logicalRanges) {
+      // A composed row at or before this fold's (already shifted) header sits
+      // outside the hidden body: unshift by the rows hidden so far.
+      if (composed <= r.header - hidden) break
+      hidden += r.end - r.start
+    }
+    return composed + hidden
+  }
+
+  return { text, hiddenTotal, toDisplay, toOriginal, toComposedLogical, toOriginalLogical }
 }
