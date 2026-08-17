@@ -156,6 +156,7 @@ Commands:
   restart     Restart this worktree (stop + start)
   status      Show this worktree status and list all instances (# / PID / port / start time)
   kill <n…>   Stop instances by their status list numbers (numbers are recalculated each run; run status before kill; e.g. kill 1 3)
+  stopall     Stop every related-checkout instance (primary + worktrees) and remove stale PID records
   all         Build + run
   maintain    Stop-free index maintenance: checkpoint WAL, optimize FTS, vacuum
   log         View background log
@@ -168,7 +169,9 @@ SI_DATA_DIR may be set to override these defaults; PORT=8080 is ignored in a
 linked worktree because that port is reserved for the primary checkout.
 Instance numbers in status/kill are rebuilt each run and may change; always run
 status immediately before kill. Only related checkouts (this repo's worktrees)
-are killable; same-named binaries elsewhere are listed as non-killable.
+are killable; same-named binaries elsewhere are listed as non-killable. stopall
+stops every killable instance at once and also removes stale PID records left
+behind by dead processes.
 EOF
   exit 0
 }
@@ -949,6 +952,56 @@ do_kill() {
   return "$failed"
 }
 
+# Stop every live instance from a related checkout (primary + linked worktrees)
+# in one pass, then remove stale PID/URL records left behind by dead processes.
+# External same-named binaries are reported but never touched.
+do_stopall() {
+  collect_instances
+  local count="${#INSTANCE_PIDS[@]}"
+  local i failed=0 stopped=0
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "No running SessionInsight instances found"
+  else
+    for ((i = 0; i < count; i++)); do
+      if [[ "${INSTANCE_KILLABLE[$i]:-0}" != "1" ]]; then
+        echo "Skipping external non-killable instance: PID=${INSTANCE_PIDS[$i]} ${INSTANCE_BINS[$i]}"
+        continue
+      fi
+      if stop_listed_instance "$i"; then
+        stopped=$((stopped + 1))
+      else
+        failed=1
+      fi
+    done
+    echo "==> Stopped $stopped of $count related instance(s)"
+  fi
+
+  # Remove stale runtime records whose processes are already gone. A PID file
+  # naming a live-but-unowned process is left alone (it may be a recycled PID
+  # belonging to an unrelated process) and stays visible via status.
+  local checkout pid_file url_file log_file stale_pid
+  while IFS= read -r checkout; do
+    [[ -z "$checkout" || ! -d "$checkout" ]] && continue
+    {
+      read -r pid_file
+      read -r url_file
+      read -r log_file
+    } < <(runtime_files_for_checkout "$checkout")
+    [[ -f "$pid_file" ]] || continue
+    stale_pid=$(tr -d '[:space:]' <"$pid_file" 2>/dev/null || true)
+    if [[ -z "$stale_pid" || ! "$stale_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$stale_pid" 2>/dev/null; then
+      echo "==> Removing stale runtime record: $pid_file"
+      rm -f "$pid_file"
+      if [[ -n "$url_file" ]]; then
+        rm -f "$url_file"
+      fi
+    fi
+  done < <(list_related_checkouts)
+
+  return "$failed"
+}
+
 do_status() {
   if [[ -f "$PID_FILE" ]]; then
     local pid
@@ -1021,6 +1074,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     kill)
       shift
       do_kill "$@"
+      ;;
+    stopall)
+      do_stopall
       ;;
     log)
       do_log
