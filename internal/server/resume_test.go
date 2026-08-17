@@ -331,3 +331,71 @@ func TestLiveSessionWithoutProvableTerminalIsReportedUnknown(t *testing.T) {
 		t.Fatalf("%+v", status)
 	}
 }
+
+// A just-resumed agent idling at its prompt leaves the transcript mtime stale,
+// so the timestamp heuristic alone reports the session stopped. Live process
+// evidence (heartbeats / fds via SessionProcessFinder) must keep the resume
+// plan and terminal binding from flipping back to stopped.
+func TestResumePlanReportsRunningFromProcessEvidence(t *testing.T) {
+	cwd := t.TempDir()
+	rd := stoppedClaudeReader(cwd)
+	rd.detail.UpdatedAt = time.Now().Add(-model.LiveWindow - time.Minute)
+	rd.pids = []int{4242}
+	srv := New(nil, []reader.BaseSessionReader{rd})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/s1/resume?agent=claude", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var plan resumePlanResponse
+	if err := json.NewDecoder(w.Body).Decode(&plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Status != "session_running" || !plan.Liveness.IsLive || string(plan.Liveness.State) != "exact" {
+		t.Fatalf("%+v", plan)
+	}
+	if !plan.Terminal.SessionLive || (plan.Terminal.State != "active" && plan.Terminal.State != "active_unknown") {
+		t.Fatalf("terminal=%+v", plan.Terminal)
+	}
+}
+
+func TestTerminalStatusVerifiesLaunchFromProcessEvidence(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	rd := stoppedClaudeReader(t.TempDir())
+	rd.detail.UpdatedAt = time.Now().Add(-model.LiveWindow - time.Minute)
+	rd.pids = []int{4242}
+	if err := database.UpsertTerminalBinding(db.TerminalBindingRecord{
+		AgentType: "claude", SessionID: "s1", TerminalID: "konsole", TerminalName: "Konsole",
+		Confidence: terminal.ConfidenceExact, State: "launching", LaunchedAt: time.Now().UTC(), Focusable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(database, []reader.BaseSessionReader{rd})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/s1/terminal?agent=claude", nil)
+	w := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var status terminalStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "active" || status.AgentPID != 4242 || status.LivenessState != "exact" {
+		t.Fatalf("%+v", status)
+	}
+	record, ok, err := database.GetTerminalBinding("claude", "s1")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if record.State != "active" || record.AgentPID != 4242 || record.LastVerifiedAt.IsZero() {
+		t.Fatalf("record=%+v", record)
+	}
+}
