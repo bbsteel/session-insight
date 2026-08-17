@@ -326,9 +326,12 @@ interface Props {
   sessionId: string
   onClose: () => void
   initialIdx?: number
+  // Jump to the current edit's position in the replay terminal. Provided by
+  // ReplayView, which owns the positions cache and the terminal control.
+  onLocateInTerminal?: (editIdx: number) => void
 }
 
-export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props) {
+export default function DiffModal({ sessionId, onClose, initialIdx = 0, onLocateInTerminal }: Props) {
   const { t } = useI18n()
   const [edits, setEdits] = useState<EditCall[]>([])
   const [loading, setLoading] = useState(true)
@@ -456,6 +459,18 @@ export default function DiffModal({ sessionId, onClose, initialIdx = 0 }: Props)
           >
             {t('diff.wrap')}
           </button>
+
+          {/* locate this edit in the replay terminal */}
+          {onLocateInTerminal && edits.length > 0 && (
+            <button
+              onClick={() => onLocateInTerminal(idx)}
+              style={{ padding: '3px 10px', fontSize: 12, borderRadius: 6, border: `1px solid ${pal.border}`, background: 'transparent', color: pal.muted, cursor: 'pointer', flexShrink: 0 }}
+              title={t('diff.locateInTerminalHint')}
+              data-testid="diff-locate-in-terminal"
+            >
+              {t('diff.locateInTerminal')}
+            </button>
+          )}
 
           {/* maximize */}
           <button

@@ -19,6 +19,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/reader/chrys"
+	"github.com/bbsteel/session-insight/internal/reader/claude"
 	"github.com/bbsteel/session-insight/internal/reader/codex"
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
 )
@@ -49,6 +50,12 @@ func gateArchetypes() []gateArchetype {
 			fixtureDir: "../reader/copilot/testdata/collaboration-lifecycle-only",
 			rootID:     "collab-copilot-1",
 			newReader:  func(dir string) reader.BaseSessionReader { return copilot.New(dir) },
+		},
+		{
+			name:       "claude",
+			fixtureDir: "../reader/claude/testdata/collaboration-embedded-child",
+			rootID:     "cccccccc-dddd-eeee-ffff-000000000001",
+			newReader:  func(dir string) reader.BaseSessionReader { return claude.New(dir) },
 		},
 	}
 }
@@ -318,6 +325,10 @@ func TestWave2GateArchetypeRoundTrip(t *testing.T) {
 			case "chrys":
 				if rw.Code != http.StatusOK || rw.Body.Len() == 0 {
 					t.Fatalf("chrys embedded child render: %d (%d bytes)", rw.Code, rw.Body.Len())
+				}
+			case "claude":
+				if rw.Code != http.StatusOK || rw.Body.Len() == 0 {
+					t.Fatalf("claude embedded child render: %d (%d bytes)", rw.Code, rw.Body.Len())
 				}
 			case "copilot":
 				if rw.Code != http.StatusUnprocessableEntity {

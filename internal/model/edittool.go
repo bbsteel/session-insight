@@ -25,10 +25,10 @@ func ExtractEditCalls(evt RenderEvent) []EditCall {
 		return nil
 	}
 	if evt.ToolName == "apply_patch" {
-		return parseApplyPatch(evt.TurnIndex, evt.ToolInput)
+		return parseApplyPatch(evt.TurnIndex, evt.ToolCallID, evt.ToolInput)
 	}
 	// Claude Edit / str_replace_editor / OpenCode edit
-	call := EditCall{TurnIndex: evt.TurnIndex}
+	call := EditCall{TurnIndex: evt.TurnIndex, ToolCallID: evt.ToolCallID}
 	if v, ok := evt.ToolInput["file_path"].(string); ok {
 		call.FilePath = v
 	}
@@ -59,8 +59,9 @@ func ExtractEditCalls(evt RenderEvent) []EditCall {
 //	 context line
 //	*** End Patch
 //
-// Multiple Update File sections produce multiple EditCalls.
-func parseApplyPatch(turnIndex int, input map[string]any) []EditCall {
+// Multiple Update File sections produce multiple EditCalls; they all share
+// the invocation's toolCallID.
+func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []EditCall {
 	var patchStr string
 	for _, key := range []string{"args", "input", "patch"} {
 		if v, ok := input[key].(string); ok && v != "" {
@@ -98,6 +99,7 @@ func parseApplyPatch(turnIndex int, input map[string]any) []EditCall {
 			FilePath:     curFile,
 			OldString:    strings.Join(oldParts, "\n"),
 			NewString:    strings.Join(newParts, "\n"),
+			ToolCallID:   toolCallID,
 			PreviousPath: prevFile,
 		})
 		curFile = ""
