@@ -26,6 +26,10 @@ const actionTestId: Record<ResumeMenuActionKind, string> = {
   unsafe: 'resume-menu-unsafe',
 }
 
+// How long success/info feedback stays visible before fading; errors persist
+// until the next action instead.
+const FEEDBACK_TIMEOUT_MS = 6000
+
 export default function ResumeTerminalControl({ session }: Props) {
   const { t } = useI18n()
   const [plan, setPlan] = useState<ResumePlan | null>(null)
@@ -40,6 +44,8 @@ export default function ResumeTerminalControl({ session }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
+
+  const clearFeedback = useCallback(() => setFeedback(''), [])
 
   const positionMenu = useCallback(() => {
     const rect = rootRef.current?.getBoundingClientRect()
@@ -69,7 +75,7 @@ export default function ResumeTerminalControl({ session }: Props) {
     let cancelled = false
     setPlan(null)
     setTerminal(null)
-    setFeedback('')
+    clearFeedback()
     setError('')
     void fetchResumePlan(session.id, session.agent_type)
       .then(next => {
@@ -81,7 +87,7 @@ export default function ResumeTerminalControl({ session }: Props) {
         if (!cancelled) setError(errorMessage(err, t))
       })
     return () => { cancelled = true }
-  }, [session.agent_type, session.id, t])
+  }, [session.agent_type, session.id, t, clearFeedback])
 
   useEffect(() => {
     if (!isSessionWriting(session.updated_at, Date.now())) return
@@ -112,9 +118,9 @@ export default function ResumeTerminalControl({ session }: Props) {
   // next action so a failed resume never silently reverts to "Continue work".
   useEffect(() => {
     if (!feedback) return
-    const timer = window.setTimeout(() => setFeedback(''), 6000)
+    const timer = window.setTimeout(clearFeedback, FEEDBACK_TIMEOUT_MS)
     return () => window.clearTimeout(timer)
-  }, [feedback])
+  }, [feedback, clearFeedback])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -171,11 +177,11 @@ export default function ResumeTerminalControl({ session }: Props) {
         // A binding already observed stopped right after launch means the agent
         // exited before verification — the launching-state poll never starts,
         // so surface the failure here instead of reverting silently.
-        setFeedback('')
+        clearFeedback()
         setError(t('resume.notVerified'))
       }
     } catch (err) {
-      setFeedback('')
+      clearFeedback()
       setError(errorMessage(err, t))
     } finally {
       setBusy(false)
