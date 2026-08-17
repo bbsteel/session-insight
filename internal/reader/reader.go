@@ -51,6 +51,8 @@ type IndexSnapshotReader interface {
 // finalization evidence, and source revision all come from one immutable
 // source-byte view. IndexSnapshotReader remains available until indexer wiring
 // migrates so adapters can adopt this protocol without breaking older ones.
+// PR/MR creation evidence is extracted from the shared RenderEvent stream for
+// every adapter; it is not gated on this interface.
 type AuthoritativeIndexSnapshotReader interface {
 	ReadIndexSnapshotEnvelope(ctx context.Context, session model.Session) (*model.IndexSnapshotEnvelope, error)
 }

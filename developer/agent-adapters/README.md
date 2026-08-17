@@ -20,6 +20,7 @@ Do not add a `session-insight adapter init` command before capability declaratio
 - **Agent capabilities and session status are separate.** An Agent may normally record tokens while an interrupted session lacks them. That session is `missing`; it is not `0`, and the Agent does not become `unsupported`.
 - **Declare conservatively.** Research in progress, partial implementations, and untested behavior cannot be presented to users as supported.
 - **Do not copy one existing adapter as the specification.** Check every requirement in this guide so Agent-specific assumptions are not inherited accidentally.
+- **PR/MR creation is a shared RenderEvent rule.** The indexer extracts exact creation evidence from every adapter's tool stream: a successful paired `ToolInvocation` / `ToolResult` whose command contains an unquoted `gh pr create` or `glab mr create` statement and whose stdout has exactly one matching URL. Put the command in `ToolInput["command"]` (or `cmd`) and join the result with `ParentEventID`. Do not special-case this by `agent_type`.
 
 ## Adapter Layout
 

@@ -19,6 +19,7 @@ type mockReader struct {
 	agentType       string
 	sessions        []model.Session
 	details         map[string]*model.SessionDetail
+	renderEvents    []model.RenderEvent
 	listErr         error
 	getSessionErr   error
 	getSessionCalls *int32
@@ -89,7 +90,12 @@ func (m *mockReader) GetSession(id string) (*model.SessionDetail, error) {
 
 func (m *mockReader) RenderANSI(id string, cols int) (string, error) { return "", nil }
 
-func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) { return nil, nil }
+func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	if m.renderEvents == nil {
+		return nil, nil
+	}
+	return m.renderEvents, nil
+}
 
 type authoritativeMockReader struct {
 	*mockReader
@@ -253,6 +259,37 @@ func TestIndexerPrefersAuthoritativeSnapshotEnvelope(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
 		t.Fatalf("authoritative calls after unchanged-timestamp rewrite = %d, want 2", got)
+	}
+}
+
+func TestIndexerIndexesCreationEvidenceWithoutAuthoritativeEnvelope(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "grok", UpdatedAt: time.Unix(0, 100)}
+	r := &mockReader{
+		agentType: "grok",
+		sessions:  []model.Session{session},
+		details: map[string]*model.SessionDetail{
+			"s1": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "open a pr"}}},
+		},
+		renderEvents: []model.RenderEvent{
+			{EventID: "invoke", Type: "ToolInvocation", ToolName: "Run",
+				ToolInput: map[string]any{"command": "git push -u origin HEAD && gh pr create --fill"}},
+			{EventID: "created", ParentEventID: "invoke", Type: "ToolResult",
+				Timestamp: time.Date(2026, 8, 15, 9, 7, 59, 0, time.UTC),
+				Stdout:    "https://github.com/acme/widgets/pull/139\n"},
+		},
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/139", 10)
+	if err != nil || len(created) != 1 || created[0].RootAgentType != "grok" || created[0].RootSessionID != "s1" {
+		t.Fatalf("non-authoritative creation evidence not indexed: matches=%+v err=%v", created, err)
 	}
 }
 

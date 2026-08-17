@@ -52,6 +52,47 @@ func TestExtractCreationEvidenceDoesNotPromoteCommandMention(t *testing.T) {
 	}
 }
 
+func TestExtractCreationEvidenceAcceptsCreateInUnquotedCommandChain(t *testing.T) {
+	now := time.Date(2026, 8, 15, 9, 7, 59, 0, time.UTC)
+	command := "cd /workspace/sanitized-project && git push -u origin HEAD && gh pr create --title sanitized --body \"$(cat <<'EOF'\nWhat:\n- mention gh pr create in a quote\nEOF\n)\""
+	events := []model.RenderEvent{
+		{EventID: "invoke", Type: "ToolInvocation", ToolName: "Run",
+			ToolInput: map[string]any{"command": command}},
+		{EventID: "result", ParentEventID: "invoke", Type: "ToolResult", Timestamp: now,
+			Stdout: "To https://github.com/acme/widgets.git\nhttps://github.com/acme/widgets/pull/42\n"},
+	}
+	got := ExtractCreationEvidence(events, "index:grok:s1:1")
+	if len(got) != 1 || got[0].Reference.NormalizedURL != "https://github.com/acme/widgets/pull/42" ||
+		got[0].CommandKind != CommandGitHubCLI {
+		t.Fatalf("chained create not extracted: %+v", got)
+	}
+}
+
+func TestExtractCreationEvidenceAcceptsQuotedHeredocBodyAfterPush(t *testing.T) {
+	command := "cd /workspace/sanitized-project && git push -u origin HEAD && gh pr create --title \"Complete coverage\" --body \"$(cat <<'EOF'\n## Summary\n- mention gh pr create in a quote\nEOF\n)\""
+	events := []model.RenderEvent{
+		{EventID: "invoke", Type: "ToolInvocation", ToolInput: map[string]any{"command": command}},
+		{EventID: "result", ParentEventID: "invoke", Type: "ToolResult",
+			Timestamp: time.Date(2026, 8, 15, 9, 7, 59, 0, time.UTC),
+			Stdout:    "https://github.com/bbsteel/session-insight/pull/139\n"},
+	}
+	got := ExtractCreationEvidence(events, "index:grok:s1:1")
+	if len(got) != 1 || got[0].Reference.NormalizedURL != "https://github.com/bbsteel/session-insight/pull/139" {
+		t.Fatalf("heredoc-bodied create not extracted: %+v", got)
+	}
+}
+
+func TestExtractCreationEvidenceAcceptsCmdField(t *testing.T) {
+	events := []model.RenderEvent{
+		{EventID: "invoke", Type: "ToolInvocation", ToolInput: map[string]any{"cmd": "gh pr create --fill"}},
+		{Type: "ToolResult", ParentEventID: "invoke", Timestamp: time.Now().UTC(),
+			Stdout: "https://github.com/acme/widgets/pull/42"},
+	}
+	if got := ExtractCreationEvidence(events, "sha256:source"); len(got) != 1 {
+		t.Fatalf("cmd field ignored: %+v", got)
+	}
+}
+
 func TestExtractCreationEvidenceSupportsGitLabMergeRequests(t *testing.T) {
 	events := []model.RenderEvent{
 		{EventID: "invoke", Type: "ToolInvocation", ToolName: "exec", ToolInput: map[string]any{"command": "glab mr create --fill"}},

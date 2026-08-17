@@ -35,8 +35,7 @@ func ExtractCreationEvidence(events []model.RenderEvent, sourceRevision string) 
 		if !ok {
 			continue
 		}
-		command, _ := invocation.ToolInput["command"].(string)
-		kind, provider, ok := creationCommand(command)
+		kind, provider, ok := creationCommand(toolCommand(invocation.ToolInput))
 		if !ok {
 			continue
 		}
@@ -61,19 +60,90 @@ func ExtractCreationEvidence(events []model.RenderEvent, sourceRevision string) 
 	return result
 }
 
+func toolCommand(input map[string]any) string {
+	if input == nil {
+		return ""
+	}
+	if command, ok := input["command"].(string); ok {
+		return command
+	}
+	if command, ok := input["cmd"].(string); ok {
+		return command
+	}
+	return ""
+}
+
 func creationCommand(command string) (string, model.ChangeProviderKind, bool) {
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) < 3 {
-		return "", "", false
+	for _, statement := range unquotedStatements(command) {
+		fields := strings.Fields(statement)
+		if len(fields) < 3 {
+			continue
+		}
+		switch {
+		case fields[0] == "gh" && fields[1] == "pr" && fields[2] == "create":
+			return CommandGitHubCLI, model.ChangeProviderGitHub, true
+		case fields[0] == "glab" && fields[1] == "mr" && fields[2] == "create":
+			return CommandGitLabCLI, model.ChangeProviderGitLab, true
+		}
 	}
-	switch {
-	case fields[0] == "gh" && fields[1] == "pr" && fields[2] == "create":
-		return CommandGitHubCLI, model.ChangeProviderGitHub, true
-	case fields[0] == "glab" && fields[1] == "mr" && fields[2] == "create":
-		return CommandGitLabCLI, model.ChangeProviderGitLab, true
-	default:
-		return "", "", false
+	return "", "", false
+}
+
+// unquotedStatements splits a tool command on unquoted &&, ;, and newlines.
+// Quoted bodies, including heredoc text inside double quotes, stay one statement
+// so echo/prose mentions are not promoted and a trailing gh/glab create is found.
+func unquotedStatements(command string) []string {
+	var (
+		out    []string
+		buf    strings.Builder
+		quote  rune
+		escape bool
+	)
+	flush := func() {
+		statement := strings.TrimSpace(buf.String())
+		buf.Reset()
+		if statement != "" {
+			out = append(out, statement)
+		}
 	}
+	for i, r := range command {
+		if escape {
+			buf.WriteRune(r)
+			escape = false
+			continue
+		}
+		if quote == 0 && r == '\\' {
+			buf.WriteRune(r)
+			escape = true
+			continue
+		}
+		if quote == 0 && (r == '\'' || r == '"') {
+			quote = r
+			buf.WriteRune(r)
+			continue
+		}
+		if quote != 0 {
+			buf.WriteRune(r)
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\n' || r == ';' {
+			flush()
+			continue
+		}
+		if r == '&' && i+1 < len(command) && command[i+1] == '&' {
+			flush()
+			continue
+		}
+		if r == '&' && i > 0 && command[i-1] == '&' {
+			continue
+		}
+		buf.WriteRune(r)
+	}
+	flush()
+	return out
 }
 
 func uniqueReference(registry *changehost.Registry, output string, provider model.ChangeProviderKind) (model.ChangeRequestReference, bool) {
