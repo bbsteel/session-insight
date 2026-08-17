@@ -49,6 +49,10 @@ func TestV37FreshSchema(t *testing.T) {
 	if err != nil || !complete {
 		t.Fatalf("fresh v37 physical schema complete=%v err=%v", complete, err)
 	}
+	complete, err = inspectV40Schema(t.Context(), database.Conn())
+	if err != nil || !complete {
+		t.Fatalf("fresh v40 physical schema complete=%v err=%v", complete, err)
+	}
 	assertNoForeignKeyViolations(t, database.Conn())
 }
 

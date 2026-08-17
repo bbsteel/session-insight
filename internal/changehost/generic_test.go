@@ -15,7 +15,8 @@ func TestGenericParserKeepsExactPathIdentityOffline(t *testing.T) {
 	if !ok {
 		t.Fatal("safe generic reference rejected")
 	}
-	if ref.NormalizedURL != "https://code.example/team/repo/reviews/7" || ref.DisplayOrigin != "https://code.example" {
+	if ref.NormalizedURL != "https://code.example/team/repo/reviews/7" || ref.DisplayOrigin != "https://code.example" ||
+		ref.TargetRepositorySlug != "team/repo" || ref.DisplayNumber != "7" {
 		t.Fatalf("unexpected normalization: %+v", ref)
 	}
 	identity, err := GenericIdentity(ref)
@@ -190,6 +191,8 @@ func TestDefaultRegistryIncludesAutomaticAndOfflineProviders(t *testing.T) {
 		{"https://github.com/acme/widgets/pull/42", model.ChangeProviderGitHub},
 		{"https://gitlab.com/acme/widgets/-/merge_requests/42", model.ChangeProviderGitLab},
 		{"https://code.example/acme/widgets/reviews/42", model.ChangeProviderGeneric},
+		{"https://gitee.com/acme/widgets/pulls/12", model.ChangeProviderGeneric},
+		{"https://gitcode.com/acme/widgets/pull/8", model.ChangeProviderGeneric},
 	} {
 		ref, err := registry.ResolveReference(example.raw)
 		if err != nil || ref.Provider != example.provider {
@@ -213,5 +216,18 @@ func TestDefaultRegistryFactoriesRemainBoundToApprovedPublicHost(t *testing.T) {
 	}
 	if _, err := registry.NewProvider(model.ChangeProviderGitLab, PublicGitLabHost(), client); !errors.Is(err, ErrProviderContract) {
 		t.Fatalf("mismatched approved client was accepted: %v", err)
+	}
+}
+
+func TestGenericParserRejectsURLsThatDoNotLookLikeChangeRequests(t *testing.T) {
+	parser := GenericParser{}
+	for _, raw := range []string{
+		"https://gitee.com/acme/widgets",
+		"https://wiki.example/about",
+		"https://code.example/acme/widgets/issues/12",
+	} {
+		if ref, ok := parser.ParseReference(raw); ok {
+			t.Fatalf("non-review URL accepted: %q -> %+v", raw, ref)
+		}
 	}
 }

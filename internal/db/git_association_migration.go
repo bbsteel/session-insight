@@ -654,6 +654,10 @@ func schemaObjectMatchesCompatibleSuccessor(actual string, object v34SchemaObjec
 		compactDDL(actual) == compactDDL(v36SnapshotFilesObject.ddl) {
 		return true
 	}
+	if object.kind == "table" && object.name == v40CreationEvidenceObject.name &&
+		compactDDL(actual) == compactDDL(v40CreationEvidenceObject.ddl) {
+		return true
+	}
 	if object.kind != "trigger" {
 		return false
 	}

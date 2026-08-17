@@ -376,11 +376,11 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 			return false, err
 		}
 		collabCurrentKnown = true
-		gitCurrent := true
 		storedSourceRevision, creationCurrent, _, readErr := ix.db.SessionChangeRequestCreationIndexState(agentType, sess.ID)
 		if readErr != nil {
 			return false, readErr
 		}
+		gitCurrent := creationCurrent
 		if authoritativeReader != nil {
 			gitEvidenceCurrent := false
 			if ix.git != nil {
