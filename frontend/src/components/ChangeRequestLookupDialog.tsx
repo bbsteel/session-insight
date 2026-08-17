@@ -503,7 +503,7 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
               )
             })}
             {canLoadHostedDetails && (
-              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-primary)] p-4">
+              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-primary)] p-4" data-testid="change-request-hosted-details">
                 <h3 className="text-body font-medium text-[var(--text-primary)]">{t('git.lookup.hostedDetailsTitle')}</h3>
                 <p className="mt-1 text-helper text-[var(--text-secondary)]">{t('git.lookup.hostedDetailsHelp')}</p>
                 <button

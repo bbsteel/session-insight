@@ -28,17 +28,44 @@ func TestExtractCreationEvidenceRequiresSuccessfulPairedCommand(t *testing.T) {
 	}
 }
 
-func TestExtractCreationEvidenceRejectsFailureTruncationAndAmbiguousOutput(t *testing.T) {
+func TestExtractCreationEvidenceRejectsUnsuccessfulAndAmbiguousResults(t *testing.T) {
 	base := []model.RenderEvent{{EventID: "invoke", Type: "ToolInvocation", ToolInput: map[string]any{"command": "glab mr create"}}}
+	url := "https://gitlab.com/acme/widgets/-/merge_requests/7"
 	cases := []model.RenderEvent{
-		{Type: "ToolResult", ParentEventID: "invoke", ExitCode: 1, Stdout: "https://gitlab.com/acme/widgets/-/merge_requests/7"},
-		{Type: "ToolResult", ParentEventID: "invoke", Truncated: true, Stdout: "https://gitlab.com/acme/widgets/-/merge_requests/7"},
-		{Type: "ToolResult", ParentEventID: "invoke", Stdout: "https://gitlab.com/acme/widgets/-/merge_requests/7 https://gitlab.com/acme/widgets/-/merge_requests/8"},
+		{Type: "ToolResult", ParentEventID: "invoke", ExitCode: 1, Stdout: url},
+		{Type: "ToolResult", ParentEventID: "invoke", Truncated: true, Stdout: url},
+		{Type: "ToolResult", ParentEventID: "invoke", TimedOut: true, Stdout: url},
+		{Type: "ToolResult", ParentEventID: "invoke", Rejected: true, Stdout: url},
+		{Type: "ToolResult", ParentEventID: "invoke", ErrorKind: "tool_error", Stdout: url},
+		{Type: "ToolResult", Stdout: url},
+		{Type: "ToolResult", ParentEventID: "missing", Stdout: url},
+		{Type: "ToolResult", ParentEventID: "invoke", Stdout: url + " https://gitlab.com/acme/widgets/-/merge_requests/8"},
+		{Type: "ToolResult", ParentEventID: "invoke", Stdout: "https://github.com/acme/widgets/pull/42"},
 	}
 	for _, event := range cases {
 		if got := ExtractCreationEvidence(append(base, event), "sha256:source"); len(got) != 0 {
 			t.Fatalf("unexpected evidence for %+v: %+v", event, got)
 		}
+	}
+}
+
+func TestExtractCreationEvidenceDeduplicatesRepeatedNormalizedURL(t *testing.T) {
+	now := time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC)
+	events := []model.RenderEvent{
+		{EventID: "invoke", Type: "ToolInvocation", ToolInput: map[string]any{"command": "gh pr create --fill"}},
+		{EventID: "result-a", ParentEventID: "invoke", Type: "ToolResult", Timestamp: now,
+			Stdout: "https://github.com/acme/widgets/pull/42/\nhttps://github.com/acme/widgets/pull/42"},
+		{EventID: "result-b", ParentEventID: "invoke", Type: "ToolResult", Timestamp: now,
+			Stdout: "https://github.com/acme/widgets/pull/42"},
+	}
+	got := ExtractCreationEvidence(events, "sha256:source")
+	if len(got) != 1 || got[0].Reference.NormalizedURL != "https://github.com/acme/widgets/pull/42" ||
+		got[0].EventID != "invoke" || got[0].EvidenceID == "" {
+		t.Fatalf("unexpected deduped evidence: %+v", got)
+	}
+	again := ExtractCreationEvidence(events, "sha256:source")
+	if again[0].EvidenceID != got[0].EvidenceID {
+		t.Fatalf("evidence id is not deterministic: %q vs %q", got[0].EvidenceID, again[0].EvidenceID)
 	}
 }
 

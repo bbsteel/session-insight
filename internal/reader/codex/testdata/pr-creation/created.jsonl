@@ -1,0 +1,9 @@
+{"timestamp":"2026-08-11T16:17:00.000Z","type":"session_meta","payload":{"id":"codex-pr-create","cwd":"/workspace/sanitized-project","model_provider":"openai","git":{"commit_hash":"0123456789abcdef0123456789abcdef01234567","branch":"feat/sanitized-branch","repository_url":"https://github.com/acme/widgets.git"}}}
+{"timestamp":"2026-08-11T16:17:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-08-11T16:17:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"open a pull request for the sanitized change"}}
+{"timestamp":"2026-08-11T16:17:10.000Z","type":"response_item","payload":{"type":"function_call","call_id":"call-echo","name":"exec","arguments":"{\"command\":\"echo gh pr create\"}"}}
+{"timestamp":"2026-08-11T16:17:11.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-echo","output":"gh pr create\n"}}
+{"timestamp":"2026-08-11T16:17:16.781Z","type":"response_item","payload":{"type":"function_call","call_id":"call-create","name":"exec","arguments":"{\"command\":\"gh pr create --base main --head feat/sanitized-branch --title sanitized --body sanitized\"}"}}
+{"timestamp":"2026-08-11T16:17:21.704Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-create","output":"https://github.com/acme/widgets/pull/42\n"}}
+{"timestamp":"2026-08-11T16:17:22.000Z","type":"event_msg","payload":{"type":"agent_message","message":"opened https://github.com/acme/widgets/pull/42 and mentioned https://github.com/acme/widgets/pull/99"}}
+{"timestamp":"2026-08-11T16:17:23.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}

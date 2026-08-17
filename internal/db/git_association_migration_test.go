@@ -52,6 +52,138 @@ func TestV37FreshSchema(t *testing.T) {
 	assertNoForeignKeyViolations(t, database.Conn())
 }
 
+func TestV37UpgradesAndRepairsMissingObjects(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Conn().Exec(`
+		DROP TABLE session_change_request_creation_evidence;
+		DROP TABLE session_change_request_creation_indexes;
+		DELETE FROM schema_migrations WHERE version = 37`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateGitAssociationV37(database.Conn()); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := inspectV37Schema(t.Context(), database.Conn())
+	if err != nil || !complete {
+		t.Fatalf("upgraded v37 schema complete=%v err=%v", complete, err)
+	}
+	if _, err := database.Conn().Exec(`
+		DROP INDEX idx_change_request_creation_url;
+		DELETE FROM schema_migrations WHERE version = 37`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateGitAssociationV37(database.Conn()); err != nil {
+		t.Fatal(err)
+	}
+	complete, err = inspectV37Schema(t.Context(), database.Conn())
+	if err != nil || !complete {
+		t.Fatalf("repaired v37 index complete=%v err=%v", complete, err)
+	}
+}
+
+func TestV37RejectsIncompatiblePhysicalSchema(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Conn().Exec(`
+		DROP TABLE session_change_request_creation_evidence;
+		DROP TABLE session_change_request_creation_indexes;
+		DELETE FROM schema_migrations WHERE version = 37;
+		CREATE TABLE session_change_request_creation_indexes (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	err = migrateGitAssociationV37(database.Conn())
+	if err == nil || !strings.Contains(err.Error(), "incompatible table session_change_request_creation_indexes") {
+		t.Fatalf("incompatible v37 schema error = %v", err)
+	}
+}
+
+func TestV37MigrationRollback(t *testing.T) {
+	database, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Conn().Exec(`
+		DROP TABLE session_change_request_creation_evidence;
+		DROP TABLE session_change_request_creation_indexes;
+		DELETE FROM schema_migrations WHERE version = 37;
+		CREATE TRIGGER reject_v37 BEFORE INSERT ON schema_migrations
+		WHEN NEW.version = 37 BEGIN
+			SELECT RAISE(ABORT, 'reject v37 for rollback test');
+		END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateGitAssociationV37(database.Conn()); err == nil {
+		t.Fatal("expected v37 migration failure")
+	}
+	var count int
+	if err := database.Conn().QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'session_change_request_creation_indexes'`,
+	).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("v37 DDL survived a failed version insert")
+	}
+}
+
+func TestV37ConcurrentMigrationUsesSQLiteLock(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`
+		DROP TABLE session_change_request_creation_evidence;
+		DROP TABLE session_change_request_creation_indexes;
+		DELETE FROM schema_migrations WHERE version = 37`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dsn := filepath.Join(dir, "index.db") + "?_foreign_keys=on&_busy_timeout=5000"
+	connections := make([]*sql.DB, 2)
+	for i := range connections {
+		conn, err := sql.Open("sqlite3", dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		connections[i] = conn
+	}
+	start := make(chan struct{})
+	errs := make([]error, len(connections))
+	var wg sync.WaitGroup
+	for i, conn := range connections {
+		wg.Add(1)
+		go func(i int, conn *sql.DB) {
+			defer wg.Done()
+			<-start
+			errs[i] = migrateGitAssociationV37(conn)
+		}(i, conn)
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent v37 migration %d: %v", i, err)
+		}
+	}
+	complete, err := inspectV37Schema(t.Context(), connections[0])
+	if err != nil || !complete {
+		t.Fatalf("concurrent v37 schema complete=%v err=%v", complete, err)
+	}
+}
+
 func TestV36RebuildPreservesSnapshotFilesAndAcceptsSpecialKinds(t *testing.T) {
 	dir := makeRawV33Database(t)
 	conn, err := sql.Open("sqlite3", filepath.Join(dir, "index.db")+"?_foreign_keys=on&_busy_timeout=5000")
