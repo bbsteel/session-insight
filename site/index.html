@@ -25,10 +25,7 @@
     <div class="site-shell" id="top">
       <header class="site-header">
         <a class="brand" href="#top" data-i18n-attr="aria-label:brand.aria">
-          <span class="brand-mark" aria-hidden="true">
-            <span class="brand-mark-corner"></span>
-            <span class="brand-mark-core">SI</span>
-          </span>
+          <img class="brand-mark" src="./favicon.png" alt="" width="32" height="32" aria-hidden="true" />
           <span class="brand-name">SESSION<span>INSIGHT</span></span>
         </a>
 
@@ -116,13 +113,21 @@
                 <span class="hero-product-bar-path">SESSION INSIGHT / REPLAY</span>
                 <span data-i18n="hero.actualUiStatus">REAL PRODUCT VIEW</span>
               </div>
-              <img
-                class="hero-product-image"
-                src="./assets/screenshots/en/replay.png"
-                data-locale-src="replay"
-                alt="Session Insight replay view"
-                data-i18n-attr="alt:screen.replay.alt"
-              />
+              <button
+                class="screenshot-trigger screenshot-trigger-hero"
+                type="button"
+                data-screenshot-zoom
+                data-i18n-attr="aria-label:screen.zoomAria"
+              >
+                <img
+                  class="hero-product-image"
+                  src="./assets/screenshots/en/replay.png"
+                  data-locale-src="replay"
+                  alt="Session Insight replay view"
+                  data-i18n-attr="alt:screen.replay.alt"
+                />
+                <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+              </button>
             </figure>
             <p class="hero-visual-caption">
               <span data-i18n="hero.actualUiCaption">The actual Session Insight interface.</span>
@@ -185,15 +190,30 @@
           </div>
           <div class="screen-grid">
             <figure class="screen-card screen-card-large">
-              <div class="screen-frame"><img src="./assets/screenshots/en/replay.png" data-locale-src="replay" alt="Session Insight replay view" data-i18n-attr="alt:screen.replay.alt" loading="lazy" /></div>
+              <div class="screen-frame">
+                <button class="screenshot-trigger" type="button" data-screenshot-zoom data-i18n-attr="aria-label:screen.zoomAria">
+                  <img src="./assets/screenshots/en/replay.png" data-locale-src="replay" alt="Session Insight replay view" data-i18n-attr="alt:screen.replay.alt" loading="lazy" />
+                  <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+                </button>
+              </div>
               <figcaption><span class="screen-caption-index" data-i18n="screen.replay.index">REPLAY / 01</span><span data-i18n="screen.replay.caption">Navigate the entire conversation without losing the thread.</span></figcaption>
             </figure>
             <figure class="screen-card">
-              <div class="screen-frame"><img src="./assets/screenshots/en/analytics.png" data-locale-src="analytics" alt="Session Insight analytics view" data-i18n-attr="alt:screen.analytics.alt" loading="lazy" /></div>
+              <div class="screen-frame">
+                <button class="screenshot-trigger" type="button" data-screenshot-zoom data-i18n-attr="aria-label:screen.zoomAria">
+                  <img src="./assets/screenshots/en/analytics.png" data-locale-src="analytics" alt="Session Insight analytics view" data-i18n-attr="alt:screen.analytics.alt" loading="lazy" />
+                  <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+                </button>
+              </div>
               <figcaption><span class="screen-caption-index" data-i18n="screen.analytics.index">ANALYTICS / 02</span><span data-i18n="screen.analytics.caption">Find pressure, cost, anomalies, and patterns in the run.</span></figcaption>
             </figure>
             <figure class="screen-card">
-              <div class="screen-frame"><img src="./assets/screenshots/en/interaction.png" data-locale-src="interaction" alt="Session Insight interaction view" data-i18n-attr="alt:screen.interaction.alt" loading="lazy" /></div>
+              <div class="screen-frame">
+                <button class="screenshot-trigger" type="button" data-screenshot-zoom data-i18n-attr="aria-label:screen.zoomAria">
+                  <img src="./assets/screenshots/en/interaction.png" data-locale-src="interaction" alt="Session Insight interaction view" data-i18n-attr="alt:screen.interaction.alt" loading="lazy" />
+                  <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+                </button>
+              </div>
               <figcaption><span class="screen-caption-index" data-i18n="screen.interaction.index">EVIDENCE / 03</span><span data-i18n="screen.interaction.caption">Keep the human and agent decisions in the same frame.</span></figcaption>
             </figure>
           </div>
@@ -267,7 +287,7 @@
       </main>
 
       <footer class="site-footer">
-        <div class="footer-brand"><span class="brand-mark brand-mark-small" aria-hidden="true"><span class="brand-mark-corner"></span><span class="brand-mark-core">SI</span></span><span class="brand-name">SESSION<span>INSIGHT</span></span></div>
+        <div class="footer-brand"><img class="brand-mark brand-mark-small" src="./favicon.png" alt="" width="25" height="25" aria-hidden="true" /><span class="brand-name">SESSION<span>INSIGHT</span></span></div>
         <p data-i18n="footer.tagline">A clearer view of the work behind the prompt.</p>
         <div class="footer-links">
           <a href="https://github.com/bbsteel/session-insight" target="_blank" rel="noreferrer" data-i18n="footer.github">GitHub</a>
@@ -276,6 +296,18 @@
         </div>
         <span class="footer-build" data-i18n="footer.build">OPEN SOURCE / LOCAL-FIRST / 2026</span>
       </footer>
+
+      <dialog class="screenshot-dialog" id="screenshot-dialog" aria-labelledby="screenshot-dialog-title">
+        <div class="screenshot-dialog-shell">
+          <div class="screenshot-dialog-header">
+            <p id="screenshot-dialog-title" data-i18n="screen.dialogLabel">SCREENSHOT / FULL SIZE</p>
+            <button class="screenshot-dialog-close" id="screenshot-dialog-close" type="button" data-i18n-attr="aria-label:screen.closeAria">×</button>
+          </div>
+          <div class="screenshot-dialog-frame">
+            <img id="screenshot-dialog-image" alt="" />
+          </div>
+        </div>
+      </dialog>
     </div>
     <script type="module" src="./script.js"></script>
   </body>

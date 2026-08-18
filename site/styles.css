@@ -108,53 +108,11 @@ button {
 }
 
 .brand-mark {
-  position: relative;
-  display: inline-grid;
+  display: block;
+  flex: 0 0 auto;
   width: 32px;
   height: 32px;
-  place-items: center;
-  border: 1px solid var(--cyan);
-  color: var(--cyan);
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: -0.1em;
-  box-shadow: 0 0 20px rgba(117, 231, 236, 0.16), inset 0 0 14px rgba(117, 231, 236, 0.08);
-}
-
-.brand-mark::before,
-.brand-mark::after,
-.brand-mark-corner {
-  position: absolute;
-  width: 6px;
-  height: 6px;
-  border-color: var(--lime);
-  content: "";
-}
-
-.brand-mark::before {
-  top: -1px;
-  left: -1px;
-  border-top: 1px solid;
-  border-left: 1px solid;
-}
-
-.brand-mark::after {
-  right: -1px;
-  bottom: -1px;
-  border-right: 1px solid;
-  border-bottom: 1px solid;
-}
-
-.brand-mark-corner {
-  right: -1px;
-  top: -1px;
-  border-top: 1px solid;
-  border-right: 1px solid;
-}
-
-.brand-mark-core {
-  transform: translateX(-1px);
+  border-radius: 7px;
 }
 
 .brand-name {
@@ -606,6 +564,26 @@ button {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.36);
 }
 
+.screenshot-trigger {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: #090c0f;
+  color: inherit;
+  cursor: zoom-in;
+  font: inherit;
+  text-align: inherit;
+}
+
+.screenshot-trigger:focus-visible {
+  outline: 1px solid var(--lime);
+  outline-offset: -5px;
+}
+
 .screen-frame img {
   display: block;
   width: 100%;
@@ -627,6 +605,33 @@ button {
   transform: scale(1.025);
 }
 
+.screenshot-zoom-indicator {
+  position: absolute;
+  z-index: 3;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(117, 231, 236, 0.75);
+  background: rgba(5, 6, 7, 0.8);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0.72;
+  transform: translateY(0);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.screenshot-trigger:hover .screenshot-zoom-indicator,
+.screenshot-trigger:focus-visible .screenshot-zoom-indicator {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .screen-card figcaption {
   display: grid;
   gap: 8px;
@@ -641,6 +646,81 @@ button {
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: 0.1em;
+}
+
+.screenshot-dialog {
+  width: min(94vw, 1500px);
+  max-width: none;
+  max-height: 92vh;
+  padding: 0;
+  border: 1px solid var(--line-bright);
+  background: var(--background-raised);
+  color: var(--ink);
+  box-shadow: 0 28px 100px rgba(0, 0, 0, 0.72), 0 0 42px rgba(61, 198, 211, 0.11);
+}
+
+.screenshot-dialog::backdrop {
+  background: rgba(2, 4, 5, 0.86);
+  backdrop-filter: blur(5px);
+}
+
+.screenshot-dialog-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: 92vh;
+}
+
+.screenshot-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 14px 0 17px;
+  border-bottom: 1px solid var(--line);
+}
+
+.screenshot-dialog-header p {
+  margin: 0;
+  color: var(--lime);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.screenshot-dialog-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted-bright);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.screenshot-dialog-close:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.screenshot-dialog-frame {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  background: #050607;
+}
+
+.screenshot-dialog-frame img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: calc(92vh - 84px);
+  margin: 0 auto;
+  object-fit: contain;
+  filter: none;
 }
 
 .workflow-layout {
@@ -897,7 +977,7 @@ button {
 .brand-mark-small {
   width: 25px;
   height: 25px;
-  font-size: 7px;
+  border-radius: 6px;
 }
 
 .footer-brand .brand-name {
@@ -917,6 +997,55 @@ button {
   justify-self: end;
   color: #59676d;
   white-space: nowrap;
+}
+
+html[data-language="zh"] body {
+  font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", var(--sans);
+}
+
+html[data-language="zh"] .eyebrow {
+  letter-spacing: 0.08em;
+  line-height: 1.7;
+}
+
+html[data-language="zh"] .hero h1 {
+  font-size: clamp(48px, 5vw, 74px);
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+}
+
+html[data-language="zh"] .hero-body {
+  margin-top: 26px;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  line-height: 1.9;
+}
+
+html[data-language="zh"] .hero-note,
+html[data-language="zh"] .button {
+  letter-spacing: 0.04em;
+}
+
+html[data-language="zh"] .section-heading h2,
+html[data-language="zh"] .local-section h2,
+html[data-language="zh"] .final-cta h2 {
+  font-size: clamp(34px, 4.2vw, 58px);
+  letter-spacing: 0.01em;
+  line-height: 1.14;
+}
+
+html[data-language="zh"] .section-heading > p:last-child,
+html[data-language="zh"] .local-copy > p,
+html[data-language="zh"] .workflow-item p,
+html[data-language="zh"] .aside-copy {
+  letter-spacing: 0.01em;
+  line-height: 1.9;
+}
+
+html[data-language="zh"] .feature-card h3,
+html[data-language="zh"] .workflow-item h3 {
+  letter-spacing: 0.01em;
+  line-height: 1.3;
 }
 
 :focus-visible {

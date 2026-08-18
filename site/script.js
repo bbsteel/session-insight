@@ -50,6 +50,9 @@ const translations = {
     "screen.interaction.alt": "Session Insight interaction view",
     "screen.interaction.index": "EVIDENCE / 03",
     "screen.interaction.caption": "Keep the human and agent decisions in the same frame.",
+    "screen.zoomAria": "Open screenshot full size",
+    "screen.dialogLabel": "SCREENSHOT / FULL SIZE",
+    "screen.closeAria": "Close full-size screenshot",
     "workflow.eyebrow": "DESIGNED FOR THE LONG RUN",
     "workflow.title": "Stay oriented when the session gets serious.",
     "workflow.body": "Use it after the magic wears off — when the context is huge, the agent has branched, and you need to know what to trust.",
@@ -128,6 +131,9 @@ const translations = {
     "screen.interaction.alt": "Session Insight 交互视图",
     "screen.interaction.index": "证据 / 03",
     "screen.interaction.caption": "把人与代理的决策放在同一幅图里。",
+    "screen.zoomAria": "打开截图大图",
+    "screen.dialogLabel": "截图 / 原始尺寸",
+    "screen.closeAria": "关闭截图大图",
     "workflow.eyebrow": "为长期运行而设计",
     "workflow.title": "会话变复杂时，依然保持方向感。",
     "workflow.body": "当上下文变得庞大、代理开始分支，而你需要知道什么值得信任时，它才真正派上用场。",
@@ -161,6 +167,10 @@ const translations = {
 
 const languageToggle = document.querySelector("#language-toggle");
 const languageLabel = document.querySelector("[data-language-label]");
+const screenshotDialog = document.querySelector("#screenshot-dialog");
+const screenshotDialogImage = document.querySelector("#screenshot-dialog-image");
+const screenshotDialogClose = document.querySelector("#screenshot-dialog-close");
+let activeScreenshotName = "";
 
 function applyLanguage(language) {
   const selectedLanguage = language === "zh" ? "zh" : "en";
@@ -185,6 +195,10 @@ function applyLanguage(language) {
     const screenshotName = image.dataset.localeSrc;
     image.src = `./assets/screenshots/${screenshotLocale}/${screenshotName}.png`;
   });
+
+  if (activeScreenshotName && screenshotDialog?.open) {
+    screenshotDialogImage.src = `./assets/screenshots/${screenshotLocale}/${activeScreenshotName}.png`;
+  }
 
   languageLabel.textContent = selectedLanguage === "zh" ? "EN" : "中文";
   languageToggle.setAttribute("aria-pressed", String(selectedLanguage === "zh"));
@@ -212,4 +226,24 @@ document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
 
 document.querySelectorAll(`a[href="${githubUrl}"]`).forEach((link) => {
   link.dataset.destination = "github";
+});
+
+document.querySelectorAll("[data-screenshot-zoom]").forEach((trigger) => {
+  trigger.addEventListener("click", () => {
+    const screenshotImage = trigger.querySelector("img");
+    if (!screenshotImage || !screenshotDialog || !screenshotDialogImage) return;
+    activeScreenshotName = screenshotImage.dataset.localeSrc ?? "";
+    screenshotDialogImage.src = screenshotImage.src;
+    screenshotDialogImage.alt = screenshotImage.alt;
+    screenshotDialog.showModal();
+  });
+});
+
+screenshotDialogClose?.addEventListener("click", () => screenshotDialog?.close());
+screenshotDialog?.addEventListener("click", (event) => {
+  if (event.target === screenshotDialog) screenshotDialog.close();
+});
+screenshotDialog?.addEventListener("close", () => {
+  activeScreenshotName = "";
+  screenshotDialogImage.removeAttribute("src");
 });
