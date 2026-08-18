@@ -32,6 +32,8 @@ Options:
   --session-title  Exact title of the local session to capture (required)
   --base-url       Running Session Insight URL (default: http://127.0.0.1:8080)
   --locale         Interface locale: en or zh-CN (default: en)
+  --theme          Interface theme: light or dark (default: light)
+  --output-dir     Screenshot output directory (default: assets/screenshots/<locale>)
   --terminal-query Optional query shown in the replay screenshot
   --public-root    Path displayed instead of the real repository path
                    (default: /workspace/session-insight)`)
@@ -45,12 +47,14 @@ const baseURL = options.get('--base-url') ?? 'http://127.0.0.1:8080'
 const terminalQuery = options.get('--terminal-query')
 const locale = options.get('--locale') ?? 'en'
 if (locale !== 'en' && locale !== 'zh-CN') throw new Error('--locale must be en or zh-CN')
+const theme = options.get('--theme') ?? 'light'
+if (theme !== 'light' && theme !== 'dark') throw new Error('--theme must be light or dark')
 const publicRoot = options.get('--public-root') ?? '/workspace/session-insight'
 const privateHome = homedir()
 const privateUsername = basename(privateHome)
 const privateHostname = hostname()
 const publicHome = '/home/user'
-const outputDir = resolve(repoRoot, 'assets/screenshots', locale)
+const outputDir = resolve(repoRoot, options.get('--output-dir') ?? `assets/screenshots/${locale}`)
 mkdirSync(outputDir, { recursive: true })
 
 const copy = locale === 'en' ? {
@@ -146,11 +150,11 @@ try {
   const context = await browser.newContext({
     viewport: { width: 1600, height: 1000 },
     deviceScaleFactor: 1,
-    colorScheme: 'light',
+    colorScheme: theme,
   })
-  await context.addInitScript(selectedLocale => {
+  await context.addInitScript(({ selectedLocale, selectedTheme }) => {
     localStorage.setItem('sidebar-width', '300')
-    localStorage.setItem('recap-theme', 'light')
+    localStorage.setItem('recap-theme', selectedTheme)
     localStorage.setItem('si-locale', selectedLocale)
     // Screenshots use a stable session snapshot, so keep the UI in the
     // connected state without opening the live SSE stream.
@@ -166,7 +170,7 @@ try {
       close() {}
     }
     Object.defineProperty(window, 'EventSource', { value: ScreenshotEventSource })
-  }, locale)
+  }, { selectedLocale: locale, selectedTheme: theme })
 
   const replay = await context.newPage()
   await installSanitizer(replay)

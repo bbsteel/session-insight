@@ -105,82 +105,27 @@
           </div>
 
           <div class="hero-visual" data-i18n-attr="aria-label:hero.visualAria">
-            <div class="visual-orbit visual-orbit-one" aria-hidden="true"></div>
-            <div class="visual-orbit visual-orbit-two" aria-hidden="true"></div>
-            <div class="console-card">
-              <div class="console-topbar">
-                <div class="console-window-dots" aria-hidden="true">
-                  <span></span><span></span><span></span>
-                </div>
-                <span class="console-path">~/sessions/release-0.7.1</span>
-                <span class="console-live"><span class="status-pip" aria-hidden="true"></span><span data-i18n="console.live">LIVE</span></span>
-              </div>
-              <div class="console-toolbar">
-                <span class="console-toolbar-active" data-i18n="console.replay">REPLAY</span>
-                <span data-i18n="console.timeline">TIMELINE</span>
-                <span data-i18n="console.evidence">EVIDENCE</span>
-                <span data-i18n="console.collaboration">COLLABORATION</span>
-              </div>
-              <div class="console-body">
-                <div class="console-intro">
-                  <span class="console-kicker" data-i18n="console.sessionLabel">SESSION / 0042</span>
-                  <span class="console-indexing" data-i18n="console.indexing">INDEXED 100%</span>
-                </div>
-                <div class="console-command">
-                  <span class="console-command-marker">&gt;</span>
-                  <span data-i18n="console.command">ship the next version, keep the release reproducible</span>
-                </div>
-                <div class="console-events">
-                  <div class="console-event console-event-highlight">
-                    <span class="event-time">00:14:22</span>
-                    <span class="event-dot"></span>
-                    <span data-i18n="console.eventOne">release gate verified</span>
-                    <span class="event-tag" data-i18n="console.pass">PASS</span>
-                  </div>
-                  <div class="console-event">
-                    <span class="event-time">00:15:08</span>
-                    <span class="event-dot"></span>
-                    <span data-i18n="console.eventTwo">adapter evidence attached</span>
-                    <span class="event-tag event-tag-muted" data-i18n="console.trace">TRACE</span>
-                  </div>
-                  <div class="console-event">
-                    <span class="event-time">00:16:41</span>
-                    <span class="event-dot"></span>
-                    <span data-i18n="console.eventThree">change request linked</span>
-                    <span class="event-tag event-tag-muted" data-i18n="console.linked">LINKED</span>
-                  </div>
-                </div>
-                <div class="console-signal-grid">
-                  <div class="console-signal">
-                    <span class="console-signal-label" data-i18n="console.metricTokens">TOKENS</span>
-                    <strong>870K</strong>
-                    <span class="console-signal-bar"><i style="width: 78%"></i></span>
-                  </div>
-                  <div class="console-signal">
-                    <span class="console-signal-label" data-i18n="console.metricTurns">TURNS</span>
-                    <strong>94</strong>
-                    <span class="console-signal-bar"><i style="width: 54%"></i></span>
-                  </div>
-                  <div class="console-signal">
-                    <span class="console-signal-label" data-i18n="console.metricErrors">ERRORS</span>
-                    <strong class="console-signal-good">00</strong>
-                    <span class="console-signal-bar"><i style="width: 12%"></i></span>
-                  </div>
-                </div>
-              </div>
-              <div class="console-footer">
-                <span data-i18n="console.footerLeft">READ-ONLY INSIGHT LAYER</span>
-                <span>SI / 0.7.1</span>
-              </div>
+            <div class="hero-visual-label">
+              <span class="status-pip" aria-hidden="true"></span>
+              <span data-i18n="hero.actualUi">ACTUAL UI / DARK THEME</span>
             </div>
-            <div class="hero-metric hero-metric-left">
-              <span class="hero-metric-value">01</span>
-              <span class="hero-metric-label" data-i18n="hero.metricReplay">replay layer</span>
-            </div>
-            <div class="hero-metric hero-metric-right">
-              <span class="hero-metric-value">0</span>
-              <span class="hero-metric-label" data-i18n="hero.metricCloud">cloud uploads</span>
-            </div>
+            <figure class="hero-product-shot">
+              <div class="hero-product-bar">
+                <span class="hero-product-bar-path">SESSION INSIGHT / REPLAY</span>
+                <span data-i18n="hero.actualUiStatus">REAL PRODUCT VIEW</span>
+              </div>
+              <img
+                class="hero-product-image"
+                src="./assets/screenshots/en/replay.png"
+                data-locale-src="replay"
+                alt="Session Insight replay view"
+                data-i18n-attr="alt:screen.replay.alt"
+              />
+            </figure>
+            <p class="hero-visual-caption">
+              <span data-i18n="hero.actualUiCaption">The actual Session Insight interface.</span>
+              <span data-i18n="hero.actualUiNote">Captured from a real local session.</span>
+            </p>
           </div>
         </section>
 
@@ -238,15 +183,15 @@
           </div>
           <div class="screen-grid">
             <figure class="screen-card screen-card-large">
-              <div class="screen-frame"><img src="./assets/screenshots/replay.png" alt="Session Insight replay view" data-i18n-attr="alt:screen.replay.alt" loading="lazy" /></div>
+              <div class="screen-frame"><img src="./assets/screenshots/en/replay.png" data-locale-src="replay" alt="Session Insight replay view" data-i18n-attr="alt:screen.replay.alt" loading="lazy" /></div>
               <figcaption><span class="screen-caption-index" data-i18n="screen.replay.index">REPLAY / 01</span><span data-i18n="screen.replay.caption">Navigate the entire conversation without losing the thread.</span></figcaption>
             </figure>
             <figure class="screen-card">
-              <div class="screen-frame"><img src="./assets/screenshots/analytics.png" alt="Session Insight analytics view" data-i18n-attr="alt:screen.analytics.alt" loading="lazy" /></div>
+              <div class="screen-frame"><img src="./assets/screenshots/en/analytics.png" data-locale-src="analytics" alt="Session Insight analytics view" data-i18n-attr="alt:screen.analytics.alt" loading="lazy" /></div>
               <figcaption><span class="screen-caption-index" data-i18n="screen.analytics.index">ANALYTICS / 02</span><span data-i18n="screen.analytics.caption">Find pressure, cost, anomalies, and patterns in the run.</span></figcaption>
             </figure>
             <figure class="screen-card">
-              <div class="screen-frame"><img src="./assets/screenshots/interaction.png" alt="Session Insight interaction view" data-i18n-attr="alt:screen.interaction.alt" loading="lazy" /></div>
+              <div class="screen-frame"><img src="./assets/screenshots/en/interaction.png" data-locale-src="interaction" alt="Session Insight interaction view" data-i18n-attr="alt:screen.interaction.alt" loading="lazy" /></div>
               <figcaption><span class="screen-caption-index" data-i18n="screen.interaction.index">EVIDENCE / 03</span><span data-i18n="screen.interaction.caption">Keep the human and agent decisions in the same frame.</span></figcaption>
             </figure>
           </div>

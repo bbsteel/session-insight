@@ -10,6 +10,10 @@ const translations = {
     "nav.github": "Open Session Insight on GitHub",
     "language.aria": "Switch to Chinese",
     "hero.visualAria": "Session Insight interface preview",
+    "hero.actualUi": "ACTUAL UI / DARK THEME",
+    "hero.actualUiStatus": "REAL PRODUCT VIEW",
+    "hero.actualUiCaption": "The actual Session Insight interface.",
+    "hero.actualUiNote": "Captured from a real local session.",
     "hero.eyebrow": "LOCAL-FIRST OBSERVABILITY FOR AI CODING SESSIONS",
     "hero.headingLead": "See what your",
     "hero.headingAccent": "coding agents",
@@ -18,26 +22,6 @@ const translations = {
     "hero.ctaGithub": "Explore on GitHub",
     "hero.ctaRelease": "Get v0.7.1",
     "hero.note": "Open source · local data · built for long sessions",
-    "hero.metricReplay": "replay layer",
-    "hero.metricCloud": "cloud uploads",
-    "console.live": "LIVE",
-    "console.replay": "REPLAY",
-    "console.timeline": "TIMELINE",
-    "console.evidence": "EVIDENCE",
-    "console.collaboration": "COLLABORATION",
-    "console.sessionLabel": "SESSION / 0042",
-    "console.indexing": "INDEXED 100%",
-    "console.command": "ship the next version, keep the release reproducible",
-    "console.eventOne": "release gate verified",
-    "console.eventTwo": "adapter evidence attached",
-    "console.eventThree": "change request linked",
-    "console.pass": "PASS",
-    "console.trace": "TRACE",
-    "console.linked": "LINKED",
-    "console.metricTokens": "TOKENS",
-    "console.metricTurns": "TURNS",
-    "console.metricErrors": "ERRORS",
-    "console.footerLeft": "READ-ONLY INSIGHT LAYER",
     "strip.replay": "REPLAY THE CONTEXT",
     "strip.evidence": "FOLLOW THE EVIDENCE",
     "strip.collaboration": "SEE THE COLLABORATION",
@@ -104,6 +88,10 @@ const translations = {
     "nav.github": "在 GitHub 打开 Session Insight",
     "language.aria": "切换到英文",
     "hero.visualAria": "Session Insight 界面预览",
+    "hero.actualUi": "真实界面 / 深色主题",
+    "hero.actualUiStatus": "真实产品视图",
+    "hero.actualUiCaption": "真实的 Session Insight 界面。",
+    "hero.actualUiNote": "来自真实本地会话的脱敏截图。",
     "hero.eyebrow": "面向 AI 编程会话的本地优先观测层",
     "hero.headingLead": "看清你的",
     "hero.headingAccent": "编程代理",
@@ -112,26 +100,6 @@ const translations = {
     "hero.ctaGithub": "前往 GitHub",
     "hero.ctaRelease": "获取 v0.7.1",
     "hero.note": "开源 · 本地数据 · 为长会话而生",
-    "hero.metricReplay": "重放层",
-    "hero.metricCloud": "云端上传",
-    "console.live": "运行中",
-    "console.replay": "重放",
-    "console.timeline": "时间线",
-    "console.evidence": "证据",
-    "console.collaboration": "协作",
-    "console.sessionLabel": "会话 / 0042",
-    "console.indexing": "索引完成 100%",
-    "console.command": "发布下一个版本，同时保证发布可复现",
-    "console.eventOne": "发布门禁已验证",
-    "console.eventTwo": "适配器证据已关联",
-    "console.eventThree": "变更请求已关联",
-    "console.pass": "通过",
-    "console.trace": "追踪",
-    "console.linked": "已关联",
-    "console.metricTokens": "令牌",
-    "console.metricTurns": "轮次",
-    "console.metricErrors": "错误",
-    "console.footerLeft": "只读洞察层",
     "strip.replay": "重放上下文",
     "strip.evidence": "追踪证据",
     "strip.collaboration": "看见协作",
@@ -210,6 +178,12 @@ function applyLanguage(language) {
     const [attribute, key] = element.dataset.i18nAttr.split(":");
     const translation = copy[key];
     if (translation) element.setAttribute(attribute, translation);
+  });
+
+  const screenshotLocale = selectedLanguage === "zh" ? "zh-CN" : "en";
+  document.querySelectorAll("[data-locale-src]").forEach((image) => {
+    const screenshotName = image.dataset.localeSrc;
+    image.src = `./assets/screenshots/${screenshotLocale}/${screenshotName}.png`;
   });
 
   languageLabel.textContent = selectedLanguage === "zh" ? "EN" : "中文";

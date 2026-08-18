@@ -24,11 +24,21 @@ Start the full application first, then install Playwright's Chromium build once 
 ```bash
 ./run.sh all
 npm --prefix frontend exec -- playwright install chromium
-npm --prefix frontend run capture:screenshots -- --locale en --session-title "<exact session title>" --terminal-query "<representative query>"
-npm --prefix frontend run capture:screenshots -- --locale zh-CN --session-title "<exact session title>" --terminal-query "<representative query>"
+npm --prefix frontend run capture:screenshots -- --locale en --theme light --session-title "<exact session title>" --terminal-query "<representative query>"
+npm --prefix frontend run capture:screenshots -- --locale zh-CN --theme light --session-title "<exact session title>" --terminal-query "<representative query>"
 ```
 
-The script fixes the viewport and light theme, filters the sidebar to the chosen session, opens terminal find when a query is supplied, replaces the repository and home paths, replaces email addresses, and limits the code-reader tree to Git-tracked files. It writes six PNG files under the selected locale directory.
+The script fixes the viewport and selected theme, filters the sidebar to the chosen session, opens terminal find when a query is supplied, replaces the repository and home paths, replaces email addresses, and limits the code-reader tree to Git-tracked files. It writes six PNG files under the selected locale directory or `--output-dir`.
+
+For dark-theme product pages or marketing captures, use `--theme dark` and a separate output directory so the README set remains unchanged:
+
+```bash
+npm --prefix frontend run capture:screenshots -- \
+  --locale en \
+  --theme dark \
+  --session-title "<exact English session title>" \
+  --output-dir site/assets/screenshots/en
+```
 
 ## Privacy check
 

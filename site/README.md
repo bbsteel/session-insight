@@ -23,3 +23,5 @@ Use the repository as the Pages source with:
 
 After the first deployment, attach the chosen custom domain in Cloudflare Pages.
 The page currently links to the public GitHub repository and the `v0.7.1` release.
+
+Product visuals live under `assets/screenshots/en` and `assets/screenshots/zh-CN`. They are sanitized captures of the real interface in dark theme, with English and Chinese session data kept in their matching locale.
