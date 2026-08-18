@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" fill="#050607"/>
+  <path d="M14 14h36v36H14z" fill="none" stroke="#75e7ec" stroke-width="2"/>
+  <path d="M14 22h8v-8M50 42h-8v8M42 14h8v8" fill="none" stroke="#b5f47a" stroke-width="2"/>
+  <text x="32" y="37" fill="#edf4f4" font-family="monospace" font-size="13" font-weight="700" text-anchor="middle">SI</text>
+</svg>
