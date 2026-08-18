@@ -326,7 +326,9 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
               <h3 className="text-body font-medium text-[var(--text-primary)]">
                 {t('git.host.enableTitle', { provider: t(providerKey(result.reference.provider)) })}
               </h3>
-              <p className="mt-1 text-helper text-[var(--text-secondary)]">{t('git.host.enableHelp')}</p>
+              <p className="mt-1 text-helper text-[var(--text-secondary)]">
+                {t('git.host.enableHelp', { provider: t(providerKey(result.reference.provider)) })}
+              </p>
               {!hostPreview ? (
                 <>
                   <p className="mt-2 text-meta text-[var(--text-muted)]">{result.reference.display_origin}</p>

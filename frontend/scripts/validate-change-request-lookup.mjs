@@ -24,13 +24,13 @@ const CREATED_SESSION = {
 }
 const COPY = {
   en: {
-    created: 'Created this PR/MR · 1',
-    hosted: 'Load hosted details',
+    created: 'Sessions with this PR/MR · 1',
+    hosted: 'Contact the host',
     search: 'Search',
   },
   'zh-CN': {
-    created: '在这些会话中创建 · 1',
-    hosted: '加载托管平台详情',
+    created: '包含该 PR/MR 的会话 · 1',
+    hosted: '向平台请求',
     search: '搜索',
   },
 }
