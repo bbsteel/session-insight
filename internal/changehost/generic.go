@@ -14,10 +14,9 @@ import (
 
 var ErrUnsafeGenericReference = errors.New("unsafe generic change reference")
 
-// GenericParser recognizes an exact, path-contained HTTPS URL without
-// guessing provider, repository, number, branch, or revision semantics. It is
-// intentionally offline and never grants network access to the referenced
-// host.
+// GenericParser recognizes an exact HTTPS URL whose path looks like a pull,
+// merge, or review request. It does not guess a hosted provider and never
+// grants network access to the referenced host.
 type GenericParser struct{}
 
 func (GenericParser) Kind() model.ChangeProviderKind { return model.ChangeProviderGeneric }
@@ -27,10 +26,16 @@ func (GenericParser) ParseReference(raw string) (model.ChangeRequestReference, b
 	if err != nil || pathValue == "/" {
 		return model.ChangeRequestReference{}, false
 	}
+	slug, number, ok := changeRequestPathIdentity(pathValue)
+	if !ok {
+		return model.ChangeRequestReference{}, false
+	}
 	return model.ChangeRequestReference{
-		Provider:      model.ChangeProviderGeneric,
-		DisplayOrigin: origin,
-		NormalizedURL: normalized,
+		Provider:             model.ChangeProviderGeneric,
+		DisplayOrigin:        origin,
+		TargetRepositorySlug: slug,
+		DisplayNumber:        number,
+		NormalizedURL:        normalized,
 	}, true
 }
 

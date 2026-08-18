@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bbsteel/session-insight/internal/changeevidence"
 	"github.com/bbsteel/session-insight/internal/model"
 )
 
@@ -198,6 +199,25 @@ func TestRenderEventsFromUpdates(t *testing.T) {
 	}
 	if ansi == "" {
 		t.Error("expected non-empty ANSI")
+	}
+}
+
+func TestGrokRenderEventsYieldCreationEvidenceFromChainedCommand(t *testing.T) {
+	root := t.TempDir()
+	id := "dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee"
+	updates := `{"timestamp":1700000100,"method":"session/update","params":{"sessionId":"` + id + `","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"open a pull request"}}}}
+{"timestamp":1700000101,"method":"session/update","params":{"sessionId":"` + id + `","update":{"sessionUpdate":"tool_call","toolCallId":"call-create","title":"run_terminal_command","rawInput":{"command":"git push -u origin HEAD && gh pr create --title sanitized --body sanitized"}}}}
+{"timestamp":1700000102,"method":"session/update","params":{"sessionId":"` + id + `","update":{"sessionUpdate":"tool_call_update","toolCallId":"call-create","status":"completed","content":[{"type":"content","content":{"type":"text","text":"https://github.com/acme/widgets/pull/42\n"}}]}}}
+{"timestamp":1700000103,"method":"_x.ai/session/update","params":{"sessionId":"` + id + `","update":{"sessionUpdate":"turn_completed","stop_reason":"end_turn"}}}
+`
+	writeSession(t, root, "proj", id, summaryFile{}, updates, sampleEventsClosed())
+	events, err := New(root).GetRenderEvents(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := changeevidence.ExtractCreationEvidence(events, "index:grok:"+id+":1")
+	if len(got) != 1 || got[0].Reference.NormalizedURL != "https://github.com/acme/widgets/pull/42" {
+		t.Fatalf("grok chained create not extracted: events=%+v evidence=%+v", events, got)
 	}
 }
 

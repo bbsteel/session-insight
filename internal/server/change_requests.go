@@ -262,12 +262,10 @@ func (s *Server) handleResolveChangeRequest(w http.ResponseWriter, r *http.Reque
 		Reference: reference, CreationSessions: []model.ChangeRequestCreationSessionMatch{}, Matches: []changeRequestLookup{},
 		Assessment: model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonChangeRequestNotFound),
 	}
-	if reference.Provider == model.ChangeProviderGitHub || reference.Provider == model.ChangeProviderGitLab {
-		response.CreationSessions, err = s.DB.ChangeRequestCreationSessions(reference.NormalizedURL, 100)
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, "internal")
-			return
-		}
+	response.CreationSessions, err = s.DB.ChangeRequestCreationSessions(reference.NormalizedURL, 100)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal")
+		return
 	}
 	if len(changeKeys) == 0 && reference.Provider != model.ChangeProviderGeneric && request.IncludeHostedDetails {
 		if host, ok := changehost.PublicHost(reference.Provider); ok {

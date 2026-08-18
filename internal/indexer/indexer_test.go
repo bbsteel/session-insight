@@ -10,15 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"path/filepath"
+
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader"
+	"github.com/bbsteel/session-insight/internal/reader/codex"
 )
 
 type mockReader struct {
 	agentType       string
 	sessions        []model.Session
 	details         map[string]*model.SessionDetail
+	renderEvents    []model.RenderEvent
 	listErr         error
 	getSessionErr   error
 	getSessionCalls *int32
@@ -89,7 +93,12 @@ func (m *mockReader) GetSession(id string) (*model.SessionDetail, error) {
 
 func (m *mockReader) RenderANSI(id string, cols int) (string, error) { return "", nil }
 
-func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) { return nil, nil }
+func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
+	if m.renderEvents == nil {
+		return nil, nil
+	}
+	return m.renderEvents, nil
+}
 
 type authoritativeMockReader struct {
 	*mockReader
@@ -253,6 +262,220 @@ func TestIndexerPrefersAuthoritativeSnapshotEnvelope(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
 		t.Fatalf("authoritative calls after unchanged-timestamp rewrite = %d, want 2", got)
+	}
+}
+
+func TestIndexerRewrittenEmptyCreationSourceAddsEvidenceWithoutUpdatedAtChange(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "test", UpdatedAt: time.Unix(0, 100)}
+	r := &authoritativeMockReader{
+		mockReader: &mockReader{
+			agentType: "test",
+			sessions:  []model.Session{session},
+			details: map[string]*model.SessionDetail{
+				"s1": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "no create yet"}}},
+			},
+		},
+		envelope: testAuthoritativeEnvelope(session, "empty creation source"),
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 0 {
+		t.Fatalf("empty source already had creation evidence: matches=%+v err=%v", created, err)
+	}
+	current, err := database.HasSessionChangeRequestCreationIndex("test", "s1")
+	if err != nil || !current {
+		t.Fatalf("empty extraction should still write a creation index: current=%v err=%v", current, err)
+	}
+
+	r.envelope = testAuthoritativeEnvelope(session, "create added later")
+	r.envelope.SourceFingerprint.Digest = strings.Repeat("b", 64)
+	r.envelope.SourceRevision = "sha256:" + strings.Repeat("b", 64)
+	for _, fact := range []*model.GitFact[string]{
+		&r.envelope.OriginGit.RepositoryURL, &r.envelope.OriginGit.WorktreePath,
+		&r.envelope.OriginGit.Branch, &r.envelope.OriginGit.HeadSHA,
+	} {
+		fact.SourceRevision = r.envelope.SourceRevision
+	}
+	r.envelope.OriginGit.DirtyState.SourceRevision = r.envelope.SourceRevision
+	r.envelope.RenderEvents = []model.RenderEvent{
+		{EventID: "create", Type: "ToolInvocation", ToolName: "exec",
+			ToolInput: map[string]any{"command": "gh pr create --base main"}},
+		{EventID: "created", ParentEventID: "create", Type: "ToolResult",
+			Timestamp: time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC),
+			Stdout:    "https://github.com/acme/widgets/pull/42\n"},
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err = database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 1 || created[0].RootSessionID != "s1" {
+		t.Fatalf("rewritten empty source did not add creation evidence: matches=%+v err=%v", created, err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
+		t.Fatalf("authoritative calls after empty rewrite = %d, want 2", got)
+	}
+}
+
+func TestIndexerIndexesCreationEvidenceWithoutAuthoritativeEnvelope(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "grok", UpdatedAt: time.Unix(0, 100)}
+	r := &mockReader{
+		agentType: "grok",
+		sessions:  []model.Session{session},
+		details: map[string]*model.SessionDetail{
+			"s1": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "open a pr"}}},
+		},
+		renderEvents: []model.RenderEvent{
+			{EventID: "invoke", Type: "ToolInvocation", ToolName: "Run",
+				ToolInput: map[string]any{"command": "git push -u origin HEAD && gh pr create --fill"}},
+			{EventID: "created", ParentEventID: "invoke", Type: "ToolResult",
+				Timestamp: time.Date(2026, 8, 15, 9, 7, 59, 0, time.UTC),
+				Stdout:    "https://github.com/acme/widgets/pull/139\n"},
+		},
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/139", 10)
+	if err != nil || len(created) != 1 || created[0].RootAgentType != "grok" || created[0].RootSessionID != "s1" {
+		t.Fatalf("non-authoritative creation evidence not indexed: matches=%+v err=%v", created, err)
+	}
+}
+
+func TestIndexerIndexesReviewURLsWithoutCLI(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s-url", AgentType: "grok", UpdatedAt: time.Unix(0, 100)}
+	r := &mockReader{
+		agentType: "grok",
+		sessions:  []model.Session{session},
+		details: map[string]*model.SessionDetail{
+			"s-url": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, AssistantMessage: "opened a PR"}}},
+		},
+		renderEvents: []model.RenderEvent{{
+			EventID: "assistant", Type: "TextChunk",
+			Timestamp: time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC),
+			Text:      "Opened https://gitee.com/acme/widgets/pulls/12",
+		}},
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := database.ChangeRequestCreationSessions("https://gitee.com/acme/widgets/pulls/12", 10)
+	if err != nil || len(matches) != 1 || matches[0].RootSessionID != "s-url" ||
+		matches[0].Evidence.CommandKind != "change_request_url" {
+		t.Fatalf("URL mention was not indexed: matches=%+v err=%v", matches, err)
+	}
+}
+
+func TestIndexerClearsWatermarkWhenCreationEvidenceReplaceFails(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "test", UpdatedAt: time.Unix(0, 100)}
+	r := &authoritativeMockReader{
+		mockReader: &mockReader{
+			agentType: "test",
+			sessions:  []model.Session{session},
+			details:   map[string]*model.SessionDetail{"s1": {Session: session}},
+		},
+		envelope: testAuthoritativeEnvelope(session, "zero-timestamp result"),
+	}
+	r.envelope.RenderEvents = []model.RenderEvent{
+		{EventID: "create", Type: "ToolInvocation", ToolName: "exec",
+			ToolInput: map[string]any{"command": "gh pr create --base main"}},
+		{EventID: "created", ParentEventID: "create", Type: "ToolResult",
+			Stdout: "https://github.com/acme/widgets/pull/42\n"},
+	}
+	err = New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "index Change Request creation evidence") {
+		t.Fatalf("creation replace error = %v", err)
+	}
+	if _, exists, err := database.GetWatermark("test", "s1"); err != nil || exists {
+		t.Fatalf("failed creation replace left watermark: exists=%v err=%v", exists, err)
+	}
+}
+
+func TestIndexerBackfillsWhenCreationIndexHeaderMissing(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "grok", UpdatedAt: time.Unix(0, 100)}
+	events := []model.RenderEvent{
+		{EventID: "create", Type: "ToolInvocation", ToolName: "Run",
+			ToolInput: map[string]any{"command": "gh pr create --fill"}},
+		{EventID: "created", ParentEventID: "create", Type: "ToolResult",
+			Timestamp: time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC),
+			Stdout:    "https://github.com/acme/widgets/pull/42\n"},
+	}
+	r := &mockReader{
+		agentType: "grok",
+		sessions:  []model.Session{session},
+		details: map[string]*model.SessionDetail{
+			"s1": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "open a pr"}}},
+		},
+		renderEvents: events,
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Conn().Exec(`
+		DELETE FROM session_change_request_creation_evidence;
+		DELETE FROM session_change_request_creation_indexes`); err != nil {
+		t.Fatal(err)
+	}
+	current, err := database.HasSessionChangeRequestCreationIndex("grok", "s1")
+	if err != nil || current {
+		t.Fatalf("header still present after delete: current=%v err=%v", current, err)
+	}
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 1 || created[0].RootSessionID != "s1" {
+		t.Fatalf("missing creation header was not backfilled: matches=%+v err=%v", created, err)
+	}
+}
+
+func TestIndexerIndexesSanitizedCodexCreationTranscript(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	r := codex.New(filepath.Join("..", "reader", "codex", "testdata", "pr-creation"))
+	if err := New(database, []reader.BaseSessionReader{r}).RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := database.ChangeRequestCreationSessions("https://github.com/acme/widgets/pull/42", 10)
+	if err != nil || len(created) != 1 || created[0].RootAgentType != "codex" ||
+		created[0].RootSessionID != "created" || created[0].Evidence.EventID == "" ||
+		created[0].Evidence.SourceRevision == "" || created[0].Evidence.Assessment.State != model.GitEvidenceExact {
+		t.Fatalf("sanitized transcript was not indexed: matches=%+v err=%v", created, err)
 	}
 }
 

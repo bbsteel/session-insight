@@ -136,6 +136,81 @@ func TestAutomaticResolveFindsLocalCreationEvidenceWithoutHostApproval(t *testin
 		resolved.CreationSessions[0].RootSessionID != "creator" || len(resolved.Matches) != 0 {
 		t.Fatalf("unexpected local creation match: %+v", resolved)
 	}
+	if !strings.Contains(response.Body.String(), `"matches":[]`) {
+		t.Fatalf("matches did not serialize as empty array: %s", response.Body.String())
+	}
+
+	response = serveChangeRequestAPI(server, "POST", "/api/change-requests/resolve", `{
+		"reference":"https://github.com/acme/widgets/pull/42",
+		"include_hosted_details":true
+	}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("hosted status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.CreationSessions) != 1 || resolved.CreationSessions[0].RootSessionID != "creator" {
+		t.Fatalf("hosted details dropped local creation matches: %+v", resolved)
+	}
+}
+
+func TestResolveChangeRequestFailsClosedOnMalformedInput(t *testing.T) {
+	database := openCollabAPIDB(t)
+	server := New(database, nil)
+	cases := []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "empty reference", body: `{"reference":""}`, code: "invalid_request"},
+		{name: "unknown field", body: `{"reference":"https://github.com/acme/widgets/pull/42","extra":true}`, code: "invalid_request"},
+		{name: "invalid json", body: `{`, code: "invalid_request"},
+		{name: "unclaimed reference", body: `{"reference":"not-a-url"}`, code: "change_alias_ambiguous"},
+	}
+	for _, test := range cases {
+		response := serveChangeRequestAPI(server, "POST", "/api/change-requests/resolve", test.body)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s status=%d body=%s", test.name, response.Code, response.Body.String())
+		}
+		if !strings.Contains(response.Body.String(), test.code) {
+			t.Fatalf("%s code=%s body=%s", test.name, test.code, response.Body.String())
+		}
+	}
+}
+
+func TestResolveFindsGenericReviewURLWithoutHostApproval(t *testing.T) {
+	database := openCollabAPIDB(t)
+	seedCollabSession(t, database, "grok", "mentioned", false)
+	reference := model.ChangeRequestReference{
+		Provider: model.ChangeProviderGeneric, DisplayOrigin: "https://gitee.com",
+		TargetRepositorySlug: "acme/widgets", DisplayNumber: "12",
+		NormalizedURL: "https://gitee.com/acme/widgets/pulls/12",
+	}
+	evidence := model.ChangeRequestCreationEvidence{
+		EvidenceID: "cr-create-gitee", Reference: reference,
+		CommandKind: "change_request_url", ToolName: "message", EventID: "assistant",
+		RecordedAt:     time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC),
+		SourceRevision: "index:grok:mentioned:1", Assessment: model.ExactGitEvidence(),
+	}
+	if err := database.ReplaceSessionChangeRequestCreationEvidence("grok", "mentioned", evidence.SourceRevision, []model.ChangeRequestCreationEvidence{evidence}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(database, nil)
+	response := serveChangeRequestAPI(server, "POST", "/api/change-requests/resolve", `{
+		"reference":"https://gitee.com/acme/widgets/pulls/12"
+	}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var resolved changeRequestResolveResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Assessment.State != model.GitEvidenceExact || resolved.Reference.Provider != model.ChangeProviderGeneric ||
+		len(resolved.CreationSessions) != 1 || resolved.CreationSessions[0].RootSessionID != "mentioned" {
+		t.Fatalf("unexpected generic URL resolve: %+v", resolved)
+	}
 }
 
 func TestExclusiveChangeRequestBindSelectsAuthorityAndServesPatch(t *testing.T) {
