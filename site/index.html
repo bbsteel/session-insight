@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en" data-language="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#050607" />
+    <meta
+      name="description"
+      content="Session Insight is a local-first observability console for AI coding sessions. Replay turns, inspect evidence, and understand agent collaboration."
+    />
+    <meta property="og:title" content="Session Insight — See what your coding agents actually did." />
+    <meta
+      property="og:description"
+      content="A local-first observability console for AI coding sessions."
+    />
+    <meta property="og:type" content="website" />
+    <title>Session Insight — See what your coding agents actually did.</title>
+    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="icon" href="./favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-noise" aria-hidden="true"></div>
+    <div class="site-shell" id="top">
+      <header class="site-header">
+        <a class="brand" href="#top" data-i18n-attr="aria-label:brand.aria">
+          <img class="brand-mark" src="./favicon.png" alt="" width="32" height="32" aria-hidden="true" />
+          <span class="brand-name">SESSION<span>INSIGHT</span></span>
+        </a>
+
+        <nav class="site-nav" data-i18n-attr="aria-label:nav.aria">
+          <a href="#features" data-i18n="nav.features">Features</a>
+          <a href="#signals" data-i18n="nav.signals">Signals</a>
+          <a href="#workflow" data-i18n="nav.workflow">Workflow</a>
+        </nav>
+
+        <div class="header-actions">
+          <button
+            class="language-toggle"
+            id="language-toggle"
+            type="button"
+            data-i18n-attr="aria-label:language.aria"
+          >
+            <span class="language-toggle-dot" aria-hidden="true"></span>
+            <span data-language-label>中文</span>
+          </button>
+          <a
+            class="header-github"
+            href="https://github.com/bbsteel/session-insight"
+            target="_blank"
+            rel="noreferrer"
+            data-i18n-attr="aria-label:nav.github"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2.5a9.5 9.5 0 0 0-3 18.52c.48.09.66-.21.66-.46v-1.7c-2.7.59-3.27-1.15-3.27-1.15-.44-1.12-1.08-1.42-1.08-1.42-.88-.6.07-.59.07-.59.98.07 1.5 1.01 1.5 1.01.87 1.5 2.28 1.07 2.84.82.09-.64.34-1.07.62-1.32-2.16-.25-4.43-1.08-4.43-4.8 0-1.06.38-1.92 1-2.6-.1-.25-.43-1.3.1-2.57 0 0 .82-.26 2.67.99A9.3 9.3 0 0 1 12 6.9c.82 0 1.65.11 2.42.33 1.85-1.25 2.67-.99 2.67-.99.53 1.27.2 2.32.1 2.57.62.68 1 1.54 1 2.6 0 3.73-2.27 4.55-4.44 4.79.35.3.66.9.66 1.82v2.54c0 .25.18.55.67.46A9.5 9.5 0 0 0 12 2.5Z" />
+            </svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero section-grid" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <p class="eyebrow">
+              <span class="status-pip" aria-hidden="true"></span>
+              <span data-i18n="hero.eyebrow">LOCAL-FIRST OBSERVABILITY FOR AI CODING SESSIONS</span>
+            </p>
+            <h1 id="hero-title">
+              <span data-i18n="hero.headingLead">See what your</span>
+              <span class="hero-heading-accent" data-i18n="hero.headingAccent">coding agents</span>
+              <span data-i18n="hero.headingTail">actually did.</span>
+            </h1>
+            <p class="hero-body" data-i18n="hero.body">
+              Replay the work, follow the evidence, and understand the decisions behind every agent session — on your machine.
+            </p>
+            <div class="hero-actions">
+              <a
+                class="button button-primary"
+                href="https://github.com/bbsteel/session-insight"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 2.5a9.5 9.5 0 0 0-3 18.52c.48.09.66-.21.66-.46v-1.7c-2.7.59-3.27-1.15-3.27-1.15-.44-1.12-1.08-1.42-1.08-1.42-.88-.6.07-.59.07-.59.98.07 1.5 1.01 1.5 1.01.87 1.5 2.28 1.07 2.84.82.09-.64.34-1.07.62-1.32-2.16-.25-4.43-1.08-4.43-4.8 0-1.06.38-1.92 1-2.6-.1-.25-.43-1.3.1-2.57 0 0 .82-.26 2.67.99A9.3 9.3 0 0 1 12 6.9c.82 0 1.65.11 2.42.33 1.85-1.25 2.67-.99 2.67-.99.53 1.27.2 2.32.1 2.57.62.68 1 1.54 1 2.6 0 3.73-2.27 4.55-4.44 4.79.35.3.66.9.66 1.82v2.54c0 .25.18.55.67.46A9.5 9.5 0 0 0 12 2.5Z" />
+                </svg>
+                <span data-i18n="hero.ctaGithub">Explore on GitHub</span>
+              </a>
+              <a
+                class="button button-quiet"
+                href="https://github.com/bbsteel/session-insight/releases/tag/v0.7.1"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <span data-i18n="hero.ctaRelease">Get v0.7.1</span>
+                <span aria-hidden="true">↗</span>
+              </a>
+            </div>
+            <p class="hero-note">
+              <span class="hero-note-line" aria-hidden="true"></span>
+              <span data-i18n="hero.note">Open source · local data · built for long sessions</span>
+            </p>
+          </div>
+
+          <div class="hero-visual" data-i18n-attr="aria-label:hero.visualAria">
+            <div class="hero-visual-label">
+              <span class="status-pip" aria-hidden="true"></span>
+              <span data-i18n="hero.actualUi">ACTUAL UI / DARK THEME</span>
+            </div>
+            <figure class="hero-product-shot">
+              <div class="hero-product-bar">
+                <span class="hero-product-bar-path">SESSION INSIGHT / REPLAY</span>
+                <span data-i18n="hero.actualUiStatus">REAL PRODUCT VIEW</span>
+              </div>
+              <button
+                class="screenshot-trigger screenshot-trigger-hero"
+                type="button"
+                data-screenshot-zoom
+                data-i18n-attr="aria-label:screen.zoomAria"
+              >
+                <img
+                  class="hero-product-image"
+                  src="./assets/screenshots/en/replay.png"
+                  data-locale-src="replay"
+                  alt="Session Insight replay view"
+                  data-i18n-attr="alt:screen.replay.alt"
+                />
+                <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+              </button>
+            </figure>
+            <p class="hero-visual-caption">
+              <span data-i18n="hero.actualUiCaption">The actual Session Insight interface.</span>
+              <span data-i18n="hero.actualUiNote">Captured from a real local session.</span>
+            </p>
+          </div>
+        </section>
+
+        <section class="signal-strip" data-i18n-attr="aria-label:strip.aria">
+          <div class="signal-strip-item">
+            <span class="signal-strip-index">01</span>
+            <span data-i18n="strip.replay">REPLAY THE CONTEXT</span>
+          </div>
+          <div class="signal-strip-item">
+            <span class="signal-strip-index">02</span>
+            <span data-i18n="strip.evidence">FOLLOW THE EVIDENCE</span>
+          </div>
+          <div class="signal-strip-item">
+            <span class="signal-strip-index">03</span>
+            <span data-i18n="strip.collaboration">SEE THE COLLABORATION</span>
+          </div>
+        </section>
+
+        <section class="content-section" id="features" aria-labelledby="features-title">
+          <div class="section-heading">
+            <p class="eyebrow"><span class="eyebrow-number">01</span><span data-i18n="features.eyebrow">THE INSIGHT LAYER</span></p>
+            <h2 id="features-title" data-i18n="features.title">From raw transcript to usable signal.</h2>
+            <p data-i18n="features.body">Your agent did more than print messages. Session Insight turns the whole run into a navigable, inspectable record.</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature-card feature-card-accent">
+              <div class="feature-card-top"><span class="feature-index">01</span><span class="feature-wire" aria-hidden="true"></span></div>
+              <p class="feature-label" data-i18n="feature.replay.label">NAVIGATION</p>
+              <h3 data-i18n="feature.replay.title">Replay the moment that matters.</h3>
+              <p data-i18n="feature.replay.body">Search, jump, fold, and follow the exact turn where the plan changed — without losing your place in a long session.</p>
+              <span class="feature-arrow" aria-hidden="true">↗</span>
+            </article>
+            <article class="feature-card">
+              <div class="feature-card-top"><span class="feature-index">02</span><span class="feature-wire" aria-hidden="true"></span></div>
+              <p class="feature-label" data-i18n="feature.evidence.label">PROVENANCE</p>
+              <h3 data-i18n="feature.evidence.title">Know what actually happened.</h3>
+              <p data-i18n="feature.evidence.body">Connect tool calls, files, commits, change requests, and approvals into an evidence trail you can inspect.</p>
+              <span class="feature-arrow" aria-hidden="true">↗</span>
+            </article>
+            <article class="feature-card">
+              <div class="feature-card-top"><span class="feature-index">03</span><span class="feature-wire" aria-hidden="true"></span></div>
+              <p class="feature-label" data-i18n="feature.collaboration.label">COLLABORATION</p>
+              <h3 data-i18n="feature.collaboration.title">See the agents behind the agent.</h3>
+              <p data-i18n="feature.collaboration.body">Make child agents, tasks, handoffs, and parallel work visible in one timeline.</p>
+              <span class="feature-arrow" aria-hidden="true">↗</span>
+            </article>
+          </div>
+        </section>
+
+        <section class="content-section signal-section" id="signals" aria-labelledby="signals-title">
+          <div class="section-heading section-heading-wide">
+            <p class="eyebrow"><span class="eyebrow-number">02</span><span data-i18n="signals.eyebrow">A SIGNAL, NOT ANOTHER CHAT WINDOW</span></p>
+            <h2 id="signals-title" data-i18n="signals.title">Read the shape of the work.</h2>
+            <p data-i18n="signals.body">A session is a system: context pressure, repeated work, risky actions, useful evidence, and decisions over time.</p>
+          </div>
+          <div class="screen-grid">
+            <figure class="screen-card screen-card-large">
+              <div class="screen-frame">
+                <button class="screenshot-trigger" type="button" data-screenshot-zoom data-i18n-attr="aria-label:screen.zoomAria">
+                  <img src="./assets/screenshots/en/replay.png" data-locale-src="replay" alt="Session Insight replay view" data-i18n-attr="alt:screen.replay.alt" loading="lazy" />
+                  <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+                </button>
+              </div>
+              <figcaption><span class="screen-caption-index" data-i18n="screen.replay.index">REPLAY / 01</span><span data-i18n="screen.replay.caption">Navigate the entire conversation without losing the thread.</span></figcaption>
+            </figure>
+            <figure class="screen-card">
+              <div class="screen-frame">
+                <button class="screenshot-trigger" type="button" data-screenshot-zoom data-i18n-attr="aria-label:screen.zoomAria">
+                  <img src="./assets/screenshots/en/analytics.png" data-locale-src="analytics" alt="Session Insight analytics view" data-i18n-attr="alt:screen.analytics.alt" loading="lazy" />
+                  <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+                </button>
+              </div>
+              <figcaption><span class="screen-caption-index" data-i18n="screen.analytics.index">ANALYTICS / 02</span><span data-i18n="screen.analytics.caption">Find pressure, cost, anomalies, and patterns in the run.</span></figcaption>
+            </figure>
+            <figure class="screen-card">
+              <div class="screen-frame">
+                <button class="screenshot-trigger" type="button" data-screenshot-zoom data-i18n-attr="aria-label:screen.zoomAria">
+                  <img src="./assets/screenshots/en/interaction.png" data-locale-src="interaction" alt="Session Insight interaction view" data-i18n-attr="alt:screen.interaction.alt" loading="lazy" />
+                  <span class="screenshot-zoom-indicator" aria-hidden="true">+</span>
+                </button>
+              </div>
+              <figcaption><span class="screen-caption-index" data-i18n="screen.interaction.index">EVIDENCE / 03</span><span data-i18n="screen.interaction.caption">Keep the human and agent decisions in the same frame.</span></figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section class="content-section workflow-section" id="workflow" aria-labelledby="workflow-title">
+          <div class="section-heading">
+            <p class="eyebrow"><span class="eyebrow-number">03</span><span data-i18n="workflow.eyebrow">DESIGNED FOR THE LONG RUN</span></p>
+            <h2 id="workflow-title" data-i18n="workflow.title">Stay oriented when the session gets serious.</h2>
+            <p data-i18n="workflow.body">Use it after the magic wears off — when the context is huge, the agent has branched, and you need to know what to trust.</p>
+          </div>
+          <div class="workflow-layout">
+            <div class="workflow-rail" aria-hidden="true">
+              <span class="workflow-rail-line"></span>
+              <span class="workflow-rail-dot workflow-rail-dot-active"></span>
+              <span class="workflow-rail-dot"></span>
+              <span class="workflow-rail-dot"></span>
+            </div>
+            <div class="workflow-list">
+              <article class="workflow-item workflow-item-active">
+                <span class="workflow-item-index">A</span>
+                <div><h3 data-i18n="workflow.one.title">Start with the whole run.</h3><p data-i18n="workflow.one.body">Index local sessions and get a fast map of turns, tools, files, and active agents.</p></div>
+              </article>
+              <article class="workflow-item">
+                <span class="workflow-item-index">B</span>
+                <div><h3 data-i18n="workflow.two.title">Zoom into the decision.</h3><p data-i18n="workflow.two.body">Search exact terms, jump to first or last matches, and anchor the viewport to the evidence.</p></div>
+              </article>
+              <article class="workflow-item">
+                <span class="workflow-item-index">C</span>
+                <div><h3 data-i18n="workflow.three.title">Leave with a trace.</h3><p data-i18n="workflow.three.body">Connect the outcome to commits, pull requests, reviews, and the people or agents involved.</p></div>
+              </article>
+            </div>
+            <div class="workflow-aside">
+              <div class="aside-code"><span class="aside-code-prompt">$</span><span>session-insight</span><span class="aside-code-caret">_</span></div>
+              <p class="aside-label" data-i18n="workflow.asideLabel">ONE COMMAND TO START</p>
+              <p class="aside-copy" data-i18n="workflow.asideCopy">No hosted account. No upload step. Just a local window into the work already on your machine.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="local-section" aria-labelledby="local-title">
+          <div class="local-grid">
+            <div>
+              <p class="eyebrow"><span class="eyebrow-number">04</span><span data-i18n="local.eyebrow">LOCAL BY DESIGN</span></p>
+              <h2 id="local-title" data-i18n="local.title">Your sessions stay yours.</h2>
+            </div>
+            <div class="local-copy">
+              <p data-i18n="local.body">Session Insight is built as a local developer tool. It reads the session roots you choose, builds a local index, and gives you an inspection layer without asking you to move your work into another cloud.</p>
+              <div class="local-points">
+                <span><i></i><span data-i18n="local.pointOne">Local session roots</span></span>
+                <span><i></i><span data-i18n="local.pointTwo">Read-only evidence layer</span></span>
+                <span><i></i><span data-i18n="local.pointThree">Open source workflow</span></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="final-cta" aria-labelledby="cta-title">
+          <div class="final-cta-glow" aria-hidden="true"></div>
+          <p class="eyebrow"><span class="status-pip" aria-hidden="true"></span><span data-i18n="cta.eyebrow">THE NEXT SESSION IS ALREADY WAITING</span></p>
+          <h2 id="cta-title" data-i18n="cta.title">Make the invisible work legible.</h2>
+          <p data-i18n="cta.body">Start with the source. Keep the data local. See the signal.</p>
+          <div class="hero-actions final-cta-actions">
+            <a class="button button-primary" href="https://github.com/bbsteel/session-insight" target="_blank" rel="noreferrer">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5a9.5 9.5 0 0 0-3 18.52c.48.09.66-.21.66-.46v-1.7c-2.7.59-3.27-1.15-3.27-1.15-.44-1.12-1.08-1.42-1.08-1.42-.88-.6.07-.59.07-.59.98.07 1.5 1.01 1.5 1.01.87 1.5 2.28 1.07 2.84.82.09-.64.34-1.07.62-1.32-2.16-.25-4.43-1.08-4.43-4.8 0-1.06.38-1.92 1-2.6-.1-.25-.43-1.3.1-2.57 0 0 .82-.26 2.67.99A9.3 9.3 0 0 1 12 6.9c.82 0 1.65.11 2.42.33 1.85-1.25 2.67-.99 2.67-.99.53 1.27.2 2.32.1 2.57.62.68 1 1.54 1 2.6 0 3.73-2.27 4.55-4.44 4.79.35.3.66.9.66 1.82v2.54c0 .25.18.55.67.46A9.5 9.5 0 0 0 12 2.5Z" /></svg>
+              <span data-i18n="cta.github">Open the repository</span>
+            </a>
+            <a class="button button-quiet" href="https://github.com/bbsteel/session-insight/releases/tag/v0.7.1" target="_blank" rel="noreferrer"><span data-i18n="cta.release">Read the latest release</span><span aria-hidden="true">↗</span></a>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div class="footer-brand"><img class="brand-mark brand-mark-small" src="./favicon.png" alt="" width="25" height="25" aria-hidden="true" /><span class="brand-name">SESSION<span>INSIGHT</span></span></div>
+        <p data-i18n="footer.tagline">A clearer view of the work behind the prompt.</p>
+        <div class="footer-links">
+          <a href="https://github.com/bbsteel/session-insight" target="_blank" rel="noreferrer" data-i18n="footer.github">GitHub</a>
+          <a href="https://github.com/bbsteel/session-insight/releases" target="_blank" rel="noreferrer" data-i18n="footer.releases">Releases</a>
+          <a href="#top" data-i18n="footer.top">Back to top ↑</a>
+        </div>
+        <span class="footer-build" data-i18n="footer.build">OPEN SOURCE / LOCAL-FIRST / 2026</span>
+      </footer>
+
+      <dialog class="screenshot-dialog" id="screenshot-dialog" aria-labelledby="screenshot-dialog-title">
+        <div class="screenshot-dialog-shell">
+          <div class="screenshot-dialog-header">
+            <p id="screenshot-dialog-title" data-i18n="screen.dialogLabel">SCREENSHOT / FULL SIZE</p>
+            <button class="screenshot-dialog-close" id="screenshot-dialog-close" type="button" data-i18n-attr="aria-label:screen.closeAria">×</button>
+          </div>
+          <div class="screenshot-dialog-frame">
+            <img id="screenshot-dialog-image" alt="" />
+          </div>
+        </div>
+      </dialog>
+    </div>
+    <script type="module" src="./script.js"></script>
+  </body>
+</html>
