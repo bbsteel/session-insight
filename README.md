@@ -4,7 +4,7 @@
 
 A local-first web app for browsing and analyzing AI coding agent sessions through terminal-native replay. It reconstructs ANSI-styled conversations, tool calls, and code output in an interactive terminal, while discovery, indexing, search, and replay stay on your machine. AI generation is opt-in and only uses a provider you configure.
 
-Built-in observability connects Agent capabilities, record provenance, collaboration timelines, Token and tool analytics, and Git/PR/MR evidence. Exact, estimated, missing, and unavailable states make the confidence of each conclusion visible instead of hiding uncertainty.
+Built-in observability connects Agent capabilities, record provenance, collaboration timelines, Token and tool analytics, and Git/Change Request evidence. Exact, estimated, missing, and unavailable states make the confidence of each conclusion visible instead of hiding uncertainty.
 
 [中文](README_ZH.md)
 
@@ -21,7 +21,7 @@ Built-in observability connects Agent capabilities, record provenance, collabora
 - **Terminal-native replay** — preserve ANSI output, formatted assistant text, tool calls, code, and errors; keep parallel tool results beside their invocations, fold noisy details, and follow active sessions as they grow
 - **Fast session navigation** — start at the first prompt, keep the current user message visible while scrolling, search inside the terminal with first/last-match jumps, open clickable links, use the semantic minimap, or browse the combined user/assistant interaction panel
 - **Search and organization** — search metadata, prompts, assistant replies, skills, tool inputs, and errors across sessions while background indexing reports progress; narrow results by project or agent, sort projects by name, session count, or recent activity, and keep bookmarks with notes
-- **Git and Change Request evidence** — inspect repository-scoped local changes, retained patches, candidate commits, and replay edit anchors; link fixed GitHub PR or GitLab MR snapshots with explicit evidence quality and revocable read-only host approval
+- **Git and Change Request evidence** — inspect repository-scoped local changes, retained patches, candidate commits, and replay edit anchors; recognize PR/MR/review-shaped links from any agent and host, distinguish link mentions from CLI creation evidence, and optionally link fixed GitHub PR or GitLab MR snapshots with explicit evidence quality and revocable read-only host approval
 - **Tool, diff, and code inspection** — filter tool calls and jump to their source turn; inspect inline or side-by-side diffs; open referenced files in the structured code reader or your editor
 - **Usage analytics** — inspect prompt, output, and cache tokens, cost estimates, tool usage, errors, anomalies, continuation pressure, and per-turn trends
 - **Session lifecycle tools** — export Markdown or portable `.sibundle` packs for offline migration, resume sessions in place (or copy a shell command), and safely delete with running-process protection and supported force-stop flows
@@ -99,6 +99,8 @@ Useful runtime commands:
 ./run.sh status       # list the current app and linked-worktree instances
 ./run.sh restart      # stop and start this checkout without rebuilding
 ./run.sh stop         # stop only this checkout's instance
+./run.sh stopall      # stop all related-checkout instances and clean stale PID records
+./run.sh converge     # fast-forward main, rebuild, and start one fresh primary instance
 ```
 
 ### Windows
