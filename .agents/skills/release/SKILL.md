@@ -42,9 +42,41 @@ notes when no Release is present.
    ```
 5. Latest CI on the commit you will tag is green, or the user explicitly
    waives that check.
+6. The release-equivalent preflight is green on the exact commit to publish.
+   This includes the release-specific dependency/component checks and the
+   target build prerequisites used by `.github/workflows/release.yml`.
 
 If anything is wrong, report it and stop. Do not force-push or rewrite
 published tags.
+
+### Mandatory preflight
+
+Run this before the final approval gate and before any tag or GitHub Release
+is created:
+
+1. Check for component and adapter drift:
+
+   ```bash
+   bash scripts/verify-codex-acp-version.sh --latest
+   ```
+
+   If this reports an available update, stop the release. Update the pinned
+   component, exercise the affected contracts, and commit the tested change
+   through the normal PR workflow. Do not waive this check merely because the
+   currently pinned package is still downloadable.
+
+2. Run the frontend and Go checks that the release consumes, including the
+   frontend dependency install/build and release-specific Go build checks.
+3. Confirm the target-specific prerequisites and all targets in the release
+   matrix (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, and
+   `windows-amd64`) wherever the environment permits. If the matrix cannot be
+   exercised before tagging, use an equivalent candidate-commit CI preflight;
+   add that capability before publishing if it does not exist yet.
+
+Do not create a release and wait for the post-tag workflow to discover that a
+component, dependency, compiler, or other build prerequisite must be updated.
+The post-release workflow check is still required, but it is follow-up
+verification and cannot replace this preflight.
 
 ## Step 1 — Resolve version
 
