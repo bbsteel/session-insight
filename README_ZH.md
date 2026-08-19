@@ -6,7 +6,7 @@
 
 内建可观测性将 Agent 能力、会话溯源、协作时间线、Token/工具分析与 Git/变更请求证据串联起来；通过准确、估算、缺失和不可用状态明示每条结论的可信度，而不隐藏不确定性。
 
-[English](README.md)
+[Website](https://session-insight.dev/) · [English](README.md)
 
 ![带终端查找、工具调用和语义小地图的会话回放](assets/screenshots/zh-CN/replay.png)
 
