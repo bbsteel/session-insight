@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title>Session Insight</title>
+  <rect width="512" height="512" fill="#05090b" />
+  <rect x="10" y="10" width="492" height="492" fill="#081217" stroke="#64e5e7" stroke-width="8" />
+  <text
+    x="256"
+    y="313"
+    text-anchor="middle"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="190"
+    font-weight="700"
+    letter-spacing="10"
+    fill="#edfafa"
+  >S<tspan fill="#64e5e7">I</tspan></text>
+</svg>
