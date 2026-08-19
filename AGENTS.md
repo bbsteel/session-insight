@@ -54,6 +54,13 @@ For **every** change set (including small fixes and agent-instruction edits):
 6. After merge (by user or explicit request), continue the next task from a **new** branch off updated **`origin/main`** (fetch first). Do not merge the feature branch into local `main` as a substitute for the remote PR merge. Do not reuse the previous feature branch as the base for the next task without rebasing onto fresh `origin/main`.
 7. **Delete the remote feature branch after the PR is merged** (e.g. `git push origin --delete <branch>`) to keep the repository tidy.
 
+## Release preflight
+
+- Before creating or pushing a release tag or GitHub Release, run a release-equivalent preflight against the exact commit to publish. A green PR CI run is necessary but not sufficient.
+- The preflight must include `bash scripts/verify-codex-acp-version.sh --latest` and the release-specific frontend and Go build checks. Treat an available component, adapter, toolchain, or dependency update as a release blocker until it is updated, exercised, and committed through the normal PR workflow.
+- Confirm the target-specific prerequisites and build matrix used by `.github/workflows/release.yml` wherever the environment permits. If the release matrix cannot be exercised before tagging, add or use an equivalent candidate-commit preflight workflow before publishing.
+- Never create a release first and repair a component or dependency after the release build fails. A post-tag workflow check is follow-up verification, not a substitute for the preflight gate.
+
 ### GitHub authentication from sandboxed agents
 
 - A sandboxed command may be unable to access the host keyring even when the user has a valid `gh` login. If `gh auth status` fails inside the sandbox, do not immediately conclude that the stored credential is invalid or ask the user to log in again.
