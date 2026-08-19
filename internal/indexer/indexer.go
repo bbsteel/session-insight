@@ -17,7 +17,14 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/provenance"
 )
 
-const IndexInterval = 3 * time.Minute
+const (
+	IndexInterval = 3 * time.Minute
+
+	// Session readers spend most of an indexing pass reading and parsing
+	// independent transcript files. Keep a small fixed pool so that the
+	// filesystem and SQLite writer are not overwhelmed on large stores.
+	defaultSessionIndexWorkers = 4
+)
 
 // Progress is a snapshot of the current (or last completed) index cycle.
 // Percent is 0–100; when State is "idle", Percent is 100 after a successful
@@ -35,6 +42,9 @@ type Indexer struct {
 	readers []reader.BaseSessionReader
 	kick    chan struct{}
 	git     *gitEvidenceRuntime
+
+	sessionIndexWorkers int
+	indexWriteMu        sync.Mutex
 
 	gitAttempted sync.Map // agent_type\x00session_id -> successful bounded attempt
 
@@ -57,11 +67,12 @@ type Indexer struct {
 func New(database *db.DB, readers []reader.BaseSessionReader) *Indexer {
 	gitRuntime, _ := newGitEvidenceRuntime()
 	return &Indexer{
-		db:             database,
-		readers:        readers,
-		kick:           make(chan struct{}, 1),
-		git:            gitRuntime,
-		agentRequested: make(map[string]struct{}),
+		db:                  database,
+		readers:             readers,
+		kick:                make(chan struct{}, 1),
+		git:                 gitRuntime,
+		sessionIndexWorkers: defaultSessionIndexWorkers,
+		agentRequested:      make(map[string]struct{}),
 		progress: Progress{
 			State:   "idle",
 			Percent: 0,
@@ -167,6 +178,16 @@ func (ix *Indexer) RunBackground(ctx context.Context) {
 
 func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{}) error {
 	cycleStarted := time.Now()
+	// File watchers run agent-scoped incremental cycles between full
+	// reconciliation passes. Keep those cycles invisible to the global search
+	// progress indicator; only a full cycle represents the index being rebuilt
+	// for the whole application.
+	reportsFullCycleProgress := len(agentFilter) == 0
+	setCycleProgress := func(progress Progress) {
+		if reportsFullCycleProgress {
+			ix.setProgress(progress)
+		}
+	}
 	// Pre-count sessions so the UI can show a stable percentage.
 	type agentSessions struct {
 		reader            reader.BaseSessionReader
@@ -183,7 +204,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 			}
 		}
 		if ctx.Err() != nil {
-			ix.setProgress(Progress{State: "idle", Message: "cancelled"})
+			setCycleProgress(Progress{State: "idle", Message: "cancelled"})
 			return ctx.Err()
 		}
 		listStarted := time.Now()
@@ -209,7 +230,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 		total += len(sessions)
 	}
 
-	ix.setProgress(Progress{
+	setCycleProgress(Progress{
 		State:   "running",
 		Done:    0,
 		Total:   total,
@@ -221,7 +242,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 	done := 0
 	for _, item := range planned {
 		if ctx.Err() != nil {
-			ix.setProgress(Progress{
+			setCycleProgress(Progress{
 				State:   "idle",
 				Done:    done,
 				Total:   total,
@@ -235,7 +256,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 		}
 		n, err := ix.indexReaderSessions(ctx, item.reader, item.sessions, item.inventoryComplete, func() {
 			done++
-			ix.setProgress(Progress{
+			setCycleProgress(Progress{
 				State:   "running",
 				Done:    done,
 				Total:   total,
@@ -252,7 +273,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 	if len(errs) > 0 {
 		msg = "completed_with_errors"
 	}
-	ix.setProgress(Progress{
+	setCycleProgress(Progress{
 		State:   "idle",
 		Done:    done,
 		Total:   total,
@@ -269,10 +290,47 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 	return nil
 }
 
+type sessionIndexJob struct {
+	position int
+	session  model.Session
+}
+
+type sessionIndexResult struct {
+	position  int
+	sessionID string
+	changed   bool
+	err       error
+}
+
+func (ix *Indexer) sessionIndexWorkerCount(sessionCount int) int {
+	if sessionCount <= 0 {
+		return 0
+	}
+	workerCount := ix.sessionIndexWorkers
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+	if workerCount > sessionCount {
+		workerCount = sessionCount
+	}
+	return workerCount
+}
+
+// withIndexWrite serializes indexer-owned SQLite writes while leaving source
+// reads, parsing, and other CPU/IO work free to run in parallel.
+func (ix *Indexer) withIndexWrite(writeOperation func() error) error {
+	ix.indexWriteMu.Lock()
+	defer ix.indexWriteMu.Unlock()
+	return writeOperation()
+}
+
 // indexReaderSessions indexes a pre-listed session set for one agent.
 // onEach is called after each session attempt (success or failure) for progress.
 // Per-session errors are aggregated so the cycle ends as completed_with_errors
 // instead of ready+nil when some sessions fail (watermark not advanced for those).
+// Independent sessions are processed by a bounded worker pool; the per-session
+// snapshot transaction still keeps each session's metadata, FTS rows, and
+// watermark atomic.
 func (ix *Indexer) indexReaderSessions(
 	ctx context.Context,
 	r reader.BaseSessionReader,
@@ -280,28 +338,92 @@ func (ix *Indexer) indexReaderSessions(
 	inventoryComplete bool,
 	onEach func(),
 ) (int, error) {
-	changed := 0
-	var sessionErrs []string
 	knownIDs := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
-		if ctx.Err() != nil {
-			if len(sessionErrs) > 0 {
-				return changed, fmt.Errorf("%w; also: %s", ctx.Err(), strings.Join(sessionErrs, "; "))
-			}
-			return changed, ctx.Err()
-		}
 		knownIDs = append(knownIDs, sess.ID)
-		did, err := ix.indexSession(ctx, r, sess)
-		if err != nil {
-			log.Printf("[indexer] %s/%s: index error: %v", r.AgentType(), sess.ID, err)
-			sessionErrs = append(sessionErrs, fmt.Sprintf("%s: %v", sess.ID, err))
+	}
+
+	workerCount := ix.sessionIndexWorkerCount(len(sessions))
+	completed := make([]bool, len(sessions))
+	completedResults := make([]sessionIndexResult, len(sessions))
+	if workerCount > 0 {
+		results := make(chan sessionIndexResult)
+		jobs := make(chan sessionIndexJob)
+		var workerGroup sync.WaitGroup
+		workerGroup.Add(workerCount)
+		for workerIndex := 0; workerIndex < workerCount; workerIndex++ {
+			go func() {
+				defer workerGroup.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case job, ok := <-jobs:
+						if !ok {
+							return
+						}
+						did, err := ix.indexSession(ctx, r, job.session)
+						results <- sessionIndexResult{
+							position:  job.position,
+							sessionID: job.session.ID,
+							changed:   did,
+							err:       err,
+						}
+					}
+				}
+			}()
 		}
-		if did {
+
+		// Dispatch in its own goroutine so completed workers can report progress
+		// while the remaining sessions are still entering the queue. Cancellation
+		// closes the queue without waiting for unstarted sessions.
+		go func() {
+			defer close(jobs)
+			for position, sess := range sessions {
+				select {
+				case <-ctx.Done():
+					return
+				case jobs <- sessionIndexJob{position: position, session: sess}:
+				}
+			}
+		}()
+
+		go func() {
+			workerGroup.Wait()
+			close(results)
+		}()
+
+		for result := range results {
+			completed[result.position] = true
+			completedResults[result.position] = result
+			if result.err != nil {
+				log.Printf("[indexer] %s/%s: index error: %v", r.AgentType(), result.sessionID, result.err)
+			}
+			if onEach != nil {
+				onEach()
+			}
+		}
+	}
+
+	changed := 0
+	var sessionErrs []string
+	for position, result := range completedResults {
+		if !completed[position] {
+			continue
+		}
+		if result.err != nil {
+			sessionErrs = append(sessionErrs, fmt.Sprintf("%s: %v", result.sessionID, result.err))
+		}
+		if result.changed {
 			changed++
 		}
-		if onEach != nil {
-			onEach()
+	}
+
+	if ctx.Err() != nil {
+		if len(sessionErrs) > 0 {
+			return changed, fmt.Errorf("%w; also: %s", ctx.Err(), strings.Join(sessionErrs, "; "))
 		}
+		return changed, ctx.Err()
 	}
 
 	// Omission tombstones only when discovery reported a complete inventory.
@@ -413,7 +535,13 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 			// Turn content is unchanged, but list-derived metadata may still
 			// need a backfill when adapter logic improves without touching
 			// session files (project basename normalization, Codex resume_id).
-			return ix.db.RefreshSessionListMetadata(agentType, sess)
+			var refreshed bool
+			err := ix.withIndexWrite(func() error {
+				var err error
+				refreshed, err = ix.db.RefreshSessionListMetadata(agentType, sess)
+				return err
+			})
+			return refreshed, err
 		}
 	}
 
@@ -477,30 +605,38 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	turns := buildTurnTexts(persisted, detail, renderEvents)
 	writeStarted := time.Now()
 	// Atomic metadata + turns + provenance so list/detail never mix revisions.
-	if err := ix.db.ReplaceSessionSnapshot(db.SessionSnapshotWrite{
-		AgentType:           agentType,
-		Session:             persisted,
-		TurnCount:           detail.TurnCount,
-		HistoricalTurnCount: detail.HistoricalTurnCount,
-		RolledBackTurnCount: detail.RolledBackTurnCount,
-		MessageCount:        persisted.MessageCount,
-		Turns:               turns,
-		Provenance:          detail.Provenance,
-		Revision:            revision,
+	if err := ix.withIndexWrite(func() error {
+		return ix.db.ReplaceSessionSnapshot(db.SessionSnapshotWrite{
+			AgentType:           agentType,
+			Session:             persisted,
+			TurnCount:           detail.TurnCount,
+			HistoricalTurnCount: detail.HistoricalTurnCount,
+			RolledBackTurnCount: detail.RolledBackTurnCount,
+			MessageCount:        persisted.MessageCount,
+			Turns:               turns,
+			Provenance:          detail.Provenance,
+			Revision:            revision,
+		})
 	}); err != nil {
 		return false, fmt.Errorf("replace session snapshot: %w", err)
 	}
 	sourceRevision := creationEvidenceSourceRevision(authoritativeEnvelope, agentType, sess.ID, revision)
 	creationEvidence := changeevidence.ExtractCreationEvidence(renderEvents, sourceRevision)
-	if err := ix.db.ReplaceSessionChangeRequestCreationEvidence(
-		agentType, sess.ID, sourceRevision, creationEvidence,
-	); err != nil {
-		_ = ix.db.ClearSessionWatermark(agentType, sess.ID)
+	if err := ix.withIndexWrite(func() error {
+		return ix.db.ReplaceSessionChangeRequestCreationEvidence(
+			agentType, sess.ID, sourceRevision, creationEvidence,
+		)
+	}); err != nil {
+		_ = ix.withIndexWrite(func() error {
+			return ix.db.ClearSessionWatermark(agentType, sess.ID)
+		})
 		return false, fmt.Errorf("index Change Request creation evidence: %w", err)
 	}
 	if authoritativeEnvelope != nil && ix.git != nil {
 		if err := ix.indexGitEvidence(ctx, authoritativeReader, persisted, authoritativeEnvelope); err != nil {
-			_ = ix.db.ClearSessionWatermark(agentType, sess.ID)
+			_ = ix.withIndexWrite(func() error {
+				return ix.db.ClearSessionWatermark(agentType, sess.ID)
+			})
 			return false, fmt.Errorf("index Git evidence: %w", err)
 		}
 		ix.gitAttempted.Store(agentType+"\x00"+sess.ID, struct{}{})
@@ -534,6 +670,8 @@ func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType strin
 	} else if def, ok := reader.AgentDefinition(r.AgentType()); ok && def.AdapterRevision > 0 {
 		adapterRev = def.AdapterRevision
 	}
+	ix.indexWriteMu.Lock()
+	defer ix.indexWriteMu.Unlock()
 
 	state := model.RecordMetadataOnly
 	reason := sre.ReasonCode
@@ -677,7 +815,9 @@ func (ix *Indexer) indexCollaboration(ctx context.Context, r reader.BaseSessionR
 	// Collaboration and turn indexing share the session revision; the store
 	// advances it only when the replacement transaction commits.
 	graph.Revision = revision
-	if err := ix.db.ReplaceCollaborationGraph(graph); err != nil {
+	if err := ix.withIndexWrite(func() error {
+		return ix.db.ReplaceCollaborationGraph(graph)
+	}); err != nil {
 		ix.markCollaborationStale(agentType, sess.ID, err)
 		return fmt.Errorf("replace collaboration graph: %w", err)
 	}
@@ -688,7 +828,9 @@ func (ix *Indexer) indexCollaboration(ctx context.Context, r reader.BaseSessionR
 // revision. Best-effort: a marking failure is logged but never masks the
 // original indexing error.
 func (ix *Indexer) markCollaborationStale(agentType, sessionID string, cause error) {
-	if err := ix.db.MarkCollaborationStale(agentType, sessionID, cause.Error()); err != nil {
+	if err := ix.withIndexWrite(func() error {
+		return ix.db.MarkCollaborationStale(agentType, sessionID, cause.Error())
+	}); err != nil {
 		log.Printf("[indexer] %s/%s: mark collaboration stale: %v", agentType, sessionID, err)
 	}
 }

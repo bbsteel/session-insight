@@ -91,6 +91,32 @@ func (m *mockReader) GetSession(id string) (*model.SessionDetail, error) {
 	return m.details[id], nil
 }
 
+type concurrentMockReader struct {
+	mockReader
+	entered chan<- struct{}
+	release <-chan struct{}
+	active  int32
+	maximum int32
+}
+
+func (m *concurrentMockReader) GetSession(id string) (*model.SessionDetail, error) {
+	active := atomic.AddInt32(&m.active, 1)
+	for {
+		maximum := atomic.LoadInt32(&m.maximum)
+		if active <= maximum || atomic.CompareAndSwapInt32(&m.maximum, maximum, active) {
+			break
+		}
+	}
+	if m.entered != nil {
+		m.entered <- struct{}{}
+	}
+	if m.release != nil {
+		<-m.release
+	}
+	atomic.AddInt32(&m.active, -1)
+	return m.details[id], nil
+}
+
 func (m *mockReader) RenderANSI(id string, cols int) (string, error) { return "", nil }
 
 func (m *mockReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
@@ -191,6 +217,133 @@ func TestIndexer_FirstRun(t *testing.T) {
 	}
 	if results[0].SessionID != "s1" {
 		t.Fatalf("expected s1, got %s", results[0].SessionID)
+	}
+}
+
+func TestIndexerHidesIncrementalProgress(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	initialRevision := time.Unix(0, 100)
+	mr := &mockReader{
+		agentType: "test",
+		sessions:  []model.Session{{ID: "s1", UpdatedAt: initialRevision}},
+		details: map[string]*model.SessionDetail{
+			"s1": {
+				Session: model.Session{ID: "s1", UpdatedAt: initialRevision},
+				Turns:   []model.TurnVM{{TurnIndex: 0, UserMessage: "hello world"}},
+			},
+		},
+	}
+
+	ix := New(database, []reader.BaseSessionReader{mr})
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatalf("full RunOnce: %v", err)
+	}
+	fullProgress := ix.SnapshotProgress()
+
+	updatedRevision := time.Unix(0, 200)
+	mr.sessions[0].UpdatedAt = updatedRevision
+	mr.details["s1"].UpdatedAt = updatedRevision
+	if err := ix.indexOnce(context.Background(), map[string]struct{}{"test": {}}); err != nil {
+		t.Fatalf("incremental indexOnce: %v", err)
+	}
+	if incrementalProgress := ix.SnapshotProgress(); incrementalProgress != fullProgress {
+		t.Fatalf("incremental cycle changed global progress: before=%+v after=%+v", fullProgress, incrementalProgress)
+	}
+}
+
+func TestIndexerProcessesSessionsConcurrently(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	const sessionCount = 4
+	sessions := make([]model.Session, sessionCount)
+	details := make(map[string]*model.SessionDetail, sessionCount)
+	for sessionIndex := 0; sessionIndex < sessionCount; sessionIndex++ {
+		sessionID := "concurrent-" + string(rune('a'+sessionIndex))
+		session := model.Session{ID: sessionID, UpdatedAt: time.Unix(0, int64(sessionIndex+1))}
+		sessions[sessionIndex] = session
+		details[sessionID] = &model.SessionDetail{
+			Session: session,
+			Turns:   []model.TurnVM{{TurnIndex: 0, UserMessage: "content for " + sessionID}},
+		}
+	}
+
+	entered := make(chan struct{}, sessionCount)
+	release := make(chan struct{})
+	mr := &concurrentMockReader{
+		mockReader: mockReader{agentType: "test", sessions: sessions, details: details},
+		entered:    entered,
+		release:    release,
+	}
+	ix := New(database, []reader.BaseSessionReader{mr})
+	ix.sessionIndexWorkers = 2
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- ix.RunOnce(context.Background())
+	}()
+
+	for sessionIndex := 0; sessionIndex < 2; sessionIndex++ {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("indexer did not start two session reads concurrently")
+		}
+	}
+	close(release)
+
+	if err := <-runErr; err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if maximum := atomic.LoadInt32(&mr.maximum); maximum < 2 {
+		t.Fatalf("maximum concurrent session reads = %d, want at least 2", maximum)
+	}
+	if progress := ix.SnapshotProgress(); progress.Done != sessionCount || progress.Total != sessionCount {
+		t.Fatalf("progress after concurrent run: %+v", progress)
+	}
+}
+
+func TestIndexerSerializesConcurrentSQLiteWrites(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	const sessionCount = 12
+	sessions := make([]model.Session, sessionCount)
+	details := make(map[string]*model.SessionDetail, sessionCount)
+	for sessionIndex := 0; sessionIndex < sessionCount; sessionIndex++ {
+		sessionID := "write-lock-" + string(rune('a'+sessionIndex))
+		session := model.Session{ID: sessionID, UpdatedAt: time.Unix(0, int64(sessionIndex+1))}
+		sessions[sessionIndex] = session
+		details[sessionID] = &model.SessionDetail{
+			Session: session,
+			Turns:   []model.TurnVM{{TurnIndex: 0, UserMessage: "content for " + sessionID}},
+		}
+	}
+
+	mr := &collabMockReader{
+		mockReader: mockReader{agentType: "test", sessions: sessions, details: details},
+	}
+	ix := New(database, []reader.BaseSessionReader{mr})
+	ix.sessionIndexWorkers = 4
+
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	for _, session := range sessions {
+		if _, exists, err := database.GetWatermark("test", session.ID); err != nil || !exists {
+			t.Fatalf("watermark for %s: exists=%v err=%v", session.ID, exists, err)
+		}
 	}
 }
 
