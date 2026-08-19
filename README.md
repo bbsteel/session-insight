@@ -6,7 +6,7 @@ A local-first web app for browsing and analyzing AI coding agent sessions throug
 
 Built-in observability connects Agent capabilities, record provenance, collaboration timelines, Token and tool analytics, and Git/Change Request evidence. Exact, estimated, missing, and unavailable states make the confidence of each conclusion visible instead of hiding uncertainty.
 
-[中文](README_ZH.md)
+[Website](https://session-insight.dev/) · [中文](README_ZH.md)
 
 ![Session replay with terminal find, tool calls, and semantic minimap](assets/screenshots/en/replay.png)
 
