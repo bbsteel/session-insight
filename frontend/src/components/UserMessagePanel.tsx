@@ -2,11 +2,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
 import AgentIcon from './AgentIcon'
 import UserAvatar from './UserAvatar'
-import { CloseIcon, NarrowIcon, PinIcon, WidenIcon } from './icons'
 import { formatNumber, useI18n } from '../i18n'
+import { NavigationFilterPill, NavigationFilterSelectionActions } from './NavigationFilterPill'
+import NavigationPanelHeader from './NavigationPanelHeader'
 
 // 交互消息面板:按时间序列出会话的用户消息(kind === 'user')和助手回复
-// (kind === 'assistant',每个连续文本块一条),两类消息各有勾选项(默认全选,
+// (kind === 'assistant',每个连续文本块一条),两类消息各有筛选胶囊(默认全选,
 // 可单独打开),支持文字过滤、点击跳转到终端对应行。用户消息用头像图标
 // (可在设置中自定义),助手回复用对应 agent 图标。数据全部来自 positions
 // API,不需要额外请求。助手回复文本由后端截断(400 字符),展示层再做 4 行
@@ -122,13 +123,24 @@ export default function UserMessagePanel({
     observer.observe(panel)
     return () => observer.disconnect()
   }, [onWidthChange])
-  // 用户消息 / 助手回复两个勾选项,默认全选,可单独打开,记忆到本地。
+  // 用户消息 / 助手回复两个筛选胶囊,默认全选,可单独打开,记忆到本地。
   const [kinds, setKinds] = useState<InteractionKind[]>(loadKinds)
   const toggleKind = (kind: InteractionKind) => setKinds(prev => {
     const next = prev.includes(kind) ? prev.filter(k => k !== kind) : [...prev, kind]
     localStorage.setItem(KINDS_STORAGE_KEY, JSON.stringify(next))
     return next
   })
+  const allKindsSelected = ALL_KINDS.every(kind => kinds.includes(kind))
+  const noKindsSelected = kinds.length === 0
+  const selectAllKinds = () => {
+    const next = [...ALL_KINDS]
+    setKinds(next)
+    localStorage.setItem(KINDS_STORAGE_KEY, JSON.stringify(next))
+  }
+  const selectNoKinds = () => {
+    setKinds([])
+    localStorage.setItem(KINDS_STORAGE_KEY, JSON.stringify([]))
+  }
 
   // Floating overlay: close on outside click unless pinned. Defer attach so the
   // open click does not immediately dismiss the panel.
@@ -172,44 +184,24 @@ export default function UserMessagePanel({
 
   return (
     <aside ref={panelRef} data-testid="navigation-panel" className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
-      <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
-        <span className="text-nav font-medium text-[var(--text-primary)]">{t('replay.messages')}</span>
-        <span className="text-meta text-[var(--text-muted)]">
-          {filtering ? `${formatNumber(locale, visible.length)}/${formatNumber(locale, kindFiltered.length)}` : formatNumber(locale, kindFiltered.length)}
-        </span>
-        <span className="flex-1" />
-        {/* Header actions: text-nav + currentColor SVG (no emoji/symbol fallbacks). */}
-        <button
-          onClick={() => onPinnedChange?.(!pinned)}
-          className={`inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-            pinned
-              ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
-              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-          }`}
-          title={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
-          aria-pressed={pinned}
-          aria-label={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
-        >
-          <PinIcon filled={pinned} />
-          {pinned ? t('panel.pinned') : t('panel.pin')}
-        </button>
-        <button
-          onClick={toggleWide}
-          className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={wide ? t('panel.restoreWidth') : t('panel.widen')}
-        >
-          {wide ? <NarrowIcon /> : <WidenIcon />}
-          {wide ? t('panel.standard') : t('panel.widen')}
-        </button>
-        <button
-          onClick={onClose}
-          className="inline-flex h-6 w-6 items-center justify-center rounded text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={t('common.close')}
-          aria-label={t('panel.closeMessages')}
-        >
-          <CloseIcon />
-        </button>
-      </div>
+      <NavigationPanelHeader
+        title={t('replay.messages')}
+        count={filtering ? `${formatNumber(locale, visible.length)}/${formatNumber(locale, kindFiltered.length)}` : formatNumber(locale, kindFiltered.length)}
+        pinned={pinned}
+        wide={wide}
+        onPinnedChange={onPinnedChange}
+        onToggleWide={toggleWide}
+        onClose={onClose}
+        pinLabel={t('panel.pin')}
+        pinnedLabel={t('panel.pinned')}
+        pinTitle={t('panel.pinHelp')}
+        unpinTitle={t('panel.unpinHelp')}
+        widenLabel={t('panel.widen')}
+        standardLabel={t('panel.standard')}
+        widenTitle={t('panel.widen')}
+        restoreWidthTitle={t('panel.restoreWidth')}
+        closeLabel={t('panel.closeMessages')}
+      />
 
       <div className="flex-shrink-0 border-b border-[var(--border-muted)] p-2">
         <input
@@ -219,21 +211,25 @@ export default function UserMessagePanel({
           className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
           aria-label={t('panel.filterMessagesLabel')}
         />
-        <div className="mt-1.5 flex items-center gap-3">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          <NavigationFilterSelectionActions
+            allSelected={allKindsSelected}
+            noneSelected={noKindsSelected}
+            allLabel={t('panel.selectAll')}
+            noneLabel={t('panel.selectNone')}
+            onSelectAll={selectAllKinds}
+            onSelectNone={selectNoKinds}
+          />
           {([['user', t('panel.userMessage')], ['assistant', t('panel.assistantReply')]] as const).map(([kind, label]) => (
-            <label
+            <NavigationFilterPill
               key={kind}
-              className="flex cursor-pointer items-center gap-1.5 text-meta text-[var(--text-secondary)]"
+              active={kinds.includes(kind)}
+              accentColor={KIND_META[kind].borderColor}
+              onClick={() => toggleKind(kind)}
+              aria-label={t('panel.showKind', { kind: label })}
             >
-              <input
-                type="checkbox"
-                checked={kinds.includes(kind)}
-                onChange={() => toggleKind(kind)}
-                className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent-blue)]"
-                aria-label={t('panel.showKind', { kind: label })}
-              />
               {label}
-            </label>
+            </NavigationFilterPill>
           ))}
         </div>
       </div>
