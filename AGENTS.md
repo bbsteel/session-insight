@@ -51,7 +51,7 @@ For **every** change set (including small fixes and agent-instruction edits):
 3. **Commit only on that branch.** Do not leave finished work solely as commits on `main`.
 4. **Open a PR into `main`** (`gh pr create` or equivalent). Create the PR as **ready for review** (non-draft); CodeRabbit does not review draft PRs. Default to **not** merging unless the user explicitly asks to merge.
 5. **Push the branch**, not `main`, when publishing the change for review.
-6. After merge (by user or explicit request), continue the next task from a **new** branch off updated **`origin/main`** (fetch first). Do not merge the feature branch into local `main` as a substitute for the remote PR merge. Do not reuse the previous feature branch as the base for the next task without rebasing onto fresh `origin/main`.
+6. After merge (by user or explicit request), first synchronize the primary checkout's local `main` with the merged remote target: `git fetch origin && git switch main && git pull --ff-only origin main`. Then continue the next task from a **new** branch off updated **`origin/main`**. Do not merge the feature branch into local `main` as a substitute for the remote PR merge. Do not reuse the previous feature branch as the base for the next task without rebasing onto fresh `origin/main`.
 7. **Delete the remote feature branch after the PR is merged** (e.g. `git push origin --delete <branch>`) to keep the repository tidy.
 
 ## Release preflight
@@ -86,7 +86,7 @@ Local `main` is a **mirror of `origin/main`**, not a place to integrate feature 
 
 **Allowed** integration path: open/merge a PR on the remote; then refresh local `main` from `origin/main` as above. Merging a PR with `gh pr merge` (or the GitHub UI) updates **remote** `main`; that is not a local merge into `main`.
 
-After a remote merge, **do not** automatically `git switch main && git pull` unless the user asked to sync local `main` or the next step clearly requires an up-to-date local `main` checkout. Prefer basing the next branch on `origin/main` after `git fetch`.
+After a remote merge, automatically synchronize the primary checkout's local `main` with `origin/main` using `git fetch origin && git switch main && git pull --ff-only origin main`. This keeps the primary checkout's mirror current while preserving the PR-only integration path. If the fast-forward pull cannot proceed, stop and resolve the checkout state rather than creating a local merge. Prefer basing the next feature branch on the freshly fetched `origin/main`.
 
 Exceptions (must still prefer a branch when practical):
 

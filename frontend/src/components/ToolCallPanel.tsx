@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MiniMapPosition, PositionsResponse } from '../types'
-import { CloseIcon, CollapseAllIcon, ExpandAllIcon, NarrowIcon, PinIcon, WidenIcon } from './icons'
 import { formatNumber, useI18n } from '../i18n'
+import { NavigationFilterPill, NavigationFilterSelectionActions } from './NavigationFilterPill'
+import NavigationPanelHeader from './NavigationPanelHeader'
 
 // 工具调用管理面板:按时序列出会话的所有工具调用(kind === 'tool' 的
 // positions),支持按工具类型筛选、文字过滤、展开查看参数、点击跳转到终端
@@ -139,7 +140,10 @@ export default function ToolCallPanel({
 }: Props) {
   const { locale, t } = useI18n()
   const panelRef = useRef<HTMLElement>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  // null = all tools, an empty set = no tools, otherwise only the named tools.
+  // The explicit empty state makes the "select none" action distinguishable
+  // from the legacy empty-set-as-all behavior.
+  const [selectedToolNames, setSelectedToolNames] = useState<Set<string> | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   // 宽/标准两档宽度,记忆到本地;浮层不占终端布局,加宽零成本。
   const [wide, setWide] = useState(() => localStorage.getItem(WIDE_STORAGE_KEY) === '1')
@@ -186,7 +190,7 @@ export default function ToolCallPanel({
   // 应用来自分析页的筛选请求:只按该工具筛选,并清掉文字过滤避免叠加后空结果。
   useEffect(() => {
     if (!filterRequest) return
-    setSelected(new Set([filterRequest.name]))
+    setSelectedToolNames(new Set([filterRequest.name]))
     setQuery('')
   }, [filterRequest?.token])
 
@@ -195,28 +199,34 @@ export default function ToolCallPanel({
     [positions],
   )
 
-  // 筛选 chips:按调用次数降序;点击切换,空集 = 全部显示。
+  // 筛选胶囊:按调用次数降序;点击切换,全选/全不选是显式状态。
   const nameCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const e of entries) counts.set(e.name, (counts.get(e.name) ?? 0) + 1)
     return [...counts.entries()].sort((a, b) => b[1] - a[1])
   }, [entries])
 
-  // 类型 chips 与文字过滤叠加生效;文字匹配工具名和参数摘要。
+  // 工具胶囊与文字过滤叠加生效;文字匹配工具名和参数摘要。
   const q = query.trim().toLowerCase()
   const visible = entries.filter(e =>
-    (selected.size === 0 || selected.has(e.name)) &&
+    (selectedToolNames === null || selectedToolNames.has(e.name)) &&
     (q === '' || e.name.toLowerCase().includes(q) || e.summary.toLowerCase().includes(q)))
-  const filtering = selected.size > 0 || q !== ''
+  const filtering = selectedToolNames !== null || q !== ''
 
   const toggleName = (name: string) => {
-    setSelected(prev => {
+    setSelectedToolNames(prev => {
+      if (prev === null) return new Set([name])
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
       else next.add(name)
       return next
     })
   }
+
+  const allToolsSelected = selectedToolNames === null
+  const noToolsSelected = selectedToolNames !== null && selectedToolNames.size === 0
+  const selectAllTools = () => setSelectedToolNames(null)
+  const selectNoTools = () => setSelectedToolNames(new Set())
 
   const toggleExpanded = (key: string) => {
     setExpanded(prev => {
@@ -248,54 +258,32 @@ export default function ToolCallPanel({
 
   return (
     <aside ref={panelRef} data-testid="navigation-panel" className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
-      <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
-        <span className="text-nav font-medium text-[var(--text-primary)]">{t('replay.toolCalls')}</span>
-        <span className="text-meta text-[var(--text-muted)]">
-          {filtering ? `${formatNumber(locale, visible.length)}/${formatNumber(locale, entries.length)}` : formatNumber(locale, entries.length)}
-        </span>
-        <span className="flex-1" />
-        {/* Header actions: text-nav + currentColor SVG (no emoji/symbol fallbacks). */}
-        <button
-          onClick={() => onPinnedChange?.(!pinned)}
-          className={`inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-            pinned
-              ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
-              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-          }`}
-          title={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
-          aria-pressed={pinned}
-          aria-label={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
-        >
-          <PinIcon filled={pinned} />
-          {pinned ? t('panel.pinned') : t('panel.pin')}
-        </button>
-        <button
-          onClick={toggleWide}
-          className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={wide ? t('panel.restoreWidth') : t('panel.widen')}
-        >
-          {wide ? <NarrowIcon /> : <WidenIcon />}
-          {wide ? t('panel.standard') : t('panel.widen')}
-        </button>
-        {expandableKeys.length > 0 && (
-          <button
-            onClick={toggleAll}
-            className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            title={anyExpanded ? t('panel.collapseAll') : t('panel.expandAll')}
-          >
-            {anyExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
-            {anyExpanded ? t('panel.collapseAll') : t('panel.expandAll')}
-          </button>
-        )}
-        <button
-          onClick={onClose}
-          className="inline-flex h-6 w-6 items-center justify-center rounded text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={t('common.close')}
-          aria-label={t('panel.closeTools')}
-        >
-          <CloseIcon />
-        </button>
-      </div>
+      <NavigationPanelHeader
+        title={t('replay.toolCalls')}
+        count={filtering
+          ? formatNumber(locale, visible.length) + '/' + formatNumber(locale, entries.length)
+          : formatNumber(locale, entries.length)}
+        pinned={pinned}
+        wide={wide}
+        onPinnedChange={onPinnedChange}
+        onToggleWide={toggleWide}
+        onClose={onClose}
+        pinLabel={t('panel.pin')}
+        pinnedLabel={t('panel.pinned')}
+        pinTitle={t('panel.pinHelp')}
+        unpinTitle={t('panel.unpinHelp')}
+        widenLabel={t('panel.widen')}
+        standardLabel={t('panel.standard')}
+        widenTitle={t('panel.widen')}
+        restoreWidthTitle={t('panel.restoreWidth')}
+        closeLabel={t('panel.closeTools')}
+        expandAll={expandableKeys.length > 0 ? {
+          expanded: anyExpanded,
+          onToggle: toggleAll,
+          expandLabel: t('panel.expandAll'),
+          collapseLabel: t('panel.collapseAll'),
+        } : undefined}
+      />
 
       <div className="flex-shrink-0 border-b border-[var(--border-muted)] p-2">
         <input
@@ -309,33 +297,28 @@ export default function ToolCallPanel({
 
       {nameCounts.length > 0 && (
         <div className="flex max-h-[96px] flex-shrink-0 flex-wrap gap-1 overflow-y-auto border-b border-[var(--border-muted)] p-2">
-          <button
-            onClick={() => setSelected(new Set())}
-            className={`h-5 rounded-full border px-2 text-meta leading-none ${
-              selected.size === 0
-                ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
-                : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)]'
-            }`}
-          >
-            {t('panel.all')}
-          </button>
+          <NavigationFilterSelectionActions
+            allSelected={allToolsSelected}
+            noneSelected={noToolsSelected}
+            allLabel={t('panel.selectAll')}
+            noneLabel={t('panel.selectNone')}
+            onSelectAll={selectAllTools}
+            onSelectNone={selectNoTools}
+          />
           {nameCounts.map(([name, count]) => {
             const color = toolColor(name)
-            const isOn = selected.has(name)
+            const isOn = selectedToolNames?.has(name) ?? false
             return (
-              <button
+              <NavigationFilterPill
                 key={name}
+                active={isOn}
                 onClick={() => toggleName(name)}
-                className={`h-6 rounded-full border px-2 text-helper font-semibold leading-none ${
-                  isOn ? '' : 'border-[var(--border-default)] hover:bg-[var(--bg-surface-hover)]'
-                }`}
-                style={isOn
-                  ? { color, borderColor: color, backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)` }
-                  : { color }}
-                title={`${name} · ${formatNumber(locale, count)} ${t('panel.calls')}`}
+                accentColor={color}
+                className="font-semibold"
+                title={name + ' · ' + formatNumber(locale, count) + ' ' + t('panel.calls')}
               >
                 {name} {formatNumber(locale, count)}
-              </button>
+              </NavigationFilterPill>
             )
           })}
         </div>
