@@ -1,4 +1,4 @@
-import { extractPathAt, extractPathMatches, pathAtColumn } from '/tmp/session-insight-file-path/filePathDetection.js'
+import { extractPathAt, extractPathMatches, pathAtColumn, pathAtTextOffset } from '/tmp/session-insight-file-path/filePathDetection.js'
 
 let failures = 0
 function assertEq(actual, expected, label) {
@@ -31,6 +31,20 @@ assertEq(
     { path: 'src/main.go', line: null, start: 29, end: 40 },
   ],
   'path matches retain exact text ranges',
+)
+const cjkPaths = '前缀 frontend/src/missing.ts 和 frontend/src/existing.ts'
+assertEq(
+  extractPathMatches(cjkPaths, new Set(['ts'])),
+  [
+    { path: 'frontend/src/missing.ts', line: null, start: 3, end: 26 },
+    { path: 'frontend/src/existing.ts', line: null, start: 29, end: 53 },
+  ],
+  'CJK prefix keeps independent path ranges',
+)
+assertEq(
+  pathAtTextOffset(cjkPaths, 36, new Set(['ts'])),
+  { path: 'frontend/src/existing.ts', line: null },
+  'text offset selects the matching path after CJK text',
 )
 
 // Windows paths: chrys/opencode sessions recorded on Windows store backslash

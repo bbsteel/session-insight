@@ -53,9 +53,14 @@ function terminalUrls(lineText: string): TerminalUrlMatch[] {
   return urls
 }
 
+/** Returns every http(s) URL and its exact text range in the terminal row. */
+export function extractTerminalUrlMatches(lineText: string): TerminalUrlMatch[] {
+  return terminalUrls(lineText)
+}
+
 /** Returns the preferred URL and its text range, favoring Markdown destinations over labels. */
 export function extractTerminalUrlMatch(lineText: string): TerminalUrlMatch | null {
-  const urls = terminalUrls(lineText)
+  const urls = extractTerminalUrlMatches(lineText)
   // Markdown links render as `label (destination)`. Prefer their destination
   // when a URL-shaped label precedes it, while retaining parentheses that are
   // actually part of the URL itself.

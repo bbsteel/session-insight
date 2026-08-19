@@ -4,8 +4,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { fetchRenderANSI, streamRenderANSI } from '../api'
-import { extractPathsAt, pathAtColumn } from '../filePathDetection'
-import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine, terminalTextRangeToCellRange, type TerminalCellRange } from '../terminalInteractionGeometry'
+import { extractPathsAt, pathAtTextOffset } from '../filePathDetection'
+import { getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine, terminalCellColumnToTextOffset, terminalTextRangeToCellRange, type TerminalCellRange, type TerminalTextRange } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, resolveMatcherTooltip, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type TerminalSearchOptions, type UserHighlightRange } from '../terminalControl'
@@ -171,8 +171,10 @@ type InteractionEntry = {
   matcher: TerminalLineMatcher<unknown>
   data: unknown
   matchIndex: number
-  /** null means the matcher intentionally owns the whole row. */
-  cellRanges: TerminalCellRange[] | null
+  /** null means this match intentionally owns the whole row. */
+  textRange: TerminalTextRange | null
+  /** null means this match intentionally owns the whole row. */
+  cellRange: TerminalCellRange | null
 }
 type XtermCoreWithMouse = {
   screenElement?: HTMLElement
@@ -856,12 +858,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       currentCols = term.cols
       dbg('initial-fit', { cols: term.cols, rows: term.rows, containerW: container.clientWidth, containerH: container.clientHeight })
 
-      const xtermCanvas = container.querySelector<HTMLCanvasElement>('.xterm-screen canvas')
-      const dpr = window.devicePixelRatio || 1
-      const cellHeight = xtermCanvas && term.rows > 0
-        ? xtermCanvas.height / dpr / term.rows
-        : TERMINAL_LINE_HEIGHT
-      dbg('open-done', { webglDetected: !!xtermCanvas, canvasW: xtermCanvas?.width, canvasH: xtermCanvas?.height, cellHeight })
+      dbg('open-done', { webglDetected: webglOk, cols: term.cols, rows: term.rows })
 
       container.style.position = 'relative'
 
@@ -963,48 +960,38 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       const xtermScreen = container.querySelector<HTMLElement>('.xterm-screen')
       const eventTarget = xtermScreen ?? container
 
-      const getScreenRect = () => (xtermScreen ?? container).getBoundingClientRect()
-
-      const getMousePosition = (e: MouseEvent): { bufferLine: number | null; column: number | null } => {
-        // Keep hit-testing in xterm's coordinate system. Hand-rolled
-        // rect/cellHeight math drifts by 1-2 rows because xterm accounts for
-        // screen padding, renderService cell dimensions, ceil/clamp behavior,
-        // and viewport state internally.
+      const getMousePosition = (e: MouseEvent): { bufferLine: number | null; cellColumn: number | null; textOffset: number | null } => {
+        // Keep hit-testing in xterm's coordinate system. When the internal
+        // MouseService is unavailable there is deliberately no DOM fallback:
+        // a guessed row/column can activate the wrong ranged match.
         const core = (term as unknown as { _core?: XtermCoreWithMouse })._core
         const screenElement = core?.screenElement ?? xtermScreen ?? container
         const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
         const xtermLine = getBufferLineFromXtermCoords(coords, term.buffer.active.viewportY)
-        if (xtermLine !== null) {
-          return {
-            bufferLine: xtermLine,
-            column: coords ? coords[0] - 1 : null,
-          }
+        if (xtermLine === null || xtermLine < 0 || xtermLine >= term.buffer.active.length || !coords) {
+          return { bufferLine: null, cellColumn: null, textOffset: null }
         }
-
-        const screenRect = screenElement.getBoundingClientRect?.() ?? getScreenRect()
+        const cellColumn = coords[0] - 1
+        const bufferLine = term.buffer.active.getLine(xtermLine)
+        if (!bufferLine) return { bufferLine: null, cellColumn: null, textOffset: null }
         return {
-          bufferLine: getBufferLineFromPointer({
-            clientY: e.clientY,
-            screenTop: screenRect.top,
-            cellHeight,
-            viewportY: term.buffer.active.viewportY,
-            rowCount: term.rows,
-          }),
-          column: null,
+          bufferLine: xtermLine,
+          cellColumn,
+          textOffset: terminalCellColumnToTextOffset(bufferLine, cellColumn, term.cols),
         }
       }
 
       const resolveInteractionAt = (
         bufferLine: number,
-        column: number | null,
+        cellColumn: number | null,
       ): { entry: InteractionEntry; cellRange: TerminalCellRange | null } | null => {
         const entries = interactionMap.get(bufferLine)
         if (!entries) return null
         for (const entry of entries) {
-          if (entry.cellRanges === null) return { entry, cellRange: null }
-          if (column === null) continue
-          const cellRange = entry.cellRanges.find(range => column >= range.start && column < range.end)
-          if (cellRange) return { entry, cellRange }
+          if (entry.cellRange === null) return { entry, cellRange: null }
+          if (cellColumn !== null && cellColumn >= entry.cellRange.start && cellColumn < entry.cellRange.end) {
+            return { entry, cellRange: entry.cellRange }
+          }
         }
         return null
       }
@@ -1198,21 +1185,26 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           const text = line.translateToString(true)
           const entries: InteractionEntry[] = []
           for (const matcher of lineMatchers) {
-            const data = matcher.match(text)
-            if (data !== null) {
+            let matcherOwnsRow = false
+            for (const matched of matcher.match(text)) {
               const idx = matchCounts.get(matcher) ?? 0
               matchCounts.set(matcher, idx + 1)
-              const textRanges = matcher.getTextRanges?.(text, data)
-              const cellRanges = textRanges
-                ? textRanges
-                    .map(textRange => terminalTextRangeToCellRange(line, textRange, text.length, term.cols))
-                    .filter((range): range is TerminalCellRange => range !== null)
+              const textRange = matched.textRange ?? null
+              const cellRange = textRange
+                ? terminalTextRangeToCellRange(line, textRange, text.length, term.cols)
                 : null
-              entries.push({ matcher, data, matchIndex: idx, cellRanges })
-              // A matcher without ranges owns the complete row and preserves
+              // A malformed or zero-width ranged match cannot be interacted
+              // with; do not let it shadow another valid matcher on the row.
+              if (textRange && cellRange === null) continue
+              entries.push({ matcher, data: matched.data, matchIndex: idx, textRange, cellRange })
+              // A match without a range owns the complete row and preserves
               // the established matcher priority (edit/truncation/fold rows).
-              if (cellRanges === null) break
+              if (textRange === null) {
+                matcherOwnsRow = true
+                break
+              }
             }
+            if (matcherOwnsRow) break
           }
           if (entries.length > 0) interactionMap.set(i, entries)
         }
@@ -1251,37 +1243,37 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         return r
       }
       const makeFoldMatcher = (): TerminalLineMatcher<FoldRange> => ({
-        match: () => null, // rows come from fold geometry, not text scanning
+        match: () => [], // rows come from fold geometry, not text scanning
         tooltip: translatorRef.current('terminal.toggleContent'),
         onActivate: (bufLine, fold, _matchIndex, meta) => {
           const groupStart = wrapGroupStart(bufLine)
           const joined = joinWrappedLineText(groupStart)
-          // Map the click to an index in the joined header text. meta.column
-          // is an xterm cell column on the clicked row; a click on a
-          // soft-wrapped continuation row is offset by the preceding rows'
-          // text (±wide-char drift, absorbed by pathAtColumn's slack).
-          let col = meta?.column ?? null
-          if (col !== null && bufLine > groupStart) {
+          // Map the click to an index in the joined header text. meta.textOffset
+          // is already a JavaScript string offset for the clicked row; a click
+          // on a soft-wrapped continuation row is offset by preceding rows'
+          // using their actual string lengths.
+          let textOffset = meta?.textOffset ?? null
+          if (textOffset !== null && bufLine > groupStart) {
             const buf = term.buffer.active
             for (let r = groupStart; r < bufLine; r++) {
-              col += buf.getLine(r)?.translateToString(true).length ?? 0
+              textOffset += buf.getLine(r)?.translateToString(true).length ?? 0
             }
           }
           // Only a hit on the path token itself opens the file menu (with
           // fold toggle); the rest of the row toggles the fold directly.
-          // Column unknown → fall back to the old any-path-on-row routing.
-          const hitPath = col !== null
-            ? pathAtColumn(joined, col) !== null
+          // Text offset unknown → fall back to the old any-path-on-row routing.
+          const hitPath = textOffset !== null
+            ? pathAtTextOffset(joined, textOffset) !== null
             : extractPathsAt(joined, null, null).length > 0
+          const selectedFile = textOffset !== null ? pathAtTextOffset(joined, textOffset) : null
           if (hitPath && meta && onFoldPathActivateRef.current) {
             onFoldPathActivateRef.current(bufLine, {
               clientX: meta.clientX,
               clientY: meta.clientY,
-              // Keep the popover in the same joined-header coordinate space
-              // used to identify the path. Fall back to xterm's raw column
-              // when the normalized position is unavailable.
-              column: col ?? meta.column,
+              cellColumn: meta.cellColumn,
+              textOffset,
               lineText: joined,
+              selectedFile: selectedFile ?? undefined,
               foldKey: fold.key,
             })
             return
@@ -1311,7 +1303,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
                 tooltip: translatorRef.current('terminal.fileMenuHint'),
               }
             : foldMatcher
-          const entry: InteractionEntry = { matcher, data: f, matchIndex: 0, cellRanges: null }
+          const entry: InteractionEntry = { matcher, data: f, matchIndex: 0, textRange: null, cellRange: null }
           interactionMap.set(row, [entry])
           // An untruncated header ("▶ • Name  <full summary>") can soft-wrap over
           // several display rows. Make every one clickable so a click on the
@@ -1901,14 +1893,14 @@ const snapshotTerminal = () => {
         if (xtermScreen) xtermScreen.style.cursor = 'pointer'
       }
 
-      let lastHover: { bl: number; column: number | null; clientX: number; clientY: number } | null = null
+      let lastHover: { bl: number; cellColumn: number | null; clientX: number; clientY: number } | null = null
 
       onMouseMove = (e: MouseEvent) => {
         if (!interactionMap.size) { hideHover(); return }
-        const { bufferLine: bl, column } = getMousePosition(e)
+        const { bufferLine: bl, cellColumn } = getMousePosition(e)
         if (bl === null) { hideHover(); lastHover = null; return }
-        const interaction = resolveInteractionAt(bl, column)
-        lastHover = { bl, column, clientX: e.clientX, clientY: e.clientY }
+        const interaction = resolveInteractionAt(bl, cellColumn)
+        lastHover = { bl, cellColumn, clientX: e.clientX, clientY: e.clientY }
         if (!interaction) { hideHover(); return }
         const { entry, cellRange } = interaction
 
@@ -1921,7 +1913,7 @@ const snapshotTerminal = () => {
             interactionValidity.set(entry, 'pending')
             hideHover()
             const text = term.buffer.active.getLine(bl)?.translateToString(true) ?? ''
-            entry.matcher.validate(text).then(ok => {
+            entry.matcher.validate(text, entry.data).then(ok => {
               if (disposed || interactionValidity.get(entry) !== 'pending') return
               interactionValidity.set(entry, ok)
               if (!ok) {
@@ -1934,7 +1926,7 @@ const snapshotTerminal = () => {
                 return
               }
               if (lastHover?.bl === bl) {
-                const currentInteraction = resolveInteractionAt(bl, lastHover.column)
+                const currentInteraction = resolveInteractionAt(bl, lastHover.cellColumn)
                 if (currentInteraction?.entry === entry) {
                   showHoverFor(bl, entry, currentInteraction.cellRange, lastHover.clientX, lastHover.clientY)
                 }
@@ -1950,9 +1942,9 @@ const snapshotTerminal = () => {
       onMouseLeave = () => hideHover()
 
       onClick = (e: MouseEvent) => {
-        const { bufferLine: bl, column } = getMousePosition(e)
+        const { bufferLine: bl, cellColumn, textOffset } = getMousePosition(e)
         if (bl === null) return
-        const interaction = resolveInteractionAt(bl, column)
+        const interaction = resolveInteractionAt(bl, cellColumn)
         if (interaction) {
           const { entry } = interaction
           // Validated matchers only activate after their check confirmed.
@@ -1962,29 +1954,38 @@ const snapshotTerminal = () => {
           entry.matcher.onActivate(bl, entry.data, entry.matchIndex, {
             clientX: e.clientX,
             clientY: e.clientY,
-            column,
+            cellColumn,
+            textOffset: entry.textRange?.start ?? textOffset,
             lineText: term.buffer.active.getLine(bl)?.translateToString(true) ?? '',
+            textRange: entry.textRange ?? undefined,
           })
         }
       }
 
       onCtxMenu = (e: MouseEvent) => {
         e.preventDefault()
-        const { bufferLine: bl, column } = getMousePosition(e)
-        // Column comes from the same xterm MouseService call as the row
-        // (coords are 1-based); needed to pick the path token under the cursor.
+        const { bufferLine: bl, cellColumn, textOffset: rowTextOffset } = getMousePosition(e)
+        // Cell and text offsets come from the same xterm MouseService call.
         // Join soft-wrapped rows so right-click on a long path (write header)
         // still resolves the full token for "打开文件".
         let lineText = ''
+        let textOffset = rowTextOffset
         if (bl !== null) {
           const start = wrapGroupStart(bl)
           lineText = joinWrappedLineText(start)
+          if (textOffset !== null && bl > start) {
+            const buf = term.buffer.active
+            for (let r = start; r < bl; r++) {
+              textOffset += buf.getLine(r)?.translateToString(true).length ?? 0
+            }
+          }
         }
         onContextMenuRef.current?.({
           clientX: e.clientX,
           clientY: e.clientY,
           originalRow: bl !== null ? toOriginalLine(bl) : null,
-          column,
+          cellColumn,
+          textOffset,
           lineText,
           collapsedFoldKeys: [...collapsedKeys],
         })

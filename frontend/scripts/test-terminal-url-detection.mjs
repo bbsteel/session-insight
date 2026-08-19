@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { extractTerminalUrl, extractTerminalUrlMatch } from '/tmp/session-insight-terminal-url/terminalUrlDetection.js'
+import { extractTerminalUrl, extractTerminalUrlMatch, extractTerminalUrlMatches } from '/tmp/session-insight-terminal-url/terminalUrlDetection.js'
 import { resolveMatcherTooltip } from '/tmp/session-insight-terminal-url/terminalControl.js'
 
 assert.equal(
@@ -37,6 +37,14 @@ assert.deepEqual(
     start: 11,
     end: 62,
   },
+)
+const multipleUrlText = '前缀 https://one.example/a 和 https://two.example/b'
+assert.deepEqual(
+  extractTerminalUrlMatches(multipleUrlText),
+  [
+    { value: 'https://one.example/a', start: 3, end: 24 },
+    { value: 'https://two.example/b', start: 27, end: 48 },
+  ],
 )
 
 assert.equal(resolveMatcherTooltip(undefined, null), '')

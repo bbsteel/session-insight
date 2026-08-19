@@ -74,6 +74,26 @@ export function terminalTextOffsetToCellColumn(
   return maxColumns
 }
 
+/** Converts an xterm cell column into a JavaScript string offset. */
+export function terminalCellColumnToTextOffset(
+  bufferLine: TerminalBufferLine,
+  cellColumn: number,
+  maxColumns: number,
+): number {
+  const boundedCellColumn = Math.max(0, Math.min(maxColumns, cellColumn))
+  let textOffset = 0
+  let currentCellColumn = 0
+
+  while (currentCellColumn < boundedCellColumn) {
+    const cell = bufferLine.getCell(currentCellColumn)
+    if (!cell) return textOffset
+    textOffset += cell.getChars().length
+    currentCellColumn += Math.max(1, cell.getWidth())
+  }
+
+  return textOffset
+}
+
 /** Converts a text range to a clamped, drawable xterm cell range. */
 export function terminalTextRangeToCellRange(
   bufferLine: TerminalBufferLine,

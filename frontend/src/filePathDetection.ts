@@ -69,13 +69,13 @@ function candidateAllowed(path: string, exts: Set<string> | null): boolean {
 
 /**
  * All path-like tokens in the row that pass the extension allowlist, ordered
- * with the token under `column` first (when it hits one). Empty when nothing
- * qualifies — no affordance for such rows.
+ * with the token under `textOffset` first (when it hits one). Empty when
+ * nothing qualifies — no affordance for such rows.
  */
-export function extractPathsAt(lineText: string, column: number | null, exts: Set<string> | null): PathCandidate[] {
+export function extractPathsAt(lineText: string, textOffset: number | null, exts: Set<string> | null): PathCandidate[] {
   const matches = extractPathMatches(lineText, exts)
-  if (column !== null) {
-    const hit = matches.findIndex(match => column >= match.start && column < match.end)
+  if (textOffset !== null) {
+    const hit = matches.findIndex(match => textOffset >= match.start && textOffset < match.end)
     if (hit > 0) {
       const [hitMatch] = matches.splice(hit, 1)
       matches.unshift(hitMatch)
@@ -103,29 +103,33 @@ export function extractPathMatches(lineText: string, exts: Set<string> | null): 
 }
 
 /**
- * Returns the path-like token spanning `column` in `lineText`, falling back
- * to the first path-like token when the click missed every token (or column
- * is unknown). null when the row contains nothing path-like.
+ * Returns the path-like token spanning `textOffset` in `lineText`, falling
+ * back to the first path-like token when the click missed every token (or the
+ * offset is unknown). null when the row contains nothing path-like.
  */
-export function extractPathAt(lineText: string, column: number | null, exts: Set<string> | null = null): PathCandidate | null {
-  return extractPathsAt(lineText, column, exts)[0] ?? null
+export function extractPathAt(lineText: string, textOffset: number | null, exts: Set<string> | null = null): PathCandidate | null {
+  return extractPathsAt(lineText, textOffset, exts)[0] ?? null
 }
 
 /**
- * Path token that strictly spans `column` (no fallback to "first on row").
+ * Path token that strictly spans `textOffset` (no fallback to "first on row").
  * Used when a fold header also owns the click: only a hit on the path itself
  * should open the file; the rest of the row toggles the fold.
  *
- * `column` is an xterm cell index. Fold badges often include fullwidth CJK
- * (e.g. "行"), so cell columns and JS string indices can drift by 1–2; a small
- * window around the token still counts as a path hit.
+ * `textOffset` is a JavaScript string index. Callers that start with an xterm
+ * cell column must convert it through the xterm buffer line first.
  */
-export function pathAtColumn(lineText: string, column: number, exts: Set<string> | null = null): PathCandidate | null {
+export function pathAtTextOffset(lineText: string, textOffset: number, exts: Set<string> | null = null): PathCandidate | null {
   const SLACK = 2
   for (const match of extractPathMatches(lineText, exts)) {
-    if (column >= match.start - SLACK && column < match.end + SLACK) {
+    if (textOffset >= match.start - SLACK && textOffset < match.end + SLACK) {
       return { path: match.path, line: match.line }
     }
   }
   return null
+}
+
+/** @deprecated Use pathAtTextOffset; the argument is a JavaScript text offset. */
+export function pathAtColumn(lineText: string, textOffset: number, exts: Set<string> | null = null): PathCandidate | null {
+  return pathAtTextOffset(lineText, textOffset, exts)
 }

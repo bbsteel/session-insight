@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
 import { addBookmark, APIError, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathMatches, extractPathsAt, parseExtList, type PathMatch } from '../filePathDetection'
-import { extractTerminalUrlMatch, type TerminalUrlMatch } from '../terminalUrlDetection'
+import { extractTerminalUrlMatches, type TerminalUrlMatch } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
 import { sessionCapabilityHeaderHint, sessionTokenHeaderDisplay } from '../capabilityPresentation'
 import { presentFromSession, recordStatusLabel, toneClass } from '../recordStatusPresentation'
@@ -19,7 +19,7 @@ import { resolveAnchorJump } from '../collaboration/jumpTargets'
 import type { SourceAnchorDTO } from '../collaboration/types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
-import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type UserHighlightRange, type ViewportAnchor } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalFileMatch, type UserHighlightRange, type ViewportAnchor } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import GitEvidencePanel from './GitEvidencePanel'
@@ -337,38 +337,48 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     }
   }, [])
 
-  // Resolve the first candidate on the row that exists on disk (cached).
-  const resolveRowFile = useCallback(async (lineText: string, column: number | null): Promise<{ path: string; line: number | null } | null> => {
+  // Resolve one path candidate on disk (cached). Keeping this per candidate
+  // lets multiple path matches on one row validate independently.
+  const resolveFileCandidate = useCallback(async (candidate: TerminalFileMatch): Promise<TerminalFileMatch | null> => {
     const cwd = sessionCwdRef.current
-    for (const cand of extractPathsAt(lineText, column, fileExtsRef.current)) {
-      const key = cwd + '\0' + cand.path
-      let ok = pathCheckCache.current.get(key)
-      let resolved: string | null = null
-      if (ok === undefined) {
-        resolved = await resolveFile(cand.path, cwd).catch(() => null)
-        ok = resolved !== null
-        pathCheckCache.current.set(key, ok)
-      } else if (ok) {
-        resolved = await resolveFile(cand.path, cwd).catch(() => null)
-      }
-      if (ok && resolved) return { path: resolved, line: cand.line }
+    const key = cwd + '\0' + candidate.path
+    let ok = pathCheckCache.current.get(key)
+    let resolved: string | null = null
+    if (ok === undefined) {
+      resolved = await resolveFile(candidate.path, cwd).catch(() => null)
+      ok = resolved !== null
+      pathCheckCache.current.set(key, ok)
+    } else if (ok) {
+      resolved = await resolveFile(candidate.path, cwd).catch(() => null)
+    }
+    return ok && resolved ? { path: resolved, line: candidate.line } : null
+  }, [])
+
+  // Resolve the first candidate on the row that exists on disk (cached).
+  // textOffset is a JavaScript string offset, never an xterm cell column.
+  const resolveRowFile = useCallback(async (lineText: string, textOffset: number | null): Promise<TerminalFileMatch | null> => {
+    for (const candidate of extractPathsAt(lineText, textOffset, fileExtsRef.current)) {
+      const resolved = await resolveFileCandidate(candidate)
+      if (resolved) return resolved
     }
     return null
-  }, [])
+  }, [resolveFileCandidate])
 
   // Left-click on a row with file context opens a small action popover at the
   // cursor (editor / new tab / diff) instead of a single hard-wired action.
   // foldKey (from path-bearing tool headers) adds 展开/收起 next to open-file.
-  const openFilePopover = useCallback((bufLine: number, meta: TerminalActivateMeta | undefined, editIdx: number | null) => {
+  const openFilePopover = useCallback((bufLine: number, meta: TerminalActivateMeta | undefined, editIdx: number | null, selectedFile?: TerminalFileMatch) => {
     if (!meta) return
     const ctrl = termControlRef.current
     setCtxMenu({
       clientX: meta.clientX,
       clientY: meta.clientY,
       originalRow: ctrl ? ctrl.toOriginalLine(bufLine) : bufLine,
-      column: meta.column,
+      cellColumn: meta.cellColumn,
+      textOffset: meta.textOffset,
       lineText: meta.lineText,
       collapsedFoldKeys: ctrl?.getCollapsedFoldKeys() ?? [],
+      selectedFile: selectedFile ?? meta.selectedFile,
       fileOnly: true,
       editIdx: editIdx ?? undefined,
       foldKey: meta.foldKey,
@@ -383,7 +393,10 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         // hides some headers, so the click is resolved back to the original
         // row and looked up among the "edit" positions; matchIndex stays as
         // fallback when positions are unavailable.
-        match: (text: string) => parseEditHeaderLine(text),
+        match: (text: string) => {
+          const data = parseEditHeaderLine(text)
+          return data ? [{ data }] : []
+        },
         tooltip: t('replay.fileActions'),
         onActivate: (bufLine: number, _data: unknown, matchIndex: number, meta?: TerminalActivateMeta) => {
           const ctrl = termControlRef.current
@@ -396,7 +409,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       {
         // "[+] N 行被截断（点击展开）" lines → full output modal via the
         // "trunc" position at the same original row.
-        match: (text: string) => (/\[\+\] \d+ 行被截断/.test(text) ? {} : null),
+        match: (text: string) => (/\[\+\] \d+ 行被截断/.test(text) ? [{ data: {} }] : []),
         tooltip: t('replay.expandOutput'),
         onActivate: (bufLine: number, _data: unknown, matchIndex: number) => {
           const ctrl = termControlRef.current
@@ -415,11 +428,10 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         // file matcher because URL path fragments are not local files.
         // Tooltip includes the full destination so truncated terminal rows
         // still show where a click will navigate.
-        match: (text: string) => extractTerminalUrlMatch(text),
-        getTextRanges: (_text, data) => {
-          const urlMatch = data as TerminalUrlMatch
-          return [{ start: urlMatch.start, end: urlMatch.end }]
-        },
+        match: (text: string) => extractTerminalUrlMatches(text).map((urlMatch: TerminalUrlMatch) => ({
+          data: urlMatch,
+          textRange: { start: urlMatch.start, end: urlMatch.end },
+        })),
         tooltip: (data) => t('replay.openLink', { url: (data as TerminalUrlMatch).value }),
         onActivate: (_bufLine: number, url: unknown) => {
           const urlMatch = url as TerminalUrlMatch
@@ -432,19 +444,18 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         // validate: the affordance only appears when some candidate on the
         // row actually resolves to an existing file (multi-token rows check
         // every candidate, so "cd /some/dir && vim a.vue" still qualifies).
-        match: (text: string) => {
-          const pathMatches = extractPathMatches(text, fileExtsRef.current)
-          return pathMatches.length > 0 ? pathMatches : null
-        },
-        getTextRanges: (_text, data) => (data as PathMatch[]).map(({ start, end }) => ({ start, end })),
+        match: (text: string) => extractPathMatches(text, fileExtsRef.current).map((pathMatch: PathMatch) => ({
+          data: pathMatch,
+          textRange: { start: pathMatch.start, end: pathMatch.end },
+        })),
         tooltip: t('replay.openFileMenu'),
-        validate: async (lineText: string) => (await resolveRowFile(lineText, null)) !== null,
-        onActivate: (bufLine: number, _data: unknown, _idx: number, meta?: TerminalActivateMeta) => {
-          openFilePopover(bufLine, meta, null)
+        validate: async (_lineText: string, data: unknown) => (await resolveFileCandidate(data as PathMatch)) !== null,
+        onActivate: (bufLine: number, data: unknown, _idx: number, meta?: TerminalActivateMeta) => {
+          openFilePopover(bufLine, meta, null, data as PathMatch)
         },
       },
     ])
-  }, [openFilePopover, t])
+  }, [openFilePopover, resolveFileCandidate, t])
 
   // 列数没变时(例如「分析↔终端」来回切换导致的终端重挂载)必须保留现有
   // positions:positions 拉取 effect 的依赖不会变化、不会重拉,这里若无条件
@@ -991,13 +1002,17 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       const e = edits[editIdx]
       const search = (e.new_string || e.old_string).split('\n').find(l => l.trim())
       void resolveFile(e.file_path, cwd).then(p => { if (p) show(p, null, search) })
+    } else if (ctxMenu.selectedFile) {
+      void resolveFileCandidate(ctxMenu.selectedFile).then(hit => {
+        if (hit) show(hit.path, hit.line)
+      })
     } else {
-      void resolveRowFile(ctxMenu.lineText, ctxMenu.column).then(hit => {
+      void resolveRowFile(ctxMenu.lineText, ctxMenu.textOffset).then(hit => {
         if (hit) show(hit.path, hit.line)
       })
     }
     return () => { cancelled = true }
-  }, [ctxMenu, edits, positionsData, session, resolveRowFile])
+  }, [ctxMenu, edits, positionsData, session, resolveFileCandidate, resolveRowFile])
 
   const ctxMenuSections = useMemo((): TerminalMenuSection[] => {
     const selectedText = window.getSelection()?.toString() ?? ''

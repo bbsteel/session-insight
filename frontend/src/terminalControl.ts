@@ -7,27 +7,44 @@ export type { TerminalTextRange }
 
 export const TERMINAL_LINE_HEIGHT = 14 // base; grok uses even denser via xterm lineHeight option (see TerminalPanel)
 
+export interface TerminalFileMatch {
+  path: string
+  line: number | null
+}
+
 // Screen/cell context of the click that activated a matcher row, so handlers
-// can anchor popovers at the cursor and inspect the exact clicked column.
+// can anchor popovers at the cursor and inspect both coordinate spaces.
 export interface TerminalActivateMeta {
   clientX: number
   clientY: number
-  column: number | null
+  /** Zero-based xterm cell column from MouseService. */
+  cellColumn: number | null
+  /** JavaScript string offset for the clicked buffer row. */
+  textOffset: number | null
   lineText: string
+  /** Exact source range selected when a ranged matcher handled the click. */
+  textRange?: TerminalTextRange
+  /** Exact path selected by a path-bearing fold header. */
+  selectedFile?: TerminalFileMatch
   /** When set, the click was on a path-bearing fold header — show 展开/收起 with open-file. */
   foldKey?: string
 }
 
+export interface TerminalLineMatch<T = unknown> {
+  data: T
+  /** Omitted when this match intentionally owns the complete terminal row. */
+  textRange?: TerminalTextRange
+}
+
 export interface TerminalLineMatcher<T = unknown> {
-  match: (text: string) => T | null
-  /** Text ranges that receive hover/click affordances; omitted means full row. */
-  getTextRanges?: (lineText: string, data: T) => TerminalTextRange[]
+  /** Each returned match owns its payload, validation identity, and optional text range. */
+  match: (text: string) => TerminalLineMatch<T>[]
   /** Static label, or a formatter that receives the matcher's match data (e.g. full URL). */
   tooltip?: string | ((data: T) => string)
-  // Optional async confirmation (e.g. does the detected path actually exist).
-  // Rows failing validation lose their hover affordance and click handling;
-  // results are cached per buffer row until the next rewrite.
-  validate?: (lineText: string) => Promise<boolean>
+  // Optional async confirmation (e.g. does this detected path actually exist).
+  // Each returned match is validated independently and can be removed without
+  // affecting other matches on the same buffer row.
+  validate?: (lineText: string, data: T) => Promise<boolean>
   onActivate: (bufLine: number, data: T, matchIndex: number, meta?: TerminalActivateMeta) => void
 }
 
@@ -129,15 +146,19 @@ export interface TerminalSearchOptions {
 
 // Payload for the terminal context menu: where the right-click landed, in
 // original render rows so it can be matched against the positions cache.
-// lineText/column describe the clicked buffer row so the menu can offer
-// row-content-aware actions (e.g. open the file path under the cursor).
+// lineText/textOffset describe the clicked buffer row so the menu can offer
+// row-content-aware actions (e.g. open the file path under the cursor). The
+// cell coordinate remains available for terminal-only consumers.
 export interface TerminalContextMenuEvent {
   clientX: number
   clientY: number
   originalRow: number | null
-  column: number | null
+  cellColumn: number | null
+  textOffset: number | null
   lineText: string
   collapsedFoldKeys: string[]
+  /** Exact path selected by a ranged matcher or path-bearing fold header. */
+  selectedFile?: TerminalFileMatch
   /** Path-bearing fold header: offer 展开/收起 alongside open-file in fileOnly menu. */
   foldKey?: string
 }
