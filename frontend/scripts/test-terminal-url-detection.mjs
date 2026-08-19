@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { extractTerminalUrl } from '/tmp/session-insight-terminal-url/terminalUrlDetection.js'
+import { extractTerminalUrl, extractTerminalUrlMatch } from '/tmp/session-insight-terminal-url/terminalUrlDetection.js'
 import { resolveMatcherTooltip } from '/tmp/session-insight-terminal-url/terminalControl.js'
 
 assert.equal(
@@ -30,6 +30,14 @@ assert.equal(extractTerminalUrl('见 https://example.test/docs，然后'), 'http
 assert.equal(extractTerminalUrl('打开 https://zh.wikipedia.org/wiki/测试 页面'), 'https://zh.wikipedia.org/wiki/测试')
 assert.equal(extractTerminalUrl('no external link'), null)
 assert.equal(extractTerminalUrl('javascript:alert(1)'), null)
+assert.deepEqual(
+  extractTerminalUrlMatch('修正已推送到 PR (https://github.com/bbsteel/session-insight/pull/152)，提交为 832e813。'),
+  {
+    value: 'https://github.com/bbsteel/session-insight/pull/152',
+    start: 11,
+    end: 62,
+  },
+)
 
 assert.equal(resolveMatcherTooltip(undefined, null), '')
 assert.equal(resolveMatcherTooltip('Open link in new tab', 'https://example.test'), 'Open link in new tab')

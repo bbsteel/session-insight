@@ -1,7 +1,9 @@
 import type { ScrollMetrics } from './minimapGeometry'
+import type { TerminalTextRange } from './terminalInteractionGeometry'
 import type { ViewportAnchor } from './viewportAnchor'
 
 export type { ViewportAnchor }
+export type { TerminalTextRange }
 
 export const TERMINAL_LINE_HEIGHT = 14 // base; grok uses even denser via xterm lineHeight option (see TerminalPanel)
 
@@ -18,6 +20,8 @@ export interface TerminalActivateMeta {
 
 export interface TerminalLineMatcher<T = unknown> {
   match: (text: string) => T | null
+  /** Text ranges that receive hover/click affordances; omitted means full row. */
+  getTextRanges?: (lineText: string, data: T) => TerminalTextRange[]
   /** Static label, or a formatter that receives the matcher's match data (e.g. full URL). */
   tooltip?: string | ((data: T) => string)
   // Optional async confirmation (e.g. does the detected path actually exist).

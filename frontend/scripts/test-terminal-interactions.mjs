@@ -9,6 +9,8 @@ const {
   getBufferLineFromXtermCoords,
   getMarkerOffsetForBufferLine,
   parseEditHeaderLine,
+  terminalTextOffsetToCellColumn,
+  terminalTextRangeToCellRange,
 } = await import(pathToFileURL(compiledModule).href)
 
 assert.equal(
@@ -55,6 +57,27 @@ assert.equal(
     cursorY: 3,
   }),
   -17,
+)
+
+const cjkLineCells = [
+  { chars: '前', width: 2 },
+  { chars: '', width: 0 },
+  { chars: ' ', width: 1 },
+  { chars: 'P', width: 1 },
+  { chars: 'R', width: 1 },
+  { chars: ' ', width: 1 },
+]
+const cjkLine = {
+  getCell(column) {
+    const cell = cjkLineCells[column]
+    return cell ? { getChars: () => cell.chars, getWidth: () => cell.width } : undefined
+  },
+}
+
+assert.equal(terminalTextOffsetToCellColumn(cjkLine, 1, 6), 2)
+assert.deepEqual(
+  terminalTextRangeToCellRange(cjkLine, { start: 2, end: 4 }, '前 PR '.length, 6),
+  { start: 3, end: 5 },
 )
 
 assert.deepEqual(

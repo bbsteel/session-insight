@@ -5,7 +5,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { fetchRenderANSI, streamRenderANSI } from '../api'
 import { extractPathsAt, pathAtColumn } from '../filePathDetection'
-import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine } from '../terminalInteractionGeometry'
+import { getBufferLineFromPointer, getBufferLineFromXtermCoords, getMarkerOffsetForBufferLine, terminalTextRangeToCellRange, type TerminalCellRange } from '../terminalInteractionGeometry'
 import type { ScrollMetrics } from '../minimapGeometry'
 import { createFrameBatcher } from '../scrollSync'
 import { TERMINAL_LINE_HEIGHT, resolveMatcherTooltip, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalLineMatcher, type TerminalSearchOptions, type UserHighlightRange } from '../terminalControl'
@@ -167,7 +167,13 @@ async function waitForTerminalFont(fontFamily: string, fontSize: number) {
   }
 }
 
-type InteractionEntry = { matcher: TerminalLineMatcher<unknown>; data: unknown; matchIndex: number }
+type InteractionEntry = {
+  matcher: TerminalLineMatcher<unknown>
+  data: unknown
+  matchIndex: number
+  /** null means the matcher intentionally owns the whole row. */
+  cellRanges: TerminalCellRange[] | null
+}
 type XtermCoreWithMouse = {
   screenElement?: HTMLElement
   _mouseService?: {
@@ -334,10 +340,10 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
 
     // Line interaction state
     let lineMatchers: TerminalLineMatcher<unknown>[] = []
-    const interactionMap = new Map<number, InteractionEntry>()
+    const interactionMap = new Map<number, InteractionEntry[]>()
     // Per-row async validation results ('pending' while in flight); cleared
     // on every buffer rescan since row numbers shift across rewrites.
-    const rowValidity = new Map<number, 'pending' | boolean>()
+    const interactionValidity = new Map<InteractionEntry, 'pending' | boolean>()
 
     // Fold state: raw ANSI is kept so collapsed tool-group bodies can be
     // recomposed out of the buffer (xterm has no hide-rows primitive; a fold
@@ -427,6 +433,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let hoverDecoration: IDecoration | null = null
     let hoverMarker: IMarker | null = null
     let activeHoverLine: number | null = null
+    let activeHoverRangeKey: string | null = null
 
     // Jump-flash state (hoisted so the effect cleanup can dispose it)
     let flashMarkers: IMarker[] = []
@@ -958,7 +965,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
 
       const getScreenRect = () => (xtermScreen ?? container).getBoundingClientRect()
 
-      const getBufLine = (e: MouseEvent): number | null => {
+      const getMousePosition = (e: MouseEvent): { bufferLine: number | null; column: number | null } => {
         // Keep hit-testing in xterm's coordinate system. Hand-rolled
         // rect/cellHeight math drifts by 1-2 rows because xterm accounts for
         // screen padding, renderService cell dimensions, ceil/clamp behavior,
@@ -967,16 +974,39 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         const screenElement = core?.screenElement ?? xtermScreen ?? container
         const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
         const xtermLine = getBufferLineFromXtermCoords(coords, term.buffer.active.viewportY)
-        if (xtermLine !== null) return xtermLine
+        if (xtermLine !== null) {
+          return {
+            bufferLine: xtermLine,
+            column: coords ? coords[0] - 1 : null,
+          }
+        }
 
         const screenRect = screenElement.getBoundingClientRect?.() ?? getScreenRect()
-        return getBufferLineFromPointer({
-          clientY: e.clientY,
-          screenTop: screenRect.top,
-          cellHeight,
-          viewportY: term.buffer.active.viewportY,
-          rowCount: term.rows,
-        })
+        return {
+          bufferLine: getBufferLineFromPointer({
+            clientY: e.clientY,
+            screenTop: screenRect.top,
+            cellHeight,
+            viewportY: term.buffer.active.viewportY,
+            rowCount: term.rows,
+          }),
+          column: null,
+        }
+      }
+
+      const resolveInteractionAt = (
+        bufferLine: number,
+        column: number | null,
+      ): { entry: InteractionEntry; cellRange: TerminalCellRange | null } | null => {
+        const entries = interactionMap.get(bufferLine)
+        if (!entries) return null
+        for (const entry of entries) {
+          if (entry.cellRanges === null) return { entry, cellRange: null }
+          if (column === null) continue
+          const cellRange = entry.cellRanges.find(range => column >= range.start && column < range.end)
+          if (cellRange) return { entry, cellRange }
+        }
+        return null
       }
 
       const clearHoverDecoration = () => {
@@ -985,6 +1015,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         hoverDecoration = null
         hoverMarker = null
         activeHoverLine = null
+        activeHoverRangeKey = null
       }
 
       const flashLines = (startLine: number, count = 2) => {
@@ -1059,8 +1090,14 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         if (xtermScreen) xtermScreen.style.cursor = ''
       }
 
-      const showHoverDecoration = (bufLine: number) => {
-        if (activeHoverLine === bufLine && hoverDecoration && !hoverDecoration.isDisposed) return
+      const showHoverDecoration = (bufLine: number, cellRange: TerminalCellRange | null) => {
+        const rangeKey = cellRange ? `${cellRange.start}:${cellRange.end}` : 'full-row'
+        if (
+          activeHoverLine === bufLine
+          && activeHoverRangeKey === rangeKey
+          && hoverDecoration
+          && !hoverDecoration.isDisposed
+        ) return
         clearHoverDecoration()
 
         const offset = getMarkerOffsetForBufferLine({
@@ -1075,7 +1112,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         try {
           decoration = term.registerDecoration({
             marker,
-            width: term.cols,
+            x: cellRange?.start ?? 0,
+            width: cellRange ? cellRange.end - cellRange.start : term.cols,
             height: 1,
             layer: 'top',
           })
@@ -1090,9 +1128,6 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
 
         decoration.onRender(element => {
           element.style.pointerEvents = 'none'
-          element.style.left = '0'
-          element.style.right = '0'
-          element.style.width = '100%'
           element.style.boxSizing = 'border-box'
           element.style.borderBottom = '1.5px solid rgba(124,58,237,0.65)'
           element.style.background = 'rgba(124,58,237,0.07)'
@@ -1101,6 +1136,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         hoverMarker = marker
         hoverDecoration = decoration
         activeHoverLine = bufLine
+        activeHoverRangeKey = rangeKey
       }
 
       // Deferred jump target: set when a panel jump arrives before the buffer
@@ -1152,7 +1188,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         refreshLogicalRows()
         flushPendingJump()
         interactionMap.clear()
-        rowValidity.clear()
+        interactionValidity.clear()
         if (lineMatchers.length === 0) return
         const buf = term.buffer.active
         const matchCounts = new Map<TerminalLineMatcher<unknown>, number>()
@@ -1160,15 +1196,25 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           const line = buf.getLine(i)
           if (!line) continue
           const text = line.translateToString(true)
+          const entries: InteractionEntry[] = []
           for (const matcher of lineMatchers) {
             const data = matcher.match(text)
             if (data !== null) {
               const idx = matchCounts.get(matcher) ?? 0
               matchCounts.set(matcher, idx + 1)
-              interactionMap.set(i, { matcher, data, matchIndex: idx })
-              break
+              const textRanges = matcher.getTextRanges?.(text, data)
+              const cellRanges = textRanges
+                ? textRanges
+                    .map(textRange => terminalTextRangeToCellRange(line, textRange, text.length, term.cols))
+                    .filter((range): range is TerminalCellRange => range !== null)
+                : null
+              entries.push({ matcher, data, matchIndex: idx, cellRanges })
+              // A matcher without ranges owns the complete row and preserves
+              // the established matcher priority (edit/truncation/fold rows).
+              if (cellRanges === null) break
             }
           }
+          if (entries.length > 0) interactionMap.set(i, entries)
         }
       }
 
@@ -1265,8 +1311,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
                 tooltip: translatorRef.current('terminal.fileMenuHint'),
               }
             : foldMatcher
-          const entry = { matcher, data: f, matchIndex: 0 }
-          interactionMap.set(row, entry)
+          const entry: InteractionEntry = { matcher, data: f, matchIndex: 0, cellRanges: null }
+          interactionMap.set(row, [entry])
           // An untruncated header ("▶ • Name  <full summary>") can soft-wrap over
           // several display rows. Make every one clickable so a click on the
           // wrapped summary/badge toggles the fold too. isWrapped rides xterm's
@@ -1275,7 +1321,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           for (let r = row + 1; r < buf.length; r++) {
             const bl = buf.getLine(r)
             if (!bl || !bl.isWrapped) break
-            interactionMap.set(r, entry)
+            interactionMap.set(r, [entry])
           }
         }
       }
@@ -1820,8 +1866,14 @@ const snapshotTerminal = () => {
         updateStickyUserMsg()
       }
 
-      const showHoverFor = (bl: number, entry: InteractionEntry, clientX: number, clientY: number) => {
-        showHoverDecoration(bl)
+      const showHoverFor = (
+        bl: number,
+        entry: InteractionEntry,
+        cellRange: TerminalCellRange | null,
+        clientX: number,
+        clientY: number,
+      ) => {
+        showHoverDecoration(bl, cellRange)
         if (tooltipEl) {
           const tip = resolveMatcherTooltip(entry.matcher.tooltip, entry.data)
           tooltipEl.textContent = tip
@@ -1849,59 +1901,68 @@ const snapshotTerminal = () => {
         if (xtermScreen) xtermScreen.style.cursor = 'pointer'
       }
 
-      let lastHover: { bl: number; clientX: number; clientY: number } | null = null
+      let lastHover: { bl: number; column: number | null; clientX: number; clientY: number } | null = null
 
       onMouseMove = (e: MouseEvent) => {
         if (!interactionMap.size) { hideHover(); return }
-        const bl = getBufLine(e)
+        const { bufferLine: bl, column } = getMousePosition(e)
         if (bl === null) { hideHover(); lastHover = null; return }
-        const entry = interactionMap.get(bl)
-        lastHover = { bl, clientX: e.clientX, clientY: e.clientY }
-        if (!entry) { hideHover(); return }
+        const interaction = resolveInteractionAt(bl, column)
+        lastHover = { bl, column, clientX: e.clientX, clientY: e.clientY }
+        if (!interaction) { hideHover(); return }
+        const { entry, cellRange } = interaction
 
         // Rows with a validator only get the affordance once it confirms
         // (e.g. the detected path really exists). The mouse may sit still
         // while the check resolves, so completion re-shows from lastHover.
         if (entry.matcher.validate) {
-          const state = rowValidity.get(bl)
+          const state = interactionValidity.get(entry)
           if (state === undefined) {
-            rowValidity.set(bl, 'pending')
+            interactionValidity.set(entry, 'pending')
             hideHover()
             const text = term.buffer.active.getLine(bl)?.translateToString(true) ?? ''
             entry.matcher.validate(text).then(ok => {
-              if (disposed || rowValidity.get(bl) !== 'pending') return
-              rowValidity.set(bl, ok)
+              if (disposed || interactionValidity.get(entry) !== 'pending') return
+              interactionValidity.set(entry, ok)
               if (!ok) {
-                interactionMap.delete(bl)
+                const entries = interactionMap.get(bl)
+                if (entries) {
+                  const remainingEntries = entries.filter(candidate => candidate !== entry)
+                  if (remainingEntries.length > 0) interactionMap.set(bl, remainingEntries)
+                  else interactionMap.delete(bl)
+                }
                 return
               }
-              if (lastHover?.bl === bl) showHoverFor(bl, entry, lastHover.clientX, lastHover.clientY)
+              if (lastHover?.bl === bl) {
+                const currentInteraction = resolveInteractionAt(bl, lastHover.column)
+                if (currentInteraction?.entry === entry) {
+                  showHoverFor(bl, entry, currentInteraction.cellRange, lastHover.clientX, lastHover.clientY)
+                }
+              }
             })
             return
           }
           if (state !== true) { hideHover(); return }
         }
-        showHoverFor(bl, entry, e.clientX, e.clientY)
+        showHoverFor(bl, entry, cellRange, e.clientX, e.clientY)
       }
 
       onMouseLeave = () => hideHover()
 
       onClick = (e: MouseEvent) => {
-        const bl = getBufLine(e)
+        const { bufferLine: bl, column } = getMousePosition(e)
         if (bl === null) return
-        const entry = interactionMap.get(bl)
-        if (entry) {
+        const interaction = resolveInteractionAt(bl, column)
+        if (interaction) {
+          const { entry } = interaction
           // Validated matchers only activate after their check confirmed.
-          if (entry.matcher.validate && rowValidity.get(bl) !== true) return
+          if (entry.matcher.validate && interactionValidity.get(entry) !== true) return
           e.preventDefault()
           e.stopPropagation()
-          const core = (term as unknown as { _core?: XtermCoreWithMouse })._core
-          const screenElement = core?.screenElement ?? xtermScreen ?? container
-          const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
           entry.matcher.onActivate(bl, entry.data, entry.matchIndex, {
             clientX: e.clientX,
             clientY: e.clientY,
-            column: coords ? coords[0] - 1 : null,
+            column,
             lineText: term.buffer.active.getLine(bl)?.translateToString(true) ?? '',
           })
         }
@@ -1909,12 +1970,9 @@ const snapshotTerminal = () => {
 
       onCtxMenu = (e: MouseEvent) => {
         e.preventDefault()
-        const bl = getBufLine(e)
+        const { bufferLine: bl, column } = getMousePosition(e)
         // Column comes from the same xterm MouseService call as the row
         // (coords are 1-based); needed to pick the path token under the cursor.
-        const core = (term as unknown as { _core?: XtermCoreWithMouse })._core
-        const screenElement = core?.screenElement ?? xtermScreen ?? container
-        const coords = core?._mouseService?.getCoords?.(e, screenElement, term.cols, term.rows, false)
         // Join soft-wrapped rows so right-click on a long path (write header)
         // still resolves the full token for "打开文件".
         let lineText = ''
@@ -1926,7 +1984,7 @@ const snapshotTerminal = () => {
           clientX: e.clientX,
           clientY: e.clientY,
           originalRow: bl !== null ? toOriginalLine(bl) : null,
-          column: coords ? coords[0] - 1 : null,
+          column,
           lineText,
           collapsedFoldKeys: [...collapsedKeys],
         })

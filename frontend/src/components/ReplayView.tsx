@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
 import { addBookmark, APIError, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
-import { DEFAULT_FILE_OPEN_EXTS, extractPathsAt, parseExtList } from '../filePathDetection'
-import { extractTerminalUrl } from '../terminalUrlDetection'
+import { DEFAULT_FILE_OPEN_EXTS, extractPathMatches, extractPathsAt, parseExtList, type PathMatch } from '../filePathDetection'
+import { extractTerminalUrlMatch, type TerminalUrlMatch } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
 import { sessionCapabilityHeaderHint, sessionTokenHeaderDisplay } from '../capabilityPresentation'
 import { presentFromSession, recordStatusLabel, toneClass } from '../recordStatusPresentation'
@@ -415,10 +415,15 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         // file matcher because URL path fragments are not local files.
         // Tooltip includes the full destination so truncated terminal rows
         // still show where a click will navigate.
-        match: (text: string) => extractTerminalUrl(text),
-        tooltip: (url) => t('replay.openLink', { url: typeof url === 'string' ? url : String(url) }),
+        match: (text: string) => extractTerminalUrlMatch(text),
+        getTextRanges: (_text, data) => {
+          const urlMatch = data as TerminalUrlMatch
+          return [{ start: urlMatch.start, end: urlMatch.end }]
+        },
+        tooltip: (data) => t('replay.openLink', { url: (data as TerminalUrlMatch).value }),
         onActivate: (_bufLine: number, url: unknown) => {
-          if (typeof url === 'string') window.open(url, '_blank', 'noopener,noreferrer')
+          const urlMatch = url as TerminalUrlMatch
+          window.open(urlMatch.value, '_blank', 'noopener,noreferrer')
         },
       },
       {
@@ -427,7 +432,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         // validate: the affordance only appears when some candidate on the
         // row actually resolves to an existing file (multi-token rows check
         // every candidate, so "cd /some/dir && vim a.vue" still qualifies).
-        match: (text: string) => (extractPathsAt(text, null, fileExtsRef.current).length > 0 ? {} : null),
+        match: (text: string) => {
+          const pathMatches = extractPathMatches(text, fileExtsRef.current)
+          return pathMatches.length > 0 ? pathMatches : null
+        },
+        getTextRanges: (_text, data) => (data as PathMatch[]).map(({ start, end }) => ({ start, end })),
         tooltip: t('replay.openFileMenu'),
         validate: async (lineText: string) => (await resolveRowFile(lineText, null)) !== null,
         onActivate: (bufLine: number, _data: unknown, _idx: number, meta?: TerminalActivateMeta) => {

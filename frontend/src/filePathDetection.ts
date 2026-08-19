@@ -8,6 +8,12 @@ export interface PathCandidate {
   line: number | null
 }
 
+export interface PathMatch extends PathCandidate {
+  /** Half-open JavaScript string range occupied by the path token. */
+  start: number
+  end: number
+}
+
 // Tokens containing at least one path separator — `/` (Unix) or `\` and `/`
 // (Windows) — optionally `~`/`./`/`../` prefixed, with an optional `:line`
 // suffix. Windows drive-absolute (`C:\…`, `C:/…`) and UNC (`\\server\share\…`)
@@ -67,22 +73,33 @@ function candidateAllowed(path: string, exts: Set<string> | null): boolean {
  * qualifies — no affordance for such rows.
  */
 export function extractPathsAt(lineText: string, column: number | null, exts: Set<string> | null): PathCandidate[] {
-  const matches: { start: number; end: number; token: string }[] = []
+  const matches = extractPathMatches(lineText, exts)
+  if (column !== null) {
+    const hit = matches.findIndex(match => column >= match.start && column < match.end)
+    if (hit > 0) {
+      const [hitMatch] = matches.splice(hit, 1)
+      matches.unshift(hitMatch)
+    }
+  }
+  return matches.map(({ path, line }) => ({ path, line }))
+}
+
+/** Returns allowlisted path tokens together with their text ranges. */
+export function extractPathMatches(lineText: string, exts: Set<string> | null): PathMatch[] {
+  const matches: PathMatch[] = []
   PATH_TOKEN.lastIndex = 0
   for (let m = PATH_TOKEN.exec(lineText); m; m = PATH_TOKEN.exec(lineText)) {
     if (isUrlContext(lineText, m.index)) continue
     if (PSEUDO_FS.test(m[0])) continue
-    if (!candidateAllowed(parseToken(m[0]).path, exts)) continue
-    matches.push({ start: m.index, end: m.index + m[0].length, token: m[0] })
+    const candidate = parseToken(m[0])
+    if (!candidateAllowed(candidate.path, exts)) continue
+    matches.push({
+      ...candidate,
+      start: m.index,
+      end: m.index + m[0].length,
+    })
   }
-  if (column !== null) {
-    const hit = matches.findIndex(m => column >= m.start && column < m.end)
-    if (hit > 0) {
-      const [h] = matches.splice(hit, 1)
-      matches.unshift(h)
-    }
-  }
-  return matches.map(m => parseToken(m.token))
+  return matches
 }
 
 /**
@@ -105,15 +122,9 @@ export function extractPathAt(lineText: string, column: number | null, exts: Set
  */
 export function pathAtColumn(lineText: string, column: number, exts: Set<string> | null = null): PathCandidate | null {
   const SLACK = 2
-  PATH_TOKEN.lastIndex = 0
-  for (let m = PATH_TOKEN.exec(lineText); m; m = PATH_TOKEN.exec(lineText)) {
-    if (isUrlContext(lineText, m.index)) continue
-    if (PSEUDO_FS.test(m[0])) continue
-    if (!candidateAllowed(parseToken(m[0]).path, exts)) continue
-    const start = m.index
-    const end = m.index + m[0].length
-    if (column >= start - SLACK && column < end + SLACK) {
-      return parseToken(m[0])
+  for (const match of extractPathMatches(lineText, exts)) {
+    if (column >= match.start - SLACK && column < match.end + SLACK) {
+      return { path: match.path, line: match.line }
     }
   }
   return null

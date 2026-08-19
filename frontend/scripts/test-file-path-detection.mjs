@@ -1,4 +1,4 @@
-import { extractPathAt, pathAtColumn } from '/tmp/session-insight-file-path/filePathDetection.js'
+import { extractPathAt, extractPathMatches, pathAtColumn } from '/tmp/session-insight-file-path/filePathDetection.js'
 
 let failures = 0
 function assertEq(actual, expected, label) {
@@ -24,6 +24,14 @@ assertEq(extractPathAt('padded  ./scripts/run.sh  tail', null), { path: './scrip
 assertEq(extractPathAt('uv venv --help 2>/dev/null | head -3', null), null, 'shell redirection /dev/null is not a file')
 assertEq(extractPathAt('cat /proc/self/status /sys/class/net', null), null, 'pseudo filesystems excluded')
 assertEq(extractPathAt('log to /dev/null but edit src/main.go', 30), { path: 'src/main.go', line: null }, 'real path survives next to /dev/null')
+assertEq(
+  extractPathMatches('Edit frontend/src/api.ts and src/main.go', new Set(['ts', 'go'])),
+  [
+    { path: 'frontend/src/api.ts', line: null, start: 5, end: 24 },
+    { path: 'src/main.go', line: null, start: 29, end: 40 },
+  ],
+  'path matches retain exact text ranges',
+)
 
 // Windows paths: chrys/opencode sessions recorded on Windows store backslash
 // (C:\…) and sometimes forward-slash (C:/…) forms. Both must keep the drive
