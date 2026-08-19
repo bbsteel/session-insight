@@ -165,7 +165,7 @@ async function run() {
 
   try {
     const sessionId = process.env.SI_SESSION_ID ?? await chooseSession(page)
-    console.log('Using session ' + sessionId)
+    console.log('Using a recorded session with the required navigation data')
     for (const spec of locales) {
       await checkLocale(page, spec, sessionId)
     }
