@@ -247,7 +247,7 @@ func TestIndexerHidesIncrementalProgress(t *testing.T) {
 
 	updatedRevision := time.Unix(0, 200)
 	mr.sessions[0].UpdatedAt = updatedRevision
-	mr.details["s1"].Session.UpdatedAt = updatedRevision
+	mr.details["s1"].UpdatedAt = updatedRevision
 	if err := ix.indexOnce(context.Background(), map[string]struct{}{"test": {}}); err != nil {
 		t.Fatalf("incremental indexOnce: %v", err)
 	}
