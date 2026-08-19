@@ -13,15 +13,13 @@ import {
 import {
   AlertTriangleIcon,
   CheckCircleIcon,
-  CloseIcon,
   CrosshairIcon,
   FileEditIcon,
   LayersIcon,
-  NarrowIcon,
-  PinIcon,
-  WidenIcon,
 } from './icons'
 import { formatNumber, useI18n } from '../i18n'
+import { NavigationFilterPill, NavigationFilterSelectionActions } from './NavigationFilterPill'
+import NavigationPanelHeader from './NavigationPanelHeader'
 
 // 关键事件大纲面板(v0.6.1):由后端共享分类器产生的稀疏 outline positions
 // 驱动,默认只包含异常、上下文边界、文件修改和关键验证结果四类。面板负责
@@ -93,6 +91,17 @@ export default function KeyEventOutlinePanel({
     persistOutlineCategories(localStorage, next)
     return next
   })
+  const allCategoriesSelected = OUTLINE_CATEGORIES.every(category => categories.includes(category))
+  const noCategoriesSelected = categories.length === 0
+  const selectAllCategories = () => {
+    const next = [...OUTLINE_CATEGORIES]
+    setCategories(next)
+    persistOutlineCategories(localStorage, next)
+  }
+  const selectNoCategories = () => {
+    setCategories([])
+    persistOutlineCategories(localStorage, [])
+  }
 
   // Floating overlay: close on outside click unless pinned.
   useEffect(() => {
@@ -153,45 +162,26 @@ export default function KeyEventOutlinePanel({
 
   return (
     <aside ref={panelRef} data-testid="navigation-panel" className={`absolute inset-y-0 right-0 z-10 flex max-w-[calc(100%-24px)] flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)] shadow-[-8px_0_24px_rgba(0,0,0,0.35)] ${wide ? 'w-[640px]' : 'w-[420px]'}`}>
-      <div className="flex h-9 flex-shrink-0 items-center gap-2 border-b border-[var(--border-muted)] px-3">
-        <span className="text-nav font-medium text-[var(--text-primary)]">{t('replay.outline')}</span>
-        <span className="text-meta text-[var(--text-muted)]">
-          {visible.length === items.length
-            ? formatNumber(locale, items.length)
-            : `${formatNumber(locale, visible.length)}/${formatNumber(locale, items.length)}`}
-        </span>
-        <span className="flex-1" />
-        <button
-          onClick={() => onPinnedChange?.(!pinned)}
-          className={`inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-            pinned
-              ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
-              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-          }`}
-          title={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
-          aria-pressed={pinned}
-          aria-label={pinned ? t('panel.unpinHelp') : t('panel.pinHelp')}
-        >
-          <PinIcon filled={pinned} />
-          {pinned ? t('panel.pinned') : t('panel.pin')}
-        </button>
-        <button
-          onClick={toggleWide}
-          className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={wide ? t('panel.restoreWidth') : t('panel.widen')}
-        >
-          {wide ? <NarrowIcon /> : <WidenIcon />}
-          {wide ? t('panel.standard') : t('panel.widen')}
-        </button>
-        <button
-          onClick={onClose}
-          className="inline-flex h-6 w-6 items-center justify-center rounded text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-          title={t('common.close')}
-          aria-label={t('outline.close')}
-        >
-          <CloseIcon />
-        </button>
-      </div>
+      <NavigationPanelHeader
+        title={t('replay.outline')}
+        count={visible.length === items.length
+          ? formatNumber(locale, items.length)
+          : formatNumber(locale, visible.length) + '/' + formatNumber(locale, items.length)}
+        pinned={pinned}
+        wide={wide}
+        onPinnedChange={onPinnedChange}
+        onToggleWide={toggleWide}
+        onClose={onClose}
+        pinLabel={t('panel.pin')}
+        pinnedLabel={t('panel.pinned')}
+        pinTitle={t('panel.pinHelp')}
+        unpinTitle={t('panel.unpinHelp')}
+        widenLabel={t('panel.widen')}
+        standardLabel={t('panel.standard')}
+        widenTitle={t('panel.widen')}
+        restoreWidthTitle={t('panel.restoreWidth')}
+        closeLabel={t('outline.close')}
+      />
 
       <div className="flex-shrink-0 border-b border-[var(--border-muted)] p-2">
         <input
@@ -201,27 +191,31 @@ export default function KeyEventOutlinePanel({
           className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
           aria-label={t('outline.filterLabel')}
         />
-        <div className="mt-1.5 flex flex-wrap items-center gap-3">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          <NavigationFilterSelectionActions
+            allSelected={allCategoriesSelected}
+            noneSelected={noCategoriesSelected}
+            allLabel={t('panel.selectAll')}
+            noneLabel={t('panel.selectNone')}
+            onSelectAll={selectAllCategories}
+            onSelectNone={selectNoCategories}
+          />
           {OUTLINE_CATEGORIES.map(cat => (
-            <label
+            <NavigationFilterPill
               key={cat}
-              className="flex cursor-pointer items-center gap-1.5 text-meta text-[var(--text-secondary)]"
+              active={categories.includes(cat)}
+              accentColor={CATEGORY_META[cat].color}
+              onClick={() => toggleCategory(cat)}
+              aria-label={t('outline.showKind', { kind: t(`outline.category.${cat}`) })}
             >
-              <input
-                type="checkbox"
-                checked={categories.includes(cat)}
-                onChange={() => toggleCategory(cat)}
-                className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent-blue)]"
-                aria-label={t('outline.showKind', { kind: t(`outline.category.${cat}`) })}
-              />
-              <span style={{ color: CATEGORY_META[cat].color }}>{CATEGORY_META[cat].icon('h-3 w-3 shrink-0')}</span>
+              <span>{CATEGORY_META[cat].icon('h-3 w-3 shrink-0')}</span>
               {t(`outline.category.${cat}`)}
               <span className="text-[var(--text-muted)]">
                 {counts[cat].visible === counts[cat].total
                   ? formatNumber(locale, counts[cat].total)
-                  : `${formatNumber(locale, counts[cat].visible)}/${formatNumber(locale, counts[cat].total)}`}
+                  : formatNumber(locale, counts[cat].visible) + '/' + formatNumber(locale, counts[cat].total)}
               </span>
-            </label>
+            </NavigationFilterPill>
           ))}
         </div>
       </div>
