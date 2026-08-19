@@ -9,7 +9,7 @@ const HTTP_URL_START = /https?:\/\//gi
 const ALLOWED_TERMINAL_URL_ASCII = /[A-Za-z0-9\-._~:/?#@!$&*+,;=%]/
 const UNICODE_LETTER_OR_NUMBER = /[\p{L}\p{N}]/u
 
-interface UrlMatch {
+export interface TerminalUrlMatch {
   value: string
   start: number
   end: number
@@ -23,8 +23,8 @@ function isAllowedTerminalUrlChar(ch: string): boolean {
   return ch > '\u007f' && UNICODE_LETTER_OR_NUMBER.test(ch)
 }
 
-function terminalUrls(lineText: string): UrlMatch[] {
-  const urls: UrlMatch[] = []
+function terminalUrls(lineText: string): TerminalUrlMatch[] {
+  const urls: TerminalUrlMatch[] = []
   HTTP_URL_START.lastIndex = 0
   for (let startMatch = HTTP_URL_START.exec(lineText); startMatch; startMatch = HTTP_URL_START.exec(lineText)) {
     const start = startMatch.index
@@ -53,15 +53,25 @@ function terminalUrls(lineText: string): UrlMatch[] {
   return urls
 }
 
-/** Returns the preferred http(s) URL, favoring Markdown destinations over labels. */
-export function extractTerminalUrl(lineText: string): string | null {
-  const urls = terminalUrls(lineText)
+/** Returns every http(s) URL and its exact text range in the terminal row. */
+export function extractTerminalUrlMatches(lineText: string): TerminalUrlMatch[] {
+  return terminalUrls(lineText)
+}
+
+/** Returns the preferred URL and its text range, favoring Markdown destinations over labels. */
+export function extractTerminalUrlMatch(lineText: string): TerminalUrlMatch | null {
+  const urls = extractTerminalUrlMatches(lineText)
   // Markdown links render as `label (destination)`. Prefer their destination
   // when a URL-shaped label precedes it, while retaining parentheses that are
   // actually part of the URL itself.
   for (let i = urls.length - 1; i >= 0; i--) {
     const url = urls[i]
-    if (lineText[url.start - 1] === '(' && lineText[url.end] === ')') return url.value
+    if (lineText[url.start - 1] === '(' && lineText[url.end] === ')') return url
   }
-  return urls[0]?.value ?? null
+  return urls[0] ?? null
+}
+
+/** Returns the preferred http(s) URL, favoring Markdown destinations over labels. */
+export function extractTerminalUrl(lineText: string): string | null {
+  return extractTerminalUrlMatch(lineText)?.value ?? null
 }

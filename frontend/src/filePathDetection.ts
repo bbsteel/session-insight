@@ -8,6 +8,12 @@ export interface PathCandidate {
   line: number | null
 }
 
+export interface PathMatch extends PathCandidate {
+  /** Half-open JavaScript string range occupied by the path token. */
+  start: number
+  end: number
+}
+
 // Tokens containing at least one path separator — `/` (Unix) or `\` and `/`
 // (Windows) — optionally `~`/`./`/`../` prefixed, with an optional `:line`
 // suffix. Windows drive-absolute (`C:\…`, `C:/…`) and UNC (`\\server\share\…`)
@@ -63,58 +69,67 @@ function candidateAllowed(path: string, exts: Set<string> | null): boolean {
 
 /**
  * All path-like tokens in the row that pass the extension allowlist, ordered
- * with the token under `column` first (when it hits one). Empty when nothing
- * qualifies — no affordance for such rows.
+ * with the token under `textOffset` first (when it hits one). Empty when
+ * nothing qualifies — no affordance for such rows.
  */
-export function extractPathsAt(lineText: string, column: number | null, exts: Set<string> | null): PathCandidate[] {
-  const matches: { start: number; end: number; token: string }[] = []
+export function extractPathsAt(lineText: string, textOffset: number | null, exts: Set<string> | null): PathCandidate[] {
+  const matches = extractPathMatches(lineText, exts)
+  if (textOffset !== null) {
+    const hit = matches.findIndex(match => textOffset >= match.start && textOffset < match.end)
+    if (hit > 0) {
+      const [hitMatch] = matches.splice(hit, 1)
+      matches.unshift(hitMatch)
+    }
+  }
+  return matches.map(({ path, line }) => ({ path, line }))
+}
+
+/** Returns allowlisted path tokens together with their text ranges. */
+export function extractPathMatches(lineText: string, exts: Set<string> | null): PathMatch[] {
+  const matches: PathMatch[] = []
   PATH_TOKEN.lastIndex = 0
   for (let m = PATH_TOKEN.exec(lineText); m; m = PATH_TOKEN.exec(lineText)) {
     if (isUrlContext(lineText, m.index)) continue
     if (PSEUDO_FS.test(m[0])) continue
-    if (!candidateAllowed(parseToken(m[0]).path, exts)) continue
-    matches.push({ start: m.index, end: m.index + m[0].length, token: m[0] })
+    const candidate = parseToken(m[0])
+    if (!candidateAllowed(candidate.path, exts)) continue
+    matches.push({
+      ...candidate,
+      start: m.index,
+      end: m.index + m[0].length,
+    })
   }
-  if (column !== null) {
-    const hit = matches.findIndex(m => column >= m.start && column < m.end)
-    if (hit > 0) {
-      const [h] = matches.splice(hit, 1)
-      matches.unshift(h)
-    }
-  }
-  return matches.map(m => parseToken(m.token))
+  return matches
 }
 
 /**
- * Returns the path-like token spanning `column` in `lineText`, falling back
- * to the first path-like token when the click missed every token (or column
- * is unknown). null when the row contains nothing path-like.
+ * Returns the path-like token spanning `textOffset` in `lineText`, falling
+ * back to the first path-like token when the click missed every token (or the
+ * offset is unknown). null when the row contains nothing path-like.
  */
-export function extractPathAt(lineText: string, column: number | null, exts: Set<string> | null = null): PathCandidate | null {
-  return extractPathsAt(lineText, column, exts)[0] ?? null
+export function extractPathAt(lineText: string, textOffset: number | null, exts: Set<string> | null = null): PathCandidate | null {
+  return extractPathsAt(lineText, textOffset, exts)[0] ?? null
 }
 
 /**
- * Path token that strictly spans `column` (no fallback to "first on row").
+ * Path token that strictly spans `textOffset` (no fallback to "first on row").
  * Used when a fold header also owns the click: only a hit on the path itself
  * should open the file; the rest of the row toggles the fold.
  *
- * `column` is an xterm cell index. Fold badges often include fullwidth CJK
- * (e.g. "行"), so cell columns and JS string indices can drift by 1–2; a small
- * window around the token still counts as a path hit.
+ * `textOffset` is a JavaScript string index. Callers that start with an xterm
+ * cell column must convert it through the xterm buffer line first.
  */
-export function pathAtColumn(lineText: string, column: number, exts: Set<string> | null = null): PathCandidate | null {
+export function pathAtTextOffset(lineText: string, textOffset: number, exts: Set<string> | null = null): PathCandidate | null {
   const SLACK = 2
-  PATH_TOKEN.lastIndex = 0
-  for (let m = PATH_TOKEN.exec(lineText); m; m = PATH_TOKEN.exec(lineText)) {
-    if (isUrlContext(lineText, m.index)) continue
-    if (PSEUDO_FS.test(m[0])) continue
-    if (!candidateAllowed(parseToken(m[0]).path, exts)) continue
-    const start = m.index
-    const end = m.index + m[0].length
-    if (column >= start - SLACK && column < end + SLACK) {
-      return parseToken(m[0])
+  for (const match of extractPathMatches(lineText, exts)) {
+    if (textOffset >= match.start - SLACK && textOffset < match.end + SLACK) {
+      return { path: match.path, line: match.line }
     }
   }
   return null
+}
+
+/** @deprecated Use pathAtTextOffset; the argument is a JavaScript text offset. */
+export function pathAtColumn(lineText: string, textOffset: number, exts: Set<string> | null = null): PathCandidate | null {
+  return pathAtTextOffset(lineText, textOffset, exts)
 }

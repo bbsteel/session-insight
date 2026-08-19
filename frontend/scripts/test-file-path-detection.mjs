@@ -1,4 +1,4 @@
-import { extractPathAt, pathAtColumn } from '/tmp/session-insight-file-path/filePathDetection.js'
+import { extractPathAt, extractPathMatches, pathAtColumn, pathAtTextOffset } from '/tmp/session-insight-file-path/filePathDetection.js'
 
 let failures = 0
 function assertEq(actual, expected, label) {
@@ -24,6 +24,28 @@ assertEq(extractPathAt('padded  ./scripts/run.sh  tail', null), { path: './scrip
 assertEq(extractPathAt('uv venv --help 2>/dev/null | head -3', null), null, 'shell redirection /dev/null is not a file')
 assertEq(extractPathAt('cat /proc/self/status /sys/class/net', null), null, 'pseudo filesystems excluded')
 assertEq(extractPathAt('log to /dev/null but edit src/main.go', 30), { path: 'src/main.go', line: null }, 'real path survives next to /dev/null')
+assertEq(
+  extractPathMatches('Edit frontend/src/api.ts and src/main.go', new Set(['ts', 'go'])),
+  [
+    { path: 'frontend/src/api.ts', line: null, start: 5, end: 24 },
+    { path: 'src/main.go', line: null, start: 29, end: 40 },
+  ],
+  'path matches retain exact text ranges',
+)
+const cjkPaths = '前缀 frontend/src/missing.ts 和 frontend/src/existing.ts'
+assertEq(
+  extractPathMatches(cjkPaths, new Set(['ts'])),
+  [
+    { path: 'frontend/src/missing.ts', line: null, start: 3, end: 26 },
+    { path: 'frontend/src/existing.ts', line: null, start: 29, end: 53 },
+  ],
+  'CJK prefix keeps independent path ranges',
+)
+assertEq(
+  pathAtTextOffset(cjkPaths, 36, new Set(['ts'])),
+  { path: 'frontend/src/existing.ts', line: null },
+  'text offset selects the matching path after CJK text',
+)
 
 // Windows paths: chrys/opencode sessions recorded on Windows store backslash
 // (C:\…) and sometimes forward-slash (C:/…) forms. Both must keep the drive
