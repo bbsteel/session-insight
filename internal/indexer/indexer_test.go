@@ -220,6 +220,42 @@ func TestIndexer_FirstRun(t *testing.T) {
 	}
 }
 
+func TestIndexerHidesIncrementalProgress(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	initialRevision := time.Unix(0, 100)
+	mr := &mockReader{
+		agentType: "test",
+		sessions:  []model.Session{{ID: "s1", UpdatedAt: initialRevision}},
+		details: map[string]*model.SessionDetail{
+			"s1": {
+				Session: model.Session{ID: "s1", UpdatedAt: initialRevision},
+				Turns:   []model.TurnVM{{TurnIndex: 0, UserMessage: "hello world"}},
+			},
+		},
+	}
+
+	ix := New(database, []reader.BaseSessionReader{mr})
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatalf("full RunOnce: %v", err)
+	}
+	fullProgress := ix.SnapshotProgress()
+
+	updatedRevision := time.Unix(0, 200)
+	mr.sessions[0].UpdatedAt = updatedRevision
+	mr.details["s1"].Session.UpdatedAt = updatedRevision
+	if err := ix.indexOnce(context.Background(), map[string]struct{}{"test": {}}); err != nil {
+		t.Fatalf("incremental indexOnce: %v", err)
+	}
+	if incrementalProgress := ix.SnapshotProgress(); incrementalProgress != fullProgress {
+		t.Fatalf("incremental cycle changed global progress: before=%+v after=%+v", fullProgress, incrementalProgress)
+	}
+}
+
 func TestIndexerProcessesSessionsConcurrently(t *testing.T) {
 	database, err := db.Open(t.TempDir())
 	if err != nil {

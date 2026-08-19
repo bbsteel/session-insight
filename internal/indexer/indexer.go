@@ -178,6 +178,16 @@ func (ix *Indexer) RunBackground(ctx context.Context) {
 
 func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{}) error {
 	cycleStarted := time.Now()
+	// File watchers run agent-scoped incremental cycles between full
+	// reconciliation passes. Keep those cycles invisible to the global search
+	// progress indicator; only a full cycle represents the index being rebuilt
+	// for the whole application.
+	reportsFullCycleProgress := len(agentFilter) == 0
+	setCycleProgress := func(progress Progress) {
+		if reportsFullCycleProgress {
+			ix.setProgress(progress)
+		}
+	}
 	// Pre-count sessions so the UI can show a stable percentage.
 	type agentSessions struct {
 		reader            reader.BaseSessionReader
@@ -194,7 +204,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 			}
 		}
 		if ctx.Err() != nil {
-			ix.setProgress(Progress{State: "idle", Message: "cancelled"})
+			setCycleProgress(Progress{State: "idle", Message: "cancelled"})
 			return ctx.Err()
 		}
 		listStarted := time.Now()
@@ -220,7 +230,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 		total += len(sessions)
 	}
 
-	ix.setProgress(Progress{
+	setCycleProgress(Progress{
 		State:   "running",
 		Done:    0,
 		Total:   total,
@@ -232,7 +242,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 	done := 0
 	for _, item := range planned {
 		if ctx.Err() != nil {
-			ix.setProgress(Progress{
+			setCycleProgress(Progress{
 				State:   "idle",
 				Done:    done,
 				Total:   total,
@@ -246,7 +256,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 		}
 		n, err := ix.indexReaderSessions(ctx, item.reader, item.sessions, item.inventoryComplete, func() {
 			done++
-			ix.setProgress(Progress{
+			setCycleProgress(Progress{
 				State:   "running",
 				Done:    done,
 				Total:   total,
@@ -263,7 +273,7 @@ func (ix *Indexer) indexOnce(ctx context.Context, agentFilter map[string]struct{
 	if len(errs) > 0 {
 		msg = "completed_with_errors"
 	}
-	ix.setProgress(Progress{
+	setCycleProgress(Progress{
 		State:   "idle",
 		Done:    done,
 		Total:   total,
