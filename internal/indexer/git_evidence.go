@@ -45,6 +45,30 @@ func newGitEvidenceRuntime() (*gitEvidenceRuntime, error) {
 	return &gitEvidenceRuntime{resolver: resolver, capturer: capturer, discoverer: discoverer}, nil
 }
 
+func (ix *Indexer) replaceSessionGitEvidence(evidence model.SessionGitEvidence) error {
+	return ix.withIndexWrite(func() error {
+		return ix.db.ReplaceSessionGitEvidence(evidence)
+	})
+}
+
+func (ix *Indexer) storeLocalGitSnapshot(snapshotWrite db.LocalGitSnapshotWrite) error {
+	return ix.withIndexWrite(func() error {
+		return ix.db.StoreLocalGitSnapshot(snapshotWrite)
+	})
+}
+
+func (ix *Indexer) replaceSessionGitPatchContent(
+	agentType, sessionID, repositoryEntryKey string,
+	patchContent map[string][]byte,
+	quota db.SourceContentQuota,
+) error {
+	return ix.withIndexWrite(func() error {
+		return ix.db.ReplaceSessionGitPatchContent(
+			agentType, sessionID, repositoryEntryKey, patchContent, quota,
+		)
+	})
+}
+
 func (ix *Indexer) indexGitEvidence(
 	ctx context.Context,
 	snapshotReader reader.AuthoritativeIndexSnapshotReader,
@@ -120,7 +144,7 @@ func (ix *Indexer) indexGitEvidence(
 
 	// Create or refresh the private binding before immutable snapshots attach
 	// to it. Existing hosted authority and its exact fixed files are preserved.
-	if err := ix.db.ReplaceSessionGitEvidence(evidence); err != nil {
+	if err := ix.replaceSessionGitEvidence(evidence); err != nil {
 		if !errors.Is(err, db.ErrHostedAuthorityRequiresReconfirmation) {
 			return err
 		}
@@ -135,7 +159,7 @@ func (ix *Indexer) indexGitEvidence(
 		if evidence.Baseline != nil {
 			evidence.Assessment = model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonFinalNotCaptured)
 		}
-		if err := ix.db.ReplaceSessionGitEvidence(evidence); err != nil {
+		if err := ix.replaceSessionGitEvidence(evidence); err != nil {
 			return err
 		}
 	}
@@ -181,7 +205,7 @@ func (ix *Indexer) indexGitEvidence(
 			evidence.CandidateCommits = []model.GitCandidateCommit{}
 		}
 		evidence.Provisional = exactLive
-		return ix.db.ReplaceSessionGitEvidence(evidence)
+		return ix.replaceSessionGitEvidence(evidence)
 	}
 
 	// Reuse an already published final for the same authoritative source
@@ -205,12 +229,12 @@ func (ix *Indexer) indexGitEvidence(
 			evidence.Authority = model.GitAuthorityNone
 			evidence.AuthoritySelection = nil
 		}
-		return ix.db.ReplaceSessionGitEvidence(evidence)
+		return ix.replaceSessionGitEvidence(evidence)
 	}
 	if err := recheckGitSource(ctx, snapshotReader, session, envelope); err != nil {
 		return err
 	}
-	if err := ix.db.StoreLocalGitSnapshot(localSnapshotWrite(bindingID, captured.Snapshot)); err != nil {
+	if err := ix.storeLocalGitSnapshot(localSnapshotWrite(bindingID, captured.Snapshot)); err != nil {
 		return err
 	}
 
@@ -223,7 +247,7 @@ func (ix *Indexer) indexGitEvidence(
 			evidence.AuthoritySelection = nil
 		}
 		evidence.Provisional = true
-		return ix.db.ReplaceSessionGitEvidence(evidence)
+		return ix.replaceSessionGitEvidence(evidence)
 	case model.GitSnapshotCheckpoint:
 		if evidence.Authority != model.GitAuthorityHostedChange {
 			evidence.Assessment = model.NonExactGitEvidence(model.GitEvidenceMissing, model.ReasonSessionStillLive)
@@ -233,7 +257,7 @@ func (ix *Indexer) indexGitEvidence(
 			evidence.CandidateCommits = []model.GitCandidateCommit{}
 		}
 		evidence.Provisional = true
-		return ix.db.ReplaceSessionGitEvidence(evidence)
+		return ix.replaceSessionGitEvidence(evidence)
 	case model.GitSnapshotFinal:
 		return ix.deriveLocalGitEvidence(ctx, session, envelope, evidence, repository, baselineRecord, snapshotRecord(captured.Snapshot))
 	default:
@@ -275,7 +299,7 @@ func (ix *Indexer) deriveLocalGitEvidence(
 	if evidence.Authority == model.GitAuthorityHostedChange {
 		// Local snapshots remain useful private observations, but a user-selected
 		// fixed hosted change owns the public file set until explicitly changed.
-		return ix.db.ReplaceSessionGitEvidence(evidence)
+		return ix.replaceSessionGitEvidence(evidence)
 	}
 
 	renderedPatches := gitevidence.RenderPatches(baseline, final, diff, gitevidence.DefaultPatchLimits())
@@ -371,16 +395,16 @@ func (ix *Indexer) deriveLocalGitEvidence(
 	if staged.Assessment.State == model.GitEvidenceExact && len(patchContent) != 0 {
 		staged.Assessment = model.NonExactGitEvidence(model.GitEvidenceEstimated, model.ReasonSnapshotObjectMissing)
 	}
-	if err := ix.db.ReplaceSessionGitEvidence(staged); err != nil {
+	if err := ix.replaceSessionGitEvidence(staged); err != nil {
 		return err
 	}
-	if err := ix.db.ReplaceSessionGitPatchContent(
+	if err := ix.replaceSessionGitPatchContent(
 		evidence.RootAgentType, evidence.RootSessionID, evidence.RepositoryEntryKey,
 		patchContent, db.DefaultSourceContentQuota,
 	); err != nil {
 		return err
 	}
-	return ix.db.ReplaceSessionGitEvidence(evidence)
+	return ix.replaceSessionGitEvidence(evidence)
 }
 
 func intPointer(value int) *int {
