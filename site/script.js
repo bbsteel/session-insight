@@ -81,6 +81,9 @@ const translations = {
     "footer.top": "Back to top ↑",
     "footer.build": "OPEN SOURCE / LOCAL-FIRST / 2026",
     "page.title": "Session Insight — See what your coding agents actually did.",
+    "page.description": "Session Insight is a local-first observability console for AI coding sessions. Replay turns, inspect evidence, and understand agent collaboration.",
+    "page.ogDescription": "A local-first observability console for AI coding sessions.",
+    "page.imageAlt": "Session Insight replay view showing an AI coding session.",
   },
   zh: {
     "brand.aria": "Session Insight 首页",
@@ -162,6 +165,9 @@ const translations = {
     "footer.top": "回到顶部 ↑",
     "footer.build": "开源 / 本地优先 / 2026",
     "page.title": "Session Insight — 看清 AI 编程代理到底做了什么。",
+    "page.description": "Session Insight 是一个本地优先的 AI 编程会话观测控制台，用来重放轮次、检查证据并理解代理协作。",
+    "page.ogDescription": "面向 AI 编程会话的本地优先观测控制台。",
+    "page.imageAlt": "Session Insight 展示 AI 编程会话的重放视图。",
   },
 };
 
@@ -178,6 +184,11 @@ function applyLanguage(language) {
   document.documentElement.lang = selectedLanguage === "zh" ? "zh-CN" : "en";
   document.documentElement.dataset.language = selectedLanguage;
   document.title = copy["page.title"];
+
+  document.querySelectorAll("[data-meta-i18n]").forEach((element) => {
+    const translation = copy[element.dataset.metaI18n];
+    if (translation) element.setAttribute("content", translation);
+  });
 
   document.querySelectorAll("[data-i18n]").forEach((element) => {
     const translation = copy[element.dataset.i18n];
