@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 40
+const currentSchemaVersion = 41
 
 type DB struct {
 	conn *sql.DB
@@ -206,6 +206,21 @@ func migrate(conn *sql.DB) error {
 		    created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	    PRIMARY KEY (agent_type, session_id)
 	);
+
+	-- Snippets are immutable local copies of useful transcript excerpts.
+	-- Source fields provide a best-effort path back to the originating session,
+	-- but deliberately do not depend on the source still existing.
+	CREATE TABLE IF NOT EXISTS snippets (
+	    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	    content     TEXT    NOT NULL,
+	    agent_type  TEXT    NOT NULL,
+	    session_id  TEXT    NOT NULL,
+	    session_name TEXT   NOT NULL DEFAULT '',
+	    source_kind TEXT    NOT NULL CHECK (source_kind IN ('selection', 'assistant')),
+	    turn_index  INTEGER,
+	    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_snippets_created ON snippets(created_at DESC, id DESC);
 
 	CREATE TABLE IF NOT EXISTS app_settings (
 	    key TEXT PRIMARY KEY,
@@ -936,6 +951,8 @@ func migrate(conn *sql.DB) error {
 	if err := migrateGitAssociationV40(conn); err != nil {
 		return err
 	}
+	// Version 41: persistent local excerpts. The CREATE TABLE above safely
+	// creates it for both fresh installs and existing databases.
 
 	// Version 38: the Codex reader now parses paginated history mode
 	// (event_msg/item_completed) for user/assistant text. Codex sessions

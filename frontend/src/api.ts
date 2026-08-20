@@ -1,4 +1,4 @@
-import type { AgentInfo, EditCall, PositionsResponse, ResumePlan, ResumeResult, SearchResult, SessionDetail, SessionSummary, SessionTerminalStatus, TerminalFocusResult } from './types'
+import type { AgentInfo, EditCall, PositionsResponse, ResumePlan, ResumeResult, SearchResult, SessionDetail, SessionSummary, SessionTerminalStatus, Snippet, TerminalFocusResult } from './types'
 import type { CollaborationGraphDTO, FactEvidenceDTO } from './collaboration/types.js'
 import type {
   ChangeHostPreview,
@@ -321,6 +321,30 @@ export async function fetchBookmarks(): Promise<SessionSummary[]> {
   const res = await fetch('/api/bookmarks')
   if (!res.ok) throw await responseError(res, 'bookmarks_load_failed')
   return readJson<SessionSummary[]>(res, 'bookmarks')
+}
+
+export async function fetchSnippets(): Promise<Snippet[]> {
+  const res = await fetch('/api/snippets')
+  if (!res.ok) throw await responseError(res, 'snippets_load_failed')
+  return readJson<Snippet[]>(res, 'snippets')
+}
+
+export async function createSnippet(snippet: Omit<Snippet, 'id' | 'created_at'>): Promise<Snippet> {
+  const res = await fetch('/api/snippets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(snippet),
+  })
+  if (!res.ok) throw await responseError(res, 'snippet_save_failed')
+  return readJson<Snippet>(res, 'snippet')
+}
+
+export async function deleteSnippet(id: number): Promise<void> {
+  const res = await fetch(`/api/snippets/${id}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) throw await responseError(res, 'snippet_delete_failed')
 }
 
 export async function addBookmark(session: Pick<SessionSummary, 'id' | 'agent_type'>): Promise<void> {

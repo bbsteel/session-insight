@@ -63,6 +63,8 @@ export interface TerminalControl {
   // viewport (top-anchored scrollToLine leaves it easy to miss).
   scrollToLineCentered: (line: number) => void
   getMetrics: () => ScrollMetrics
+  /** Current xterm buffer selection, or an empty string when none exists. */
+  getSelectionText: () => string
   // Top visible buffer line via xterm's own buffer state (exact regardless of
   // line-height variants); used to preserve the logical visible position
   // across layout changes that only alter the container height.
@@ -156,6 +158,8 @@ export interface TerminalContextMenuEvent {
   cellColumn: number | null
   textOffset: number | null
   lineText: string
+  /** Selection frozen from xterm at the context-menu event boundary. */
+  selectionText: string
   collapsedFoldKeys: string[]
   /** Exact path selected by a ranged matcher or path-bearing fold header. */
   selectedFile?: TerminalFileMatch
