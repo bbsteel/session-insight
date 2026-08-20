@@ -63,6 +63,13 @@ async function checkLocale(page, locale) {
   check(`${locale} quota hover preview is visible`, await quotaPreview.isVisible())
   check(`${locale} quota hover preview has configured providers or empty state`,
     await quotaPreview.locator('[data-testid^="coding-quota-preview-provider-"]').count() > 0 || await quotaPreview.locator('[data-testid="coding-quota-preview-empty"]').count() === 1)
+  const previewText = await quotaPreview.innerText()
+  check(`${locale} quota hover preview prompts opening management`, previewText.includes(locale === 'en' ? 'Click Quota to open full management.' : '点击“额度”打开完整管理。'))
+  check(`${locale} quota hover preview omits strategy details`, !previewText.includes(locale === 'en' ? 'Strategy' : '额度策略'))
+  const previewRemaining = quotaPreview.locator('[data-testid^="coding-quota-preview-remaining-"]').first()
+  const previewReset = quotaPreview.locator('[data-testid^="coding-quota-preview-reset-"]').first()
+  check(`${locale} quota hover preview emphasizes remaining value`, await previewRemaining.count() === 0 || (await previewRemaining.getAttribute('class'))?.includes('font-bold'))
+  check(`${locale} quota hover preview emphasizes reset time`, await previewReset.count() === 0 || (await previewReset.getAttribute('class'))?.includes('text-[var(--accent-blue)]'))
   const previewScreenshotPath = path.join(SHOT_DIR, `coding-quota-preview-${locale}.png`)
   await page.screenshot({ path: previewScreenshotPath })
   console.log(`Quota preview screenshot saved: ${previewScreenshotPath}`)
