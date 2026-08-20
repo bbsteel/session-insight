@@ -59,6 +59,11 @@ function getSnippetPreview(content: string): { text: string; truncated: boolean 
   }
 }
 
+function getSnippetPageLabel(snippet: Snippet): string {
+  const firstContentLine = snippet.content.split('\n').find(line => line.trim())?.trim() ?? ''
+  return snippet.session_name.trim() || firstContentLine || snippet.session_id
+}
+
 export default function SnippetPage({ onBack, onOpenSource }: Props) {
   const { locale, t } = useI18n()
   const [snippets, setSnippets] = useState<Snippet[]>([])
@@ -69,6 +74,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
   const [expandedSnippetIDs, setExpandedSnippetIDs] = useState<Set<number>>(() => new Set())
   const [agentFilter, setAgentFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState('')
+  const [selectedSnippetID, setSelectedSnippetID] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -141,6 +147,18 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
     if (projectFilter && !projectFacets.some(facet => facet.key === projectFilter)) setProjectFilter('')
   }, [projectFacets, projectFilter])
 
+  const selectedSnippet = visibleSnippets.find(snippet => snippet.id === selectedSnippetID) ?? visibleSnippets[0] ?? null
+
+  useEffect(() => {
+    if (visibleSnippets.length === 0) {
+      if (selectedSnippetID !== null) setSelectedSnippetID(null)
+      return
+    }
+    if (!visibleSnippets.some(snippet => snippet.id === selectedSnippetID)) {
+      setSelectedSnippetID(visibleSnippets[0].id)
+    }
+  }, [selectedSnippetID, visibleSnippets])
+
   const remove = async (id: number) => {
     if (deletingID !== null) return
     setDeletingID(id)
@@ -192,185 +210,224 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
         </div>
         {error && <p className="mt-3 text-helper text-[var(--error)]" role="status">{t(error)}</p>}
 
-        <div className="mt-5 grid grid-cols-1 items-start gap-5 lg:grid-cols-[14rem_minmax(0,1fr)]">
-          <aside
-            className="relative overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-3 shadow-sm"
-            data-testid="snippet-notebook-nav"
-            aria-label={t('snippets.notebook')}
-          >
-            <div className="absolute inset-y-0 left-0 w-1 bg-[var(--accent-purple)]" aria-hidden="true" />
-            <div className="flex items-center gap-2 px-2">
-              <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--accent-purple)]/10 text-[var(--accent-purple)]">
-                <NotebookIcon />
-              </span>
-              <div className="min-w-0">
-                <p className="text-meta font-semibold uppercase tracking-[0.12em] text-[var(--accent-purple)]">{t('snippets.notebook')}</p>
-                <p className="truncate text-helper font-medium text-[var(--text-primary)]">{t('snippets.title')}</p>
+        <div className="mt-5 overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-sm" data-testid="snippet-notebook-workspace">
+          <div className="flex min-w-0 border-b border-[var(--border-default)] bg-[var(--bg-inset)]" data-testid="snippet-agent-nav">
+            <nav className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto px-3 pt-2" aria-label={t('snippets.agents')}>
+              <div className="mr-2 flex flex-shrink-0 items-center gap-2 border-r border-[var(--border-default)] pb-2 pr-4">
+                <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--accent-purple)]/10 text-[var(--accent-purple)]">
+                  <NotebookIcon size={16} />
+                </span>
+                <span className="text-helper font-medium text-[var(--text-primary)]">{t('snippets.notebook')}</span>
               </div>
-            </div>
-
-            <nav className="mt-4 space-y-1" aria-label={t('snippets.notebook')}>
               <button
                 type="button"
                 data-testid="snippet-filter-all"
                 aria-pressed={!agentFilter && !projectFilter}
+                role="tab"
+                aria-selected={!agentFilter && !projectFilter}
                 onClick={() => {
                   setAgentFilter('')
                   setProjectFilter('')
                 }}
-                className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${!agentFilter && !projectFilter ? 'bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
+                className={`flex h-8 flex-shrink-0 items-center gap-1.5 rounded-t-md border-x border-t px-3 text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${!agentFilter && !projectFilter ? 'border-[var(--border-default)] bg-[var(--bg-surface)] font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
               >
-                <NotebookIcon size={16} />
-                <span className="min-w-0 flex-1 truncate">{t('snippets.allNotes')}</span>
-                <span className="text-meta text-[var(--text-muted)]">{snippets.length}</span>
+                <NotebookIcon size={15} />
+                <span>{t('snippets.allNotes')}</span>
               </button>
+              {agentFacets.map(facet => (
+                <button
+                  key={facet.key}
+                  type="button"
+                  data-testid={`snippet-filter-agent-${facet.key}`}
+                  aria-pressed={agentFilter === facet.key}
+                  role="tab"
+                  aria-selected={agentFilter === facet.key}
+                  onClick={() => setAgentFilter(current => current === facet.key ? '' : facet.key)}
+                  className={`flex h-8 flex-shrink-0 items-center gap-1.5 rounded-t-md border-x border-t px-3 text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${agentFilter === facet.key ? 'border-[var(--border-default)] bg-[var(--bg-surface)] font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
+                >
+                  <AgentIcon agentType={facet.key} size={15} />
+                  <span>{facet.label}</span>
+                  <span className="text-meta text-[var(--text-muted)]">{facet.count}</span>
+                </button>
+              ))}
             </nav>
+            <span className="flex flex-shrink-0 items-center border-l border-[var(--border-default)] px-3 text-meta text-[var(--text-muted)]" data-testid="snippet-total-count">{t('snippets.count', { count: snippets.length })}</span>
+          </div>
 
-            <div className="mt-5">
-              <p className="px-2.5 text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">{t('snippets.agents')}</p>
-              <div className="mt-2 space-y-0.5">
-                {agentFacets.map(facet => (
-                  <button
-                    key={facet.key}
-                    type="button"
-                    data-testid={`snippet-filter-agent-${facet.key}`}
-                    aria-pressed={agentFilter === facet.key}
-                    onClick={() => setAgentFilter(current => current === facet.key ? '' : facet.key)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${agentFilter === facet.key ? 'bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
-                  >
-                    <AgentIcon agentType={facet.key} size={16} />
-                    <span className="min-w-0 flex-1 truncate">{facet.label}</span>
-                    <span className="text-meta text-[var(--text-muted)]">{facet.count}</span>
-                  </button>
-                ))}
+          <div className="grid min-h-[32rem] grid-cols-1 lg:grid-cols-[12rem_minmax(0,1fr)_14rem]">
+            <aside className="flex min-h-[12rem] flex-col border-b border-[var(--border-default)] bg-[var(--bg-inset)]/45 lg:min-h-0 lg:border-b-0 lg:border-r" data-testid="snippet-project-nav" aria-label={t('snippets.projects')}>
+              <div className="flex items-center gap-2 border-b border-[var(--border-default)] px-3 py-3">
+                <FolderIcon />
+                <span className="text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">{t('snippets.projects')}</span>
               </div>
-            </div>
-
-            <div className="mt-5">
-              <p className="px-2.5 text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">{t('snippets.projects')}</p>
-              <div className="mt-2 max-h-56 space-y-0.5 overflow-y-auto pr-1">
-                {projectFacets.map(facet => (
-                  <button
-                    key={facet.key}
-                    type="button"
-                    data-testid={`snippet-filter-project-${facet.key}`}
-                    aria-pressed={projectFilter === facet.key}
-                    onClick={() => setProjectFilter(current => current === facet.key ? '' : facet.key)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${projectFilter === facet.key ? 'bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
-                  >
-                    <FolderIcon />
-                    <span className="min-w-0 flex-1 truncate">{facet.label}</span>
-                    <span className="text-meta text-[var(--text-muted)]">{facet.count}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {hasActiveFilters && (
-              <button
-                type="button"
-                data-testid="snippet-clear-filters"
-                onClick={() => {
-                  setQuery('')
-                  setAgentFilter('')
-                  setProjectFilter('')
-                }}
-                className="mt-5 w-full rounded-lg border border-[var(--border-default)] px-2.5 py-1.5 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-              >
-                {t('snippets.clearFilters')}
-              </button>
-            )}
-          </aside>
-
-          <div className="min-w-0">
-            <div className="flex items-center justify-between gap-3 px-1">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="h-2 w-2 flex-shrink-0 rounded-full bg-[var(--accent-purple)]" aria-hidden="true" />
-                <h2 className="truncate text-base font-semibold">{currentNotebookLabel}</h2>
-              </div>
-              <span className="flex-shrink-0 text-helper text-[var(--text-muted)]" data-testid="snippet-visible-count">{t('snippets.count', { count: visibleSnippets.length })}</span>
-            </div>
-
-            {loading ? (
-              <p className="mt-6 text-helper text-[var(--text-muted)]">{t('common.loading')}</p>
-            ) : visibleSnippets.length === 0 ? (
-              <p className="mt-6 max-w-xl rounded-xl border border-dashed border-[var(--border-default)] px-5 py-8 text-helper leading-6 text-[var(--text-muted)]">{hasActiveFilters ? t('snippets.noMatches') : t('snippets.empty')}</p>
-            ) : (
-              <section className="mt-4 grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label={t('snippets.title')}>
-                {visibleSnippets.map(snippet => {
-                  const preview = getSnippetPreview(snippet.content)
-                  const expanded = expandedSnippetIDs.has(snippet.id)
-                  const isAssistantSnippet = snippet.source_kind === 'assistant'
-                  return (
-                    <article
-                      key={snippet.id}
-                      className="group relative flex min-h-[236px] flex-col overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 shadow-sm transition-shadow duration-fast hover:shadow-md"
+              <div className="flex-1 overflow-y-auto p-2">
+                <button
+                  type="button"
+                  data-testid="snippet-filter-all-projects"
+                  aria-pressed={!projectFilter}
+                  onClick={() => setProjectFilter('')}
+                  className={`flex w-full items-center gap-2 border-l-2 px-2 py-2 text-left text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${!projectFilter ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
+                >
+                  <NotebookIcon size={15} />
+                  <span className="min-w-0 flex-1 truncate">{t('snippets.allProjects')}</span>
+                </button>
+                <div className="mt-2 space-y-0.5 border-l border-[var(--border-muted)] pl-2">
+                  {projectFacets.map(facet => (
+                    <button
+                      key={facet.key}
+                      type="button"
+                      data-testid={`snippet-filter-project-${facet.key}`}
+                      aria-pressed={projectFilter === facet.key}
+                      onClick={() => setProjectFilter(current => current === facet.key ? '' : facet.key)}
+                      className={`flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${projectFilter === facet.key ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
                     >
-                      <div className={`absolute inset-x-0 top-0 h-0.5 ${isAssistantSnippet ? 'bg-[var(--accent-purple)]' : 'bg-[var(--accent-blue)]'}`} aria-hidden="true" />
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1 text-meta text-[var(--text-secondary)]">
-                          <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${isAssistantSnippet ? 'bg-[var(--accent-purple)]' : 'bg-[var(--accent-blue)]'}`} aria-hidden="true" />
-                          <span className="truncate">{isAssistantSnippet ? t('snippets.sourceAssistant') : t('snippets.sourceSelection')}</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => void remove(snippet.id)}
-                          disabled={deletingID === snippet.id}
-                          aria-label={t('snippets.deleteLabel')}
-                          title={t('snippets.delete')}
-                          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-base leading-none text-[var(--text-muted)] opacity-70 hover:bg-[var(--bg-surface-hover)] hover:text-[var(--error)] group-hover:opacity-100 disabled:cursor-wait disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                        >
-                          ×
-                        </button>
-                      </div>
+                      <FolderIcon />
+                      <span className="min-w-0 flex-1 truncate">{facet.label}</span>
+                      <span className="text-meta text-[var(--text-muted)]">{facet.count}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  data-testid="snippet-clear-filters"
+                  onClick={() => {
+                    setQuery('')
+                    setAgentFilter('')
+                    setProjectFilter('')
+                  }}
+                  className="m-2 border-t border-[var(--border-default)] px-2 pt-3 text-left text-helper text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                >
+                  {t('snippets.clearFilters')}
+                </button>
+              )}
+            </aside>
 
-                      <div className={`relative mt-3 flex-none rounded-lg border border-[var(--border-muted)] bg-[var(--bg-inset)] px-3 py-3 ${expanded ? 'max-h-[22rem] overflow-y-auto' : 'h-[11rem] overflow-hidden'}`}>
-                        <pre className="m-0 whitespace-pre-wrap break-words font-mono text-helper leading-6 text-[var(--text-primary)]">{expanded ? snippet.content : preview.text}</pre>
-                        {!expanded && preview.truncated && (
-                          <div
-                            className="pointer-events-none absolute inset-x-0 bottom-0 h-10"
-                            style={{ background: 'linear-gradient(to bottom, transparent, var(--bg-inset))' }}
-                            aria-hidden="true"
-                          />
-                        )}
-                      </div>
+            <section className="min-w-0 bg-[var(--bg-primary)]" data-testid="snippet-reading-pane" aria-label={t('snippets.title')}>
+              <div className="flex items-center justify-between gap-3 border-b border-[var(--border-default)] px-5 py-3">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="h-2 w-2 flex-shrink-0 rounded-full bg-[var(--accent-purple)]" aria-hidden="true" />
+                    <h2 className="truncate text-base font-semibold">{currentNotebookLabel}</h2>
+                  </div>
+                  {selectedSnippet && <p className="mt-1 truncate text-meta text-[var(--text-muted)]">{getSnippetPageLabel(selectedSnippet)}</p>}
+                </div>
+                <span className="flex-shrink-0 text-helper text-[var(--text-muted)]" data-testid="snippet-visible-count">{t('snippets.count', { count: visibleSnippets.length })}</span>
+              </div>
 
-                      <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
-                        <div className="min-w-0 flex-1 text-meta text-[var(--text-muted)]">
-                          <div className="truncate" title={snippet.session_name || snippet.session_id}>{snippet.session_name || snippet.session_id}</div>
-                          <div className="mt-0.5 truncate" title={snippet.project || t('snippets.unknownProject')}>{snippet.project || t('snippets.unknownProject')}</div>
-                          <div className="mt-0.5 truncate">{formatDate(locale, snippet.created_at)}</div>
-                        </div>
-                        <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-1.5">
-                          {preview.truncated && (
-                            <button
-                              type="button"
-                              onClick={() => setExpandedSnippetIDs(ids => {
-                                const nextIDs = new Set(ids)
-                                if (nextIDs.has(snippet.id)) nextIDs.delete(snippet.id)
-                                else nextIDs.add(snippet.id)
-                                return nextIDs
-                              })}
-                              aria-expanded={expanded}
-                              className="h-7 rounded-md px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                            >
-                              {expanded ? t('snippets.collapse') : t('snippets.expand')}
-                            </button>
-                          )}
+              {loading ? (
+                <p className="px-5 py-8 text-helper text-[var(--text-muted)]">{t('common.loading')}</p>
+              ) : !selectedSnippet ? (
+                <p className="m-5 rounded-lg border border-dashed border-[var(--border-default)] px-5 py-8 text-helper leading-6 text-[var(--text-muted)]">{hasActiveFilters ? t('snippets.noMatches') : t('snippets.empty')}</p>
+              ) : (() => {
+                const preview = getSnippetPreview(selectedSnippet.content)
+                const expanded = expandedSnippetIDs.has(selectedSnippet.id)
+                const isAssistantSnippet = selectedSnippet.source_kind === 'assistant'
+                return (
+                  <article
+                    className="group relative m-5 overflow-hidden rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-sm"
+                    data-testid="snippet-reading-card"
+                  >
+                    <div className={`absolute inset-x-0 top-0 h-0.5 ${isAssistantSnippet ? 'bg-[var(--accent-purple)]' : 'bg-[var(--accent-blue)]'}`} aria-hidden="true" />
+                    <div className="flex items-center justify-between gap-3 border-b border-[var(--border-muted)] px-4 py-3">
+                      <span className="inline-flex min-w-0 items-center gap-1.5 text-meta text-[var(--text-secondary)]">
+                        <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${isAssistantSnippet ? 'bg-[var(--accent-purple)]' : 'bg-[var(--accent-blue)]'}`} aria-hidden="true" />
+                        <span className="truncate">{isAssistantSnippet ? t('snippets.sourceAssistant') : t('snippets.sourceSelection')}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void remove(selectedSnippet.id)}
+                        disabled={deletingID === selectedSnippet.id}
+                        aria-label={t('snippets.deleteLabel')}
+                        title={t('snippets.delete')}
+                        className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-base leading-none text-[var(--text-muted)] opacity-70 hover:bg-[var(--bg-surface-hover)] hover:text-[var(--error)] group-hover:opacity-100 disabled:cursor-wait disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <div className={`relative m-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-inset)] px-4 py-4 ${expanded ? 'max-h-[32rem] overflow-y-auto' : 'max-h-[22rem] overflow-hidden'}`}>
+                      <pre className="m-0 whitespace-pre-wrap break-words font-mono text-helper leading-6 text-[var(--text-primary)]">{expanded ? selectedSnippet.content : preview.text}</pre>
+                      {!expanded && preview.truncated && (
+                        <div
+                          className="pointer-events-none absolute inset-x-0 bottom-0 h-12"
+                          style={{ background: 'linear-gradient(to bottom, transparent, var(--bg-inset))' }}
+                          aria-hidden="true"
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-end justify-between gap-3 border-t border-[var(--border-muted)] px-4 py-3">
+                      <div className="min-w-0 flex-1 text-meta text-[var(--text-muted)]">
+                        <div className="truncate" title={selectedSnippet.session_name || selectedSnippet.session_id}>{selectedSnippet.session_name || selectedSnippet.session_id}</div>
+                        <div className="mt-0.5 truncate" title={selectedSnippet.project || t('snippets.unknownProject')}>{selectedSnippet.project || t('snippets.unknownProject')}</div>
+                        <div className="mt-0.5 truncate">{formatDate(locale, selectedSnippet.created_at)}</div>
+                      </div>
+                      <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-1.5">
+                        {preview.truncated && (
                           <button
                             type="button"
-                            onClick={() => onOpenSource(snippet)}
-                            className="h-7 rounded-md border border-[var(--border-default)] px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                            onClick={() => setExpandedSnippetIDs(ids => {
+                              const nextIDs = new Set(ids)
+                              if (nextIDs.has(selectedSnippet.id)) nextIDs.delete(selectedSnippet.id)
+                              else nextIDs.add(selectedSnippet.id)
+                              return nextIDs
+                            })}
+                            aria-expanded={expanded}
+                            className="h-7 rounded-md px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                           >
-                            {t('snippets.openSource')}
+                            {expanded ? t('snippets.collapse') : t('snippets.expand')}
                           </button>
-                        </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onOpenSource(selectedSnippet)}
+                          className="h-7 rounded-md border border-[var(--border-default)] px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                        >
+                          {t('snippets.openSource')}
+                        </button>
                       </div>
-                    </article>
+                    </div>
+                  </article>
+                )
+              })()}
+            </section>
+
+            <aside className="flex min-h-[12rem] flex-col border-t border-[var(--border-default)] bg-[var(--bg-inset)]/45 lg:min-h-0 lg:border-l lg:border-t-0" data-testid="snippet-page-nav" aria-label={t('snippets.pages')}>
+              <div className="flex items-center justify-between gap-2 border-b border-[var(--border-default)] px-3 py-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <NotebookIcon size={15} />
+                  <span className="truncate text-meta font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">{t('snippets.pages')}</span>
+                </div>
+                <span className="text-meta text-[var(--text-muted)]">{visibleSnippets.length}</span>
+              </div>
+              <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
+                {visibleSnippets.map(snippet => {
+                  const selected = selectedSnippet?.id === snippet.id
+                  const isAssistantSnippet = snippet.source_kind === 'assistant'
+                  return (
+                    <button
+                      key={snippet.id}
+                      type="button"
+                      data-testid={`snippet-page-${snippet.id}`}
+                      aria-current={selected ? 'page' : undefined}
+                      onClick={() => setSelectedSnippetID(snippet.id)}
+                      className={`flex w-full items-start gap-2 border-l-2 px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${selected ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10' : 'border-transparent hover:bg-[var(--bg-surface-hover)]'}`}
+                    >
+                      <span className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${isAssistantSnippet ? 'bg-[var(--accent-purple)]' : 'bg-[var(--accent-blue)]'}`} aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-helper text-[var(--text-primary)]">{getSnippetPageLabel(snippet)}</span>
+                        <span className="mt-0.5 block truncate text-meta text-[var(--text-muted)]">{snippet.project || t('snippets.unknownProject')}</span>
+                      </span>
+                    </button>
                   )
                 })}
-              </section>
-            )}
+                {!loading && visibleSnippets.length === 0 && (
+                  <p className="px-2 py-3 text-meta leading-5 text-[var(--text-muted)]">{hasActiveFilters ? t('snippets.noMatches') : t('snippets.empty')}</p>
+                )}
+              </div>
+            </aside>
           </div>
         </div>
       </div>
