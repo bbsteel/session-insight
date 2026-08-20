@@ -231,7 +231,9 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		view := itemState{ChecklistItem: item, Candidate: candidates[item.ID]}
 		for _, slot := range item.Slots {
 			st := cat.Items[slot.LogicalName]
-			resolved := resolveStatus(st, candidates[item.ID] != nil, s.store.blobExists(agent, currentCapture(st)))
+			current := currentCapture(st)
+			currentExists := s.store.blobExists(agent, current)
+			resolved := resolveStatus(st, candidates[item.ID] != nil, currentExists)
 			ss := slotState{
 				LogicalName:      slot.LogicalName,
 				Label:            slot.Label,
@@ -245,9 +247,14 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 				ss.AcceptedHash = st.AcceptedHash
 				if st.Current != nil {
 					ss.Capture = st.Current
-					ss.ImageURL = fmt.Sprintf("/api/image?agent=%s&hash=%s", agent, st.Current.Hash)
+					// Never emit a URL for a blob that is not on disk:
+					// the browser would render a broken image against a 404.
+					if currentExists {
+						ss.ImageURL = fmt.Sprintf("/api/image?agent=%s&hash=%s", agent, st.Current.Hash)
+					}
 				}
-				if st.AcceptedHash != "" && (st.Current == nil || st.AcceptedHash != st.Current.Hash) {
+				acceptedDiffers := st.AcceptedHash != "" && (st.Current == nil || st.AcceptedHash != st.Current.Hash)
+				if acceptedDiffers && s.store.blobExists(agent, &CaptureRecord{Hash: st.AcceptedHash, Ext: st.AcceptedExt}) {
 					ss.AcceptedImageURL = fmt.Sprintf("/api/image?agent=%s&hash=%s", agent, st.AcceptedHash)
 				}
 			}

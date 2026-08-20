@@ -182,7 +182,10 @@ func (s *Store) Import(agent, logicalName string, r io.Reader, originalName stri
 		return nil, err
 	}
 	blob := s.blobPath(canonicalAgent, hash, ext)
-	if _, err := os.Stat(blob); os.IsNotExist(err) {
+	if _, statErr := os.Stat(blob); statErr != nil {
+		if !os.IsNotExist(statErr) {
+			return nil, fmt.Errorf("inspect blob: %w", statErr)
+		}
 		if err := os.WriteFile(blob, data, 0o600); err != nil {
 			return nil, err
 		}
@@ -267,24 +270,30 @@ func (s *Store) blobExists(agent string, rec *CaptureRecord) bool {
 	return err == nil
 }
 
-// knownHashes returns every content hash the catalog may legitimately serve:
-// current captures, accepted content and work-order frozen inputs.
-func knownHashes(cat *AgentCatalog) map[string]string {
-	out := map[string]string{} // hash -> ext
+// servableHashes returns every content hash the catalog may legitimately
+// serve: current captures, accepted content and work-order frozen inputs.
+func servableHashes(cat *AgentCatalog) map[string]bool {
+	out := map[string]bool{}
 	for _, st := range cat.Items {
 		if st.Current != nil {
-			out[st.Current.Hash] = st.Current.Ext
+			out[st.Current.Hash] = true
 		}
-		if st.AcceptedHash != "" && st.AcceptedExt != "" {
-			out[st.AcceptedHash] = st.AcceptedExt
+		if st.AcceptedHash != "" {
+			out[st.AcceptedHash] = true
+		}
+	}
+	for _, wo := range cat.WorkOrders {
+		for _, frozenHash := range wo.Frozen {
+			out[frozenHash] = true
 		}
 	}
 	return out
 }
 
 // lookupBlob resolves a hash to an on-disk blob only when the catalog knows
-// the hash. The served path is built from the catalog's own hash string, not
-// from the request. The store directory is never exposed as static content.
+// the hash. The served path is built from catalog-owned and on-disk values,
+// not from the request. The store directory is never exposed as static
+// content.
 func (s *Store) lookupBlob(agent, hash string) (path string, ext string, err error) {
 	canonicalAgent, err := s.canonicalAgent(agent)
 	if err != nil {
@@ -297,19 +306,27 @@ func (s *Store) lookupBlob(agent, hash string) (path string, ext string, err err
 	if err != nil {
 		return "", "", err
 	}
-	knownHash, knownExt := "", ""
-	for catalogHash, catalogExt := range knownHashes(cat) {
+	knownHash := ""
+	for catalogHash := range servableHashes(cat) {
 		if catalogHash == hash {
-			knownHash, knownExt = catalogHash, catalogExt
+			knownHash = catalogHash
 			break
 		}
 	}
 	if knownHash == "" {
 		return "", "", fmt.Errorf("unknown image")
 	}
-	path = s.blobPath(canonicalAgent, knownHash, knownExt)
-	if _, err := os.Stat(path); err != nil {
-		return "", "", fmt.Errorf("image content not available locally")
+	// The on-disk blob name carries the authoritative extension (a frozen
+	// input's capture record may no longer be current or accepted).
+	matches, err := filepath.Glob(s.blobPath(canonicalAgent, knownHash, ".*"))
+	if err != nil {
+		return "", "", fmt.Errorf("inspect blob: %w", err)
 	}
-	return path, knownExt, nil
+	for _, match := range matches {
+		switch filepath.Ext(match) {
+		case ".png", ".jpg", ".gif":
+			return match, filepath.Ext(match), nil
+		}
+	}
+	return "", "", fmt.Errorf("image content not available locally")
 }

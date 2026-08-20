@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -153,4 +154,47 @@ func TestServerImageGating(t *testing.T) {
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown image hash = %d, want 404", res.StatusCode)
 	}
+}
+
+// TestServerOmitsURLForMissingBlob pins that a locally unavailable capture is
+// reported without an image URL (the endpoint would 404).
+func TestServerOmitsURLForMissingBlob(t *testing.T) {
+	srv, ts := testHTTPServer(t)
+	code, out := uploadFile(t, ts, "claude", "04-thinking", pngBytes(t, 1), "shot.png")
+	if code != http.StatusOK {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	capture, _ := out["capture"].(map[string]any)
+	hash, _ := capture["hash"].(string)
+	ext, _ := capture["ext"].(string)
+	if err := os.Remove(srv.store.blobPath("claude", hash, ext)); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := http.Get(ts.URL + "/api/state?agent=claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close() //nolint:errcheck
+	var state stateResponse
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range state.Items {
+		if item.ID != "04-thinking" {
+			continue
+		}
+		slot := item.Slots[0]
+		if !slot.LocalUnavailable {
+			t.Fatal("missing blob must set local_unavailable")
+		}
+		if slot.ImageURL != "" {
+			t.Fatalf("missing blob must not emit an image URL, got %s", slot.ImageURL)
+		}
+		if slot.Capture == nil {
+			t.Fatal("the capture record must stay visible even without its blob")
+		}
+		return
+	}
+	t.Fatal("state must include 04-thinking")
 }

@@ -70,6 +70,35 @@ type frozenEntry struct {
 	rec     *CaptureRecord
 }
 
+// workOrderTimestamp stamps work-order IDs. Wrapped so tests can force
+// same-second collisions.
+var workOrderTimestamp = func() string { return time.Now().UTC().Format("20060102-150405") }
+
+// createWorkOrderDir exclusively creates the work-order directory, appending
+// a numeric suffix when the one-second timestamp collides with an existing
+// order. Two generations never share or overwrite a directory.
+func createWorkOrderDir(checkoutDir, canonicalAgent string) (id string, dir string, err error) {
+	rootDir := workOrderRoot(checkoutDir)
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		return "", "", err
+	}
+	baseID := canonicalAgent + "-" + workOrderTimestamp()
+	for attempt := 0; ; attempt++ {
+		id = baseID
+		if attempt > 0 {
+			id = fmt.Sprintf("%s-%d", baseID, attempt+1)
+		}
+		dir = filepath.Join(rootDir, id)
+		err := os.Mkdir(dir, 0o755)
+		if err == nil {
+			return id, dir, nil
+		}
+		if !os.IsExist(err) {
+			return "", "", err
+		}
+	}
+}
+
 // generateWorkOrder freezes the pending inputs of one Agent into a work order
 // directory. The manager's boundary ends here: it never creates goals,
 // branches, PRs or product-code edits.
@@ -87,8 +116,10 @@ func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[strin
 		return nil, fmt.Errorf("no pending reference inputs for %s; nothing to freeze", canonicalAgent)
 	}
 
-	id := canonicalAgent + "-" + time.Now().UTC().Format("20060102-150405")
-	dir := filepath.Join(workOrderRoot(checkoutDir), id)
+	id, dir, err := createWorkOrderDir(checkoutDir, canonicalAgent)
+	if err != nil {
+		return nil, err
+	}
 	assetsDir := filepath.Join(dir, "selected-reference-assets")
 	contextDir := filepath.Join(dir, "local-candidate-context")
 	if err := os.MkdirAll(assetsDir, 0o755); err != nil {

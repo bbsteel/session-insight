@@ -59,7 +59,8 @@ func TestWorkOrderFreezeAndStaleness(t *testing.T) {
 		t.Fatalf("after input change state = %s, want stale", got)
 	}
 
-	// Accepting the frozen content consumes the work order.
+	// Accepting the updated content does not consume the work order: the
+	// accepted hash moved past the frozen hash, so the order stays stale.
 	acceptCapture(t, s, "claude", "04-thinking")
 	cat, _ = s.catalogs.load("claude")
 	if got := workOrderState(cat.WorkOrders[0], cat); got != WorkOrderStale {
@@ -80,6 +81,39 @@ func TestWorkOrderConsumedWhenFrozenAccepted(t *testing.T) {
 	cat, _ := s.catalogs.load("claude")
 	if got := workOrderState(cat.WorkOrders[0], cat); got != WorkOrderConsumed {
 		t.Fatalf("state = %s, want consumed (wo frozen=%v)", got, wo.Frozen)
+	}
+}
+
+// TestWorkOrderSameSecondCollision forces two generations into one timestamp
+// second: each must get its own directory.
+func TestWorkOrderSameSecondCollision(t *testing.T) {
+	s := testStore(t)
+	checkout := t.TempDir()
+	importPNG(t, s, "claude", "04-thinking", 1)
+
+	orig := workOrderTimestamp
+	workOrderTimestamp = func() string { return "20060102-150405" }
+	defer func() { workOrderTimestamp = orig }()
+
+	first, err := generateWorkOrder(s, checkout, "claude", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := generateWorkOrder(s, checkout, "claude", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("same-second generations collided on ID %s", first.ID)
+	}
+	for _, wo := range []*WorkOrderRecord{first, second} {
+		if _, err := os.Stat(filepath.Join(checkout, wo.Dir, "WORK_ORDER.md")); err != nil {
+			t.Errorf("work order %s missing its WORK_ORDER.md: %v", wo.ID, err)
+		}
+	}
+	cat, _ := s.catalogs.load("claude")
+	if len(cat.WorkOrders) != 2 {
+		t.Fatalf("catalog must record both work orders, got %d", len(cat.WorkOrders))
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func (f *fakeReader) GetSession(id string) (*model.SessionDetail, error) {
 			return &model.SessionDetail{Session: s}, nil
 		}
 	}
-	return nil, nil
+	return nil, fmt.Errorf("session %q not found", id)
 }
 func (f *fakeReader) RenderANSI(id string, cols int) (string, error) { return "", nil }
 func (f *fakeReader) GetRenderEvents(id string) ([]model.RenderEvent, error) {
@@ -127,6 +128,27 @@ func TestDiscoverCandidatesNoGuessing(t *testing.T) {
 	c := candidateFor(report, "17-session-completed")
 	if c == nil || c.Precision != PrecisionLowConfidence {
 		t.Fatalf("completion suggestion = %+v, want low_confidence", c)
+	}
+}
+
+// TestStderrOnlyResult pins the design rule that structured stderr counts as
+// a failure fact even with a zero exit code (reference input design §7:
+// failure = ExitCode != 0, ErrorKind set, or structured stderr present).
+func TestStderrOnlyResultIsFailureCandidate(t *testing.T) {
+	now := time.Now()
+	session := model.Session{ID: "s3", AgentType: "claude", TurnCount: 1, UpdatedAt: now.Add(-time.Hour)}
+	events := []model.RenderEvent{
+		{EventID: "ti1", Type: "ToolInvocation", ToolName: "Bash", ToolCallID: "c1", TurnIndex: 1},
+		{EventID: "tr1", Type: "ToolResult", ToolCallID: "c1", ParentEventID: "ti1",
+			ExitCode: 0, Stderr: "warning: deprecated flag", TurnIndex: 1},
+	}
+	r := &fakeReader{agent: "claude", sessions: []model.Session{session}, events: map[string][]model.RenderEvent{"s3": events}}
+	report := DiscoverCandidates(r, 10)
+	if c := candidateFor(report, "08-tool-failure"); c == nil {
+		t.Fatal("structured stderr with exit 0 must still yield a failure candidate (design §7)")
+	}
+	if c := candidateFor(report, "07-tool-success"); c != nil {
+		t.Fatalf("a result with stderr must not be offered as the success scene, got %+v", c)
 	}
 }
 

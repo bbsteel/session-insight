@@ -190,8 +190,15 @@ function renderItem(agent, item) {
       copy.style.marginLeft = '6px';
       copy.onclick = () => { navigator.clipboard.writeText(c.resume_command); toast('resume command copied'); };
       box.appendChild(copy);
+    } else if (c.resume_id) {
+      box.appendChild(document.createTextNode('resume ID: '));
+      box.appendChild(el('code', '', c.resume_id));
+      const copy = el('button', '', 'copy resume ID');
+      copy.style.marginLeft = '6px';
+      copy.onclick = () => { navigator.clipboard.writeText(c.resume_id); toast('resume ID copied'); };
+      box.appendChild(copy);
     } else {
-      box.appendChild(el('span', '', '(no native resume command available)'));
+      box.appendChild(el('span', '', '(no native resume command or ID available)'));
     }
     card.appendChild(box);
   } else {
