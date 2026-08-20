@@ -1039,6 +1039,20 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   const ctxMenuSections = useMemo((): TerminalMenuSection[] => {
     const selectedText = ctxMenu?.selectionText ?? termControlRef.current?.getSelectionText() ?? ''
+    const transcriptPositions = [...(positionsData?.positions ?? [])]
+      .sort((firstPosition, secondPosition) => firstPosition.line_start - secondPosition.line_start)
+    const currentAssistantPosition = ctxMenu?.originalRow === null || ctxMenu?.originalRow === undefined
+      ? undefined
+      : transcriptPositions.find((position, positionIndex) => {
+          if (position.kind !== 'assistant') return false
+
+          const positionEndLine = position.line_end
+            ?? (transcriptPositions[positionIndex + 1]?.line_start ?? Infinity) - 1
+          return position.line_start <= ctxMenu.originalRow! && positionEndLine >= ctxMenu.originalRow!
+        })
+    const currentAssistantContent = currentAssistantPosition
+      ? session?.turns.find(turn => turn.turn_index === currentAssistantPosition.turn_index)?.assistant_message || currentAssistantPosition.label
+      : ''
     const copyText = (text: string) => {
       void navigator.clipboard.writeText(text)
       setCtxMenu(null)
@@ -1146,6 +1160,16 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               setCtxMenu(null)
             },
           },
+          ...(currentAssistantPosition && currentAssistantContent.trim()
+            ? [{
+                label: t('snippets.saveCurrentAssistant'),
+                disabled: snippetSaving,
+                onClick: () => {
+                  void saveSnippet(currentAssistantContent, 'assistant', currentAssistantPosition.turn_index)
+                  setCtxMenu(null)
+                },
+              }]
+            : []),
           { label: t('replay.copySessionId'), onClick: () => copyText(session?.id ?? '') },
           {
             label: t('replay.copyCwd'),
