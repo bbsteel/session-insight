@@ -8,6 +8,8 @@ interface AgentFilterProps {
   agents: AgentInfo[]
   selected: string
   onSelect: (agentType: string) => void
+  /** Compact mode fits the all-agents control and overflow menu beside search. */
+  compact?: boolean
 }
 
 const ICON_BTN = 30
@@ -32,7 +34,7 @@ export function AllAgentsIcon({ size = 20 }: { size?: number }) {
   )
 }
 
-export default function AgentFilter({ agents, selected, onSelect }: AgentFilterProps) {
+export default function AgentFilter({ agents, selected, onSelect, compact = false }: AgentFilterProps) {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const overflowRef = useRef<HTMLDivElement>(null)
@@ -108,7 +110,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
   const showOverflow = hiddenAgents.length > 0
 
   return (
-    <div className="px-3 pb-2 flex-shrink-0">
+    <div className={compact ? 'w-[68px] flex-shrink-0' : 'px-3 pb-2 flex-shrink-0'}>
       <div
         ref={containerRef}
         className="flex items-center gap-1"
