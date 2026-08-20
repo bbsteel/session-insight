@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, APIError, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
+import { addBookmark, APIError, createSnippet, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathMatches, extractPathsAt, parseExtList, type PathMatch } from '../filePathDetection'
 import { extractTerminalUrlMatches, type TerminalUrlMatch } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
@@ -279,7 +279,29 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [bookmarkError, setBookmarkError] = useState<string | null>(null)
   const [noteEditorOpen, setNoteEditorOpen] = useState(false)
+  const [snippetSaving, setSnippetSaving] = useState(false)
+  const [snippetNotice, setSnippetNotice] = useState<string | null>(null)
   const termControlRef = useRef<TerminalControl | null>(null)
+  const saveSnippet = useCallback(async (content: string, sourceKind: 'selection' | 'assistant', turnIndex?: number) => {
+    if (!session || snippetSaving || !content.trim()) return
+    setSnippetSaving(true)
+    setSnippetNotice(null)
+    try {
+      await createSnippet({
+        content,
+        agent_type: session.agent_type,
+        session_id: session.id,
+        session_name: session.name,
+        source_kind: sourceKind,
+        ...(turnIndex === undefined ? {} : { turn_index: turnIndex }),
+      })
+      setSnippetNotice('snippets.saved')
+    } catch {
+      setSnippetNotice('snippets.saveFailed')
+    } finally {
+      setSnippetSaving(false)
+    }
+  }, [session, snippetSaving])
   const handleToggleFollow = useCallback(() => {
     setFollowOutput(currentlyFollowing => {
       const shouldFollow = !currentlyFollowing
@@ -378,6 +400,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       cellColumn: meta.cellColumn,
       textOffset: meta.textOffset,
       lineText: meta.lineText,
+      selectionText: ctrl?.getSelectionText() ?? '',
       collapsedFoldKeys: ctrl?.getCollapsedFoldKeys() ?? [],
       selectedFile: selectedFile ?? meta.selectedFile,
       fileOnly: true,
@@ -970,7 +993,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C') ||
         (e.ctrlKey && e.key === 'Insert')
       if (!isCopy) return
-      const selectedText = window.getSelection()?.toString() ?? ''
+      const selectedText = termControlRef.current?.getSelectionText() ?? ''
       if (selectedText.length === 0) return
       e.preventDefault()
       void navigator.clipboard.writeText(selectedText)
@@ -1016,7 +1039,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   }, [ctxMenu, edits, positionsData, session, resolveFileCandidate, resolveRowFile])
 
   const ctxMenuSections = useMemo((): TerminalMenuSection[] => {
-    const selectedText = window.getSelection()?.toString() ?? ''
+    const selectedText = ctxMenu?.selectionText ?? termControlRef.current?.getSelectionText() ?? ''
     const copyText = (text: string) => {
       void navigator.clipboard.writeText(text)
       setCtxMenu(null)
@@ -1116,6 +1139,14 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             disabled: selectedText.length === 0,
             onClick: () => copyText(selectedText),
           },
+          {
+            label: t('snippets.saveSelection'),
+            disabled: selectedText.length === 0 || snippetSaving,
+            onClick: () => {
+              void saveSnippet(selectedText, 'selection')
+              setCtxMenu(null)
+            },
+          },
           { label: t('replay.copySessionId'), onClick: () => copyText(session?.id ?? '') },
           {
             label: t('replay.copyCwd'),
@@ -1197,7 +1228,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       ],
     })
     return sections
-  }, [bookmarkBusy, ctxMenu, fileTarget, folds, followOutput, handleToggleFollow, jump, positionsData, session, sessionIsLive, t, toggleBookmark])
+  }, [bookmarkBusy, ctxMenu, fileTarget, folds, followOutput, handleToggleFollow, jump, positionsData, saveSnippet, session, sessionIsLive, snippetSaving, t, toggleBookmark])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -1847,6 +1878,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               {t(bookmarkError)}
             </span>
           )}
+          {snippetNotice && (
+            <span className={`text-meta ${snippetNotice === 'snippets.saved' ? 'text-[var(--success)]' : 'text-[var(--error)]'}`} role="status">
+              {t(snippetNotice)}
+            </span>
+          )}
           {openFileError && (
             <span className="text-meta text-[var(--error)]" role="status">
               {openFileError}
@@ -2252,6 +2288,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               onPinnedChange={setNavPinned}
               onWidthChange={setNavPanelWidth}
               onJump={handlePanelJump}
+              savingSnippet={snippetSaving}
+              onSaveAssistantSnippet={(turnIndex, fallbackContent) => {
+                const assistantContent = session.turns.find(turn => turn.turn_index === turnIndex)?.assistant_message || fallbackContent
+                void saveSnippet(assistantContent, 'assistant', turnIndex)
+              }}
               onClose={() => {
                 setShowUserPanel(false)
                 setNavPinned(false)

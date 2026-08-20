@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
 import CodingQuotaDialog from './components/CodingQuotaDialog'
+import SnippetPage from './components/SnippetPage'
 import type { BookmarkChange } from './bookmarkState'
 import { useI18n } from './i18n'
 import { parseSessionRoute } from './sessionLink'
@@ -21,10 +22,17 @@ function parseFileRoute(): { path: string; cwd: string; line?: number } | null {
 
 export default function App() {
   const { t } = useI18n()
-  const [fileRoute] = useState(parseFileRoute)
+  const [hash, setHash] = useState(() => window.location.hash)
+  useEffect(() => {
+    const updateHash = () => setHash(window.location.hash)
+    window.addEventListener('hashchange', updateHash)
+    return () => window.removeEventListener('hashchange', updateHash)
+  }, [])
+  const fileRoute = parseFileRoute()
+  const snippetsRoute = hash === '#/snippets'
   // #/session/<agentType>/<id> opens a specific session directly (new-tab
   // entry point); parsed once at mount like the file route.
-  const [sessionRoute] = useState(() => (fileRoute ? null : parseSessionRoute(window.location.hash)))
+  const [sessionRoute] = useState(() => (fileRoute || snippetsRoute ? null : parseSessionRoute(window.location.hash)))
   const [selectedId, setSelectedId] = useState<string | null>(sessionRoute?.id ?? null)
   const [selectedAgentType, setSelectedAgentType] = useState<string | null>(sessionRoute?.agentType ?? null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -48,6 +56,16 @@ export default function App() {
     setSearchTarget(focusSidebar && agentType && searchQuery ? { sessionId: id, agentType, query: searchQuery } : null)
     setSearchRootRef(focusSidebar && rootRef && agentType ? { sessionId: id, childAgentType: agentType, root: rootRef } : null)
     setSidebarOpen(false)
+  }
+
+  if (snippetsRoute) {
+    return <SnippetPage
+      onBack={() => { window.location.hash = '' }}
+      onOpenSource={(snippet) => {
+        selectSession(snippet.session_id, snippet.agent_type)
+        window.location.hash = ''
+      }}
+    />
   }
 
   if (fileRoute) {
@@ -79,6 +97,7 @@ export default function App() {
           onClose={() => setSidebarOpen(false)}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
+          onOpenSnippets={() => { window.location.hash = '/snippets' }}
           onSessionDeleted={(session) => {
             if (session.id === selectedId) {
               setSelectedId(null)

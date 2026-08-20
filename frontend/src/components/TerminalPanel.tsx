@@ -1987,6 +1987,7 @@ const snapshotTerminal = () => {
           cellColumn,
           textOffset,
           lineText,
+          selectionText: term.getSelection(),
           collapsedFoldKeys: [...collapsedKeys],
         })
       }
@@ -2452,6 +2453,7 @@ const snapshotTerminal = () => {
             term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2)))
           },
           getMetrics,
+          getSelectionText: () => term.getSelection(),
           getViewportTopLine: () => term.buffer.active.viewportY,
           setLineMatchers: (matchers) => {
             lineMatchers = matchers

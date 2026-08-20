@@ -23,6 +23,7 @@ interface InteractionEntry {
   logical: number | null // 逻辑行(跳转首选,折叠 badge 不影响它)
   label: string
   tsMs: number | null
+  turnIndex: number
 }
 
 interface Props {
@@ -33,6 +34,8 @@ interface Props {
   onPinnedChange?: (pinned: boolean) => void
   onWidthChange?: (width: number) => void
   onJump: (lineStart: number, logicalStart?: number) => void
+  onSaveAssistantSnippet?: (turnIndex: number, fallbackContent: string) => void
+  savingSnippet?: boolean
   onClose: () => void
 }
 
@@ -46,6 +49,7 @@ function toEntry(p: MiniMapPosition, kind: InteractionKind, seq: number): Intera
     logical: typeof pl.logical_start === 'number' ? pl.logical_start : null,
     label: typeof pl.text === 'string' && pl.text !== '' ? pl.text : p.label,
     tsMs: typeof pl.ts_ms === 'number' ? pl.ts_ms : null,
+    turnIndex: p.turn_index,
   }
 }
 
@@ -99,6 +103,8 @@ export default function UserMessagePanel({
   onPinnedChange,
   onWidthChange,
   onJump,
+  onSaveAssistantSnippet,
+  savingSnippet = false,
   onClose,
 }: Props) {
   const { locale, t } = useI18n()
@@ -282,6 +288,21 @@ export default function UserMessagePanel({
                   <span className="min-w-0 flex-1 font-mono text-helper text-[var(--text-secondary)]" style={summaryClampStyle} title={e.label}>
                     {e.label}
                   </span>
+                  {e.kind === 'assistant' && onSaveAssistantSnippet && (
+                    <button
+                      type="button"
+                      disabled={savingSnippet}
+                      onClick={event => {
+                        event.stopPropagation()
+                        onSaveAssistantSnippet(e.turnIndex, e.label)
+                      }}
+                      aria-label={t('snippets.saveAssistant')}
+                      title={t('snippets.saveAssistant')}
+                      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-meta text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] disabled:cursor-wait disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                    >
+                      ✂
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

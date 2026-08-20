@@ -79,9 +79,10 @@ interface SidebarProps {
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
   onSessionDeleted?: (session: SessionSummary) => void
+  onOpenSnippets?: () => void
 }
 
-export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
+export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange, onSessionDeleted, onOpenSnippets }: SidebarProps) {
   const { locale, t } = useI18n()
   const [now, setNow] = useState(Date.now())
   const [sessions, setSessions] = useState<SessionSummary[]>([])
@@ -866,6 +867,15 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            type="button"
+            onClick={onOpenSnippets}
+            className="h-6 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            title={t('snippets.open')}
+            data-testid="sidebar-snippets"
+          >
+            {t('snippets.open')}
+          </button>
           <button
             type="button"
             onClick={() => setShowChangeRequestLookup(true)}
