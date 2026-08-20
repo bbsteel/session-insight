@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Terminal Reference Manager launcher (development tool).
+#
+# Usage:
+#   ./scripts/terminal-reference [agent]
+#
+# Starts a loopback-only local web tool on a random port and prints the
+# address. Reference data lives outside the Git repository (default
+# ~/.session-insight-dev/terminal-references, override with
+# SI_TERMINAL_REFERENCE_ROOT).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+exec go run -tags sqlite_fts5 ./developer/agent-adapters/reference-manager "$@"

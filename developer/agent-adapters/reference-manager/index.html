@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal Reference Manager</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --panel2: #232730; --border: #333945;
+    --text: #d7dce3; --muted: #8b93a1; --accent: #5b9dff;
+    --missing: #6b7280; --found: #5b9dff; --captured: #d9a13b;
+    --used: #4caf7d; --update: #e0703a; --na: #9a7bd0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 10; background: var(--panel);
+           border-bottom: 1px solid var(--border); padding: 10px 18px;
+           display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  select, input[type=text] { background: var(--panel2); color: var(--text);
+           border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+           border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
+  main { padding: 16px 18px 80px; max-width: 1100px; margin: 0 auto; }
+  .notice { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+            padding: 10px 14px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+  .item { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+          margin-bottom: 14px; padding: 12px 14px; }
+  .item-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .item-head .id { font-family: ui-monospace, monospace; color: var(--muted); }
+  .item-head h2 { font-size: 15px; margin: 0; }
+  .features { font-size: 11px; color: var(--muted); }
+  .goal { color: var(--text); margin: 6px 0 2px; }
+  .extract, .cand-note { color: var(--muted); font-size: 12px; margin: 2px 0; }
+  .badge { display: inline-block; border-radius: 10px; padding: 1px 9px; font-size: 11px;
+           font-weight: 600; color: #0d1117; }
+  .badge.missing { background: var(--missing); } .badge.found { background: var(--found); }
+  .badge.captured { background: var(--captured); } .badge.used { background: var(--used); }
+  .badge.update_available { background: var(--update); } .badge.not_applicable { background: var(--na); }
+  .badge.exact { background: var(--used); } .badge.low_confidence { background: var(--captured); }
+  .candidate { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+               padding: 8px 10px; margin: 8px 0; font-size: 12.5px; }
+  .candidate code { font-family: ui-monospace, monospace; background: var(--bg);
+                    padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+  .gap { color: var(--muted); font-size: 12.5px; font-style: italic; margin: 8px 0; }
+  .slots { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .slot { flex: 1 1 300px; border: 1px dashed var(--border); border-radius: 8px; padding: 10px; }
+  .slot.dragover { border-color: var(--accent); background: rgba(91,157,255,.08); }
+  .slot h3 { margin: 0 0 4px; font-size: 13px; }
+  .slot .hint { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .slot img { max-width: 100%; max-height: 260px; border-radius: 6px; border: 1px solid var(--border);
+              display: block; margin-top: 6px; cursor: zoom-in; }
+  .thumb-label { font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .slot-actions { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ver-input { width: 130px; font-size: 12px; }
+  .local-missing { color: var(--update); font-size: 12px; }
+  #workorders { margin-top: 22px; }
+  #workorders li { margin: 4px 0; font-size: 13px; }
+  .wo-state { font-weight: 600; }
+  .wo-state.active { color: var(--found); } .wo-state.stale { color: var(--update); }
+  .wo-state.consumed { color: var(--used); }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+           background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px;
+           padding: 8px 16px; display: none; z-index: 20; max-width: 80vw; }
+  #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none;
+              align-items: center; justify-content: center; z-index: 30; cursor: zoom-out; }
+  #lightbox img { max-width: 96vw; max-height: 96vh; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Terminal Reference Manager</h1>
+  <label>Agent <select id="agent"></select></label>
+  <label>Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
+  <button id="rescan">Rescan</button>
+  <button id="mkwo" class="primary">Generate work order</button>
+  <span class="meta" id="storeroot"></span>
+  <span class="meta" id="scan"></span>
+</header>
+<main>
+  <div class="notice">
+    Drop one complete native-CLI full-screen screenshot into a slot. Any terminal, any size.
+    Missing items are allowed gaps &mdash; never fabricate scenes. Captures, session IDs and
+    resume commands stay outside Git. The manager stops at the frozen work order.
+  </div>
+  <div id="items"></div>
+  <section id="workorders">
+    <h2>Work orders</h2>
+    <ul id="wolist"></ul>
+  </section>
+</main>
+<div id="toast"></div>
+<div id="lightbox"><img alt="preview"></div>
+<script>
+let STATE = null;
+
+const $ = (sel, el=document) => el.querySelector(sel);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+function toast(msg, ms=3500) {
+  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms);
+}
+async function api(path, body) {
+  const opt = body === undefined ? {} :
+    { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) };
+  const res = await fetch(path, opt);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function currentAgent() {
+  const q = new URLSearchParams(location.search).get('agent');
+  return q || '';
+}
+
+async function load() {
+  const agent = $('#agent').value || currentAgent();
+  const data = await api('/api/state?agent=' + encodeURIComponent(agent));
+  STATE = data;
+  render(data);
+  if (data.scan.running) setTimeout(load, 1500);
+}
+
+function render(data) {
+  $('#storeroot').textContent = 'store: ' + data.store_root;
+  const scan = $('#scan');
+  scan.textContent = data.scan.running ? 'scanning sessions…' :
+    (data.scan.scanned_sessions ? `scanned ${data.scan.scanned_sessions} sessions` : '');
+  const sel = $('#agent');
+  if (!sel.options.length) {
+    for (const a of data.agents) {
+      const o = el('option', '', a.display_name + (a.discovered ? '' : ' (not discovered)'));
+      o.value = a.type;
+      sel.appendChild(o);
+    }
+    sel.value = data.agent;
+  }
+  $('#agentver').value = data.current_version || '';
+
+  const items = $('#items');
+  items.textContent = '';
+  for (const item of data.items) items.appendChild(renderItem(data.agent, item));
+
+  const wol = $('#wolist');
+  wol.textContent = '';
+  if (!data.work_orders.length) wol.appendChild(el('li', '', 'No work orders yet.'));
+  for (const wo of [...data.work_orders].reverse()) {
+    const li = el('li');
+    li.appendChild(el('span', 'wo-state ' + wo.state, wo.state.toUpperCase()));
+    li.appendChild(document.createTextNode(` ${wo.id} · ${wo.items.length} input(s) · ${wo.created_at} · ${wo.dir}` +
+      (wo.state === 'stale' ? ' — an input changed after freezing; regenerate' : '')));
+    wol.appendChild(li);
+  }
+}
+
+function renderItem(agent, item) {
+  const card = el('div', 'item');
+  const head = el('div', 'item-head');
+  head.appendChild(el('span', 'id', item.id));
+  head.appendChild(el('h2', '', item.title));
+  if (item.features && item.features.length)
+    head.appendChild(el('span', 'features', 'features: ' + item.features.join(', ')));
+  card.appendChild(head);
+  card.appendChild(el('div', 'goal', item.goal));
+  card.appendChild(el('div', 'extract', 'Extractable: ' + item.extractable));
+  if (item.candidate_note) card.appendChild(el('div', 'cand-note', 'Candidate rule: ' + item.candidate_note));
+
+  if (item.candidate) {
+    const c = item.candidate;
+    const box = el('div', 'candidate');
+    box.appendChild(el('span', 'badge ' + c.precision, c.precision === 'exact' ? 'exact candidate' : 'low-confidence suggestion'));
+    box.appendChild(document.createTextNode(' ' + (c.summary || '')));
+    box.appendChild(el('br'));
+    box.appendChild(document.createTextNode('session ' + c.session_id.slice(0, 12) +
+      (c.turn_index ? ' · turn ' + c.turn_index : '') + ' '));
+    if (c.resume_command) {
+      const code = el('code', '', c.resume_command);
+      box.appendChild(code);
+      const copy = el('button', '', 'copy resume command');
+      copy.style.marginLeft = '6px';
+      copy.onclick = () => { navigator.clipboard.writeText(c.resume_command); toast('resume command copied'); };
+      box.appendChild(copy);
+    } else {
+      box.appendChild(el('span', '', '(no native resume command available)'));
+    }
+    card.appendChild(box);
+  } else {
+    card.appendChild(el('div', 'gap', 'No candidate found — an allowed gap. Do not manufacture a session for this scene.'));
+  }
+
+  const slots = el('div', 'slots');
+  for (const slot of item.slots) slots.appendChild(renderSlot(agent, item, slot));
+  card.appendChild(slots);
+  return card;
+}
+
+function renderSlot(agent, item, slot) {
+  const box = el('div', 'slot');
+  box.dataset.logical = slot.logical_name;
+  const h = el('h3');
+  h.appendChild(el('span', 'badge ' + slot.status, slot.status.replace('_', ' ')));
+  h.appendChild(document.createTextNode(' ' + slot.label + '  '));
+  const fn = el('span', 'id', slot.logical_name);
+  fn.style.fontSize = '11px'; fn.style.color = 'var(--muted)';
+  h.appendChild(fn);
+  box.appendChild(h);
+  box.appendChild(el('div', 'hint', slot.hint));
+
+  if (slot.not_applicable) {
+    box.appendChild(el('div', 'extract', 'Marked not applicable: ' + slot.not_applicable_reason));
+  }
+  if (slot.local_unavailable)
+    box.appendChild(el('div', 'local-missing',
+      'Local image content unavailable. The accepted presentation stays valid; re-capture to inspect.'));
+
+  if (slot.capture && slot.image_url) {
+    box.appendChild(el('div', 'thumb-label',
+      `current capture · hash ${slot.capture.hash.slice(0,12)} · imported ${slot.capture.imported_at}` +
+      (slot.capture.observed_version ? ' · observed with ' + slot.capture.observed_version : '')));
+    const img = el('img'); img.src = slot.image_url; img.alt = slot.logical_name;
+    img.onclick = () => showLightbox(slot.image_url);
+    box.appendChild(img);
+  }
+  if (slot.accepted_image_url) {
+    box.appendChild(el('div', 'thumb-label', 'accepted version in use · hash ' + slot.accepted_hash.slice(0,12)));
+    const img = el('img'); img.src = slot.accepted_image_url; img.alt = slot.logical_name + ' accepted';
+    img.onclick = () => showLightbox(slot.accepted_image_url);
+    box.appendChild(img);
+  }
+
+  const actions = el('div', 'slot-actions');
+  const pick = el('button', '', 'choose image…');
+  const input = el('input'); input.type = 'file'; input.accept = 'image/png,image/jpeg,image/gif';
+  input.style.display = 'none';
+  pick.onclick = () => input.click();
+  input.onchange = () => { if (input.files[0]) upload(agent, slot.logical_name, input.files[0]); };
+  actions.appendChild(pick); actions.appendChild(input);
+
+  if (slot.status === 'captured' || slot.status === 'update_available') {
+    const acc = el('button', '', slot.status === 'captured' ? 'mark accepted' : 'accept update');
+    acc.title = 'Record the current capture as the content version the presentation is built from';
+    acc.onclick = () => api('/api/accept', {agent, logical_name: slot.logical_name})
+      .then(load).catch(e => toast(e.message));
+    actions.appendChild(acc);
+  }
+  if (slot.not_applicable) {
+    const clear = el('button', '', 'clear not-applicable');
+    clear.onclick = () => api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: false, reason: ''})
+      .then(load).catch(e => toast(e.message));
+    actions.appendChild(clear);
+  } else {
+    const na = el('button', '', 'mark not-applicable…');
+    na.onclick = () => {
+      const reason = prompt('Why does this scene not exist for this Agent? (adapter research reason, required)');
+      if (reason === null) return;
+      api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: true, reason})
+        .then(load).catch(e => toast(e.message));
+    };
+    actions.appendChild(na);
+  }
+  if (slot.capture) {
+    const ver = el('input'); ver.type = 'text'; ver.className = 'ver-input';
+    ver.placeholder = 'observed version'; ver.value = slot.capture.observed_version || '';
+    ver.onchange = () => api('/api/version', {agent, logical_name: slot.logical_name, version: ver.value})
+      .then(() => toast('observed version saved')).catch(e => toast(e.message));
+    actions.appendChild(ver);
+  }
+  box.appendChild(actions);
+
+  box.ondragover = e => { e.preventDefault(); box.classList.add('dragover'); };
+  box.ondragleave = () => box.classList.remove('dragover');
+  box.ondrop = e => {
+    e.preventDefault(); box.classList.remove('dragover');
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) upload(agent, slot.logical_name, f);
+  };
+  return box;
+}
+
+async function upload(agent, logicalName, file) {
+  const fd = new FormData();
+  fd.append('agent', agent);
+  fd.append('logical_name', logicalName);
+  fd.append('file', file, file.name);
+  toast('importing ' + file.name + ' …');
+  const res = await fetch('/api/upload', {method: 'POST', body: fd});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast('import failed: ' + (data.error || res.statusText), 6000); return; }
+  toast('imported ' + logicalName + ' (' + data.capture.hash.slice(0,12) + ')');
+  load();
+}
+
+function showLightbox(url) {
+  const lb = $('#lightbox'); $('img', lb).src = url; lb.style.display = 'flex';
+}
+$('#lightbox').onclick = () => $('#lightbox').style.display = 'none';
+
+$('#agent').onchange = () => {
+  const a = $('#agent').value;
+  history.replaceState(null, '', '?agent=' + encodeURIComponent(a));
+  load();
+};
+$('#agentver').onchange = () => {
+  api('/api/version', {agent: $('#agent').value, logical_name: '', version: $('#agentver').value})
+    .then(() => toast('installed version context saved')).catch(e => toast(e.message));
+};
+$('#rescan').onclick = () => {
+  api('/api/rescan', {agent: $('#agent').value})
+    .then(r => { toast(`rescan started (drop-ins imported: ${r.imported.length}, skipped: ${r.skipped.length})`); load(); })
+    .catch(e => toast(e.message));
+};
+$('#mkwo').onclick = () => {
+  api('/api/work-order', {agent: $('#agent').value})
+    .then(r => { toast('work order frozen at ' + r.work_order.dir, 8000); load(); })
+    .catch(e => toast(e.message, 6000));
+};
+
+load().catch(e => toast('load failed: ' + e.message, 8000));
+</script>
+</body>
+</html>
