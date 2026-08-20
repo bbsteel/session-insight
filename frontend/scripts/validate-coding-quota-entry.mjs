@@ -65,15 +65,15 @@ async function checkLocale(page, locale) {
   check(`${locale} unsupported plan is hidden by default`, !(await dialog.locator('[data-testid="quota-provider-copilot"]').isVisible()))
 
   const documentationLinks = dialog.locator('[data-testid^="quota-documentation-"]')
-  const quotaQueryLinks = dialog.locator('[data-testid^="quota-query-"]')
   const strategySummaries = dialog.locator('[data-testid^="quota-strategy-"]')
+  const resetLabels = dialog.locator('[data-testid^="quota-reset-"]')
   const configuredProviderCount = await dialog.locator('[data-testid^="quota-provider-"]').count()
   check(`${locale} configured quota documentation links are present`, configuredProviderCount === 0 || await documentationLinks.count() > 0)
-  check(`${locale} configured quota query links are present`, configuredProviderCount === 0 || await quotaQueryLinks.count() > 0)
+  check(`${locale} quota query links are removed`, await dialog.locator('[data-testid^="quota-query-"]').count() === 0)
   check(`${locale} configured quota strategies are present`, configuredProviderCount === 0 || await strategySummaries.count() === configuredProviderCount)
-  if (await quotaQueryLinks.count() > 0) {
-    const queryHref = await quotaQueryLinks.first().getAttribute('href')
-    check(`${locale} quota query link has a URL`, !!queryHref && /^https?:\/\//.test(queryHref), queryHref ?? '')
+  for (let index = 0; index < await resetLabels.count(); index++) {
+    const resetText = await resetLabels.nth(index).innerText()
+    check(`${locale} reset duration uses full units`, !/\b\d+[dhm]\b/.test(resetText), resetText)
   }
 
   const percentageWindows = dialog.locator('[data-quota-percentage-window="true"]')
@@ -83,7 +83,9 @@ async function checkLocale(page, locale) {
   }
 
   await allFilter.click()
-  check(`${locale} all filter can reveal unsupported plans`, await allFilter.getAttribute('aria-pressed') === 'true' && await dialog.locator('[data-testid="quota-provider-copilot"]').isVisible())
+  const unsupportedProvider = dialog.locator('[data-testid="quota-provider-copilot"]')
+  await unsupportedProvider.waitFor({ state: 'visible', timeout: 5_000 })
+  check(`${locale} all filter can reveal unsupported plans`, await allFilter.getAttribute('aria-pressed') === 'true' && await unsupportedProvider.isVisible())
   check(`${locale} unsupported plan includes a strategy summary`, await dialog.locator('[data-testid="quota-strategy-copilot"]').isVisible())
 
   const dialogScreenshotPath = path.join(SHOT_DIR, `coding-quota-dialog-${locale}.png`)
@@ -115,12 +117,17 @@ async function checkLowQuotaPresentation(page, locale) {
           description_key: 'quota.provider.kimiDescription',
           quota_strategy_key: 'quota.provider.kimiStrategy',
           documentation_url: 'https://www.kimi.com/help/kimi-code/benefits',
-          quota_url: 'https://api.kimi.com/coding/v1/usages',
           supports_exact_quota: true,
           snapshot: {
             provider_id: 'kimi',
             status: 'available',
-            windows: [{ id: 'primary', remaining_percent: 9, limit_amount: 100, unit: 'percent' }],
+            windows: [{
+              id: 'primary',
+              remaining_percent: 9,
+              limit_amount: 100,
+              unit: 'percent',
+              reset_at: new Date(Date.now() + (6 * 86400 + 23 * 3600) * 1000).toISOString(),
+            }],
           },
         }],
       }),
@@ -133,11 +140,13 @@ async function checkLowQuotaPresentation(page, locale) {
 
   const remaining = dialog.locator('[data-testid="quota-remaining-kimi-primary"]')
   const percentageWindow = dialog.locator('[data-testid="quota-window-kimi-primary"]')
+  const resetLabel = dialog.locator('[data-testid="quota-reset-kimi-primary"]')
   const strategySummary = dialog.locator('[data-testid="quota-strategy-kimi"]')
   check(`${locale} quota strategy summary is rendered`, (await strategySummary.innerText()).length > 0)
   check(`${locale} 9% quota is rendered`, (await remaining.innerText()).includes('9%'))
   check(`${locale} 9% quota uses the critical color`, (await remaining.getAttribute('class'))?.includes('text-[var(--error)]'))
   check(`${locale} percentage quota omits the upper limit`, !(await percentageWindow.innerText()).match(/(?:Limit|上限)\s*[:：]?\s*100\b/))
+  check(`${locale} fixture reset duration uses full units`, !/\b\d+[dhm]\b/.test(await resetLabel.innerText()))
 }
 
 const browser = await chromium.launch({ headless: true })

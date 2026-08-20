@@ -63,6 +63,9 @@ func TestCodingQuotaAPIReturnsDefinitionsAndSafeSnapshots(t *testing.T) {
 	if payload.Providers[0].QuotaStrategyKey != "quota.provider.codexStrategy" {
 		t.Fatalf("unexpected quota strategy key: %q", payload.Providers[0].QuotaStrategyKey)
 	}
+	if strings.Contains(response.Body.String(), "quota_url") {
+		t.Fatalf("removed quota query URL leaked into response: %s", response.Body.String())
+	}
 	if payload.Providers[0].Snapshot.Status != string(quota.StatusAvailable) || payload.Providers[0].Snapshot.Windows[0].RemainingPercent != 73 {
 		t.Fatalf("unexpected snapshot: %+v", payload.Providers[0].Snapshot)
 	}
