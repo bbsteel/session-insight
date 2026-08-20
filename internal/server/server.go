@@ -10,6 +10,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/quota"
 	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/terminal"
 )
@@ -72,11 +73,21 @@ type Server struct {
 	// kickIndex requests a re-index of one agent type after import/delete.
 	// Nil in tests that never wire the indexer.
 	kickIndex func(agentType string)
+
+	// codingQuotaManager owns credentialed upstream quota requests. It is kept
+	// separate from the session database so quota failures never affect replay.
+	codingQuotaManager *quota.Manager
 }
 
 // SetIndexStatus wires the indexer progress provider (call before Serve).
 func (s *Server) SetIndexStatus(p IndexStatusProvider) {
 	s.indexStatus = p
+}
+
+// SetCodingQuotaManager replaces the default quota registry for tests or
+// embedders that provide their own provider catalog.
+func (s *Server) SetCodingQuotaManager(manager *quota.Manager) {
+	s.codingQuotaManager = manager
 }
 
 type SessionSummary struct {
@@ -126,6 +137,10 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 		changeRegistry:   changehost.NewDefaultRegistry(),
 		hostPolicy:       changehost.NewHostPolicy(nil),
 		approvedHosts:    make(map[string]*changehost.ApprovedHost),
+		codingQuotaManager: quota.NewManager(
+			quota.NewDefaultProviders(quota.DefaultProviderOptions()),
+			quota.ManagerOptions{},
+		),
 	}
 	s.registerRoutes()
 	return s
@@ -179,6 +194,8 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("POST /api/open-file", s.handleOpenFile)
 	s.Mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	s.Mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
+	s.Mux.HandleFunc("GET /api/coding-quotas", s.handleGetCodingQuotas)
+	s.Mux.HandleFunc("POST /api/coding-quotas/refresh", s.handleRefreshCodingQuotas)
 
 	s.Mux.HandleFunc("GET /api/llm/providers", s.handleListLLMProviders)
 	s.Mux.HandleFunc("POST /api/llm/providers", s.handleAddLLMProvider)

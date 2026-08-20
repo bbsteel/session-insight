@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 interface InstantTooltipProps {
@@ -13,6 +13,10 @@ interface InstantTooltipProps {
   maxWidth?: number
   /** Keep compact metric tooltips on one line. */
   nowrap?: boolean
+  /** Keep structured content open while the pointer moves into it. */
+  interactive?: boolean
+  /** Handle a click anywhere inside interactive structured content. */
+  onContentClick?: () => void
 }
 
 /**
@@ -27,11 +31,18 @@ export default function InstantTooltip({
   placement = 'top',
   maxWidth = 280,
   nowrap = false,
+  interactive = false,
+  onContentClick,
 }: InstantTooltipProps) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const wrapRef = useRef<HTMLSpanElement>(null)
+  const hideTimerRef = useRef<number | null>(null)
   const tip = text?.trim() ?? ''
   const tooltipContent = content ?? tip
+
+  useEffect(() => () => {
+    if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current)
+  }, [])
 
   if (!tip && content == null) {
     return <span className={className}>{children}</span>
@@ -53,19 +64,54 @@ export default function InstantTooltip({
     })
   }
 
+  const cancelHide = () => {
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current)
+      hideTimerRef.current = null
+    }
+  }
+
+  const hide = () => {
+    cancelHide()
+    if (!interactive) {
+      setPos(null)
+      return
+    }
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null
+      setPos(null)
+    }, 160)
+  }
+
+  const handleContentClick = () => {
+    onContentClick?.()
+    cancelHide()
+    setPos(null)
+  }
+
   return (
     <span
       ref={wrapRef}
       className={className ?? 'inline-flex max-w-full'}
-      onMouseEnter={e => showAt(e.clientX, e.clientY)}
+      onMouseEnter={e => {
+        cancelHide()
+        showAt(e.clientX, e.clientY)
+      }}
       onMouseMove={placement === 'cursor' || placement === 'cursor-left' ? e => setPos({ x: e.clientX, y: e.clientY }) : undefined}
-      onMouseLeave={() => setPos(null)}
+      onMouseLeave={hide}
+      onFocus={() => showAt(0, 0)}
+      onBlur={e => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPos(null)
+      }}
     >
       {children}
       {pos && createPortal(
         <div
-          role="tooltip"
-          className={`fixed z-[var(--z-tooltip)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2 py-1.5 text-helper text-[var(--text-primary)] shadow-md pointer-events-none ${nowrap ? 'whitespace-nowrap' : 'whitespace-pre-wrap break-words'}`}
+          role={interactive ? 'button' : 'tooltip'}
+          className={`fixed z-[var(--z-tooltip)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2 py-1.5 text-helper text-[var(--text-primary)] shadow-md ${interactive ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none'} ${nowrap ? 'whitespace-nowrap' : 'whitespace-pre-wrap break-words'}`}
+          onMouseEnter={interactive ? cancelHide : undefined}
+          onMouseLeave={interactive ? hide : undefined}
+          onClick={interactive ? handleContentClick : undefined}
           style={{
             left: placement === 'left' ? pos.x - 6 : pos.x,
             top: placement === 'bottom' ? pos.y + 6 : placement === 'left' ? pos.y : pos.y - 6,

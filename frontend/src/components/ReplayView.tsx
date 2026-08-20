@@ -105,6 +105,7 @@ interface Props {
   // same back-to-parent breadcrumb as dock navigation.
   searchRootRef?: { sessionId: string; childAgentType: string; root: { id: string; agentType: string; name: string } } | null
   onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
+  onOpenCodingQuotas?: () => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
 }
@@ -127,7 +128,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, bookmarkChange, onBookmarkChange }: Props) {
+export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, onOpenCodingQuotas, bookmarkChange, onBookmarkChange }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
@@ -1567,7 +1568,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   if (!sessionId) return (
     <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalSearch onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
@@ -1580,7 +1581,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   if (loading) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalSearch onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
       <div className="p-4 space-y-3">{Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-3">
           <div className="h-5 w-44 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
@@ -1602,7 +1603,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       : ''
     return (
       <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
-        <GlobalSearch onSelect={onSelect} />
+        <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
         {session && (
           <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px' }}>
             <button
@@ -1769,7 +1770,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
-      <GlobalSearch onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
       <header className="relative flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }} data-testid="session-toolbar">
         <div className="flex items-center gap-2">
           <ResumeTerminalControl session={session} />
