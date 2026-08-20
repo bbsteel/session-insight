@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
@@ -22,8 +22,17 @@ function parseFileRoute(): { path: string; cwd: string; line?: number } | null {
 export default function App() {
   const { t } = useI18n()
   const [hash, setHash] = useState(() => window.location.hash)
+  const currentHashRef = useRef(window.location.hash)
+  const snippetReturnHashRef = useRef<string | null>(null)
   useEffect(() => {
-    const updateHash = () => setHash(window.location.hash)
+    const updateHash = () => {
+      const nextHash = window.location.hash
+      if (nextHash === '#/snippets' && currentHashRef.current !== '#/snippets') {
+        snippetReturnHashRef.current = currentHashRef.current
+      }
+      currentHashRef.current = nextHash
+      setHash(nextHash)
+    }
     window.addEventListener('hashchange', updateHash)
     return () => window.removeEventListener('hashchange', updateHash)
   }, [])
@@ -54,16 +63,6 @@ export default function App() {
     setSearchTarget(focusSidebar && agentType && searchQuery ? { sessionId: id, agentType, query: searchQuery } : null)
     setSearchRootRef(focusSidebar && rootRef && agentType ? { sessionId: id, childAgentType: agentType, root: rootRef } : null)
     setSidebarOpen(false)
-  }
-
-  if (snippetsRoute) {
-    return <SnippetPage
-      onBack={() => { window.location.hash = '' }}
-      onOpenSource={(snippet) => {
-        selectSession(snippet.session_id, snippet.agent_type)
-        window.location.hash = ''
-      }}
-    />
   }
 
   if (fileRoute) {
@@ -103,7 +102,7 @@ export default function App() {
           }}
         />
       </div>
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ReplayView
           sessionId={selectedId}
           searchTarget={searchTarget}
@@ -112,6 +111,23 @@ export default function App() {
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
         />
+        {snippetsRoute && (
+          <div className="absolute inset-0 z-[220] overflow-hidden bg-[var(--bg-primary)]" data-testid="snippets-overlay">
+            <SnippetPage
+              onBack={() => {
+                const returnHash = snippetReturnHashRef.current ?? ''
+                snippetReturnHashRef.current = null
+                window.location.hash = returnHash
+              }}
+              onOpenSource={(snippet) => {
+                selectSession(snippet.session_id, snippet.agent_type)
+                const returnHash = snippetReturnHashRef.current ?? ''
+                snippetReturnHashRef.current = null
+                window.location.hash = returnHash
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   )
