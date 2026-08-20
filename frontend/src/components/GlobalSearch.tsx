@@ -4,6 +4,7 @@ import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
 import SettingsDialog from './SettingsDialog'
+import CodingQuotaPreview from './CodingQuotaPreview'
 import { LanguageSwitch } from './LanguageSwitch'
 import { ThemeSwitch } from './ThemeToggle'
 import { formatRelativeTime, useI18n, type Locale } from '../i18n'
@@ -545,17 +546,7 @@ export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
       </div>
       <div className="ml-auto flex items-center gap-1.5">
         {onOpenCodingQuotas && (
-          <button
-            type="button"
-            onClick={onOpenCodingQuotas}
-            aria-label={t('quota.open')}
-            title={t('quota.open')}
-            className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            data-testid="global-coding-quota"
-          >
-            <QuotaIcon />
-            <span>{t('quota.openShort')}</span>
-          </button>
+          <CodingQuotaPreview icon={<QuotaIcon />} onOpen={onOpenCodingQuotas} />
         )}
         <LanguageSwitch />
         <ThemeSwitch />
