@@ -31,7 +31,35 @@ function fallbackWindowLabel(windowId: string): string {
     .replace(/\b\w/g, character => character.toUpperCase())
 }
 
-export function windowLabel(windowId: string, translate: QuotaTranslate): string {
+function periodFromSeconds(seconds: number): string | undefined {
+  if (seconds >= 25 * 86400) return 'monthly'
+  if (seconds >= 5 * 86400) return 'weekly'
+  if (seconds > 0 && seconds <= 6 * 3600) return 'five_hour'
+  return undefined
+}
+
+function normalizedWindowPeriod(window: CodingQuotaWindow): string | undefined {
+  const normalizedID = window.id.trim().toLowerCase().replace(/[-\s]+/g, '_')
+  if (normalizedID === 'monthly' || normalizedID === 'month') return 'monthly'
+  if (normalizedID === 'weekly' || normalizedID === 'week' || normalizedID === 'usage') return 'weekly'
+  if (normalizedID === 'five_hour' || normalizedID === 'five_hours' || normalizedID === '5h') return 'five_hour'
+  if (normalizedID === 'seven_day' || normalizedID.startsWith('seven_day_')) return normalizedID
+  if (typeof window.window_seconds === 'number') return periodFromSeconds(window.window_seconds)
+  if (window.reset_at) {
+    const secondsUntilReset = (new Date(window.reset_at).getTime() - Date.now()) / 1000
+    return periodFromSeconds(secondsUntilReset)
+  }
+  return undefined
+}
+
+export function windowLabel(window: CodingQuotaWindow, translate: QuotaTranslate): string {
+  const periodID = normalizedWindowPeriod(window)
+  if (periodID) {
+    const periodKey = `quota.window.${periodID}`
+    const periodTranslation = translate(periodKey)
+    if (periodTranslation !== periodKey) return periodTranslation
+  }
+  const windowId = window.id
   const rateLimitMatch = /^limit_(\d+)$/.exec(windowId)
   if (rateLimitMatch) return translate('quota.window.numbered', { index: Number(rateLimitMatch[1]) + 1 })
   const bucketMatch = /^bucket_(\d+)$/.exec(windowId)

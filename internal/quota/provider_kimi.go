@@ -196,7 +196,7 @@ func parseKimiWindows(root map[string]any, now time.Time) []QuotaWindow {
 	}
 	windows := make([]QuotaWindow, 0, 4)
 	if usage := mapField(data, "usage"); usage != nil {
-		if window, ok := parseKimiWindow(usage, "usage", now); ok {
+		if window, ok := parseKimiWindow(usage, kimiWindowID(usage, "weekly"), now); ok {
 			windows = append(windows, window)
 		}
 	}
@@ -214,9 +214,9 @@ func parseKimiWindows(root map[string]any, now time.Time) []QuotaWindow {
 			if detail == nil {
 				detail = limit
 			}
-			windowID := firstString(limit, "id", "name", "type", "window_type")
+			windowID := kimiWindowID(detail, "")
 			if windowID == "" {
-				windowID = firstString(detail, "id", "name", "type", "window_type")
+				windowID = kimiWindowID(limit, "")
 			}
 			if windowID == "" {
 				windowID = "limit_" + strconv.Itoa(index)
@@ -227,6 +227,81 @@ func parseKimiWindows(root map[string]any, now time.Time) []QuotaWindow {
 		}
 	}
 	return windows
+}
+
+func kimiWindowID(object map[string]any, fallback string) string {
+	for _, key := range []string{"window", "window_id", "windowId", "period", "id", "name", "type", "window_type"} {
+		rawValue, ok := firstValue(object, key)
+		if !ok {
+			continue
+		}
+		if windowObject, ok := rawValue.(map[string]any); ok {
+			if periodID := kimiDurationWindowID(windowObject); periodID != "" {
+				return periodID
+			}
+			continue
+		}
+		rawID, ok := rawValue.(string)
+		if !ok || strings.TrimSpace(rawID) == "" {
+			continue
+		}
+		normalizedID := normalizeKimiWindowID(rawID)
+		if normalizedID == "usage" || normalizedID == "limit" {
+			continue
+		}
+		return normalizedID
+	}
+	return fallback
+}
+
+func kimiDurationWindowID(object map[string]any) string {
+	duration, ok, err := numberField(object, "duration", "value")
+	if err != nil || !ok || duration <= 0 {
+		return ""
+	}
+	unit := strings.ToLower(strings.TrimSpace(firstString(object, "timeUnit", "time_unit", "unit")))
+	unit = strings.TrimPrefix(unit, "time_unit_")
+	var seconds float64
+	switch unit {
+	case "minute", "minutes", "min":
+		seconds = duration * 60
+	case "hour", "hours", "hr", "h":
+		seconds = duration * 3600
+	case "day", "days", "d":
+		seconds = duration * 86400
+	case "week", "weeks", "w":
+		seconds = duration * 7 * 86400
+	case "month", "months", "m":
+		seconds = duration * 30 * 86400
+	default:
+		return ""
+	}
+	switch {
+	case seconds >= 25*86400:
+		return "monthly"
+	case seconds >= 5*86400:
+		return "weekly"
+	case seconds <= 6*3600:
+		return "five_hour"
+	default:
+		return ""
+	}
+}
+
+func normalizeKimiWindowID(rawID string) string {
+	normalizedID := strings.ToLower(strings.TrimSpace(rawID))
+	normalizedID = strings.ReplaceAll(normalizedID, "-", "_")
+	normalizedID = strings.ReplaceAll(normalizedID, " ", "_")
+	switch normalizedID {
+	case "5h", "5hr", "5hour", "5hours", "5_hour", "five_hour", "five_hours":
+		return "five_hour"
+	case "1w", "1week", "7d", "7day", "7days", "7_day", "week", "weekly":
+		return "weekly"
+	case "1m", "1month", "30d", "30day", "30days", "30_day", "month", "monthly":
+		return "monthly"
+	default:
+		return strings.TrimSpace(rawID)
+	}
 }
 
 func parseKimiWindow(object map[string]any, id string, now time.Time) (QuotaWindow, bool) {

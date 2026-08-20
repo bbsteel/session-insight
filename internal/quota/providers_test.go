@@ -129,7 +129,7 @@ func TestKimiProviderParsesUsageAndLimitWindows(t *testing.T) {
 		if request.URL.String() != kimiUsageEndpoint {
 			t.Fatalf("unexpected endpoint %s", request.URL)
 		}
-		return quotaJSONResponse(http.StatusOK, `{"data":{"usage":{"limit":100,"remaining":40,"reset_in":1800},"limits":[{"type":"weekly","detail":{"limit":1000,"used":250,"resetAt":"2026-08-24T00:00:00Z"}}]}}`), nil
+		return quotaJSONResponse(http.StatusOK, `{"data":{"usage":{"window":"1w","limit":100,"remaining":40,"reset_in":1800},"limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},"detail":{"limit":1000,"used":250,"resetAt":"2026-08-24T00:00:00Z"}}]}}`), nil
 	})
 
 	snapshot := NewKimiProvider(options).Fetch(context.Background())
@@ -139,11 +139,17 @@ func TestKimiProviderParsesUsageAndLimitWindows(t *testing.T) {
 	if got := *snapshot.Windows[0].RemainingPercent; got != 40 {
 		t.Fatalf("usage remaining percent = %v, want 40", got)
 	}
+	if snapshot.Windows[0].ID != "weekly" {
+		t.Fatalf("usage window id = %q, want weekly", snapshot.Windows[0].ID)
+	}
 	if snapshot.Windows[0].Unit != "percent" {
 		t.Fatalf("usage unit = %q, want percent", snapshot.Windows[0].Unit)
 	}
 	if got := *snapshot.Windows[1].RemainingPercent; got != 75 {
 		t.Fatalf("limit remaining percent = %v, want 75", got)
+	}
+	if snapshot.Windows[1].ID != "five_hour" {
+		t.Fatalf("limit window id = %q, want five_hour", snapshot.Windows[1].ID)
 	}
 	if snapshot.Windows[1].Unit != "" {
 		t.Fatalf("limit unit = %q, want empty", snapshot.Windows[1].Unit)

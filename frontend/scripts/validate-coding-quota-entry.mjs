@@ -66,6 +66,8 @@ async function checkLocale(page, locale) {
   const previewText = await quotaPreview.innerText()
   check(`${locale} quota hover preview prompts opening management`, previewText.includes(locale === 'en' ? 'Click Quota to open full management.' : '点击“额度”打开完整管理。'))
   check(`${locale} quota hover preview omits strategy details`, !previewText.includes(locale === 'en' ? 'Strategy' : '额度策略'))
+  check(`${locale} quota hover preview uses canonical periods`, previewText.includes(locale === 'en' ? 'Weekly' : '每周'))
+  check(`${locale} quota hover preview hides internal window names`, !/(?:Quota window|Primary|Usage|额度窗口|主要|用量)/.test(previewText))
   const previewRemaining = quotaPreview.locator('[data-testid^="coding-quota-preview-remaining-"]').first()
   const previewReset = quotaPreview.locator('[data-testid^="coding-quota-preview-reset-"]').first()
   check(`${locale} quota hover preview emphasizes remaining value`, await previewRemaining.count() === 0 || (await previewRemaining.getAttribute('class'))?.includes('font-bold'))

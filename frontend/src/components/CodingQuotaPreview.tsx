@@ -54,17 +54,19 @@ function PreviewContent({
                 {windows.length > 0 ? (
                   <div className="mt-1 space-y-1">
                     {windows.slice(0, 3).map(window => (
-                      <div key={`${provider.id}-${window.id}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-0.5" data-testid={`coding-quota-preview-window-${provider.id}-${window.id}`}>
-                        <span className="truncate text-meta text-[var(--text-secondary)]">{windowLabel(window.id, t)}</span>
-                        <span
-                          className={`text-title font-bold tabular-nums ${remainingToneClass(window)}`}
-                          data-testid={`coding-quota-preview-remaining-${provider.id}-${window.id}`}
-                        >
-                          {remainingValue(window, locale, t)}
-                        </span>
+                      <div key={`${provider.id}-${window.id}`} className="space-y-0.5" data-testid={`coding-quota-preview-window-${provider.id}-${window.id}`}>
+                        <div className="flex items-baseline gap-2">
+                          <span className="shrink-0 text-meta text-[var(--text-secondary)]">{windowLabel(window, t)}</span>
+                          <span
+                            className={`text-title font-bold tabular-nums ${remainingToneClass(window)}`}
+                            data-testid={`coding-quota-preview-remaining-${provider.id}-${window.id}`}
+                          >
+                            {remainingValue(window, locale, t)}
+                          </span>
+                        </div>
                         {window.reset_at && (
                           <span
-                            className="col-span-2 text-right text-meta font-semibold text-[var(--accent-blue)]"
+                            className="block text-right text-meta font-semibold text-[var(--accent-blue)]"
                             data-testid={`coding-quota-preview-reset-${provider.id}-${window.id}`}
                           >
                             {resetValue(window, t)}
