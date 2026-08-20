@@ -28,7 +28,8 @@ func NewGeminiProvider(options ProviderOptions) QuotaProvider {
 			ID:                 ProviderGemini,
 			DisplayNameKey:     "quota.provider.gemini",
 			DescriptionKey:     "quota.provider.geminiDescription",
-			DocumentationURL:   "https://github.com/google-gemini/gemini-cli",
+			DocumentationURL:   "https://github.com/google-gemini/gemini-cli/blob/main/docs/resources/quota-and-pricing.md",
+			QuotaURL:           geminiQuotaEndpoint,
 			SupportsExactQuota: true,
 		},
 	}

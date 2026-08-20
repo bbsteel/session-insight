@@ -104,6 +104,7 @@ export interface CodingQuotaProvider {
   display_name_key: string
   description_key: string
   documentation_url: string
+  quota_url?: string
   supports_exact_quota: boolean
   snapshot: CodingQuotaSnapshot
 }

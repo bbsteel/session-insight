@@ -28,7 +28,8 @@ func NewKimiProvider(options ProviderOptions) QuotaProvider {
 			ID:                 ProviderKimi,
 			DisplayNameKey:     "quota.provider.kimi",
 			DescriptionKey:     "quota.provider.kimiDescription",
-			DocumentationURL:   "https://www.kimi.com/code/docs/en/kimi-code/membership.html",
+			DocumentationURL:   "https://www.kimi.com/help/kimi-code/benefits",
+			QuotaURL:           kimiUsageEndpoint,
 			SupportsExactQuota: true,
 		},
 	}
@@ -241,6 +242,9 @@ func parseKimiWindow(object map[string]any, id string, now time.Time) (QuotaWind
 	}, now)
 	if err != nil || !hasValue {
 		return QuotaWindow{}, false
+	}
+	if window.Unit == "" && window.LimitAmount != nil && *window.LimitAmount == 100 {
+		window.Unit = "percent"
 	}
 	return window, window.RemainingPercent != nil || window.RemainingAmount != nil || window.UsedAmount != nil
 }

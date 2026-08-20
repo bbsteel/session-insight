@@ -13,9 +13,9 @@ func NewDefaultProviders(options ProviderOptions) []QuotaProvider {
 		NewGeminiProvider(options),
 		NewKimiProvider(options),
 		NewGrokProvider(options),
-		newUnsupportedProvider(ProviderCopilot, "quota.provider.copilot", "quota.provider.copilotDescription", "https://docs.github.com/en/copilot", "included_allowance_unavailable"),
-		newUnsupportedProvider(ProviderOpenCode, "quota.provider.opencode", "quota.provider.opencodeDescription", "https://opencode.ai", "upstream_provider_dependent"),
-		newUnsupportedProvider(ProviderQwen, "quota.provider.qwen", "quota.provider.qwenDescription", "https://qwenlm.github.io/qwen-code-docs/", "quota_endpoint_unavailable"),
+		newUnsupportedProvider(ProviderCopilot, "quota.provider.copilot", "quota.provider.copilotDescription", "https://docs.github.com/en/copilot/concepts/usage-limits", "included_allowance_unavailable"),
+		newUnsupportedProvider(ProviderOpenCode, "quota.provider.opencode", "quota.provider.opencodeDescription", "https://opencode.ai/docs/go/", "upstream_provider_dependent"),
+		newUnsupportedProvider(ProviderQwen, "quota.provider.qwen", "quota.provider.qwenDescription", "https://help.aliyun.com/en/model-studio/coding-plan", "quota_endpoint_unavailable"),
 	}
 }
 
