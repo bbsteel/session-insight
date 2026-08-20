@@ -26,6 +26,7 @@ func NewGrokProvider(options ProviderOptions) QuotaProvider {
 			ID:                 ProviderGrok,
 			DisplayNameKey:     "quota.provider.grok",
 			DescriptionKey:     "quota.provider.grokDescription",
+			QuotaStrategyKey:   "quota.provider.grokStrategy",
 			DocumentationURL:   "https://docs.x.ai/grok/faq",
 			QuotaURL:           grokCreditsEndpoint,
 			SupportsExactQuota: true,

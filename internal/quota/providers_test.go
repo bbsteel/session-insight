@@ -209,7 +209,7 @@ func TestManagerKeepsLastGoodWindowsWhenRefreshFails(t *testing.T) {
 }
 
 func TestUnsupportedProviderDoesNotAttemptNetworkAccess(t *testing.T) {
-	provider := newUnsupportedProvider(ProviderQwen, "name", "description", "https://example.com", "quota_endpoint_unavailable")
+	provider := newUnsupportedProvider(ProviderQwen, "name", "description", "strategy", "https://example.com", "quota_endpoint_unavailable")
 	snapshot := provider.Fetch(context.Background())
 	if snapshot.Status != StatusUnsupported || snapshot.ReasonCode != "quota_endpoint_unavailable" {
 		t.Fatalf("unexpected unsupported snapshot: %+v", snapshot)

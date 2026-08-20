@@ -10,6 +10,7 @@ type codingQuotaProviderJSON struct {
 	ID                 quota.ProviderID    `json:"id"`
 	DisplayNameKey     string              `json:"display_name_key"`
 	DescriptionKey     string              `json:"description_key"`
+	QuotaStrategyKey   string              `json:"quota_strategy_key"`
 	DocumentationURL   string              `json:"documentation_url"`
 	QuotaURL           string              `json:"quota_url"`
 	SupportsExactQuota bool                `json:"supports_exact_quota"`
@@ -45,6 +46,7 @@ func (s *Server) writeCodingQuotas(w http.ResponseWriter, r *http.Request, force
 			ID:                 definition.ID,
 			DisplayNameKey:     definition.DisplayNameKey,
 			DescriptionKey:     definition.DescriptionKey,
+			QuotaStrategyKey:   definition.QuotaStrategyKey,
 			DocumentationURL:   definition.DocumentationURL,
 			QuotaURL:           definition.QuotaURL,
 			SupportsExactQuota: definition.SupportsExactQuota,

@@ -18,6 +18,7 @@ func (quotaHandlerTestProvider) Definition() quota.ProviderDefinition {
 		ID:                 quota.ProviderCodex,
 		DisplayNameKey:     "quota.provider.codex",
 		DescriptionKey:     "quota.provider.codexDescription",
+		QuotaStrategyKey:   "quota.provider.codexStrategy",
 		DocumentationURL:   "https://example.com/docs",
 		SupportsExactQuota: true,
 	}
@@ -43,8 +44,9 @@ func TestCodingQuotaAPIReturnsDefinitionsAndSafeSnapshots(t *testing.T) {
 	}
 	var payload struct {
 		Providers []struct {
-			ID       string `json:"id"`
-			Snapshot struct {
+			ID               string `json:"id"`
+			QuotaStrategyKey string `json:"quota_strategy_key"`
+			Snapshot         struct {
 				Status  string `json:"status"`
 				Windows []struct {
 					RemainingPercent float64 `json:"remaining_percent"`
@@ -57,6 +59,9 @@ func TestCodingQuotaAPIReturnsDefinitionsAndSafeSnapshots(t *testing.T) {
 	}
 	if len(payload.Providers) != 1 || payload.Providers[0].ID != "codex" {
 		t.Fatalf("unexpected providers: %+v", payload.Providers)
+	}
+	if payload.Providers[0].QuotaStrategyKey != "quota.provider.codexStrategy" {
+		t.Fatalf("unexpected quota strategy key: %q", payload.Providers[0].QuotaStrategyKey)
 	}
 	if payload.Providers[0].Snapshot.Status != string(quota.StatusAvailable) || payload.Providers[0].Snapshot.Windows[0].RemainingPercent != 73 {
 		t.Fatalf("unexpected snapshot: %+v", payload.Providers[0].Snapshot)

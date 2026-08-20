@@ -20,6 +20,7 @@ func NewClaudeProvider(options ProviderOptions) QuotaProvider {
 			ID:                 ProviderClaude,
 			DisplayNameKey:     "quota.provider.claude",
 			DescriptionKey:     "quota.provider.claudeDescription",
+			QuotaStrategyKey:   "quota.provider.claudeStrategy",
 			DocumentationURL:   "https://support.anthropic.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan",
 			QuotaURL:           claudeUsageEndpoint,
 			SupportsExactQuota: true,

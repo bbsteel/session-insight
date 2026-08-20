@@ -66,9 +66,11 @@ async function checkLocale(page, locale) {
 
   const documentationLinks = dialog.locator('[data-testid^="quota-documentation-"]')
   const quotaQueryLinks = dialog.locator('[data-testid^="quota-query-"]')
+  const strategySummaries = dialog.locator('[data-testid^="quota-strategy-"]')
   const configuredProviderCount = await dialog.locator('[data-testid^="quota-provider-"]').count()
   check(`${locale} configured quota documentation links are present`, configuredProviderCount === 0 || await documentationLinks.count() > 0)
   check(`${locale} configured quota query links are present`, configuredProviderCount === 0 || await quotaQueryLinks.count() > 0)
+  check(`${locale} configured quota strategies are present`, configuredProviderCount === 0 || await strategySummaries.count() === configuredProviderCount)
   if (await quotaQueryLinks.count() > 0) {
     const queryHref = await quotaQueryLinks.first().getAttribute('href')
     check(`${locale} quota query link has a URL`, !!queryHref && /^https?:\/\//.test(queryHref), queryHref ?? '')
@@ -82,6 +84,7 @@ async function checkLocale(page, locale) {
 
   await allFilter.click()
   check(`${locale} all filter can reveal unsupported plans`, await allFilter.getAttribute('aria-pressed') === 'true' && await dialog.locator('[data-testid="quota-provider-copilot"]').isVisible())
+  check(`${locale} unsupported plan includes a strategy summary`, await dialog.locator('[data-testid="quota-strategy-copilot"]').isVisible())
 
   const dialogScreenshotPath = path.join(SHOT_DIR, `coding-quota-dialog-${locale}.png`)
   await page.screenshot({ path: dialogScreenshotPath })
@@ -110,6 +113,7 @@ async function checkLowQuotaPresentation(page, locale) {
           id: 'kimi',
           display_name_key: 'quota.provider.kimi',
           description_key: 'quota.provider.kimiDescription',
+          quota_strategy_key: 'quota.provider.kimiStrategy',
           documentation_url: 'https://www.kimi.com/help/kimi-code/benefits',
           quota_url: 'https://api.kimi.com/coding/v1/usages',
           supports_exact_quota: true,
@@ -129,6 +133,8 @@ async function checkLowQuotaPresentation(page, locale) {
 
   const remaining = dialog.locator('[data-testid="quota-remaining-kimi-primary"]')
   const percentageWindow = dialog.locator('[data-testid="quota-window-kimi-primary"]')
+  const strategySummary = dialog.locator('[data-testid="quota-strategy-kimi"]')
+  check(`${locale} quota strategy summary is rendered`, (await strategySummary.innerText()).length > 0)
   check(`${locale} 9% quota is rendered`, (await remaining.innerText()).includes('9%'))
   check(`${locale} 9% quota uses the critical color`, (await remaining.getAttribute('class'))?.includes('text-[var(--error)]'))
   check(`${locale} percentage quota omits the upper limit`, !(await percentageWindow.innerText()).match(/(?:Limit|上限)\s*[:：]?\s*100\b/))
