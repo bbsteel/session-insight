@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
+import CodingQuotaDialog from './components/CodingQuotaDialog'
 import type { BookmarkChange } from './bookmarkState'
 import { useI18n } from './i18n'
 import { parseSessionRoute } from './sessionLink'
@@ -27,6 +28,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(sessionRoute?.id ?? null)
   const [selectedAgentType, setSelectedAgentType] = useState<string | null>(sessionRoute?.agentType ?? null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showCodingQuotas, setShowCodingQuotas] = useState(false)
   const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
   const [sidebarFocusTarget, setSidebarFocusTarget] = useState<{ id: string; agentType: string } | null>(
     sessionRoute ? { id: sessionRoute.id, agentType: sessionRoute.agentType } : null,
@@ -91,10 +93,12 @@ export default function App() {
           searchTarget={searchTarget}
           searchRootRef={searchRootRef}
           onSelect={selectSession}
+          onOpenCodingQuotas={() => setShowCodingQuotas(true)}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
         />
       </div>
+      {showCodingQuotas && <CodingQuotaDialog onClose={() => setShowCodingQuotas(false)} />}
     </div>
   )
 }
