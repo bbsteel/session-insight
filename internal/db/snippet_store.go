@@ -14,6 +14,7 @@ type Snippet struct {
 	AgentType   string `json:"agent_type"`
 	SessionID   string `json:"session_id"`
 	SessionName string `json:"session_name"`
+	Project     string `json:"project"`
 	SourceKind  string `json:"source_kind"`
 	TurnIndex   *int   `json:"turn_index,omitempty"`
 	CreatedAt   string `json:"created_at"`
@@ -21,10 +22,10 @@ type Snippet struct {
 
 func (db *DB) AddSnippet(snippet Snippet) (Snippet, error) {
 	result, err := db.conn.Exec(
-		`INSERT INTO snippets(content, agent_type, session_id, session_name, source_kind, turn_index)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO snippets(content, agent_type, session_id, session_name, project, source_kind, turn_index)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		snippet.Content, snippet.AgentType, snippet.SessionID, snippet.SessionName,
-		snippet.SourceKind, snippet.TurnIndex,
+		snippet.Project, snippet.SourceKind, snippet.TurnIndex,
 	)
 	if err != nil {
 		return Snippet{}, fmt.Errorf("add snippet: %w", err)
@@ -44,11 +45,11 @@ func (db *DB) GetSnippet(id int64) (Snippet, error) {
 	var snippet Snippet
 	var turnIndex sql.NullInt64
 	err := db.conn.QueryRow(
-		`SELECT id, content, agent_type, session_id, session_name, source_kind, turn_index, created_at
+		`SELECT id, content, agent_type, session_id, session_name, project, source_kind, turn_index, created_at
 		 FROM snippets WHERE id = ?`, id,
 	).Scan(
 		&snippet.ID, &snippet.Content, &snippet.AgentType, &snippet.SessionID,
-		&snippet.SessionName, &snippet.SourceKind, &turnIndex, &snippet.CreatedAt,
+		&snippet.SessionName, &snippet.Project, &snippet.SourceKind, &turnIndex, &snippet.CreatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -65,7 +66,7 @@ func (db *DB) GetSnippet(id int64) (Snippet, error) {
 
 func (db *DB) ListSnippets() ([]Snippet, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, content, agent_type, session_id, session_name, source_kind, turn_index, created_at
+		`SELECT id, content, agent_type, session_id, session_name, project, source_kind, turn_index, created_at
 		 FROM snippets ORDER BY created_at DESC, id DESC`,
 	)
 	if err != nil {
@@ -79,7 +80,7 @@ func (db *DB) ListSnippets() ([]Snippet, error) {
 		var turnIndex sql.NullInt64
 		if err := rows.Scan(
 			&snippet.ID, &snippet.Content, &snippet.AgentType, &snippet.SessionID,
-			&snippet.SessionName, &snippet.SourceKind, &turnIndex, &snippet.CreatedAt,
+			&snippet.SessionName, &snippet.Project, &snippet.SourceKind, &turnIndex, &snippet.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan snippet: %w", err)
 		}

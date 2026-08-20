@@ -334,6 +334,7 @@ export interface SessionDetail {
   agent_type: string
   name: string
   repository: string
+  project: string
   branch: string
   cwd: string
   turn_count: number
@@ -367,6 +368,7 @@ export interface Snippet {
   agent_type: string
   session_id: string
   session_name: string
+  project: string
   source_kind: 'selection' | 'assistant'
   turn_index?: number
   created_at: string
