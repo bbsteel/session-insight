@@ -112,6 +112,8 @@ export default function CodingQuotaPreview({ icon, onOpen }: CodingQuotaPreviewP
       content={<PreviewContent providers={providers} loading={loading} error={error} />}
       placement="bottom"
       maxWidth={360}
+      interactive
+      onContentClick={onOpen}
       className="inline-flex"
     >
       <button

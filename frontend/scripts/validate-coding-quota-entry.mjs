@@ -73,10 +73,16 @@ async function checkLocale(page, locale) {
   const previewScreenshotPath = path.join(SHOT_DIR, `coding-quota-preview-${locale}.png`)
   await page.screenshot({ path: previewScreenshotPath })
   console.log(`Quota preview screenshot saved: ${previewScreenshotPath}`)
-  await page.mouse.move(20, 20)
-  await quotaPreview.waitFor({ state: 'hidden', timeout: 5_000 })
-
-  await quotaButton.click()
+  const previewBox = await quotaPreview.boundingBox()
+  if (previewBox) {
+    await page.mouse.move(previewBox.x + previewBox.width / 2, previewBox.y + previewBox.height / 2)
+    await page.waitForTimeout(250)
+    check(`${locale} quota hover preview stays open under pointer`, await quotaPreview.isVisible())
+    await quotaPreview.click()
+  } else {
+    check(`${locale} quota hover preview has a clickable surface`, false, 'missing preview bounding box')
+    await quotaButton.click()
+  }
   const dialog = page.locator('[data-testid="coding-quota-dialog"]')
   await dialog.waitFor({ state: 'visible', timeout: 10_000 })
   check(`${locale} quota dialog title`, (await dialog.locator('h2').innerText()).trim() === copy.title)
