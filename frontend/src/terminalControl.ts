@@ -38,13 +38,21 @@ export interface TerminalLineMatch<T = unknown> {
 
 export interface TerminalLineMatcher<T = unknown> {
   /** Each returned match owns its payload, validation identity, and optional text range. */
-  match: (text: string) => TerminalLineMatch<T>[]
+  match: (text: string, bufferLine?: number) => TerminalLineMatch<T>[]
   /** Static label, or a formatter that receives the matcher's match data (e.g. full URL). */
   tooltip?: string | ((data: T) => string)
   // Optional async confirmation (e.g. does this detected path actually exist).
   // Each returned match is validated independently and can be removed without
   // affecting other matches on the same buffer row.
   validate?: (lineText: string, data: T) => Promise<boolean>
+  /**
+   * A compact action rendered through an xterm marker decoration while this
+   * matcher is hovered. Clicks are accepted only in its right-edge cells.
+   */
+  hoverAction?: {
+    label: string
+    cellWidth: number
+  }
   onActivate: (bufLine: number, data: T, matchIndex: number, meta?: TerminalActivateMeta) => void
 }
 
@@ -63,6 +71,8 @@ export interface TerminalControl {
   // viewport (top-anchored scrollToLine leaves it easy to miss).
   scrollToLineCentered: (line: number) => void
   getMetrics: () => ScrollMetrics
+  /** Current xterm buffer selection, or an empty string when none exists. */
+  getSelectionText: () => string
   // Top visible buffer line via xterm's own buffer state (exact regardless of
   // line-height variants); used to preserve the logical visible position
   // across layout changes that only alter the container height.
@@ -156,6 +166,8 @@ export interface TerminalContextMenuEvent {
   cellColumn: number | null
   textOffset: number | null
   lineText: string
+  /** Selection frozen from xterm at the context-menu event boundary. */
+  selectionText: string
   collapsedFoldKeys: string[]
   /** Exact path selected by a ranged matcher or path-bearing fold header. */
   selectedFile?: TerminalFileMatch

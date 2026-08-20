@@ -434,6 +434,8 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
     let tooltipEl: HTMLDivElement | null = null
     let hoverDecoration: IDecoration | null = null
     let hoverMarker: IMarker | null = null
+    let hoverActionDecoration: IDecoration | null = null
+    let hoverActionMarker: IMarker | null = null
     let activeHoverLine: number | null = null
     let activeHoverRangeKey: string | null = null
 
@@ -999,8 +1001,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
       const clearHoverDecoration = () => {
         hoverDecoration?.dispose()
         hoverMarker?.dispose()
+        hoverActionDecoration?.dispose()
+        hoverActionMarker?.dispose()
         hoverDecoration = null
         hoverMarker = null
+        hoverActionDecoration = null
+        hoverActionMarker = null
         activeHoverLine = null
         activeHoverRangeKey = null
       }
@@ -1077,8 +1083,12 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
         if (xtermScreen) xtermScreen.style.cursor = ''
       }
 
-      const showHoverDecoration = (bufLine: number, cellRange: TerminalCellRange | null) => {
-        const rangeKey = cellRange ? `${cellRange.start}:${cellRange.end}` : 'full-row'
+      const showHoverDecoration = (
+        bufLine: number,
+        cellRange: TerminalCellRange | null,
+        hoverAction: TerminalLineMatcher<unknown>['hoverAction'],
+      ) => {
+        const rangeKey = `${cellRange ? `${cellRange.start}:${cellRange.end}` : 'full-row'}:${hoverAction?.label ?? ''}`
         if (
           activeHoverLine === bufLine
           && activeHoverRangeKey === rangeKey
@@ -1122,6 +1132,52 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
 
         hoverMarker = marker
         hoverDecoration = decoration
+        if (hoverAction) {
+          const hoverActionWidth = Math.min(hoverAction.cellWidth, term.cols)
+          const actionMarker = term.registerMarker(getMarkerOffsetForBufferLine({
+            bufferLine: bufLine,
+            baseY: term.buffer.active.baseY,
+            cursorY: term.buffer.active.cursorY,
+          }))
+          if (actionMarker) {
+            let actionDecoration: IDecoration | undefined
+            try {
+              actionDecoration = term.registerDecoration({
+                marker: actionMarker,
+                x: Math.max(0, term.cols - hoverActionWidth),
+                width: hoverActionWidth,
+                height: 1,
+                layer: 'top',
+              })
+            } catch {
+              actionMarker.dispose()
+            }
+            if (actionDecoration) {
+              actionDecoration.onRender(element => {
+                element.textContent = hoverAction.label
+                element.setAttribute('role', 'button')
+                element.setAttribute('aria-label', hoverAction.label)
+                element.title = hoverAction.label
+                element.style.pointerEvents = 'auto'
+                element.style.boxSizing = 'border-box'
+                element.style.display = 'flex'
+                element.style.alignItems = 'center'
+                element.style.justifyContent = 'center'
+                element.style.borderRadius = '3px'
+                element.style.background = 'rgba(124,58,237,0.95)'
+                element.style.color = '#fff'
+                element.style.fontFamily = 'system-ui,-apple-system,sans-serif'
+                element.style.fontSize = '11px'
+                element.style.fontWeight = '600'
+                element.style.cursor = 'pointer'
+                element.style.whiteSpace = 'nowrap'
+                element.style.overflow = 'hidden'
+              })
+              hoverActionMarker = actionMarker
+              hoverActionDecoration = actionDecoration
+            }
+          }
+        }
         activeHoverLine = bufLine
         activeHoverRangeKey = rangeKey
       }
@@ -1186,7 +1242,7 @@ export default function TerminalPanel({ sessionId, agentType, folds, tsKinds = '
           const entries: InteractionEntry[] = []
           for (const matcher of lineMatchers) {
             let matcherOwnsRow = false
-            for (const matched of matcher.match(text)) {
+            for (const matched of matcher.match(text, i)) {
               const idx = matchCounts.get(matcher) ?? 0
               matchCounts.set(matcher, idx + 1)
               const textRange = matched.textRange ?? null
@@ -1865,7 +1921,7 @@ const snapshotTerminal = () => {
         clientX: number,
         clientY: number,
       ) => {
-        showHoverDecoration(bl, cellRange)
+        showHoverDecoration(bl, cellRange, entry.matcher.hoverAction)
         if (tooltipEl) {
           const tip = resolveMatcherTooltip(entry.matcher.tooltip, entry.data)
           tooltipEl.textContent = tip
@@ -1947,6 +2003,8 @@ const snapshotTerminal = () => {
         const interaction = resolveInteractionAt(bl, cellColumn)
         if (interaction) {
           const { entry } = interaction
+          const hoverAction = entry.matcher.hoverAction
+          if (hoverAction && (cellColumn === null || cellColumn < term.cols - hoverAction.cellWidth)) return
           // Validated matchers only activate after their check confirmed.
           if (entry.matcher.validate && interactionValidity.get(entry) !== true) return
           e.preventDefault()
@@ -1987,6 +2045,7 @@ const snapshotTerminal = () => {
           cellColumn,
           textOffset,
           lineText,
+          selectionText: term.getSelection(),
           collapsedFoldKeys: [...collapsedKeys],
         })
       }
@@ -2452,6 +2511,7 @@ const snapshotTerminal = () => {
             term.scrollToLine(Math.max(0, line - Math.floor(term.rows / 2)))
           },
           getMetrics,
+          getSelectionText: () => term.getSelection(),
           getViewportTopLine: () => term.buffer.active.viewportY,
           setLineMatchers: (matchers) => {
             lineMatchers = matchers

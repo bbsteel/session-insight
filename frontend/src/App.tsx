@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
+import SnippetPage from './components/SnippetPage'
 import type { BookmarkChange } from './bookmarkState'
 import { useI18n } from './i18n'
 import { parseSessionRoute } from './sessionLink'
@@ -20,10 +21,26 @@ function parseFileRoute(): { path: string; cwd: string; line?: number } | null {
 
 export default function App() {
   const { t } = useI18n()
-  const [fileRoute] = useState(parseFileRoute)
+  const [hash, setHash] = useState(() => window.location.hash)
+  const currentHashRef = useRef(window.location.hash)
+  const snippetReturnHashRef = useRef<string | null>(null)
+  useEffect(() => {
+    const updateHash = () => {
+      const nextHash = window.location.hash
+      if (nextHash === '#/snippets' && currentHashRef.current !== '#/snippets') {
+        snippetReturnHashRef.current = currentHashRef.current
+      }
+      currentHashRef.current = nextHash
+      setHash(nextHash)
+    }
+    window.addEventListener('hashchange', updateHash)
+    return () => window.removeEventListener('hashchange', updateHash)
+  }, [])
+  const fileRoute = parseFileRoute()
+  const snippetsRoute = hash === '#/snippets'
   // #/session/<agentType>/<id> opens a specific session directly (new-tab
   // entry point); parsed once at mount like the file route.
-  const [sessionRoute] = useState(() => (fileRoute ? null : parseSessionRoute(window.location.hash)))
+  const [sessionRoute] = useState(() => (fileRoute || snippetsRoute ? null : parseSessionRoute(window.location.hash)))
   const [selectedId, setSelectedId] = useState<string | null>(sessionRoute?.id ?? null)
   const [selectedAgentType, setSelectedAgentType] = useState<string | null>(sessionRoute?.agentType ?? null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -85,7 +102,7 @@ export default function App() {
           }}
         />
       </div>
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ReplayView
           sessionId={selectedId}
           searchTarget={searchTarget}
@@ -94,6 +111,23 @@ export default function App() {
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
         />
+        {snippetsRoute && (
+          <div className="absolute inset-0 z-[220] overflow-hidden bg-[var(--bg-primary)]" data-testid="snippets-overlay">
+            <SnippetPage
+              onBack={() => {
+                const returnHash = snippetReturnHashRef.current ?? ''
+                snippetReturnHashRef.current = null
+                window.location.hash = returnHash
+              }}
+              onOpenSource={(snippet) => {
+                selectSession(snippet.session_id, snippet.agent_type)
+                const returnHash = snippetReturnHashRef.current ?? ''
+                snippetReturnHashRef.current = null
+                window.location.hash = returnHash
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

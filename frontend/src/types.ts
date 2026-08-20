@@ -334,6 +334,7 @@ export interface SessionDetail {
   agent_type: string
   name: string
   repository: string
+  project: string
   branch: string
   cwd: string
   turn_count: number
@@ -359,4 +360,16 @@ export interface SessionDetail {
   record_available?: boolean
   /** Present for sessions imported from a portable bundle. */
   import_info?: ImportInfo
+}
+
+export interface Snippet {
+  id: number
+  content: string
+  agent_type: string
+  session_id: string
+  session_name: string
+  project: string
+  source_kind: 'selection' | 'assistant'
+  turn_index?: number
+  created_at: string
 }
