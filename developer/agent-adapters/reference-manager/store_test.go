@@ -183,6 +183,26 @@ func TestLookupBlobGating(t *testing.T) {
 	}
 }
 
+// TestLookupBlobServesFrozenInputs pins that a work order's frozen input
+// stays servable after the slot advances to newer content (the frozen hash is
+// then neither current nor accepted).
+func TestLookupBlobServesFrozenInputs(t *testing.T) {
+	s := testStore(t)
+	checkout := t.TempDir()
+	frozen := importPNG(t, s, "claude", "04-thinking", 1)
+	if _, err := generateWorkOrder(s, checkout, "claude", nil); err != nil {
+		t.Fatal(err)
+	}
+	importPNG(t, s, "claude", "04-thinking", 2) // slot advances; frozen hash now only in the work order
+	path, ext, err := s.lookupBlob("claude", frozen.Hash)
+	if err != nil {
+		t.Fatalf("frozen input must stay servable: %v", err)
+	}
+	if ext != ".png" || !strings.Contains(path, frozen.Hash) {
+		t.Fatalf("lookupBlob = %s %s, want the frozen png blob", path, ext)
+	}
+}
+
 func TestLocalUnavailableKeepsAcceptedValid(t *testing.T) {
 	s := testStore(t)
 	rec := importPNG(t, s, "claude", "04-thinking", 1)
