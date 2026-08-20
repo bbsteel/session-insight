@@ -13,9 +13,9 @@ func NewDefaultProviders(options ProviderOptions) []QuotaProvider {
 		NewGeminiProvider(options),
 		NewKimiProvider(options),
 		NewGrokProvider(options),
-		newUnsupportedProvider(ProviderCopilot, "quota.provider.copilot", "quota.provider.copilotDescription", "https://docs.github.com/en/copilot/concepts/usage-limits", "included_allowance_unavailable"),
-		newUnsupportedProvider(ProviderOpenCode, "quota.provider.opencode", "quota.provider.opencodeDescription", "https://opencode.ai/docs/go/", "upstream_provider_dependent"),
-		newUnsupportedProvider(ProviderQwen, "quota.provider.qwen", "quota.provider.qwenDescription", "https://help.aliyun.com/en/model-studio/coding-plan", "quota_endpoint_unavailable"),
+		newUnsupportedProvider(ProviderCopilot, "quota.provider.copilot", "quota.provider.copilotDescription", "quota.provider.copilotStrategy", "https://docs.github.com/en/copilot/concepts/usage-limits", "included_allowance_unavailable"),
+		newUnsupportedProvider(ProviderOpenCode, "quota.provider.opencode", "quota.provider.opencodeDescription", "quota.provider.opencodeStrategy", "https://opencode.ai/docs/go/", "upstream_provider_dependent"),
+		newUnsupportedProvider(ProviderQwen, "quota.provider.qwen", "quota.provider.qwenDescription", "quota.provider.qwenStrategy", "https://help.aliyun.com/en/model-studio/coding-plan", "quota_endpoint_unavailable"),
 	}
 }
 
@@ -24,12 +24,13 @@ type unsupportedProvider struct {
 	reasonCode string
 }
 
-func newUnsupportedProvider(id ProviderID, displayNameKey, descriptionKey, documentationURL, reasonCode string) QuotaProvider {
+func newUnsupportedProvider(id ProviderID, displayNameKey, descriptionKey, quotaStrategyKey, documentationURL, reasonCode string) QuotaProvider {
 	return &unsupportedProvider{
 		definition: ProviderDefinition{
 			ID:                 id,
 			DisplayNameKey:     displayNameKey,
 			DescriptionKey:     descriptionKey,
+			QuotaStrategyKey:   quotaStrategyKey,
 			DocumentationURL:   documentationURL,
 			SupportsExactQuota: false,
 		},

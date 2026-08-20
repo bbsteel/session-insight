@@ -99,6 +99,12 @@ function ProviderCard({ provider }: { provider: CodingQuotaProvider }) {
             )}
           </div>
           <p className="mt-1 text-helper text-[var(--text-secondary)]">{t(provider.description_key)}</p>
+          {provider.quota_strategy_key && (
+            <p className="mt-1 text-helper text-[var(--text-secondary)]" data-testid={`quota-strategy-${provider.id}`}>
+              <span className="font-medium text-[var(--text-primary)]">{t('quota.strategyLabel')}:</span>{' '}
+              {t(provider.quota_strategy_key)}
+            </p>
+          )}
         </div>
         <div className="flex flex-shrink-0 items-start gap-2 text-helper">
           {provider.documentation_url && (
