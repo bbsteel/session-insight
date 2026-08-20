@@ -205,7 +205,7 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		s.refreshCandidates(agent)
 		scanning = true
 	}
-	cat, err := s.store.catalogs.load(agent)
+	cat, err := s.store.LoadCatalog(agent)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -343,7 +343,7 @@ func (s *server) handleAccept(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown logical file name")
 		return
 	}
-	err := s.store.catalogs.update(req.Agent, func(cat *AgentCatalog) error {
+	err := s.store.UpdateCatalog(req.Agent, func(cat *AgentCatalog) error {
 		st := cat.item(req.LogicalName)
 		if st.Current == nil {
 			return fmt.Errorf("nothing captured for %s", req.LogicalName)
@@ -383,7 +383,7 @@ func (s *server) handleNotApplicable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a reason is required: not_applicable must come from adapter research, never from a missing image")
 		return
 	}
-	err := s.store.catalogs.update(req.Agent, func(cat *AgentCatalog) error {
+	err := s.store.UpdateCatalog(req.Agent, func(cat *AgentCatalog) error {
 		st := cat.item(req.LogicalName)
 		st.NotApplicable = req.Value
 		st.NotApplicableReason = strings.TrimSpace(req.Reason)
@@ -415,7 +415,7 @@ func (s *server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "version string too long")
 		return
 	}
-	err := s.store.catalogs.update(req.Agent, func(cat *AgentCatalog) error {
+	err := s.store.UpdateCatalog(req.Agent, func(cat *AgentCatalog) error {
 		if req.LogicalName == "" {
 			cat.CurrentVersion = req.Version
 			return nil

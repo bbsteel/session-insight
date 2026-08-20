@@ -257,6 +257,20 @@ var knownLogicalNames = func() map[string]bool {
 	return m
 }()
 
+// canonicalLogicalName maps a caller-supplied logical file name back to the
+// checklist's own constant, so request text never flows into a path.
+func canonicalLogicalName(input string) (string, bool) {
+	if !knownLogicalNames[input] {
+		return "", false
+	}
+	for name := range knownLogicalNames {
+		if name == input {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // logicalNameItemID maps a logical file base name back to its checklist item.
 var logicalNameItemID = func() map[string]string {
 	m := map[string]string{}

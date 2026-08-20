@@ -47,11 +47,14 @@ func main() {
 	}
 
 	readers := reader.Discover()
-	validAgent := func(agent string) bool {
-		_, ok := reader.AgentDefinition(agent)
-		return ok
+	resolveAgent := func(agent string) (string, bool) {
+		def, ok := reader.AgentDefinition(agent)
+		if !ok {
+			return "", false
+		}
+		return def.AgentType, true
 	}
-	store := newStore(root, validAgent)
+	store := newStore(root, resolveAgent)
 	srv := newServer(store, checkoutDir, readers, *scanLimit)
 
 	selected := ""

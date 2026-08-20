@@ -74,16 +74,20 @@ type frozenEntry struct {
 // directory. The manager's boundary ends here: it never creates goals,
 // branches, PRs or product-code edits.
 func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[string]*Candidate) (*WorkOrderRecord, error) {
-	cat, err := s.catalogs.load(agent)
+	canonicalAgent, err := s.canonicalAgent(agent)
+	if err != nil {
+		return nil, err
+	}
+	cat, err := s.LoadCatalog(canonicalAgent)
 	if err != nil {
 		return nil, err
 	}
 	pending := pendingInputs(cat)
 	if len(pending) == 0 {
-		return nil, fmt.Errorf("no pending reference inputs for %s; nothing to freeze", agent)
+		return nil, fmt.Errorf("no pending reference inputs for %s; nothing to freeze", canonicalAgent)
 	}
 
-	id := agent + "-" + time.Now().UTC().Format("20060102-150405")
+	id := canonicalAgent + "-" + time.Now().UTC().Format("20060102-150405")
 	dir := filepath.Join(workOrderRoot(checkoutDir), id)
 	assetsDir := filepath.Join(dir, "selected-reference-assets")
 	contextDir := filepath.Join(dir, "local-candidate-context")
@@ -106,7 +110,7 @@ func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[strin
 		}
 		// Copy the frozen input next to the work order so later development
 		// reads the exact content even if the store slot advances.
-		src := s.blobPath(agent, st.Current.Hash, st.Current.Ext)
+		src := s.blobPath(canonicalAgent, st.Current.Hash, st.Current.Ext)
 		data, err := os.ReadFile(src)
 		if err != nil {
 			return nil, fmt.Errorf("freeze %s: %w", name, err)
@@ -152,12 +156,12 @@ func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[strin
 		Frozen:    frozen,
 	}
 
-	md := renderWorkOrderMarkdown(agent, record, entries, cat, gaps, candidates)
+	md := renderWorkOrderMarkdown(canonicalAgent, record, entries, cat, gaps, candidates)
 	if err := os.WriteFile(filepath.Join(dir, "WORK_ORDER.md"), []byte(md), 0o600); err != nil {
 		return nil, err
 	}
 
-	err = s.catalogs.update(agent, func(c *AgentCatalog) error {
+	err = s.UpdateCatalog(canonicalAgent, func(c *AgentCatalog) error {
 		c.WorkOrders = append(c.WorkOrders, *record)
 		return nil
 	})

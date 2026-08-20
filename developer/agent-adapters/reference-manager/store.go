@@ -50,16 +50,20 @@ func defaultStoreRoot() (string, error) {
 }
 
 // Store owns the on-disk reference data of every Agent.
+//
+// Every caller-supplied identifier (agent, logical file name, content hash)
+// is mapped back to a server-side canonical value before it touches a
+// filesystem path: request text itself is never joined into a path.
 type Store struct {
 	Root     string
 	catalogs *catalogStore
-	// validAgent reports whether an agent ID may have a catalog. Injected so
-	// tests can run without the real reader registry.
-	validAgent func(string) bool
+	// resolveAgent maps an agent ID to the registry's own canonical value.
+	// Injected so tests can run without the real reader registry.
+	resolveAgent func(string) (string, bool)
 }
 
-func newStore(root string, validAgent func(string) bool) *Store {
-	return &Store{Root: root, catalogs: &catalogStore{root: root}, validAgent: validAgent}
+func newStore(root string, resolveAgent func(string) (string, bool)) *Store {
+	return &Store{Root: root, catalogs: &catalogStore{root: root}, resolveAgent: resolveAgent}
 }
 
 func (s *Store) agentDir(agent string) string { return filepath.Join(s.Root, agent) }
@@ -69,14 +73,36 @@ func (s *Store) blobPath(agent, hash, ext string) string {
 	return filepath.Join(s.blobDir(agent), hash+ext)
 }
 
-func (s *Store) checkAgent(agent string) error {
+// canonicalAgent validates a caller-supplied agent ID and returns the
+// registry's own string for it, so downstream paths are built from trusted
+// data rather than from the request.
+func (s *Store) canonicalAgent(agent string) (string, error) {
 	if !agentIDPattern.MatchString(agent) {
-		return fmt.Errorf("invalid agent id %q", agent)
+		return "", fmt.Errorf("invalid agent id %q", agent)
 	}
-	if s.validAgent != nil && !s.validAgent(agent) {
-		return fmt.Errorf("unknown agent %q", agent)
+	canonical, ok := s.resolveAgent(agent)
+	if !ok {
+		return "", fmt.Errorf("unknown agent %q", agent)
 	}
-	return nil
+	return canonical, nil
+}
+
+// LoadCatalog reads the catalog of a caller-named Agent.
+func (s *Store) LoadCatalog(agent string) (*AgentCatalog, error) {
+	canonical, err := s.canonicalAgent(agent)
+	if err != nil {
+		return nil, err
+	}
+	return s.catalogs.load(canonical)
+}
+
+// UpdateCatalog applies fn to the catalog of a caller-named Agent.
+func (s *Store) UpdateCatalog(agent string, fn func(*AgentCatalog) error) error {
+	canonical, err := s.canonicalAgent(agent)
+	if err != nil {
+		return err
+	}
+	return s.catalogs.update(canonical, fn)
 }
 
 // supportedExt maps a decoded image format to its canonical extension.
@@ -110,10 +136,12 @@ func decodeImage(data []byte) (string, error) {
 // the catalog. Old content is never overwritten: blobs are content-addressed
 // and an accepted capture stays available after a newer image arrives.
 func (s *Store) Import(agent, logicalName string, r io.Reader, originalName string) (*CaptureRecord, error) {
-	if err := s.checkAgent(agent); err != nil {
+	canonicalAgent, err := s.canonicalAgent(agent)
+	if err != nil {
 		return nil, err
 	}
-	if !knownLogicalNames[logicalName] {
+	canonicalName, ok := canonicalLogicalName(logicalName)
+	if !ok {
 		return nil, fmt.Errorf("unknown logical file name %q", logicalName)
 	}
 	data, err := io.ReadAll(io.LimitReader(r, maxImageBytes+1))
@@ -133,27 +161,27 @@ func (s *Store) Import(agent, logicalName string, r io.Reader, originalName stri
 	sum := sha256.Sum256(data)
 	hash := hex.EncodeToString(sum[:])
 
-	cat, err := s.catalogs.load(agent)
+	cat, err := s.catalogs.load(canonicalAgent)
 	if err != nil {
 		return nil, err
 	}
 	// The same image must not be renamed to impersonate a different state.
 	for other, st := range cat.Items {
-		if other != logicalName && st.Current != nil && st.Current.Hash == hash {
+		if other != canonicalName && st.Current != nil && st.Current.Hash == hash {
 			return nil, fmt.Errorf("identical image already assigned to %s; one image cannot stand in for two states", other)
 		}
-		if other != logicalName && st.AcceptedHash != "" && st.AcceptedHash == hash {
+		if other != canonicalName && st.AcceptedHash != "" && st.AcceptedHash == hash {
 			return nil, fmt.Errorf("identical image is the accepted content of %s; one image cannot stand in for two states", other)
 		}
 	}
-	if st := cat.Items[logicalName]; st != nil && st.Current != nil && st.Current.Hash == hash {
+	if st := cat.Items[canonicalName]; st != nil && st.Current != nil && st.Current.Hash == hash {
 		return st.Current, nil // unchanged content: no state transition
 	}
 
-	if err := os.MkdirAll(s.blobDir(agent), 0o755); err != nil {
+	if err := os.MkdirAll(s.blobDir(canonicalAgent), 0o755); err != nil {
 		return nil, err
 	}
-	blob := s.blobPath(agent, hash, ext)
+	blob := s.blobPath(canonicalAgent, hash, ext)
 	if _, err := os.Stat(blob); os.IsNotExist(err) {
 		if err := os.WriteFile(blob, data, 0o600); err != nil {
 			return nil, err
@@ -165,8 +193,8 @@ func (s *Store) Import(agent, logicalName string, r io.Reader, originalName stri
 		OriginalName: filepath.Base(originalName),
 		ImportedAt:   nowRFC3339(),
 	}
-	err = s.catalogs.update(agent, func(c *AgentCatalog) error {
-		c.item(logicalName).Current = rec
+	err = s.catalogs.update(canonicalAgent, func(c *AgentCatalog) error {
+		c.item(canonicalName).Current = rec
 		return nil
 	})
 	if err != nil {
@@ -179,10 +207,11 @@ func (s *Store) Import(agent, logicalName string, r io.Reader, originalName stri
 // directory (the manual fast path) and removes the drop-in file afterwards.
 // Unknown files are left untouched and reported.
 func (s *Store) ScanDropIns(agent string) (imported []string, skipped []string, err error) {
-	if err := s.checkAgent(agent); err != nil {
+	canonicalAgent, err := s.canonicalAgent(agent)
+	if err != nil {
 		return nil, nil, err
 	}
-	dir := s.agentDir(agent)
+	dir := s.agentDir(canonicalAgent)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -197,7 +226,8 @@ func (s *Store) ScanDropIns(agent string) (imported []string, skipped []string, 
 		}
 		ext := strings.ToLower(filepath.Ext(name))
 		base := strings.TrimSuffix(name, ext)
-		if !knownLogicalNames[base] {
+		canonicalName, ok := canonicalLogicalName(base)
+		if !ok {
 			skipped = append(skipped, name)
 			continue
 		}
@@ -207,7 +237,7 @@ func (s *Store) ScanDropIns(agent string) (imported []string, skipped []string, 
 			skipped = append(skipped, name)
 			continue
 		}
-		_, importErr := s.Import(agent, base, f, name)
+		_, importErr := s.Import(canonicalAgent, canonicalName, f, name)
 		f.Close() //nolint:errcheck
 		if importErr != nil {
 			skipped = append(skipped, fmt.Sprintf("%s (%v)", name, importErr))
@@ -216,19 +246,24 @@ func (s *Store) ScanDropIns(agent string) (imported []string, skipped []string, 
 		if err := os.Remove(path); err != nil {
 			return imported, skipped, fmt.Errorf("remove imported drop-in %s: %w", name, err)
 		}
-		imported = append(imported, base)
+		imported = append(imported, canonicalName)
 	}
 	sort.Strings(imported)
 	sort.Strings(skipped)
 	return imported, skipped, nil
 }
 
-// blobExists reports whether the current capture's content is on disk.
+// blobExists reports whether the current capture's content is on disk. The
+// record comes from the catalog, so its hash/ext are store-owned values.
 func (s *Store) blobExists(agent string, rec *CaptureRecord) bool {
+	canonical, err := s.canonicalAgent(agent)
+	if err != nil {
+		return false
+	}
 	if rec == nil || !hashPattern.MatchString(rec.Hash) {
 		return false
 	}
-	_, err := os.Stat(s.blobPath(agent, rec.Hash, rec.Ext))
+	_, err = os.Stat(s.blobPath(canonical, rec.Hash, rec.Ext))
 	return err == nil
 }
 
@@ -248,25 +283,33 @@ func knownHashes(cat *AgentCatalog) map[string]string {
 }
 
 // lookupBlob resolves a hash to an on-disk blob only when the catalog knows
-// the hash. The store directory is never exposed as static content.
+// the hash. The served path is built from the catalog's own hash string, not
+// from the request. The store directory is never exposed as static content.
 func (s *Store) lookupBlob(agent, hash string) (path string, ext string, err error) {
-	if err := s.checkAgent(agent); err != nil {
+	canonicalAgent, err := s.canonicalAgent(agent)
+	if err != nil {
 		return "", "", err
 	}
 	if !hashPattern.MatchString(hash) {
 		return "", "", fmt.Errorf("invalid hash")
 	}
-	cat, err := s.catalogs.load(agent)
+	cat, err := s.catalogs.load(canonicalAgent)
 	if err != nil {
 		return "", "", err
 	}
-	ext, ok := knownHashes(cat)[hash]
-	if !ok {
+	knownHash, knownExt := "", ""
+	for catalogHash, catalogExt := range knownHashes(cat) {
+		if catalogHash == hash {
+			knownHash, knownExt = catalogHash, catalogExt
+			break
+		}
+	}
+	if knownHash == "" {
 		return "", "", fmt.Errorf("unknown image")
 	}
-	path = s.blobPath(agent, hash, ext)
+	path = s.blobPath(canonicalAgent, knownHash, knownExt)
 	if _, err := os.Stat(path); err != nil {
 		return "", "", fmt.Errorf("image content not available locally")
 	}
-	return path, ext, nil
+	return path, knownExt, nil
 }

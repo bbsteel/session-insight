@@ -14,7 +14,12 @@ import (
 func testStore(t *testing.T) *Store {
 	t.Helper()
 	root := t.TempDir()
-	return newStore(root, func(agent string) bool { return agent == "claude" })
+	return newStore(root, func(agent string) (string, bool) {
+		if agent == "claude" {
+			return "claude", true
+		}
+		return "", false
+	})
 }
 
 // pngBytes renders a small valid PNG whose content depends on the seed color.
