@@ -60,6 +60,10 @@ export default function InstantTooltip({
       onMouseEnter={e => showAt(e.clientX, e.clientY)}
       onMouseMove={placement === 'cursor' || placement === 'cursor-left' ? e => setPos({ x: e.clientX, y: e.clientY }) : undefined}
       onMouseLeave={() => setPos(null)}
+      onFocus={() => showAt(0, 0)}
+      onBlur={e => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPos(null)
+      }}
     >
       {children}
       {pos && createPortal(

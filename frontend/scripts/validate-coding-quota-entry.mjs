@@ -53,6 +53,22 @@ async function checkLocale(page, locale) {
       JSON.stringify({ inputBox, quotaBox }))
   }
 
+  await quotaButton.hover()
+  const quotaPreview = page.locator('[data-testid="coding-quota-preview"]')
+  await quotaPreview.waitFor({ state: 'visible', timeout: 10_000 })
+  await page.waitForFunction(() => {
+    const preview = document.querySelector('[data-testid="coding-quota-preview"]')
+    return Boolean(preview?.querySelector('[data-testid^="coding-quota-preview-provider-"], [data-testid="coding-quota-preview-empty"]'))
+  }, undefined, { timeout: 10_000 })
+  check(`${locale} quota hover preview is visible`, await quotaPreview.isVisible())
+  check(`${locale} quota hover preview has configured providers or empty state`,
+    await quotaPreview.locator('[data-testid^="coding-quota-preview-provider-"]').count() > 0 || await quotaPreview.locator('[data-testid="coding-quota-preview-empty"]').count() === 1)
+  const previewScreenshotPath = path.join(SHOT_DIR, `coding-quota-preview-${locale}.png`)
+  await page.screenshot({ path: previewScreenshotPath })
+  console.log(`Quota preview screenshot saved: ${previewScreenshotPath}`)
+  await page.mouse.move(20, 20)
+  await quotaPreview.waitFor({ state: 'hidden', timeout: 5_000 })
+
   await quotaButton.click()
   const dialog = page.locator('[data-testid="coding-quota-dialog"]')
   await dialog.waitFor({ state: 'visible', timeout: 10_000 })
