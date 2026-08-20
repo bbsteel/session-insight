@@ -139,8 +139,14 @@ func TestKimiProviderParsesUsageAndLimitWindows(t *testing.T) {
 	if got := *snapshot.Windows[0].RemainingPercent; got != 40 {
 		t.Fatalf("usage remaining percent = %v, want 40", got)
 	}
+	if snapshot.Windows[0].Unit != "percent" {
+		t.Fatalf("usage unit = %q, want percent", snapshot.Windows[0].Unit)
+	}
 	if got := *snapshot.Windows[1].RemainingPercent; got != 75 {
 		t.Fatalf("limit remaining percent = %v, want 75", got)
+	}
+	if snapshot.Windows[1].Unit != "" {
+		t.Fatalf("limit unit = %q, want empty", snapshot.Windows[1].Unit)
 	}
 }
 

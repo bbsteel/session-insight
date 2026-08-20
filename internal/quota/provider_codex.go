@@ -21,7 +21,8 @@ func NewCodexProvider(options ProviderOptions) QuotaProvider {
 			ID:                 ProviderCodex,
 			DisplayNameKey:     "quota.provider.codex",
 			DescriptionKey:     "quota.provider.codexDescription",
-			DocumentationURL:   "https://developers.openai.com/codex",
+			DocumentationURL:   "https://help.openai.com/en/articles/20001106-codex-rate-card",
+			QuotaURL:           codexUsageEndpoint,
 			SupportsExactQuota: true,
 		},
 	}

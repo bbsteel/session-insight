@@ -25,12 +25,14 @@ function fallbackWindowLabel(windowID: string): string {
 
 function windowLabel(windowID: string, translate: (key: string, vars?: Record<string, string | number>) => string): string {
   const rateLimitMatch = /^limit_(\d+)$/.exec(windowID)
-  if (rateLimitMatch) return translate('quota.window.rateLimit', { index: Number(rateLimitMatch[1]) + 1 })
+  if (rateLimitMatch) return translate('quota.window.numbered', { index: Number(rateLimitMatch[1]) + 1 })
   const bucketMatch = /^bucket_(\d+)$/.exec(windowID)
-  if (bucketMatch) return translate('quota.window.bucket', { index: Number(bucketMatch[1]) + 1 })
+  if (bucketMatch) return translate('quota.window.numbered', { index: Number(bucketMatch[1]) + 1 })
   const key = `quota.window.${windowID}`
   const translated = translate(key)
-  return translated === key ? fallbackWindowLabel(windowID) : translated
+  return translated === key
+    ? translate('quota.window.generic', { name: fallbackWindowLabel(windowID) })
+    : translated
 }
 
 function remainingValue(window: CodingQuotaWindow, locale: 'zh-CN' | 'en', translate: (key: string) => string): string {
@@ -49,6 +51,21 @@ function resetValue(window: CodingQuotaWindow, translate: (key: string, vars?: R
   const secondsUntilReset = (new Date(window.reset_at).getTime() - Date.now()) / 1000
   if (secondsUntilReset <= 0) return translate('quota.resetNow')
   return translate('quota.resetsIn', { duration: compactDuration(secondsUntilReset) })
+}
+
+function remainingToneClass(window: CodingQuotaWindow): string {
+  if (typeof window.remaining_percent !== 'number') return 'text-[var(--text-primary)]'
+  if (window.remaining_percent <= 10) return 'text-[var(--error)]'
+  if (window.remaining_percent <= 25) return 'text-[var(--warning)]'
+  return 'text-[var(--text-primary)]'
+}
+
+function isPercentageWindow(window: CodingQuotaWindow): boolean {
+  return typeof window.remaining_percent === 'number' && (window.unit === 'percent' || typeof window.remaining_amount !== 'number')
+}
+
+function isVisibleByDefault(provider: CodingQuotaProvider): boolean {
+  return provider.snapshot.status !== 'not_configured' && provider.snapshot.status !== 'unsupported'
 }
 
 function statusLabel(provider: CodingQuotaProvider, translate: (key: string) => string): string {
@@ -83,31 +100,53 @@ function ProviderCard({ provider }: { provider: CodingQuotaProvider }) {
           </div>
           <p className="mt-1 text-helper text-[var(--text-secondary)]">{t(provider.description_key)}</p>
         </div>
-        {provider.documentation_url && (
-          <a
-            className="flex-shrink-0 text-helper text-[var(--accent-blue)] hover:underline"
-            href={provider.documentation_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {t('quota.documentation')}
-          </a>
-        )}
+        <div className="flex flex-shrink-0 items-start gap-2 text-helper">
+          {provider.documentation_url && (
+            <a
+              className="text-[var(--accent-blue)] hover:underline"
+              href={provider.documentation_url}
+              target="_blank"
+              rel="noreferrer"
+              data-testid={`quota-documentation-${provider.id}`}
+            >
+              {t('quota.documentation')}
+            </a>
+          )}
+          {provider.quota_url && (
+            <a
+              className="text-[var(--accent-blue)] hover:underline"
+              href={provider.quota_url}
+              target="_blank"
+              rel="noreferrer"
+              data-testid={`quota-query-${provider.id}`}
+            >
+              {t('quota.query')}
+            </a>
+          )}
+        </div>
       </div>
 
       {windows.length > 0 ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {windows.map(window => (
-            <div key={`${provider.id}-${window.id}`} className="rounded-md bg-[var(--bg-inset)] px-3 py-2" data-testid={`quota-window-${provider.id}-${window.id}`}>
+            <div
+              key={`${provider.id}-${window.id}`}
+              className="rounded-md bg-[var(--bg-inset)] px-3 py-2"
+              data-testid={`quota-window-${provider.id}-${window.id}`}
+              data-quota-percentage-window={isPercentageWindow(window) ? 'true' : 'false'}
+            >
               <div className="flex items-center justify-between gap-2 text-helper text-[var(--text-secondary)]">
                 <span>{windowLabel(window.id, t)}</span>
                 {window.reset_at && <span className="text-[var(--text-muted)]">{resetValue(window, t)}</span>}
               </div>
-              <div className="mt-1 text-title font-semibold tabular-nums text-[var(--text-primary)]">
+              <div
+                className={`mt-1 text-title font-semibold tabular-nums ${remainingToneClass(window)}`}
+                data-testid={`quota-remaining-${provider.id}-${window.id}`}
+              >
                 {remainingValue(window, locale, t)}
                 {typeof window.remaining_percent === 'number' && <span className="ml-1 text-helper font-normal text-[var(--text-secondary)]">{t('quota.remaining')}</span>}
               </div>
-              {typeof window.limit_amount === 'number' && (
+              {typeof window.limit_amount === 'number' && !isPercentageWindow(window) && (
                 <div className="mt-0.5 text-meta text-[var(--text-muted)]">
                   {t('quota.limit', { amount: `${formatNumber(locale, window.limit_amount, { maximumFractionDigits: 2 })}${window.unit ? ` ${window.unit}` : ''}` })}
                 </div>
@@ -136,6 +175,7 @@ function ProviderCard({ provider }: { provider: CodingQuotaProvider }) {
 export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
   const { t } = useI18n()
   const [providers, setProviders] = useState<CodingQuotaProvider[]>([])
+  const [showAllProviders, setShowAllProviders] = useState(false)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState(false)
@@ -165,6 +205,8 @@ export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
+  const visibleProviders = showAllProviders ? providers : providers.filter(isVisibleByDefault)
+
   return createPortal(
     <div
       className="fixed inset-0 z-[420] flex items-center justify-center bg-[rgba(0,0,0,var(--opacity-overlay,0.4))] p-4"
@@ -183,6 +225,26 @@ export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
             <p className="mt-1 max-w-2xl text-body text-[var(--text-secondary)]">{t('quota.subtitle')}</p>
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
+            <div className="inline-flex rounded-md border border-[var(--border-default)] p-0.5" role="group" aria-label={t('quota.viewLabel')}>
+              <button
+                type="button"
+                onClick={() => setShowAllProviders(false)}
+                aria-pressed={!showAllProviders}
+                className={`h-6 rounded px-1.5 text-meta ${!showAllProviders ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                data-testid="coding-quota-filter-configured"
+              >
+                {t('quota.view.configured')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAllProviders(true)}
+                aria-pressed={showAllProviders}
+                className={`h-6 rounded px-1.5 text-meta ${showAllProviders ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                data-testid="coding-quota-filter-all"
+              >
+                {t('quota.view.all')}
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => load(true)}
@@ -219,9 +281,22 @@ export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
               </button>
             </div>
           ) : (
-            <div className="space-y-3">
-              {providers.map(provider => <ProviderCard key={provider.id} provider={provider} />)}
-            </div>
+            visibleProviders.length > 0 ? (
+              <div className="space-y-3">
+                {visibleProviders.map(provider => <ProviderCard key={provider.id} provider={provider} />)}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-inset)] px-4 py-6 text-center text-body text-[var(--text-secondary)]" data-testid="coding-quota-empty-configured">
+                <p>{t('quota.emptyConfigured')}</p>
+                <button
+                  type="button"
+                  onClick={() => setShowAllProviders(true)}
+                  className="mt-3 h-7 rounded-md border border-[var(--border-default)] px-3 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                >
+                  {t('quota.view.all')}
+                </button>
+              </div>
+            )
           )}
         </div>
       </section>

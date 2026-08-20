@@ -46,6 +46,7 @@ type ProviderDefinition struct {
 	DisplayNameKey     string     `json:"display_name_key"`
 	DescriptionKey     string     `json:"description_key"`
 	DocumentationURL   string     `json:"documentation_url"`
+	QuotaURL           string     `json:"quota_url"`
 	SupportsExactQuota bool       `json:"supports_exact_quota"`
 }
 
