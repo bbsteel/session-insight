@@ -137,7 +137,22 @@ function ClockIcon() {
   )
 }
 
-export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => void }) {
+function QuotaIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <rect x="7" y="12" width="2.5" height="5" rx="0.5" />
+      <rect x="11" y="9" width="2.5" height="8" rx="0.5" />
+      <rect x="15" y="6" width="2.5" height="11" rx="0.5" />
+    </svg>
+  )
+}
+
+export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
+  onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => void
+  onOpenCodingQuotas?: () => void
+}) {
   const { locale, t } = useI18n()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
@@ -529,6 +544,19 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
         )}
       </div>
       <div className="ml-auto flex items-center gap-1.5">
+        {onOpenCodingQuotas && (
+          <button
+            type="button"
+            onClick={onOpenCodingQuotas}
+            aria-label={t('quota.open')}
+            title={t('quota.open')}
+            className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            data-testid="global-coding-quota"
+          >
+            <QuotaIcon />
+            <span>{t('quota.openShort')}</span>
+          </button>
+        )}
         <LanguageSwitch />
         <ThemeSwitch />
         <div className="relative">

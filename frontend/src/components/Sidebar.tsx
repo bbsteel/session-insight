@@ -9,7 +9,6 @@ import ModelFilter, { type ModelEntry } from './ModelFilter'
 import AgentIcon from './AgentIcon'
 import BookmarkNoteEditor, { type BookmarkNoteAnchor, type BookmarkNoteTarget } from './BookmarkNoteEditor'
 import ChangeRequestLookupDialog from './ChangeRequestLookupDialog'
-import CodingQuotaDialog from './CodingQuotaDialog'
 import DeleteSessionDialog from './DeleteSessionDialog'
 import ExportImportModal from './ExportImportModal'
 import InstantTooltip from './InstantTooltip'
@@ -96,7 +95,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   const [contentHits, setContentHits] = useState<Set<string> | null>(null)
   const [showExportImport, setShowExportImport] = useState(false)
   const [showChangeRequestLookup, setShowChangeRequestLookup] = useState(false)
-  const [showCodingQuotas, setShowCodingQuotas] = useState(false)
   const [version, setVersion] = useState('')
 
   // 版本号只取一次（进程生命周期内不变），失败时 footer 留空不打扰。
@@ -870,22 +868,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
             type="button"
-            onClick={() => setShowCodingQuotas(true)}
-            aria-label={t('quota.open')}
-            title={t('quota.open')}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-            data-testid="sidebar-coding-quota"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 19V5" />
-              <path d="M4 19h16" />
-              <rect x="7" y="12" width="2.5" height="5" rx="0.5" />
-              <rect x="11" y="9" width="2.5" height="8" rx="0.5" />
-              <rect x="15" y="6" width="2.5" height="11" rx="0.5" />
-            </svg>
-          </button>
-          <button
-            type="button"
             onClick={() => setShowChangeRequestLookup(true)}
             className="h-6 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             title={t('git.lookup.open')}
@@ -1224,8 +1206,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           onSelectSession={onSelect}
         />
       )}
-
-      {showCodingQuotas && <CodingQuotaDialog onClose={() => setShowCodingQuotas(false)} />}
 
       {/* 活跃会话复制恢复命令的再确认弹窗 */}
       {resumeConfirm && createPortal(
