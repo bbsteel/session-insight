@@ -97,7 +97,6 @@ export default function App() {
           onClose={() => setSidebarOpen(false)}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
-          onOpenSnippets={() => { window.location.hash = '/snippets' }}
           onSessionDeleted={(session) => {
             if (session.id === selectedId) {
               setSelectedId(null)
