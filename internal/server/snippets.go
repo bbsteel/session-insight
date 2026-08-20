@@ -14,6 +14,7 @@ type snippetRequest struct {
 	AgentType   string `json:"agent_type"`
 	SessionID   string `json:"session_id"`
 	SessionName string `json:"session_name"`
+	Project     string `json:"project"`
 	SourceKind  string `json:"source_kind"`
 	TurnIndex   *int   `json:"turn_index,omitempty"`
 }
@@ -45,6 +46,7 @@ func (s *Server) handleCreateSnippet(w http.ResponseWriter, r *http.Request) {
 	request.AgentType = strings.TrimSpace(request.AgentType)
 	request.SessionID = strings.TrimSpace(request.SessionID)
 	request.SessionName = strings.TrimSpace(request.SessionName)
+	request.Project = strings.TrimSpace(request.Project)
 	if request.Content == "" || request.AgentType == "" || request.SessionID == "" {
 		http.Error(w, "content, agent_type, and session_id are required", http.StatusBadRequest)
 		return
@@ -64,7 +66,7 @@ func (s *Server) handleCreateSnippet(w http.ResponseWriter, r *http.Request) {
 
 	snippet, err := s.DB.AddSnippet(db.Snippet{
 		Content: request.Content, AgentType: request.AgentType, SessionID: request.SessionID,
-		SessionName: request.SessionName, SourceKind: request.SourceKind, TurnIndex: request.TurnIndex,
+		SessionName: request.SessionName, Project: request.Project, SourceKind: request.SourceKind, TurnIndex: request.TurnIndex,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

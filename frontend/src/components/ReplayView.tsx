@@ -291,6 +291,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         agent_type: session.agent_type,
         session_id: session.id,
         session_name: session.name,
+        project: session.project,
         source_kind: sourceKind,
         ...(turnIndex === undefined ? {} : { turn_index: turnIndex }),
       })

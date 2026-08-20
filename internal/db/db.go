@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 41
+const currentSchemaVersion = 42
 
 type DB struct {
 	conn *sql.DB
@@ -216,6 +216,7 @@ func migrate(conn *sql.DB) error {
 	    agent_type  TEXT    NOT NULL,
 	    session_id  TEXT    NOT NULL,
 	    session_name TEXT   NOT NULL DEFAULT '',
+	    project     TEXT    NOT NULL DEFAULT '',
 	    source_kind TEXT    NOT NULL CHECK (source_kind IN ('selection', 'assistant')),
 	    turn_index  INTEGER,
 	    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -953,6 +954,30 @@ func migrate(conn *sql.DB) error {
 	}
 	// Version 41: persistent local excerpts. The CREATE TABLE above safely
 	// creates it for both fresh installs and existing databases.
+
+	// Version 42: persist the source project alongside each snippet. Existing
+	// excerpts are backfilled from the session index when the source session is
+	// still available; historical rows remain valid with an empty project.
+	if maxVersion < 42 {
+		hasSnippetProject, err := tableHasColumn(context.Background(), conn, "snippets", "project")
+		if err != nil {
+			return fmt.Errorf("v42 inspect snippets.project: %w", err)
+		}
+		if !hasSnippetProject {
+			if _, err := conn.Exec(`ALTER TABLE snippets ADD COLUMN project TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("v42 add snippets.project: %w", err)
+			}
+		}
+		if _, err := conn.Exec(`
+			UPDATE snippets
+			SET project = COALESCE((
+				SELECT project FROM sessions
+				WHERE sessions.agent_type = snippets.agent_type AND sessions.id = snippets.session_id
+			), '')
+			WHERE project = ''`); err != nil {
+			return fmt.Errorf("v42 backfill snippets.project: %w", err)
+		}
+	}
 
 	// Version 38: the Codex reader now parses paginated history mode
 	// (event_msg/item_completed) for user/assistant text. Codex sessions

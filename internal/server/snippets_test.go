@@ -21,7 +21,7 @@ func TestSnippetAPIStoresListsAndDeletesSnapshot(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/api/snippets", strings.NewReader(`{
 		"content":"Keep this decision.","agent_type":"codex","session_id":"s-1",
-		"session_name":"Snippet work","source_kind":"assistant","turn_index":2
+		"session_name":"Snippet work","project":"session-insight","source_kind":"assistant","turn_index":2
 	}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -33,7 +33,7 @@ func TestSnippetAPIStoresListsAndDeletesSnapshot(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
 		t.Fatalf("decode created snippet: %v", err)
 	}
-	if created.Content != "Keep this decision." || created.TurnIndex == nil || *created.TurnIndex != 2 {
+	if created.Content != "Keep this decision." || created.Project != "session-insight" || created.TurnIndex == nil || *created.TurnIndex != 2 {
 		t.Fatalf("unexpected created snippet: %+v", created)
 	}
 
