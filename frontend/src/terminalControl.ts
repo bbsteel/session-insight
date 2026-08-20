@@ -38,13 +38,21 @@ export interface TerminalLineMatch<T = unknown> {
 
 export interface TerminalLineMatcher<T = unknown> {
   /** Each returned match owns its payload, validation identity, and optional text range. */
-  match: (text: string) => TerminalLineMatch<T>[]
+  match: (text: string, bufferLine?: number) => TerminalLineMatch<T>[]
   /** Static label, or a formatter that receives the matcher's match data (e.g. full URL). */
   tooltip?: string | ((data: T) => string)
   // Optional async confirmation (e.g. does this detected path actually exist).
   // Each returned match is validated independently and can be removed without
   // affecting other matches on the same buffer row.
   validate?: (lineText: string, data: T) => Promise<boolean>
+  /**
+   * A compact action rendered through an xterm marker decoration while this
+   * matcher is hovered. Clicks are accepted only in its right-edge cells.
+   */
+  hoverAction?: {
+    label: string
+    cellWidth: number
+  }
   onActivate: (bufLine: number, data: T, matchIndex: number, meta?: TerminalActivateMeta) => void
 }
 

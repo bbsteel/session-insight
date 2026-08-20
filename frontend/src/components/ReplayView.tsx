@@ -302,6 +302,8 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       setSnippetSaving(false)
     }
   }, [session, snippetSaving])
+  const saveSnippetRef = useRef(saveSnippet)
+  saveSnippetRef.current = saveSnippet
   const handleToggleFollow = useCallback(() => {
     setFollowOutput(currentlyFollowing => {
       const shouldFollow = !currentlyFollowing
@@ -332,6 +334,25 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   // once (on cols-ready) but must see the latest positions and fold mapping.
   const positionsRef = useRef<PositionsResponse | null>(null)
   useEffect(() => { positionsRef.current = positionsData }, [positionsData])
+  const assistantPositionByOriginalRowRef = useRef(new Map<number, PositionsResponse['positions'][number]>())
+  useEffect(() => {
+    const orderedPositions = [...(positionsData?.positions ?? [])]
+      .sort((firstPosition, secondPosition) => firstPosition.line_start - secondPosition.line_start)
+    const positionsByOriginalRow = new Map<number, PositionsResponse['positions'][number]>()
+
+    for (const [positionIndex, position] of orderedPositions.entries()) {
+      if (position.kind !== 'assistant') continue
+      const nextPositionStart = orderedPositions[positionIndex + 1]?.line_start ?? positionsData?.total_lines ?? position.line_start + 1
+      const positionEndLine = position.line_end ?? Math.max(position.line_start, nextPositionStart - 1)
+      for (let originalRow = position.line_start; originalRow <= positionEndLine; originalRow += 1) {
+        positionsByOriginalRow.set(originalRow, position)
+      }
+    }
+
+    assistantPositionByOriginalRowRef.current = positionsByOriginalRow
+  }, [positionsData])
+  const sessionRef = useRef(session)
+  sessionRef.current = session
   const sessionCwdRef = useRef('')
   useEffect(() => { sessionCwdRef.current = session?.cwd ?? '' }, [session])
   // Hover-time path existence results, keyed by cwd+path (rows repeat paths).
@@ -478,8 +499,37 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           openFilePopover(bufLine, meta, null, data as PathMatch)
         },
       },
+      {
+        // Every assistant row gets an xterm-owned floating action at the
+        // right edge. The matcher is last so links and file paths within a
+        // reply retain their more specific interactions.
+        match: (_text: string, bufferLine?: number) => {
+          if (bufferLine === undefined) return []
+          const terminalControl = termControlRef.current
+          const originalRow = terminalControl ? terminalControl.toOriginalLine(bufferLine) : bufferLine
+          const assistantPosition = assistantPositionByOriginalRowRef.current.get(originalRow)
+          return assistantPosition ? [{ data: assistantPosition }] : []
+        },
+        tooltip: t('snippets.saveCurrentAssistant'),
+        hoverAction: {
+          label: t('snippets.quickSave'),
+          cellWidth: 8,
+        },
+        onActivate: (_bufLine: number, data: unknown) => {
+          const assistantPosition = data as PositionsResponse['positions'][number]
+          const assistantContent = sessionRef.current?.turns.find(turn => turn.turn_index === assistantPosition.turn_index)?.assistant_message
+            || assistantPosition.label
+          void saveSnippetRef.current(assistantContent, 'assistant', assistantPosition.turn_index)
+        },
+      },
     ])
   }, [openFilePopover, resolveFileCandidate, t])
+
+  // Assistant-row actions depend on the asynchronously loaded positions map;
+  // rescan when it arrives so the hover button is available without a resize.
+  useEffect(() => {
+    registerMatchers()
+  }, [positionsData, registerMatchers])
 
   // 列数没变时(例如「分析↔终端」来回切换导致的终端重挂载)必须保留现有
   // positions:positions 拉取 effect 的依赖不会变化、不会重拉,这里若无条件
