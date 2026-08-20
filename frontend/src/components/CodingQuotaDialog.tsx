@@ -7,14 +7,29 @@ interface CodingQuotaDialogProps {
   onClose: () => void
 }
 
-function compactDuration(totalSeconds: number): string {
+function localizedDurationPart(
+  count: number,
+  singularKey: string,
+  pluralKey: string,
+  translate: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  return translate(count === 1 ? singularKey : pluralKey, { count })
+}
+
+function fullDuration(
+  totalSeconds: number,
+  translate: (key: string, vars?: Record<string, string | number>) => string,
+): string {
   const wholeSeconds = Math.max(0, Math.ceil(totalSeconds))
   const days = Math.floor(wholeSeconds / 86400)
   const hours = Math.floor((wholeSeconds % 86400) / 3600)
   const minutes = Math.floor((wholeSeconds % 3600) / 60)
-  if (days > 0) return `${days}d${hours > 0 ? ` ${hours}h` : ''}`
-  if (hours > 0) return `${hours}h${minutes > 0 ? ` ${minutes}m` : ''}`
-  return `${Math.max(1, minutes)}m`
+  const durationParts: string[] = []
+  if (days > 0) durationParts.push(localizedDurationPart(days, 'quota.duration.day', 'quota.duration.days', translate))
+  if (hours > 0) durationParts.push(localizedDurationPart(hours, 'quota.duration.hour', 'quota.duration.hours', translate))
+  if (days === 0 && minutes > 0) durationParts.push(localizedDurationPart(minutes, 'quota.duration.minute', 'quota.duration.minutes', translate))
+  if (durationParts.length === 0) durationParts.push(localizedDurationPart(1, 'quota.duration.minute', 'quota.duration.minutes', translate))
+  return durationParts.join(' ')
 }
 
 function fallbackWindowLabel(windowID: string): string {
@@ -50,7 +65,7 @@ function resetValue(window: CodingQuotaWindow, translate: (key: string, vars?: R
   if (!window.reset_at) return translate('quota.resetUnknown')
   const secondsUntilReset = (new Date(window.reset_at).getTime() - Date.now()) / 1000
   if (secondsUntilReset <= 0) return translate('quota.resetNow')
-  return translate('quota.resetsIn', { duration: compactDuration(secondsUntilReset) })
+  return translate('quota.resetsIn', { duration: fullDuration(secondsUntilReset, translate) })
 }
 
 function remainingToneClass(window: CodingQuotaWindow): string {
@@ -118,17 +133,6 @@ function ProviderCard({ provider }: { provider: CodingQuotaProvider }) {
               {t('quota.documentation')}
             </a>
           )}
-          {provider.quota_url && (
-            <a
-              className="text-[var(--accent-blue)] hover:underline"
-              href={provider.quota_url}
-              target="_blank"
-              rel="noreferrer"
-              data-testid={`quota-query-${provider.id}`}
-            >
-              {t('quota.query')}
-            </a>
-          )}
         </div>
       </div>
 
@@ -143,7 +147,11 @@ function ProviderCard({ provider }: { provider: CodingQuotaProvider }) {
             >
               <div className="flex items-center justify-between gap-2 text-helper text-[var(--text-secondary)]">
                 <span>{windowLabel(window.id, t)}</span>
-                {window.reset_at && <span className="text-[var(--text-muted)]">{resetValue(window, t)}</span>}
+                {window.reset_at && (
+                  <span className="text-[var(--text-muted)]" data-testid={`quota-reset-${provider.id}-${window.id}`}>
+                    {resetValue(window, t)}
+                  </span>
+                )}
               </div>
               <div
                 className={`mt-1 text-title font-semibold tabular-nums ${remainingToneClass(window)}`}

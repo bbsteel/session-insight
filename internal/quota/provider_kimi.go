@@ -30,7 +30,6 @@ func NewKimiProvider(options ProviderOptions) QuotaProvider {
 			DescriptionKey:     "quota.provider.kimiDescription",
 			QuotaStrategyKey:   "quota.provider.kimiStrategy",
 			DocumentationURL:   "https://www.kimi.com/help/kimi-code/benefits",
-			QuotaURL:           kimiUsageEndpoint,
 			SupportsExactQuota: true,
 		},
 	}
