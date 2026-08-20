@@ -75,7 +75,7 @@ function ProviderCard({ provider }: { provider: CodingQuotaProvider }) {
               data-quota-percentage-window={isPercentageWindow(window) ? 'true' : 'false'}
             >
               <div className="flex items-center justify-between gap-2 text-helper text-[var(--text-secondary)]">
-                <span>{windowLabel(window.id, t)}</span>
+                <span>{windowLabel(window, t)}</span>
                 {window.reset_at && (
                   <span className="text-[var(--text-muted)]" data-testid={`quota-reset-${provider.id}-${window.id}`}>
                     {resetValue(window, t)}
