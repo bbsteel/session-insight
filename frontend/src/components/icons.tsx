@@ -111,6 +111,28 @@ export function CloseIcon(props: IconProps) {
   )
 }
 
+/** Hide the session list so the terminal can use the leftover width. */
+export function PanelLeftCloseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2" y="2.5" width="12" height="11" rx="1.5" />
+      <path d="M6 2.5v11" />
+      <path d="M11 6.5 8.5 8 11 9.5" />
+    </Icon>
+  )
+}
+
+/** Restore the session list from the collapsed desktop rail. */
+export function PanelLeftOpenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2" y="2.5" width="12" height="11" rx="1.5" />
+      <path d="M6 2.5v11" />
+      <path d="M8.5 6.5 11 8 8.5 9.5" />
+    </Icon>
+  )
+}
+
 export function SunIcon({ className, ...rest }: IconProps) {
   return (
     <Icon className={className ?? 'h-3.5 w-3.5 shrink-0'} {...rest}>

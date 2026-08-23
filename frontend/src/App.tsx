@@ -1,12 +1,42 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
 import CodingQuotaDialog from './components/CodingQuotaDialog'
 import SnippetPage from './components/SnippetPage'
+import { PanelLeftOpenIcon } from './components/icons'
 import type { BookmarkChange } from './bookmarkState'
 import { useI18n } from './i18n'
 import { parseSessionRoute } from './sessionLink'
+
+const SIDEBAR_HIDDEN_KEY = 'si-sidebar-hidden'
+
+function readSidebarHidden(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeSidebarHidden(hidden: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? '1' : '0')
+  } catch {
+    // Storage is optional; keep the in-memory UI state working.
+  }
+}
+
+function modifierShortcut(key: string): string {
+  const platform =
+    typeof navigator !== 'undefined'
+      ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+        || navigator.userAgent
+        || navigator.platform
+        || '')
+      : ''
+  return /Mac|iPhone|iPad|iPod/i.test(platform) ? `⌘${key}` : `Ctrl+${key}`
+}
 
 // Hash route for the new-tab file viewer (#/file?path=…&cwd=…): the Go embed
 // file server only knows "/", so client-side hash routing keeps it zero-config.
@@ -44,7 +74,7 @@ export default function App() {
   const [sessionRoute] = useState(() => (fileRoute || snippetsRoute ? null : parseSessionRoute(window.location.hash)))
   const [selectedId, setSelectedId] = useState<string | null>(sessionRoute?.id ?? null)
   const [selectedAgentType, setSelectedAgentType] = useState<string | null>(sessionRoute?.agentType ?? null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarHidden, setSidebarHidden] = useState(readSidebarHidden)
   const [showCodingQuotas, setShowCodingQuotas] = useState(false)
   const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
   const [sidebarFocusTarget, setSidebarFocusTarget] = useState<{ id: string; agentType: string } | null>(
@@ -54,6 +84,32 @@ export default function App() {
   // Root ancestor of a subagent session opened from global search: ReplayView
   // shows the child transcript but offers a back-to-parent breadcrumb.
   const [searchRootRef, setSearchRootRef] = useState<{ sessionId: string; childAgentType: string; root: { id: string; agentType: string; name: string } } | null>(null)
+  const sessionListShortcut = modifierShortcut('B')
+
+  const persistSidebarHidden = useCallback((hidden: boolean) => {
+    writeSidebarHidden(hidden)
+    setSidebarHidden(hidden)
+  }, [])
+
+  const toggleSessionList = useCallback(() => {
+    setSidebarHidden(hidden => {
+      const nextHidden = !hidden
+      writeSidebarHidden(nextHidden)
+      return nextHidden
+    })
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing || event.altKey || event.shiftKey) return
+      if (!(event.ctrlKey || event.metaKey)) return
+      if (event.key !== 'b' && event.key !== 'B') return
+      event.preventDefault()
+      toggleSessionList()
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [toggleSessionList])
 
   const selectSession = (id: string, agentType?: string, focusSidebar = false, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => {
     setSelectedId(id)
@@ -64,7 +120,7 @@ export default function App() {
     setSidebarFocusTarget(focusSidebar && agentType ? landing : null)
     setSearchTarget(focusSidebar && agentType && searchQuery ? { sessionId: id, agentType, query: searchQuery } : null)
     setSearchRootRef(focusSidebar && rootRef && agentType ? { sessionId: id, childAgentType: agentType, root: rootRef } : null)
-    setSidebarOpen(false)
+    if (focusSidebar) persistSidebarHidden(false)
   }
 
   if (fileRoute) {
@@ -72,28 +128,15 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col md:flex-row overflow-hidden bg-[var(--bg-primary)]">
-      <button
-        className="md:hidden fixed left-2 top-2 z-[250] h-7 w-7 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-        onClick={() => setSidebarOpen(true)}
-        aria-label={t('app.openSessions')}
-      >
-        ☰
-      </button>
-      {sidebarOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-[240] bg-[rgba(0,0,0,var(--opacity-overlay))]"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-[260] transition-transform duration-normal md:block`}>
+    <div className="h-screen flex flex-row overflow-hidden bg-[var(--bg-primary)]">
+      <div className={sidebarHidden ? 'hidden' : 'h-full'}>
         <Sidebar
           selectedId={selectedId}
           selectedAgentType={selectedAgentType}
           focusTarget={sidebarFocusTarget}
           onSelect={selectSession}
-          drawer={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
+          onHide={() => persistSidebarHidden(true)}
+          sessionListShortcut={sessionListShortcut}
           bookmarkChange={bookmarkChange}
           onBookmarkChange={setBookmarkChange}
           onSessionDeleted={(session) => {
@@ -104,6 +147,25 @@ export default function App() {
           }}
         />
       </div>
+      {sidebarHidden && (
+        <div
+          className="flex h-full w-8 flex-shrink-0 flex-col items-center border-r border-[var(--border-default)] bg-[var(--bg-surface)] pt-2"
+          data-testid="sidebar-show-rail"
+        >
+          <button
+            type="button"
+            onClick={() => persistSidebarHidden(false)}
+            className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            aria-label={t('app.openSessions')}
+            title={t('app.openSessionsTitle', { shortcut: sessionListShortcut })}
+            aria-controls="session-sidebar"
+            aria-expanded={false}
+            data-testid="sidebar-show"
+          >
+            <PanelLeftOpenIcon />
+          </button>
+        </div>
+      )}
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ReplayView
           sessionId={selectedId}

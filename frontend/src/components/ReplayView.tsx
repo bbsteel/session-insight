@@ -1861,6 +1861,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       || '')
     : ''
   const findShortcut = /Mac|iPhone|iPad|iPod/i.test(uaPlatform) ? '⌘F' : 'Ctrl+F'
+  const sidebarShortcut = /Mac|iPhone|iPad|iPod/i.test(uaPlatform) ? '⌘B' : 'Ctrl+B'
   const tokenExactFull =
     tokenHeader.kind === 'value' ? formatTokenCount(locale, tokenHeader.total, 'full') : ''
   const tokenHeaderText =
@@ -2186,10 +2187,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 ['j / ↓', t('replay.shortcutNext')],
                 ['k / ↑', t('replay.shortcutPrevious')],
                 [findShortcut, t('replay.shortcutFind')],
+                [sidebarShortcut, t('replay.shortcutSidebar')],
                 ['?', t('replay.shortcutHelp')],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">
-                  <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[60px] text-center">{key}</kbd>
+                  <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[4.5rem] text-center">{key}</kbd>
                   <span className="text-[var(--text-secondary)]">{desc}</span>
                 </div>
               ))}
