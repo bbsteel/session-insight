@@ -148,6 +148,9 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 
 func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/bookmarks", s.handleListBookmarks)
+	s.Mux.HandleFunc("GET /api/snippets", s.handleListSnippets)
+	s.Mux.HandleFunc("POST /api/snippets", s.handleCreateSnippet)
+	s.Mux.HandleFunc("DELETE /api/snippets/{id}", s.handleDeleteSnippet)
 	s.Mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)

@@ -544,6 +544,40 @@ export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
           </div>
         )}
       </div>
+      <div className="flex flex-shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => { window.location.hash = '/snippets' }}
+          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          title={t('snippets.open')}
+          data-testid="global-snippets"
+        >
+          {t('snippets.open')}
+        </button>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event('si-open-change-request-lookup'))}
+          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          title={t('git.lookup.open')}
+          data-testid="global-change-request-lookup"
+        >
+          {t('git.lookup.short')}
+        </button>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event('si-open-export-import'))}
+          aria-label={t('sidebar.exportImport')}
+          title={t('sidebar.exportImport')}
+          className="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          data-testid="global-export-import"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v12" />
+            <polyline points="7 10 12 15 17 10" />
+            <path d="M4 21h16" />
+          </svg>
+        </button>
+      </div>
       <div className="ml-auto flex items-center gap-1.5">
         {onOpenCodingQuotas && (
           <CodingQuotaPreview icon={<QuotaIcon />} onOpen={onOpenCodingQuotas} />
