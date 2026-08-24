@@ -49,6 +49,28 @@ func defaultStoreRoot() (string, error) {
 	return filepath.Join(home, ".session-insight-dev", "terminal-references"), nil
 }
 
+func checkoutFallbackStore(checkoutDir string) string {
+	return filepath.Join(checkoutDir, ".runtime", "terminal-references")
+}
+
+// ensureStoreRoot creates preferred. If that fails and allowFallback is set,
+// it creates fallback instead and returns a warning note.
+func ensureStoreRoot(preferred, fallback string, allowFallback bool) (root, note string, err error) {
+	if preferred == "" {
+		return "", "", fmt.Errorf("empty store root")
+	}
+	if err := os.MkdirAll(preferred, 0o755); err == nil {
+		return preferred, "", nil
+	} else if !allowFallback || fallback == "" || fallback == preferred {
+		return "", "", fmt.Errorf("create store %s: %w", preferred, err)
+	} else {
+		if err2 := os.MkdirAll(fallback, 0o755); err2 != nil {
+			return "", "", fmt.Errorf("create store %s: %v (fallback %s: %w)", preferred, err, fallback, err2)
+		}
+		return fallback, fmt.Sprintf("default store %s is not writable (%v); using %s", preferred, err, fallback), nil
+	}
+}
+
 // Store owns the on-disk reference data of every Agent.
 //
 // Every caller-supplied identifier (agent, logical file name, content hash)

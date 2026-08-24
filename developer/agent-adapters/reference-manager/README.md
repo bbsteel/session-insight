@@ -56,7 +56,10 @@ Everything lives outside the Git repository:
     └── <logical-name>.png    # optional manual drop-in, imported on scan
 ```
 
-Override the root with `SI_TERMINAL_REFERENCE_ROOT`. Original screenshots,
+Override the root with `SI_TERMINAL_REFERENCE_ROOT`. If the default home
+directory is not writable (for example a sandboxed agent shell), the tool
+falls back to `<checkout>/.runtime/terminal-references` and logs the path.
+Original screenshots,
 session IDs, resume commands, local paths and the catalog must never enter
 Git, PRs, issues or public logs. Work orders are written to the Git-ignored
 `.runtime/reference-work/` directory of the current checkout.

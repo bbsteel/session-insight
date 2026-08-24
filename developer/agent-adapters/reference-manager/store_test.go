@@ -11,6 +11,46 @@ import (
 	"testing"
 )
 
+func TestEnsureStoreRootFallsBackWhenPreferredUnwritable(t *testing.T) {
+	blocked := t.TempDir()
+	if err := os.Chmod(blocked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
+	preferred := filepath.Join(blocked, "terminal-references")
+	checkout := t.TempDir()
+	fallback := checkoutFallbackStore(checkout)
+
+	root, note, err := ensureStoreRoot(preferred, fallback, true)
+	if err != nil {
+		t.Fatalf("ensureStoreRoot: %v", err)
+	}
+	if root != fallback {
+		t.Fatalf("root = %s, want fallback %s", root, fallback)
+	}
+	if note == "" {
+		t.Fatal("expected a fallback note")
+	}
+	if _, err := os.Stat(fallback); err != nil {
+		t.Fatalf("fallback dir missing: %v", err)
+	}
+
+	if _, _, err := ensureStoreRoot(preferred, fallback, false); err == nil {
+		t.Fatal("explicit store must not fall back")
+	}
+}
+
+func TestEnsureStoreRootUsesPreferredWhenWritable(t *testing.T) {
+	preferred := filepath.Join(t.TempDir(), "store")
+	root, note, err := ensureStoreRoot(preferred, filepath.Join(t.TempDir(), "other"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != preferred || note != "" {
+		t.Fatalf("root=%s note=%q", root, note)
+	}
+}
+
 func testStore(t *testing.T) *Store {
 	t.Helper()
 	root := t.TempDir()

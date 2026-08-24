@@ -54,7 +54,12 @@ func runVerifyWorkOrder(args []string) int {
 		writePreflight(&preflightResult{OK: false, ResultCode: ResultPrivateInputMissing, Detail: err.Error()})
 		return 1
 	}
-	root, err := defaultStoreRoot()
+	preferred, err := defaultStoreRoot()
+	if err != nil {
+		writePreflight(&preflightResult{OK: false, ResultCode: ResultPrivateInputMissing, Detail: err.Error()})
+		return 1
+	}
+	root, _, err := ensureStoreRoot(preferred, checkoutFallbackStore(checkoutDir), os.Getenv(StoreRootEnv) == "")
 	if err != nil {
 		writePreflight(&preflightResult{OK: false, ResultCode: ResultPrivateInputMissing, Detail: err.Error()})
 		return 1

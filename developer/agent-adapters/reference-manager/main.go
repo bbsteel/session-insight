@@ -43,13 +43,20 @@ func main() {
 	}
 	flag.Parse()
 
-	root, err := defaultStoreRoot()
-	if err != nil {
-		log.Fatalf("reference store root: %v", err)
-	}
 	checkoutDir, err := os.Getwd()
 	if err != nil {
 		log.Fatalf("resolve checkout directory: %v", err)
+	}
+	preferred, err := defaultStoreRoot()
+	if err != nil {
+		log.Fatalf("reference store root: %v", err)
+	}
+	root, note, err := ensureStoreRoot(preferred, checkoutFallbackStore(checkoutDir), os.Getenv(StoreRootEnv) == "")
+	if err != nil {
+		log.Fatalf("reference store root: %v", err)
+	}
+	if note != "" {
+		log.Print(note)
 	}
 
 	readers := reader.Discover()
