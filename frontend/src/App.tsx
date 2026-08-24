@@ -101,7 +101,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.isComposing || event.altKey || event.shiftKey) return
+      if (event.isComposing || event.repeat || event.altKey || event.shiftKey) return
       if (!(event.ctrlKey || event.metaKey)) return
       if (event.key !== 'b' && event.key !== 'B') return
       event.preventDefault()
