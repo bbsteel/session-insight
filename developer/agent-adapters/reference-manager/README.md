@@ -11,6 +11,7 @@ CLI, injects keystrokes or creates sessions.
 ```bash
 ./scripts/terminal-reference          # all onboarded Agents
 ./scripts/terminal-reference grok     # one Agent
+./scripts/terminal-reference verify-work-order --work-order /abs/path/WORK_ORDER.md
 ```
 
 The tool binds `127.0.0.1` on a random OS-assigned port and prints a
@@ -31,15 +32,17 @@ The tool binds `127.0.0.1` on a random OS-assigned port and prints a
   store directory on scan — no `prepare`/`--capture` command exists.
 - Tracks per-logical-file evidence states: `missing`, `found`, `captured`,
   `used`, `update_available`, `not_applicable` (the last only via an explicit
-  researched reason). Agent version changes are context, never bulk
-  invalidation.
-- Freezes pending inputs (hash-locked) into an incremental work order under
-  `.runtime/reference-work/<agent>-<id>/` and flags a work order `stale` when
-  any frozen input changes afterwards.
+  researched reason). `used` is derived from the local `origin/main` evidence
+  lock, never from a local accept button. Agent version changes are context,
+  never bulk invalidation.
+- Freezes pending inputs into a schema v2 work order under
+  `.runtime/reference-work/<agent>-<id>/`. The markdown records full SHA-256
+  hashes, the main baseline commit, the main lock summary, and a copy-paste
+  `verify-work-order` command. A work order is `stale` when an input changes
+  after freezing; old schema work orders must be regenerated.
 
 The manager's boundary ends at the work order: it does not create goals,
-branches or PRs, does not edit product code and never auto-marks
-`update_available` as `used`.
+branches or PRs, and does not edit product code. Local accept is disabled.
 
 ## Storage and privacy
 

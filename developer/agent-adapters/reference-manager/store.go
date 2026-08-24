@@ -170,8 +170,8 @@ func (s *Store) Import(agent, logicalName string, r io.Reader, originalName stri
 		if other != canonicalName && st.Current != nil && st.Current.Hash == hash {
 			return nil, fmt.Errorf("identical image already assigned to %s; one image cannot stand in for two states", other)
 		}
-		if other != canonicalName && st.AcceptedHash != "" && st.AcceptedHash == hash {
-			return nil, fmt.Errorf("identical image is the accepted content of %s; one image cannot stand in for two states", other)
+		if other != canonicalName && st.LegacyAcceptedHash != "" && st.LegacyAcceptedHash == hash {
+			return nil, fmt.Errorf("identical image is retained content of %s; one image cannot stand in for two states", other)
 		}
 	}
 	if st := cat.Items[canonicalName]; st != nil && st.Current != nil && st.Current.Hash == hash {
@@ -278,8 +278,8 @@ func servableHashes(cat *AgentCatalog) map[string]bool {
 		if st.Current != nil {
 			out[st.Current.Hash] = true
 		}
-		if st.AcceptedHash != "" {
-			out[st.AcceptedHash] = true
+		if st.LegacyAcceptedHash != "" {
+			out[st.LegacyAcceptedHash] = true
 		}
 	}
 	for _, wo := range cat.WorkOrders {
@@ -294,7 +294,7 @@ func servableHashes(cat *AgentCatalog) map[string]bool {
 // the hash. The served path is built from catalog-owned and on-disk values,
 // not from the request. The store directory is never exposed as static
 // content.
-func (s *Store) lookupBlob(agent, hash string) (path string, ext string, err error) {
+func (s *Store) lookupBlob(agent, hash string, extraHashes ...string) (path string, ext string, err error) {
 	canonicalAgent, err := s.canonicalAgent(agent)
 	if err != nil {
 		return "", "", err
@@ -306,8 +306,14 @@ func (s *Store) lookupBlob(agent, hash string) (path string, ext string, err err
 	if err != nil {
 		return "", "", err
 	}
+	known := servableHashes(cat)
+	for _, extra := range extraHashes {
+		if extra != "" {
+			known[extra] = true
+		}
+	}
 	knownHash := ""
-	for catalogHash := range servableHashes(cat) {
+	for catalogHash := range known {
 		if catalogHash == hash {
 			knownHash = catalogHash
 			break

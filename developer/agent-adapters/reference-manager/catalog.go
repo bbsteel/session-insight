@@ -15,8 +15,8 @@ const (
 	StatusMissing         = "missing"          // no candidate session and no capture
 	StatusFound           = "found"            // candidate session known, not captured yet
 	StatusCaptured        = "captured"         // capture exists, not used by the current presentation
-	StatusUsed            = "used"             // accepted content version matches the current capture
-	StatusUpdateAvailable = "update_available" // a newer capture exists while acceptance points at older content
+	StatusUsed            = "used"             // origin/main evidence lock hash matches the current capture
+	StatusUpdateAvailable = "update_available" // a newer capture exists while main lock points at older content
 	StatusNotApplicable   = "not_applicable"   // adapter research proved the scene does not exist
 )
 
@@ -34,9 +34,12 @@ type CaptureRecord struct {
 // ItemState is the catalog record of one logical screenshot file.
 type ItemState struct {
 	Current *CaptureRecord `json:"current,omitempty"`
-	// AcceptedHash / AcceptedExt identify the content version the current
-	// presentation was built from. The accepted blob stays in the store so a
-	// newer candidate image never destroys the implementation basis.
+	// LegacyAcceptedHash / LegacyAcceptedExt keep blobs that an old local
+	// accept button marked. They never decide used / consumed / overlay.
+	LegacyAcceptedHash string `json:"legacy_accepted_hash,omitempty"`
+	LegacyAcceptedExt  string `json:"legacy_accepted_ext,omitempty"`
+	// AcceptedHash is retained only so older catalog.json files can be
+	// migrated on load; it is cleared and must not be written back.
 	AcceptedHash string `json:"accepted_hash,omitempty"`
 	AcceptedExt  string `json:"accepted_ext,omitempty"`
 	// NotApplicable is set only by an explicit human/adapter-research
@@ -48,13 +51,21 @@ type ItemState struct {
 // WorkOrderRecord tracks one generated work order and its frozen input hashes
 // so the manager can refuse stale work orders when an input changes.
 type WorkOrderRecord struct {
-	ID        string            `json:"id"`
-	Dir       string            `json:"dir"` // checkout-relative .runtime/reference-work/<id>
-	CreatedAt string            `json:"created_at"`
-	Items     []string          `json:"items"`    // logical names included
-	Features  []string          `json:"features"` // mapped presentation features
-	Frozen    map[string]string `json:"frozen"`   // logical name -> frozen content hash
+	ID               string            `json:"id"`
+	Dir              string            `json:"dir"` // checkout-relative .runtime/reference-work/<id>
+	CreatedAt        string            `json:"created_at"`
+	SchemaVersion    int               `json:"schema_version"`
+	Agent            string            `json:"agent,omitempty"`
+	Items            []string          `json:"items"`    // logical names included
+	Features         []string          `json:"features"` // mapped presentation features
+	Frozen           map[string]string `json:"frozen"`   // logical name -> frozen content hash
+	BaselineRef      string            `json:"baseline_ref,omitempty"`
+	BaselineSHA      string            `json:"baseline_sha,omitempty"`
+	MainLockHashes   map[string]string `json:"main_lock_hashes,omitempty"` // logical name -> main lock hash (empty if none)
+	PreflightCommand string            `json:"preflight_command,omitempty"`
 }
+
+const WorkOrderSchemaV2 = 2
 
 // AgentCatalog is the local, never-committed per-Agent reference catalog.
 type AgentCatalog struct {
@@ -89,9 +100,9 @@ type ItemStatus struct {
 }
 
 // resolveStatus derives the evidence state of one logical file.
-// hasCandidate reports whether candidate discovery found a session for it;
-// blobExists reports whether the current capture's blob is on disk.
-func resolveStatus(st *ItemState, hasCandidate bool, blobExists bool) ItemStatus {
+// mainLockHash is the origin/main evidence lock hash for this logical file
+// (empty when the lock has no claim). LegacyAcceptedHash is ignored.
+func resolveStatus(st *ItemState, hasCandidate bool, blobExists bool, mainLockHash string) ItemStatus {
 	if st == nil {
 		if hasCandidate {
 			return ItemStatus{Status: StatusFound}
@@ -111,15 +122,27 @@ func resolveStatus(st *ItemState, hasCandidate bool, blobExists bool) ItemStatus
 	if !blobExists {
 		out.LocalUnavailable = true
 	}
-	switch st.AcceptedHash {
-	case "":
+	switch {
+	case mainLockHash == "":
 		out.Status = StatusCaptured
-	case st.Current.Hash:
+	case mainLockHash == st.Current.Hash:
 		out.Status = StatusUsed
 	default:
 		out.Status = StatusUpdateAvailable
 	}
 	return out
+}
+
+func migrateItemState(st *ItemState) {
+	if st == nil {
+		return
+	}
+	if st.AcceptedHash != "" && st.LegacyAcceptedHash == "" {
+		st.LegacyAcceptedHash = st.AcceptedHash
+		st.LegacyAcceptedExt = st.AcceptedExt
+	}
+	st.AcceptedHash = ""
+	st.AcceptedExt = ""
 }
 
 // catalogStore loads and saves per-Agent catalogs under the reference store
@@ -156,6 +179,9 @@ func (s *catalogStore) loadLocked(agent string) (*AgentCatalog, error) {
 		cat.Items = map[string]*ItemState{}
 	}
 	cat.Agent = agent
+	for _, st := range cat.Items {
+		migrateItemState(st)
+	}
 	return cat, nil
 }
 
@@ -176,6 +202,9 @@ func (s *catalogStore) update(agent string, fn func(*AgentCatalog) error) error 
 func (s *catalogStore) saveLocked(cat *AgentCatalog) error {
 	if err := os.MkdirAll(filepath.Join(s.root, cat.Agent), 0o755); err != nil {
 		return err
+	}
+	for _, st := range cat.Items {
+		migrateItemState(st)
 	}
 	data, err := json.MarshalIndent(cat, "", "  ")
 	if err != nil {

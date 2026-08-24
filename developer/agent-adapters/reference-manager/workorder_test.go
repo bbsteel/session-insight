@@ -8,6 +8,7 @@ import (
 )
 
 func TestWorkOrderFreezeAndStaleness(t *testing.T) {
+	stubEmptyBaseline(t)
 	s := testStore(t)
 	checkout := t.TempDir()
 	rec := importPNG(t, s, "claude", "04-thinking", 1)
@@ -19,8 +20,14 @@ func TestWorkOrderFreezeAndStaleness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generateWorkOrder: %v", err)
 	}
+	if wo.SchemaVersion != WorkOrderSchemaV2 {
+		t.Fatalf("schema = %d, want %d", wo.SchemaVersion, WorkOrderSchemaV2)
+	}
 	if wo.Frozen["04-thinking"] != rec.Hash {
 		t.Fatalf("frozen hash = %s, want %s", wo.Frozen["04-thinking"], rec.Hash)
+	}
+	if wo.BaselineSHA == "" || wo.PreflightCommand == "" {
+		t.Fatalf("v2 work order missing baseline or preflight: %+v", wo)
 	}
 	dir := filepath.Join(checkout, ".runtime", "reference-work", wo.ID)
 	for _, want := range []string{
@@ -33,11 +40,17 @@ func TestWorkOrderFreezeAndStaleness(t *testing.T) {
 		}
 	}
 	md, _ := os.ReadFile(filepath.Join(dir, "WORK_ORDER.md"))
-	if !strings.Contains(string(md), rec.Hash[:12]) {
-		t.Error("WORK_ORDER.md must record the frozen hash prefix")
+	if !strings.Contains(string(md), rec.Hash) {
+		t.Error("WORK_ORDER.md must record the full frozen SHA-256")
+	}
+	if !strings.Contains(string(md), "work_order_schema_version: 2") {
+		t.Error("WORK_ORDER.md must declare schema v2")
 	}
 	if !strings.Contains(string(md), "thinking") {
 		t.Error("WORK_ORDER.md must map the input to its feature")
+	}
+	if !strings.Contains(string(md), "verify-work-order") {
+		t.Error("WORK_ORDER.md must include the preflight command")
 	}
 	ctx, _ := os.ReadFile(filepath.Join(dir, "local-candidate-context", "candidates.txt"))
 	if !strings.Contains(string(ctx), "claude --resume r1") {
@@ -48,45 +61,52 @@ func TestWorkOrderFreezeAndStaleness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := workOrderState(cat.WorkOrders[0], cat); got != WorkOrderActive {
+	if got := workOrderState(cat.WorkOrders[0], cat, nil); got != WorkOrderActive {
 		t.Fatalf("fresh work order state = %s, want active", got)
 	}
 
-	// Input changed after freezing: the work order is stale.
 	importPNG(t, s, "claude", "04-thinking", 2)
 	cat, _ = s.catalogs.load("claude")
-	if got := workOrderState(cat.WorkOrders[0], cat); got != WorkOrderStale {
+	if got := workOrderState(cat.WorkOrders[0], cat, nil); got != WorkOrderStale {
 		t.Fatalf("after input change state = %s, want stale", got)
-	}
-
-	// Accepting the updated content does not consume the work order: the
-	// accepted hash moved past the frozen hash, so the order stays stale.
-	acceptCapture(t, s, "claude", "04-thinking")
-	cat, _ = s.catalogs.load("claude")
-	if got := workOrderState(cat.WorkOrders[0], cat); got != WorkOrderStale {
-		// accepted content moved past the frozen hash: still not active
-		t.Fatalf("accepted-after-update state = %s", got)
 	}
 }
 
-func TestWorkOrderConsumedWhenFrozenAccepted(t *testing.T) {
+func TestWorkOrderConsumedWhenMainLockMatches(t *testing.T) {
+	stubEmptyBaseline(t)
 	s := testStore(t)
 	checkout := t.TempDir()
-	importPNG(t, s, "claude", "04-thinking", 1)
+	rec := importPNG(t, s, "claude", "04-thinking", 1)
 	wo, err := generateWorkOrder(s, checkout, "claude", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acceptCapture(t, s, "claude", "04-thinking")
+	lockHashes := map[string]string{"04-thinking": rec.Hash, "04-thinking.png": rec.Hash}
 	cat, _ := s.catalogs.load("claude")
-	if got := workOrderState(cat.WorkOrders[0], cat); got != WorkOrderConsumed {
+	if got := workOrderState(*wo, cat, lockHashes); got != WorkOrderConsumed {
 		t.Fatalf("state = %s, want consumed (wo frozen=%v)", got, wo.Frozen)
 	}
 }
 
-// TestWorkOrderSameSecondCollision forces two generations into one timestamp
-// second: each must get its own directory.
+func TestPendingInputsSkipMainLockMatches(t *testing.T) {
+	s := testStore(t)
+	rec := importPNG(t, s, "claude", "04-thinking", 1)
+	stubLockFor(t, "04-thinking", rec.Hash)
+	if _, err := generateWorkOrder(s, t.TempDir(), "claude", nil); err == nil {
+		t.Fatal("matching main lock should leave nothing pending")
+	}
+}
+
+func TestWorkOrderUnsupportedSchema(t *testing.T) {
+	cat := newAgentCatalog("claude")
+	rec := WorkOrderRecord{ID: "old", Frozen: map[string]string{"04-thinking": "abc"}}
+	if got := workOrderState(rec, cat, nil); got != WorkOrderUnsupported {
+		t.Fatalf("state = %s, want unsupported_schema", got)
+	}
+}
+
 func TestWorkOrderSameSecondCollision(t *testing.T) {
+	stubEmptyBaseline(t)
 	s := testStore(t)
 	checkout := t.TempDir()
 	importPNG(t, s, "claude", "04-thinking", 1)
@@ -118,6 +138,7 @@ func TestWorkOrderSameSecondCollision(t *testing.T) {
 }
 
 func TestWorkOrderRequiresPendingInputs(t *testing.T) {
+	stubEmptyBaseline(t)
 	s := testStore(t)
 	if _, err := generateWorkOrder(s, t.TempDir(), "claude", nil); err == nil {
 		t.Fatal("work order with no pending inputs must fail")

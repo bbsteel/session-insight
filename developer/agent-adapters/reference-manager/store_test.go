@@ -47,33 +47,55 @@ func importPNG(t *testing.T, s *Store, agent, name string, seed uint8) *CaptureR
 	return rec
 }
 
-func acceptCapture(t *testing.T, s *Store, agent, name string) {
+func stubEmptyBaseline(t *testing.T) {
 	t.Helper()
-	err := s.catalogs.update(agent, func(cat *AgentCatalog) error {
-		st := cat.item(name)
-		st.AcceptedHash = st.Current.Hash
-		st.AcceptedExt = st.Current.Ext
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("accept %s: %v", name, err)
+	origB, origL := lookupBaseline, loadAgentLock
+	lookupBaseline = func(string) (GitBaseline, error) {
+		return GitBaseline{Ref: "origin/main", SHA: strings.Repeat("a", 40)}, nil
 	}
+	loadAgentLock = func(_, _, agent string) (*evidenceLockFile, error) {
+		return &evidenceLockFile{AgentType: agent, Captures: map[string]evidenceLockItem{}}, nil
+	}
+	t.Cleanup(func() {
+		lookupBaseline = origB
+		loadAgentLock = origL
+	})
 }
 
-func statusOf(t *testing.T, s *Store, agent, name string) ItemStatus {
+func stubLockFor(t *testing.T, logical, hash string) {
+	t.Helper()
+	origB, origL := lookupBaseline, loadAgentLock
+	lookupBaseline = func(string) (GitBaseline, error) {
+		return GitBaseline{Ref: "origin/main", SHA: strings.Repeat("b", 40)}, nil
+	}
+	loadAgentLock = func(_, _, agent string) (*evidenceLockFile, error) {
+		return &evidenceLockFile{
+			AgentType: agent,
+			Captures: map[string]evidenceLockItem{
+				logical + ".png": {CurrentSHA256: "sha256:" + hash},
+			},
+		}, nil
+	}
+	t.Cleanup(func() {
+		lookupBaseline = origB
+		loadAgentLock = origL
+	})
+}
+
+func statusOf(t *testing.T, s *Store, agent, name string, lockHash string) ItemStatus {
 	t.Helper()
 	cat, err := s.catalogs.load(agent)
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
 	}
-	return resolveStatus(cat.Items[name], false, s.blobExists(agent, currentCapture(cat.Items[name])))
+	return resolveStatus(cat.Items[name], false, s.blobExists(agent, currentCapture(cat.Items[name])), lockHash)
 }
 
 func TestImportLifecycle(t *testing.T) {
 	s := testStore(t)
 
 	rec := importPNG(t, s, "claude", "04-thinking", 1)
-	if got := statusOf(t, s, "claude", "04-thinking").Status; got != StatusCaptured {
+	if got := statusOf(t, s, "claude", "04-thinking", "").Status; got != StatusCaptured {
 		t.Fatalf("after first import status = %s, want captured", got)
 	}
 	if _, err := os.Stat(s.blobPath("claude", rec.Hash, rec.Ext)); err != nil {
@@ -85,23 +107,27 @@ func TestImportLifecycle(t *testing.T) {
 	if rec2.Hash != rec.Hash {
 		t.Fatalf("same content must keep the same hash")
 	}
-	if got := statusOf(t, s, "claude", "04-thinking").Status; got != StatusCaptured {
+	if got := statusOf(t, s, "claude", "04-thinking", "").Status; got != StatusCaptured {
 		t.Fatalf("re-import of same content changed status to %s", got)
 	}
 
-	acceptCapture(t, s, "claude", "04-thinking")
-	if got := statusOf(t, s, "claude", "04-thinking").Status; got != StatusUsed {
-		t.Fatalf("after accept status = %s, want used", got)
+	if got := statusOf(t, s, "claude", "04-thinking", rec.Hash).Status; got != StatusUsed {
+		t.Fatalf("matching main lock status = %s, want used", got)
 	}
 
-	// New content for the same logical file: update_available, old accepted
-	// content stays in the store and remains servable.
+	stubEmptyBaseline(t)
+	if _, err := generateWorkOrder(s, t.TempDir(), "claude", nil); err != nil {
+		t.Fatalf("freeze current capture: %v", err)
+	}
+
+	// New content for the same logical file: update_available when main lock
+	// still points at the previous hash. The frozen work-order blob stays servable.
 	importPNG(t, s, "claude", "04-thinking", 2)
-	if got := statusOf(t, s, "claude", "04-thinking").Status; got != StatusUpdateAvailable {
+	if got := statusOf(t, s, "claude", "04-thinking", rec.Hash).Status; got != StatusUpdateAvailable {
 		t.Fatalf("after update status = %s, want update_available", got)
 	}
 	if _, _, err := s.lookupBlob("claude", rec.Hash); err != nil {
-		t.Fatalf("accepted blob must remain available after an update: %v", err)
+		t.Fatalf("frozen blob must remain available after an update: %v", err)
 	}
 }
 
@@ -159,7 +185,7 @@ func TestScanDropIns(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "vacation.png")); err != nil {
 		t.Fatal("unknown file must be left untouched")
 	}
-	if got := statusOf(t, s, "claude", "04-thinking").Status; got != StatusCaptured {
+	if got := statusOf(t, s, "claude", "04-thinking", "").Status; got != StatusCaptured {
 		t.Fatalf("status = %s, want captured", got)
 	}
 }
@@ -187,6 +213,7 @@ func TestLookupBlobGating(t *testing.T) {
 // stays servable after the slot advances to newer content (the frozen hash is
 // then neither current nor accepted).
 func TestLookupBlobServesFrozenInputs(t *testing.T) {
+	stubEmptyBaseline(t)
 	s := testStore(t)
 	checkout := t.TempDir()
 	frozen := importPNG(t, s, "claude", "04-thinking", 1)
@@ -203,14 +230,13 @@ func TestLookupBlobServesFrozenInputs(t *testing.T) {
 	}
 }
 
-func TestLocalUnavailableKeepsAcceptedValid(t *testing.T) {
+func TestLocalUnavailableKeepsLockValid(t *testing.T) {
 	s := testStore(t)
 	rec := importPNG(t, s, "claude", "04-thinking", 1)
-	acceptCapture(t, s, "claude", "04-thinking")
 	if err := os.Remove(s.blobPath("claude", rec.Hash, rec.Ext)); err != nil {
 		t.Fatal(err)
 	}
-	st := statusOf(t, s, "claude", "04-thinking")
+	st := statusOf(t, s, "claude", "04-thinking", rec.Hash)
 	if st.Status != StatusUsed || !st.LocalUnavailable {
 		t.Fatalf("missing local blob: status = %+v, want used + local_unavailable", st)
 	}

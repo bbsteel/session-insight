@@ -12,9 +12,10 @@ import (
 // Work-order states derived by comparing frozen input hashes with the
 // catalog's current captures.
 const (
-	WorkOrderActive   = "active"   // frozen inputs still match; safe to implement
-	WorkOrderStale    = "stale"    // an input changed after freezing; regenerate
-	WorkOrderConsumed = "consumed" // every frozen input is now the accepted version
+	WorkOrderActive      = "active"             // frozen inputs still match; safe to implement
+	WorkOrderStale       = "stale"              // an input changed after freezing; regenerate
+	WorkOrderConsumed    = "consumed"           // main lock matches every frozen hash
+	WorkOrderUnsupported = "unsupported_schema" // not schema v2; regenerate
 )
 
 // workOrderRoot is the Git-ignored checkout directory for temporary work
@@ -25,13 +26,14 @@ func workOrderRoot(checkoutDir string) string {
 
 // pendingInputs lists the logical files that need implementation work:
 // captured but not accepted, or updated after acceptance.
-func pendingInputs(cat *AgentCatalog) []string {
+func pendingInputs(cat *AgentCatalog, lockHashes map[string]string) []string {
 	var out []string
 	for name, st := range cat.Items {
 		if st.NotApplicable || st.Current == nil {
 			continue
 		}
-		if st.AcceptedHash == "" || st.AcceptedHash != st.Current.Hash {
+		lockHash := lockHashFor(lockHashes, name, st.Current.Ext)
+		if lockHash == "" || lockHash != st.Current.Hash {
 			out = append(out, name)
 		}
 	}
@@ -111,7 +113,17 @@ func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[strin
 	if err != nil {
 		return nil, err
 	}
-	pending := pendingInputs(cat)
+	baseline, err := lookupBaseline(checkoutDir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", baselineRef, err)
+	}
+	lock, err := loadAgentLock(checkoutDir, baseline.SHA, canonicalAgent)
+	if err != nil {
+		return nil, fmt.Errorf("read main evidence lock: %w", err)
+	}
+	lockHashes := lockHashesByLogical(lock)
+
+	pending := pendingInputs(cat, lockHashes)
 	if len(pending) == 0 {
 		return nil, fmt.Errorf("no pending reference inputs for %s; nothing to freeze", canonicalAgent)
 	}
@@ -178,13 +190,30 @@ func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[strin
 		}
 	}
 
+	mainLock := map[string]string{}
+	for _, name := range pending {
+		st := cat.Items[name]
+		ext := ""
+		if st != nil && st.Current != nil {
+			ext = st.Current.Ext
+		}
+		mainLock[name] = lockHashFor(lockHashes, name, ext)
+	}
+	relDir := filepath.Join(".runtime", "reference-work", id)
+	absMD := filepath.Join(dir, "WORK_ORDER.md")
 	record := &WorkOrderRecord{
-		ID:        id,
-		Dir:       filepath.Join(".runtime", "reference-work", id),
-		CreatedAt: nowRFC3339(),
-		Items:     pending,
-		Features:  features,
-		Frozen:    frozen,
+		SchemaVersion:    WorkOrderSchemaV2,
+		ID:               id,
+		Dir:              relDir,
+		CreatedAt:        nowRFC3339(),
+		Agent:            canonicalAgent,
+		Items:            pending,
+		Features:         features,
+		Frozen:           frozen,
+		BaselineRef:      baseline.Ref,
+		BaselineSHA:      baseline.SHA,
+		MainLockHashes:   mainLock,
+		PreflightCommand: fmt.Sprintf("./scripts/terminal-reference verify-work-order --work-order %s", absMD),
 	}
 
 	md := renderWorkOrderMarkdown(canonicalAgent, record, entries, cat, gaps, candidates)
@@ -207,22 +236,28 @@ func renderWorkOrderMarkdown(agent string, record *WorkOrderRecord, entries []fr
 	fmt.Fprintf(&b, "# Terminal reference work order: %s\n\n", agent)
 	fmt.Fprintf(&b, "- Generated: %s\n", record.CreatedAt)
 	fmt.Fprintf(&b, "- Work order ID: `%s`\n", record.ID)
+	fmt.Fprintf(&b, "- work_order_schema_version: 2\n")
+	fmt.Fprintf(&b, "- Schema version: `2`\n")
+	fmt.Fprintf(&b, "- Baseline ref: `%s`\n", record.BaselineRef)
+	fmt.Fprintf(&b, "- Baseline commit: `%s`\n", record.BaselineSHA)
 	if cat.CurrentVersion != "" {
 		fmt.Fprintf(&b, "- Installed Agent version context: %s\n", cat.CurrentVersion)
 	}
+	fmt.Fprintf(&b, "- Preflight: `%s`\n", record.PreflightCommand)
 	b.WriteString("\n## Frozen inputs\n\n")
 	b.WriteString("Every input hash below is frozen. If any input image changes after generation, this work order is void as acceptance input and must be regenerated.\n\n")
-	b.WriteString("| Logical file | Candidate hash | Accepted hash | Features |\n|---|---|---|---|\n")
+	b.WriteString("| Logical file | Candidate SHA-256 | Main lock SHA-256 | Short | Features |\n|---|---|---|---|---|\n")
 	for _, e := range entries {
-		accepted := cat.Items[e.logical].AcceptedHash
-		if accepted == "" {
-			accepted = "(none)"
+		lockHash := record.MainLockHashes[e.logical]
+		if lockHash == "" {
+			lockHash = "(none)"
 		}
 		features := itemFeatures(e.logical)
 		if len(features) == 0 {
 			features = []string{"(context only)"}
 		}
-		fmt.Fprintf(&b, "| `%s%s` | `%s` | `%s` | %s |\n", e.logical, e.rec.Ext, shortHash(e.rec.Hash), shortHash(accepted), strings.Join(features, ", "))
+		fmt.Fprintf(&b, "| `%s%s` | `%s` | `%s` | `%s` | %s |\n",
+			e.logical, e.rec.Ext, e.rec.Hash, lockHash, shortHash(e.rec.Hash), strings.Join(features, ", "))
 	}
 	if len(gaps) > 0 {
 		b.WriteString("\n## Allowed gaps (no evidence, out of scope)\n\n")
@@ -232,9 +267,10 @@ func renderWorkOrderMarkdown(agent string, record *WorkOrderRecord, entries []fr
 	}
 	b.WriteString("\n## Boundaries\n\n")
 	b.WriteString("- This work order is local development data under `.runtime/`; do not commit it or copy private context into PRs, issues or logs.\n")
-	b.WriteString("- Presentation implementation, revision bumps and delivery are out of scope here and happen only after the user explicitly starts the next phase.\n")
+	b.WriteString("- Presentation implementation happens only after the user explicitly starts the next phase.\n")
 	b.WriteString("- Missing images stay missing: do not fabricate scenes or placeholder captures.\n")
 	b.WriteString("- Candidate sessions and event positions are listed in `local-candidate-context/` (local only).\n")
+	b.WriteString("- Old schema work orders are not accepted; regenerate with the current Reference Manager.\n")
 	return b.String()
 }
 
@@ -249,19 +285,22 @@ func shortHash(hash string) string {
 }
 
 // workOrderState compares a record's frozen inputs with the catalog.
-func workOrderState(record WorkOrderRecord, cat *AgentCatalog) string {
+func workOrderState(record WorkOrderRecord, cat *AgentCatalog, lockHashes map[string]string) string {
+	if record.SchemaVersion != WorkOrderSchemaV2 {
+		return WorkOrderUnsupported
+	}
 	consumed := 0
 	for name, frozenHash := range record.Frozen {
 		st := cat.Items[name]
 		if st == nil || st.Current == nil {
 			return WorkOrderStale
 		}
-		if st.AcceptedHash == frozenHash && st.Current.Hash == frozenHash {
-			consumed++
-			continue
-		}
 		if st.Current.Hash != frozenHash {
 			return WorkOrderStale
+		}
+		ext := st.Current.Ext
+		if lockHashFor(lockHashes, name, ext) == frozenHash {
+			consumed++
 		}
 	}
 	if consumed == len(record.Frozen) && len(record.Frozen) > 0 {

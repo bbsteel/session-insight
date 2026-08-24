@@ -13,6 +13,7 @@ import (
 
 func testHTTPServer(t *testing.T) (*server, *httptest.Server) {
 	t.Helper()
+	stubEmptyBaseline(t)
 	store := testStore(t)
 	srv := newServer(store, t.TempDir(), nil, 5)
 	ts := httptest.NewServer(srv.routes())
@@ -197,4 +198,53 @@ func TestServerOmitsURLForMissingBlob(t *testing.T) {
 		return
 	}
 	t.Fatal("state must include 04-thinking")
+}
+
+func TestServerAcceptRemoved(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	code, out := postJSON(t, ts.URL+"/api/accept", `{"agent":"claude","logical_name":"04-thinking"}`)
+	if code != http.StatusGone {
+		t.Fatalf("accept = %d %v, want 410", code, out)
+	}
+	if out["result_code"] != "accept_removed" {
+		t.Fatalf("result_code = %v", out["result_code"])
+	}
+}
+
+func TestServerWorkOrderIsSchemaV2(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	if code, out := uploadFile(t, ts, "claude", "04-thinking", pngBytes(t, 1), "shot.png"); code != http.StatusOK {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	code, out := postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("work order = %d %v", code, out)
+	}
+	wo, _ := out["work_order"].(map[string]any)
+	if wo["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", wo["schema_version"])
+	}
+	if wo["preflight_command"] == "" || wo["baseline_sha"] == "" {
+		t.Fatalf("v2 fields missing: %v", wo)
+	}
+}
+
+func TestServerWorkOrderPreflight(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	if code, out := uploadFile(t, ts, "claude", "04-thinking", pngBytes(t, 1), "shot.png"); code != http.StatusOK {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	code, out := postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("work order = %d %v", code, out)
+	}
+	wo, _ := out["work_order"].(map[string]any)
+	id, _ := wo["id"].(string)
+	code, out = postJSON(t, ts.URL+"/api/work-orders/preflight", `{"id":"`+id+`"}`)
+	if code != http.StatusOK {
+		t.Fatalf("preflight = %d %v", code, out)
+	}
+	if out["ok"] != true || out["result_code"] != ResultOK {
+		t.Fatalf("preflight body = %v", out)
+	}
 }

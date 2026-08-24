@@ -31,8 +31,8 @@ type slotState struct {
 	LocalUnavailable    bool           `json:"local_unavailable,omitempty"`
 	Capture             *CaptureRecord `json:"capture,omitempty"`
 	ImageURL            string         `json:"image_url,omitempty"`
-	AcceptedHash        string         `json:"accepted_hash,omitempty"`
-	AcceptedImageURL    string         `json:"accepted_image_url,omitempty"`
+	MainLockHash        string         `json:"main_lock_hash,omitempty"`
+	MainLockImageURL    string         `json:"main_lock_image_url,omitempty"`
 	NotApplicable       bool           `json:"not_applicable,omitempty"`
 	NotApplicableReason string         `json:"not_applicable_reason,omitempty"`
 }
@@ -45,7 +45,8 @@ type itemState struct {
 
 type workOrderView struct {
 	WorkOrderRecord
-	State string `json:"state"`
+	State   string `json:"state"`
+	Overlay string `json:"overlay,omitempty"`
 }
 
 type scanStatus struct {
@@ -60,6 +61,8 @@ type stateResponse struct {
 	Agents         []agentInfo     `json:"agents"`
 	Agent          string          `json:"agent"`
 	CurrentVersion string          `json:"current_version,omitempty"`
+	Baseline       *GitBaseline    `json:"baseline,omitempty"`
+	BaselineError  string          `json:"baseline_error,omitempty"`
 	Items          []itemState     `json:"items"`
 	WorkOrders     []workOrderView `json:"work_orders"`
 	Scan           scanStatus      `json:"scan"`
@@ -159,6 +162,8 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/version", s.handleVersion)
 	mux.HandleFunc("POST /api/rescan", s.handleRescan)
 	mux.HandleFunc("POST /api/work-order", s.handleWorkOrder)
+	mux.HandleFunc("POST /api/work-orders/preflight", s.handleWorkOrderPreflight)
+	mux.HandleFunc("POST /api/git/refresh", s.handleGitRefresh)
 	return mux
 }
 
@@ -218,6 +223,23 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		scan.Errors = report.Errors
 	}
 
+	baseline, baselineErr := lookupBaseline(s.checkoutDir)
+	var lockHashes map[string]string
+	var headLockHashes map[string]string
+	headSHA := ""
+	if baselineErr == nil {
+		if lock, err := loadAgentLock(s.checkoutDir, baseline.SHA, agent); err == nil {
+			lockHashes = lockHashesByLogical(lock)
+		}
+		if sha, err := gitOutput(s.checkoutDir, "rev-parse", "HEAD"); err == nil {
+			headSHA = sha
+			if sha != baseline.SHA {
+				if lock, err := loadAgentLock(s.checkoutDir, sha, agent); err == nil {
+					headLockHashes = lockHashesByLogical(lock)
+				}
+			}
+		}
+	}
 	resp := stateResponse{
 		StoreRoot:      s.store.Root,
 		CheckoutDir:    s.checkoutDir,
@@ -227,35 +249,48 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		Scan:           scan,
 		WorkOrders:     []workOrderView{},
 	}
+	if baselineErr != nil {
+		resp.BaselineError = baselineErr.Error()
+	} else {
+		resp.Baseline = &baseline
+	}
 	for _, item := range checklist {
 		view := itemState{ChecklistItem: item, Candidate: candidates[item.ID]}
 		for _, slot := range item.Slots {
 			st := cat.Items[slot.LogicalName]
 			current := currentCapture(st)
 			currentExists := s.store.blobExists(agent, current)
-			resolved := resolveStatus(st, candidates[item.ID] != nil, currentExists)
+			ext := ""
+			if current != nil {
+				ext = current.Ext
+			}
+			mainLockHash := lockHashFor(lockHashes, slot.LogicalName, ext)
+			resolved := resolveStatus(st, candidates[item.ID] != nil, currentExists, mainLockHash)
 			ss := slotState{
 				LogicalName:      slot.LogicalName,
 				Label:            slot.Label,
 				Hint:             slot.Hint,
 				Status:           resolved.Status,
 				LocalUnavailable: resolved.LocalUnavailable,
+				MainLockHash:     mainLockHash,
 			}
 			if st != nil {
 				ss.NotApplicable = st.NotApplicable
 				ss.NotApplicableReason = st.NotApplicableReason
-				ss.AcceptedHash = st.AcceptedHash
 				if st.Current != nil {
 					ss.Capture = st.Current
-					// Never emit a URL for a blob that is not on disk:
-					// the browser would render a broken image against a 404.
 					if currentExists {
 						ss.ImageURL = fmt.Sprintf("/api/image?agent=%s&hash=%s", agent, st.Current.Hash)
 					}
 				}
-				acceptedDiffers := st.AcceptedHash != "" && (st.Current == nil || st.AcceptedHash != st.Current.Hash)
-				if acceptedDiffers && s.store.blobExists(agent, &CaptureRecord{Hash: st.AcceptedHash, Ext: st.AcceptedExt}) {
-					ss.AcceptedImageURL = fmt.Sprintf("/api/image?agent=%s&hash=%s", agent, st.AcceptedHash)
+				if mainLockHash != "" && (st.Current == nil || mainLockHash != st.Current.Hash) {
+					lockRec := &CaptureRecord{Hash: mainLockHash, Ext: ext}
+					if ext == "" {
+						lockRec.Ext = st.LegacyAcceptedExt
+					}
+					if s.store.blobExists(agent, lockRec) {
+						ss.MainLockImageURL = fmt.Sprintf("/api/image?agent=%s&hash=%s", agent, mainLockHash)
+					}
 				}
 			}
 			view.Slots = append(view.Slots, ss)
@@ -263,9 +298,34 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		resp.Items = append(resp.Items, view)
 	}
 	for _, record := range cat.WorkOrders {
-		resp.WorkOrders = append(resp.WorkOrders, workOrderView{record, workOrderState(record, cat)})
+		resp.WorkOrders = append(resp.WorkOrders, workOrderView{
+			WorkOrderRecord: record,
+			State:           workOrderState(record, cat, lockHashes),
+			Overlay:         workOrderOverlay(record, cat, s.checkoutDir, lockHashes, headLockHashes, headSHA, baseline.SHA),
+		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *server) mainLockHashes(agent string) []string {
+	baseline, err := lookupBaseline(s.checkoutDir)
+	if err != nil {
+		return nil
+	}
+	lock, err := loadAgentLock(s.checkoutDir, baseline.SHA, agent)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, hash := range lockHashesByLogical(lock) {
+		if hash == "" || seen[hash] {
+			continue
+		}
+		seen[hash] = true
+		out = append(out, hash)
+	}
+	return out
 }
 
 func currentCapture(st *ItemState) *CaptureRecord {
@@ -283,7 +343,8 @@ func (s *server) handleImage(w http.ResponseWriter, r *http.Request) {
 	if !s.validAgentOr400(w, agent) {
 		return
 	}
-	path, ext, err := s.store.lookupBlob(agent, hash)
+	extra := s.mainLockHashes(agent)
+	path, ext, err := s.store.lookupBlob(agent, hash, extra...)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -331,39 +392,78 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "capture": rec})
 }
 
-// handleAccept records the current capture as the accepted content version.
-// This is local bookkeeping only; it never edits product code and never
-// auto-accepts an update_available input.
+// handleAccept is retired: used is derived from the origin/main evidence lock.
 func (s *server) handleAccept(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusGone, map[string]any{
+		"ok":          false,
+		"result_code": "accept_removed",
+		"error":       "local accept no longer sets used; used comes from the origin/main evidence lock",
+	})
+}
+
+func (s *server) handleWorkOrderPreflight(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Agent       string `json:"agent"`
-		LogicalName string `json:"logical_name"`
+		ID string `json:"id"`
 	}
 	if err := jsonBody(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if !s.validAgentOr400(w, req.Agent) {
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "work order id is required")
 		return
 	}
-	if !knownLogicalNames[req.LogicalName] {
-		writeError(w, http.StatusBadRequest, "unknown logical file name")
-		return
-	}
-	err := s.store.UpdateCatalog(req.Agent, func(cat *AgentCatalog) error {
-		st := cat.item(req.LogicalName)
-		if st.Current == nil {
-			return fmt.Errorf("nothing captured for %s", req.LogicalName)
+	var foundAgent string
+	for _, a := range s.agents {
+		cat, err := s.store.LoadCatalog(a.Type)
+		if err != nil {
+			continue
 		}
-		st.AcceptedHash = st.Current.Hash
-		st.AcceptedExt = st.Current.Ext
-		return nil
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		for _, rec := range cat.WorkOrders {
+			if rec.ID == id {
+				foundAgent = a.Type
+				break
+			}
+		}
+		if foundAgent != "" {
+			break
+		}
+	}
+	if foundAgent == "" {
+		writeJSON(w, http.StatusConflict, &preflightResult{
+			OK: false, ResultCode: ResultPrivateInputMissing, WorkOrder: id,
+			Detail: "work order id is not in the local catalog",
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	result := preflightWorkOrderID(s.store, s.checkoutDir, foundAgent, id, "")
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusConflict
+	}
+	writeJSON(w, status, result)
+}
+
+func (s *server) handleGitRefresh(w http.ResponseWriter, r *http.Request) {
+	if err := fetchOriginMain(s.checkoutDir); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok":          false,
+			"result_code": ResultMainLockUnreadable,
+			"error":       err.Error(),
+		})
+		return
+	}
+	baseline, err := lookupBaseline(s.checkoutDir)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok":          false,
+			"result_code": ResultMainLockUnreadable,
+			"error":       err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "baseline": baseline})
 }
 
 // handleNotApplicable marks a scene as researched-absent (or clears that

@@ -53,7 +53,7 @@ var checklist = []ChecklistItem{
 		Goal:        "The representative full view after resuming a session: header, body, status or prompt areas.",
 		Extractable: "Overall information hierarchy, density, margins, dominant visual language, default states.",
 		Slots:       []Slot{defaultSlot("01-session-overview")},
-		Features:    []string{"density", "turn_boundary"},
+		Features:    []string{"turn_boundary"},
 	},
 	{
 		ID:            "02-user-prompt",
@@ -97,7 +97,7 @@ var checklist = []ChecklistItem{
 		Goal:          "The visible state while a tool is executing.",
 		Extractable:   "Running marker, static spinner shape, status copy and colors; never used to simulate animation timing.",
 		Slots:         []Slot{defaultSlot("06-tool-running")},
-		Features:      []string{"tool_invocation"},
+		Features:      []string{"tool_running"},
 		CandidateNote: "Live session with an unpaired ToolInvocation.",
 	},
 	{
@@ -124,7 +124,7 @@ var checklist = []ChecklistItem{
 		Goal:          "An explicit tool timeout result.",
 		Extractable:   "How timeout differs visually from a plain failure.",
 		Slots:         []Slot{defaultSlot("09-tool-timeout")},
-		Features:      []string{"tool_result_failure"},
+		Features:      []string{"tool_result_timeout"},
 		CandidateNote: "ToolResult.TimedOut == true.",
 	},
 	{
@@ -133,7 +133,7 @@ var checklist = []ChecklistItem{
 		Goal:          "A tool rejected by the user, a hook or a permission policy.",
 		Extractable:   "How rejection differs visually from failure and timeout.",
 		Slots:         []Slot{defaultSlot("10-tool-rejected")},
-		Features:      []string{"tool_result_failure"},
+		Features:      []string{"tool_result_rejected"},
 		CandidateNote: "ToolResult.Rejected == true.",
 	},
 	{
@@ -169,6 +169,7 @@ var checklist = []ChecklistItem{
 		Goal:          "A native CLI permission request.",
 		Extractable:   "Options, focus, danger hints and the default selection. Undecided outcomes are never inferred from the image.",
 		Slots:         []Slot{defaultSlot("14-permission-request")},
+		Features:      []string{"permission_request"},
 		CandidateNote: "Explicit permission-request event or subtype.",
 	},
 	{
@@ -195,6 +196,7 @@ var checklist = []ChecklistItem{
 		Goal:          "A session or task that finished naturally.",
 		Extractable:   "Completion marker, final prompt, elapsed time or statistics.",
 		Slots:         []Slot{defaultSlot("17-session-completed")},
+		Features:      []string{"session_completed"},
 		CandidateNote: "Non-live finished session (low confidence suggestion).",
 	},
 	{
@@ -203,6 +205,7 @@ var checklist = []ChecklistItem{
 		Goal:          "A user interruption, abnormal termination or unfinished state.",
 		Extractable:   "How interrupted differs visually from completed / failed.",
 		Slots:         []Slot{defaultSlot("18-session-interrupted")},
+		Features:      []string{"session_interrupted"},
 		CandidateNote: "Explicit interrupted marker.",
 	},
 	{
@@ -218,7 +221,7 @@ var checklist = []ChecklistItem{
 		Goal:          "The default state of a native group of consecutive tools.",
 		Extractable:   "Group title, count, summary, group boundary and the default collapsed state.",
 		Slots:         []Slot{defaultSlot("20-tool-group"), toggledSlot("20-tool-group")},
-		Features:      []string{"tool_invocation"},
+		Features:      []string{"tool_group"},
 		CandidateNote: "Three or more consecutive tool invocations in one turn.",
 	},
 	{
@@ -231,7 +234,7 @@ var checklist = []ChecklistItem{
 			{LogicalName: "21-nested-fold-inner-toggled", Label: "Inner toggled", Hint: "From the default state, toggle only the inner block; keep the outer at default."},
 			{LogicalName: "21-nested-fold-outer-toggled", Label: "Outer toggled", Hint: "Start over from the default state and toggle only the outer block."},
 		},
-		Features:      []string{"tool_invocation", "subagent"},
+		Features:      []string{"nested_fold"},
 		CandidateNote: "Tool activity nested inside a subagent block.",
 	},
 }
@@ -290,4 +293,38 @@ func itemFeatures(logicalName string) []string {
 		return nil
 	}
 	return checklistItemByID[itemID].Features
+}
+
+// canonicalFeatureIDs is the unique presentation feature catalog from the
+// implementation design. density is a profile-level dimension, not a feature.
+var canonicalFeatureIDs = []string{
+	"turn_boundary",
+	"user_prompt",
+	"assistant_text",
+	"thinking",
+	"tool_invocation",
+	"tool_running",
+	"tool_result_success",
+	"tool_result_failure",
+	"tool_result_timeout",
+	"tool_result_rejected",
+	"file_change",
+	"subagent",
+	"context_boundary",
+	"permission_request",
+	"long_output",
+	"live_status",
+	"session_completed",
+	"session_interrupted",
+	"tool_group",
+	"nested_fold",
+}
+
+func isCanonicalFeature(id string) bool {
+	for _, want := range canonicalFeatureIDs {
+		if id == want {
+			return true
+		}
+	}
+	return false
 }

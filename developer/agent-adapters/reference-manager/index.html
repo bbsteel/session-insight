@@ -63,6 +63,7 @@
   .wo-state { font-weight: 600; }
   .wo-state.active { color: var(--found); } .wo-state.stale { color: var(--update); }
   .wo-state.consumed { color: var(--used); }
+  .wo-state.unsupported_schema { color: var(--update); }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
            background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px;
            padding: 8px 16px; display: none; z-index: 20; max-width: 80vw; }
@@ -77,15 +78,19 @@
   <label>Agent <select id="agent"></select></label>
   <label>Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
   <button id="rescan">Rescan</button>
+  <button id="refreshgit">Refresh origin/main</button>
   <button id="mkwo" class="primary">Generate work order</button>
   <span class="meta" id="storeroot"></span>
+  <span class="meta" id="baseline"></span>
   <span class="meta" id="scan"></span>
 </header>
 <main>
   <div class="notice">
     Drop one complete native-CLI full-screen screenshot into a slot. Any terminal, any size.
     Missing items are allowed gaps &mdash; never fabricate scenes. Captures, session IDs and
-    resume commands stay outside Git. The manager stops at the frozen work order.
+    resume commands stay outside Git. <code>used</code> comes from the
+    origin/main evidence lock, not a local accept button. The manager stops at
+    the frozen work order.
   </div>
   <div id="items"></div>
   <section id="workorders">
@@ -133,6 +138,12 @@ async function load() {
 
 function render(data) {
   $('#storeroot').textContent = 'store: ' + data.store_root;
+  const base = $('#baseline');
+  if (data.baseline && data.baseline.sha) {
+    base.textContent = 'baseline ' + data.baseline.ref + ' @ ' + data.baseline.sha.slice(0, 12);
+  } else {
+    base.textContent = data.baseline_error ? 'baseline unread: refresh origin/main' : '';
+  }
   const scan = $('#scan');
   scan.textContent = data.scan.running ? 'scanning sessions…' :
     (data.scan.scanned_sessions ? `scanned ${data.scan.scanned_sessions} sessions` : '');
@@ -157,8 +168,14 @@ function render(data) {
   for (const wo of [...data.work_orders].reverse()) {
     const li = el('li');
     li.appendChild(el('span', 'wo-state ' + wo.state, wo.state.toUpperCase()));
+    if (wo.overlay) li.appendChild(el('span', 'wo-state', ' · ' + wo.overlay));
     li.appendChild(document.createTextNode(` ${wo.id} · ${wo.items.length} input(s) · ${wo.created_at} · ${wo.dir}` +
-      (wo.state === 'stale' ? ' — an input changed after freezing; regenerate' : '')));
+      (wo.state === 'stale' ? ' — an input changed after freezing; regenerate' :
+        (wo.state === 'unsupported_schema' ? ' — regenerate as schema v2' : ''))));
+    if (wo.preflight_command) {
+      li.appendChild(el('br'));
+      li.appendChild(el('code', '', wo.preflight_command));
+    }
     wol.appendChild(li);
   }
 }
@@ -238,10 +255,10 @@ function renderSlot(agent, item, slot) {
     img.onclick = () => showLightbox(slot.image_url);
     box.appendChild(img);
   }
-  if (slot.accepted_image_url) {
-    box.appendChild(el('div', 'thumb-label', 'accepted version in use · hash ' + slot.accepted_hash.slice(0,12)));
-    const img = el('img'); img.src = slot.accepted_image_url; img.alt = slot.logical_name + ' accepted';
-    img.onclick = () => showLightbox(slot.accepted_image_url);
+  if (slot.main_lock_image_url) {
+    box.appendChild(el('div', 'thumb-label', 'main lock version · hash ' + slot.main_lock_hash.slice(0,12)));
+    const img = el('img'); img.src = slot.main_lock_image_url; img.alt = slot.logical_name + ' main lock';
+    img.onclick = () => showLightbox(slot.main_lock_image_url);
     box.appendChild(img);
   }
 
@@ -253,13 +270,6 @@ function renderSlot(agent, item, slot) {
   input.onchange = () => { if (input.files[0]) upload(agent, slot.logical_name, input.files[0]); };
   actions.appendChild(pick); actions.appendChild(input);
 
-  if (slot.status === 'captured' || slot.status === 'update_available') {
-    const acc = el('button', '', slot.status === 'captured' ? 'mark accepted' : 'accept update');
-    acc.title = 'Record the current capture as the content version the presentation is built from';
-    acc.onclick = () => api('/api/accept', {agent, logical_name: slot.logical_name})
-      .then(load).catch(e => toast(e.message));
-    actions.appendChild(acc);
-  }
   if (slot.not_applicable) {
     const clear = el('button', '', 'clear not-applicable');
     clear.onclick = () => api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: false, reason: ''})
@@ -325,6 +335,11 @@ $('#rescan').onclick = () => {
   api('/api/rescan', {agent: $('#agent').value})
     .then(r => { toast(`rescan started (drop-ins imported: ${r.imported.length}, skipped: ${r.skipped.length})`); load(); })
     .catch(e => toast(e.message));
+};
+$('#refreshgit').onclick = () => {
+  api('/api/git/refresh', {})
+    .then(r => { toast('origin/main is now ' + (r.baseline && r.baseline.sha ? r.baseline.sha.slice(0,12) : 'updated')); load(); })
+    .catch(e => toast(e.message, 6000));
 };
 $('#mkwo').onclick = () => {
   api('/api/work-order', {agent: $('#agent').value})

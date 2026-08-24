@@ -27,11 +27,17 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "verify-work-order" {
+		os.Exit(runVerifyWorkOrder(os.Args[2:]))
+	}
+
 	scanLimit := flag.Int("scan-sessions", 30, "most recent sessions to scan per Agent for candidates")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: terminal-reference [agent]\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: terminal-reference [agent]\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "       terminal-reference verify-work-order --work-order <WORK_ORDER.md>\n\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Starts the local terminal Reference Manager (loopback only, random port).\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Without an agent argument all onboarded Agents are available in the picker.\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Without an agent argument all onboarded Agents are available in the picker.\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "verify-work-order is the coding-agent preflight; it prints a JSON result code.\n\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Environment:\n  %s\toverride the reference store root (default ~/.session-insight-dev/terminal-references)\n\n", StoreRootEnv)
 		flag.PrintDefaults()
 	}
