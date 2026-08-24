@@ -99,14 +99,19 @@
   .ver-input { width: 130px; font-size: 12px; }
   .local-missing { color: var(--update); font-size: 12px; }
   #workorders { margin-top: 22px; }
-  #workorders li { margin: 4px 0; font-size: 13px; }
+  #workorders li { margin: 8px 0; font-size: 13px; display: flex; flex-wrap: wrap;
+                   align-items: baseline; gap: 6px 8px; }
+  #workorders .wo-meta { flex: 1 1 240px; min-width: 0; }
+  #workorders code { display: block; width: 100%; font-size: 11px; color: var(--muted);
+                     word-break: break-all; }
   .wo-state { font-weight: 600; }
   .wo-state.active { color: var(--found); } .wo-state.stale { color: var(--update); }
   .wo-state.consumed { color: var(--used); }
   .wo-state.unsupported_schema { color: var(--update); }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
            background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px;
-           padding: 8px 16px; display: none; z-index: 20; max-width: 80vw; }
+           padding: 8px 16px; display: none; z-index: 20; max-width: 80vw;
+           align-items: center; gap: 10px; flex-wrap: wrap; }
   #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none;
               align-items: center; justify-content: center; z-index: 30; cursor: zoom-out; }
   #lightbox img { max-width: 96vw; max-height: 96vh; }
@@ -211,6 +216,8 @@ const UI = {
     gitUpdated: (sha) => 'origin/main is now ' + sha,
     gitUpdatedGeneric: 'updated',
     woFrozen: (dir) => 'work order frozen at ' + dir,
+    openFolder: 'Open folder',
+    openedFolder: (path) => 'opened ' + path,
     loadFailed: 'load failed',
     staleHint: ' — an input changed after freezing; regenerate',
     unsupportedHint: ' — regenerate as schema v2',
@@ -278,6 +285,8 @@ const UI = {
     gitUpdated: (sha) => 'origin/main 现在是 ' + sha,
     gitUpdatedGeneric: '已更新',
     woFrozen: (dir) => '工作单已冻结在 ' + dir,
+    openFolder: '打开路径',
+    openedFolder: (path) => '已打开 ' + path,
     loadFailed: '加载失败',
     staleHint: ' — 冻结后输入已变化，请重新生成',
     unsupportedHint: ' — 请按 schema v2 重新生成',
@@ -358,9 +367,24 @@ function applyChrome() {
   $('#theme-dark').classList.toggle('active', theme === 'dark');
   $('#theme-light').classList.toggle('active', theme === 'light');
 }
-function toast(msg, ms=3500) {
-  const n = $('#toast'); n.textContent = msg; n.style.display = 'block';
+function toast(msg, ms=3500, action) {
+  const n = $('#toast');
+  n.replaceChildren();
+  n.appendChild(document.createTextNode(msg));
+  if (action && action.label && action.onClick) {
+    const b = el('button', 'primary', action.label);
+    b.type = 'button';
+    b.onclick = (e) => { e.stopPropagation(); action.onClick(); };
+    n.appendChild(b);
+  }
+  n.style.display = 'flex';
   clearTimeout(n._h); n._h = setTimeout(() => n.style.display = 'none', ms);
+}
+
+function openWorkOrderFolder(id) {
+  return api('/api/work-orders/open', {id})
+    .then(r => { toast(t('openedFolder')(r.path || id), 5000); })
+    .catch(e => { toast(e.message, 8000); });
 }
 async function api(path, body) {
   const opt = body === undefined ? {} :
@@ -418,15 +442,20 @@ function render(data) {
   if (!data.work_orders.length) wol.appendChild(el('li', '', t('noWorkOrders')));
   for (const wo of [...data.work_orders].reverse()) {
     const li = el('li');
+    const openBtn = el('button', '', t('openFolder'));
+    openBtn.type = 'button';
+    openBtn.title = wo.dir || wo.id;
+    openBtn.onclick = () => openWorkOrderFolder(wo.id);
+    li.appendChild(openBtn);
     li.appendChild(el('span', 'wo-state ' + wo.state, wo.state.toUpperCase()));
     if (wo.overlay) li.appendChild(el('span', 'wo-state', ' · ' + wo.overlay));
     let extra = '';
     if (wo.state === 'stale') extra = t('staleHint');
     else if (wo.state === 'unsupported_schema') extra = t('unsupportedHint');
-    li.appendChild(document.createTextNode(
-      ` ${wo.id} · ${wo.items.length} ${t('inputs')} · ${wo.created_at} · ${wo.dir}` + extra));
+    const meta = el('span', 'wo-meta',
+      `${wo.id} · ${wo.items.length} ${t('inputs')} · ${wo.created_at} · ${wo.dir}` + extra);
+    li.appendChild(meta);
     if (wo.preflight_command) {
-      li.appendChild(el('br'));
       li.appendChild(el('code', '', wo.preflight_command));
     }
     wol.appendChild(li);
@@ -663,7 +692,14 @@ $('#refreshgit').onclick = () => {
 };
 $('#mkwo').onclick = () => {
   api('/api/work-order', {agent: $('#agent').value})
-    .then(r => { toast(t('woFrozen')(r.work_order.dir), 8000); load(); })
+    .then(r => {
+      const id = r.work_order && r.work_order.id;
+      toast(t('woFrozen')(r.work_order.dir), 12000, id ? {
+        label: t('openFolder'),
+        onClick: () => openWorkOrderFolder(id),
+      } : undefined);
+      load();
+    })
     .catch(e => toast(e.message, 6000));
 };
 $('#lang-en').onclick = () => setLocale('en');

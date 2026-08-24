@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -163,6 +164,64 @@ func TestServerWorkOrderEndpoint(t *testing.T) {
 		t.Fatalf("work order response missing record: %v", out)
 	}
 	_ = srv // state verified via API above
+}
+
+func TestServerOpenWorkOrderEndpoint(t *testing.T) {
+	srv, ts := testHTTPServer(t)
+	if code, out := uploadFile(t, ts, "claude", "04-thinking", pngBytes(t, 1), "shot.png"); code != http.StatusOK {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	code, out := postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("work order = %d %v", code, out)
+	}
+	wo, _ := out["work_order"].(map[string]any)
+	id, _ := wo["id"].(string)
+	if id == "" {
+		t.Fatalf("work order id missing: %v", out)
+	}
+
+	var opened []string
+	origLaunch := launchFolderManager
+	launchFolderManager = func(dir string) error {
+		opened = append(opened, dir)
+		return nil
+	}
+	t.Cleanup(func() { launchFolderManager = origLaunch })
+
+	code, out = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":`+jsonString(id)+`}`)
+	if code != http.StatusOK {
+		t.Fatalf("open = %d %v", code, out)
+	}
+	if len(opened) != 1 {
+		t.Fatalf("launch count = %d, want 1", len(opened))
+	}
+	want := filepath.Join(srv.checkoutDir, ".runtime", "reference-work", id)
+	want, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened[0] != want {
+		t.Fatalf("opened %s, want %s", opened[0], want)
+	}
+	if out["path"] != want {
+		t.Fatalf("response path = %v, want %s", out["path"], want)
+	}
+
+	if code, _ = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":"../secret"}`); code != http.StatusBadRequest {
+		t.Fatalf("traversal open = %d, want 400", code)
+	}
+	if code, _ = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":"missing-20260824-080455"}`); code != http.StatusNotFound {
+		t.Fatalf("unknown id open = %d, want 404", code)
+	}
+	if code, _ = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":""}`); code != http.StatusBadRequest {
+		t.Fatalf("empty id open = %d, want 400", code)
+	}
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 func TestServerImageGating(t *testing.T) {

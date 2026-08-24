@@ -165,6 +165,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/rescan", s.handleRescan)
 	mux.HandleFunc("POST /api/work-order", s.handleWorkOrder)
 	mux.HandleFunc("POST /api/work-orders/preflight", s.handleWorkOrderPreflight)
+	mux.HandleFunc("POST /api/work-orders/open", s.handleOpenWorkOrder)
 	mux.HandleFunc("POST /api/git/refresh", s.handleGitRefresh)
 	return mux
 }
@@ -605,6 +606,56 @@ func (s *server) handleWorkOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "work_order": record})
+}
+
+func (s *server) findWorkOrderRecord(id string) (WorkOrderRecord, bool) {
+	if strings.TrimSpace(id) == "" {
+		return WorkOrderRecord{}, false
+	}
+	for _, a := range s.agents {
+		cat, err := s.store.LoadCatalog(a.Type)
+		if err != nil {
+			continue
+		}
+		for _, rec := range cat.WorkOrders {
+			if rec.ID == id {
+				return rec, true
+			}
+		}
+	}
+	return WorkOrderRecord{}, false
+}
+
+// handleOpenWorkOrder opens a catalogued work-order directory in the desktop
+// file manager. The request supplies only the work-order id; the path is
+// resolved under .runtime/reference-work and cannot escape that root.
+func (s *server) handleOpenWorkOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := jsonBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id := strings.TrimSpace(req.ID)
+	if err := validateWorkOrderID(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, ok := s.findWorkOrderRecord(id); !ok {
+		writeError(w, http.StatusNotFound, "work order id is not in the local catalog")
+		return
+	}
+	dir, err := confinedWorkOrderDir(s.checkoutDir, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err := launchFolderManager(dir); err != nil {
+		writeError(w, http.StatusInternalServerError, "open folder: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "path": dir})
 }
 
 // listen binds a random loopback port. The manager never listens on external

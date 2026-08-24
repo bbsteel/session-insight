@@ -39,7 +39,8 @@ The tool binds `127.0.0.1` on a random OS-assigned port and prints a
   `.runtime/reference-work/<agent>-<id>/`. The markdown records full SHA-256
   hashes, the main baseline commit, the main lock summary, and a copy-paste
   `verify-work-order` command. A work order is `stale` when an input changes
-  after freezing; old schema work orders must be regenerated.
+  after freezing; old schema work orders must be regenerated. The UI can open
+  that frozen directory in the desktop file manager.
 
 The manager's boundary ends at the work order: it does not create goals,
 branches or PRs, and does not edit product code. Local accept is disabled.
@@ -77,4 +78,6 @@ Git, PRs, issues or public logs. Work orders are written to the Git-ignored
 Loopback-only listener on a random port; image blobs are served by content
 hash only when the catalog knows them (no static directory exposure); uploads
 are size-capped and must decode as PNG/JPEG/GIF; candidate scanning is
-read-only against Agent session storage.
+read-only against Agent session storage; `POST /api/work-orders/open` launches
+the OS folder opener only for a catalogued work-order id resolved under
+`.runtime/reference-work/` (the request never supplies a filesystem path).
