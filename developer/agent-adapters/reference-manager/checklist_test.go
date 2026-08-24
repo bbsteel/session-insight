@@ -19,13 +19,22 @@ func TestChecklistShape(t *testing.T) {
 			t.Errorf("duplicate item id %q", item.ID)
 		}
 		seen[item.ID] = true
-		if item.Title == "" || item.Goal == "" {
-			t.Errorf("item %s: title and goal are required", item.ID)
+		if item.Title == "" || item.Goal == "" || item.TitleZH == "" || item.GoalZH == "" {
+			t.Errorf("item %s: title/goal are required in en and zh-CN", item.ID)
+		}
+		if item.Extractable != "" && item.ExtractableZH == "" {
+			t.Errorf("item %s: extractable_zh is required when extractable is set", item.ID)
+		}
+		if item.CandidateNote != "" && item.CandidateNoteZH == "" {
+			t.Errorf("item %s: candidate_note_zh is required when candidate_note is set", item.ID)
 		}
 		if len(item.Slots) == 0 || item.Slots[0].LogicalName != item.ID {
 			t.Errorf("item %s: first slot must be the default state named after the item", item.ID)
 		}
 		for _, slot := range item.Slots {
+			if slot.Label == "" || slot.LabelZH == "" || slot.Hint == "" || slot.HintZH == "" {
+				t.Errorf("slot %s: label/hint are required in en and zh-CN", slot.LogicalName)
+			}
 			if !knownLogicalNames[slot.LogicalName] {
 				t.Errorf("slot %s missing from known logical names", slot.LogicalName)
 			}

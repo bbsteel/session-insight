@@ -70,22 +70,30 @@
   #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none;
               align-items: center; justify-content: center; z-index: 30; cursor: zoom-out; }
   #lightbox img { max-width: 96vw; max-height: 96vh; }
+  .lang-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-left: auto; }
+  .lang-switch button { border: 0; border-radius: 0; padding: 4px 10px; }
+  .lang-switch button + button { border-left: 1px solid var(--border); }
+  .lang-switch button.active { background: var(--accent); color: #0d1117; font-weight: 600; }
 </style>
 </head>
 <body>
 <header>
   <h1>Terminal Reference Manager</h1>
-  <label>Agent <select id="agent"></select></label>
-  <label>Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
+  <label id="lbl-agent">Agent <select id="agent"></select></label>
+  <label id="lbl-ver">Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
   <button id="rescan">Rescan</button>
   <button id="refreshgit">Refresh origin/main</button>
   <button id="mkwo" class="primary">Generate work order</button>
   <span class="meta" id="storeroot"></span>
   <span class="meta" id="baseline"></span>
   <span class="meta" id="scan"></span>
+  <div class="lang-switch" role="group" aria-label="Language">
+    <button type="button" id="lang-en" data-locale="en">EN</button>
+    <button type="button" id="lang-zh" data-locale="zh-CN">中文</button>
+  </div>
 </header>
 <main>
-  <div class="notice">
+  <div class="notice" id="notice"></div>
     Drop one complete native-CLI full-screen screenshot into a slot. Any terminal, any size.
     Missing items are allowed gaps &mdash; never fabricate scenes. Captures, session IDs and
     resume commands stay outside Git. <code>used</code> comes from the
@@ -94,7 +102,7 @@
   </div>
   <div id="items"></div>
   <section id="workorders">
-    <h2>Work orders</h2>
+    <h2 id="wo-heading">Work orders</h2>
     <ul id="wolist"></ul>
   </section>
 </main>
@@ -102,6 +110,131 @@
 <div id="lightbox"><img alt="preview"></div>
 <script>
 let STATE = null;
+const LOCALE_KEY = 'si-rm-locale';
+const UI = {
+  en: {
+    title: 'Terminal Reference Manager',
+    agent: 'Agent',
+    installedVersion: 'Installed version',
+    versionPlaceholder: 'context only',
+    rescan: 'Rescan',
+    refreshGit: 'Refresh origin/main',
+    generate: 'Generate work order',
+    notice: 'Drop one complete native-CLI full-screen screenshot into a slot. Any terminal, any size. Missing items are allowed gaps — never fabricate scenes. Captures, session IDs and resume commands stay outside Git. used comes from the origin/main evidence lock, not a local accept button. The manager stops at the frozen work order.',
+    workOrders: 'Work orders',
+    noWorkOrders: 'No work orders yet.',
+    store: 'store',
+    baseline: 'baseline',
+    baselineUnread: 'baseline unread: refresh origin/main',
+    scanning: 'scanning sessions…',
+    scanned: (n) => `scanned ${n} sessions`,
+    notDiscovered: '(not discovered)',
+    features: 'features',
+    extractable: 'Extractable',
+    candidateRule: 'Candidate rule',
+    exactCandidate: 'exact candidate',
+    lowConfidence: 'low-confidence suggestion',
+    session: 'session',
+    turn: 'turn',
+    copyResume: 'copy resume command',
+    resumeCopied: 'resume command copied',
+    copyResumeId: 'copy resume ID',
+    resumeIdCopied: 'resume ID copied',
+    resumeId: 'resume ID',
+    noResume: '(no native resume command or ID available)',
+    noCandidate: 'No candidate found — an allowed gap. Do not manufacture a session for this scene.',
+    notApplicable: 'Marked not applicable',
+    localMissing: 'Local image content unavailable. The lock version stays valid; re-capture to inspect.',
+    currentCapture: 'current capture',
+    imported: 'imported',
+    observedWith: 'observed with',
+    mainLock: 'main lock version',
+    hash: 'hash',
+    chooseImage: 'choose image…',
+    clearNA: 'clear not-applicable',
+    markNA: 'mark not-applicable…',
+    naPrompt: 'Why does this scene not exist for this Agent? (adapter research reason, required)',
+    observedVersion: 'observed version',
+    versionSaved: 'observed version saved',
+    installedSaved: 'installed version context saved',
+    importing: (name) => 'importing ' + name + ' …',
+    importFailed: 'import failed',
+    importedOk: (name, hash) => 'imported ' + name + ' (' + hash + ')',
+    rescanStarted: (imp, skip) => `rescan started (drop-ins imported: ${imp}, skipped: ${skip})`,
+    gitUpdated: (sha) => 'origin/main is now ' + sha,
+    gitUpdatedGeneric: 'updated',
+    woFrozen: (dir) => 'work order frozen at ' + dir,
+    loadFailed: 'load failed',
+    staleHint: ' — an input changed after freezing; regenerate',
+    unsupportedHint: ' — regenerate as schema v2',
+    inputs: 'input(s)',
+    status: {
+      missing: 'missing', found: 'found', captured: 'captured', used: 'used',
+      update_available: 'update available', not_applicable: 'not applicable',
+    },
+  },
+  'zh-CN': {
+    title: '终端参考管理器',
+    agent: 'Agent',
+    installedVersion: '已安装版本',
+    versionPlaceholder: '仅作上下文',
+    rescan: '重新扫描',
+    refreshGit: '刷新 origin/main',
+    generate: '生成工作单',
+    notice: '把一张完整的原生 CLI 全屏截图拖进槽位。任意终端、任意尺寸。缺项是允许的缺口——不要编造场景。截图、session ID 和 resume 命令不进 Git。used 来自 origin/main 的证据锁，不是本地接受按钮。管理器到冻结工作单为止。',
+    workOrders: '工作单',
+    noWorkOrders: '还没有工作单。',
+    store: '存储',
+    baseline: '基线',
+    baselineUnread: '基线不可读：请刷新 origin/main',
+    scanning: '正在扫描会话…',
+    scanned: (n) => `已扫描 ${n} 个会话`,
+    notDiscovered: '（未发现）',
+    features: '特征',
+    extractable: '可提取',
+    candidateRule: '候选规则',
+    exactCandidate: '精确候选',
+    lowConfidence: '低置信度建议',
+    session: '会话',
+    turn: '回合',
+    copyResume: '复制 resume 命令',
+    resumeCopied: '已复制 resume 命令',
+    copyResumeId: '复制 resume ID',
+    resumeIdCopied: '已复制 resume ID',
+    resumeId: 'resume ID',
+    noResume: '（没有原生 resume 命令或 ID）',
+    noCandidate: '没有找到候选——这是允许的缺口。不要为此场景制造会话。',
+    notApplicable: '已标为不适用',
+    localMissing: '本地图片不可用。证据锁版本仍然有效；重新截图即可查看。',
+    currentCapture: '当前截图',
+    imported: '导入于',
+    observedWith: '观察版本',
+    mainLock: 'main 锁版本',
+    hash: 'hash',
+    chooseImage: '选择图片…',
+    clearNA: '清除不适用',
+    markNA: '标为不适用…',
+    naPrompt: '该场景为何不存在于这个 Agent？（需要适配器研究原因）',
+    observedVersion: '观察版本',
+    versionSaved: '已保存观察版本',
+    installedSaved: '已保存已安装版本上下文',
+    importing: (name) => '正在导入 ' + name + ' …',
+    importFailed: '导入失败',
+    importedOk: (name, hash) => '已导入 ' + name + ' (' + hash + ')',
+    rescanStarted: (imp, skip) => `已开始重扫（导入 drop-in ${imp}，跳过 ${skip}）`,
+    gitUpdated: (sha) => 'origin/main 现在是 ' + sha,
+    gitUpdatedGeneric: '已更新',
+    woFrozen: (dir) => '工作单已冻结在 ' + dir,
+    loadFailed: '加载失败',
+    staleHint: ' — 冻结后输入已变化，请重新生成',
+    unsupportedHint: ' — 请按 schema v2 重新生成',
+    inputs: '项输入',
+    status: {
+      missing: '缺失', found: '已找到', captured: '已截图', used: '已使用',
+      update_available: '有更新', not_applicable: '不适用',
+    },
+  },
+};
 
 const $ = (sel, el=document) => el.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -110,9 +243,47 @@ const el = (tag, cls, text) => {
   if (text !== undefined) e.textContent = text;
   return e;
 };
+function currentLocale() {
+  const stored = localStorage.getItem(LOCALE_KEY);
+  if (stored === 'zh-CN' || stored === 'en') return stored;
+  return (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+}
+function t(key) {
+  const pack = UI[currentLocale()] || UI.en;
+  return pack[key] ?? UI.en[key] ?? key;
+}
+function statusLabel(status) {
+  const pack = UI[currentLocale()] || UI.en;
+  return (pack.status && pack.status[status]) || status.replace('_', ' ');
+}
+function pick(obj, enKey, zhKey) {
+  if (currentLocale() === 'zh-CN' && obj[zhKey]) return obj[zhKey];
+  return obj[enKey] || '';
+}
+function setLocale(locale) {
+  localStorage.setItem(LOCALE_KEY, locale);
+  applyChrome();
+  if (STATE) render(STATE);
+}
+function applyChrome() {
+  const locale = currentLocale();
+  document.documentElement.lang = locale === 'zh-CN' ? 'zh-CN' : 'en';
+  document.title = t('title');
+  $('header h1').textContent = t('title');
+  $('#lbl-agent').firstChild.textContent = t('agent') + ' ';
+  $('#lbl-ver').firstChild.textContent = t('installedVersion') + ' ';
+  $('#agentver').placeholder = t('versionPlaceholder');
+  $('#rescan').textContent = t('rescan');
+  $('#refreshgit').textContent = t('refreshGit');
+  $('#mkwo').textContent = t('generate');
+  $('#notice').textContent = t('notice');
+  $('#wo-heading').textContent = t('workOrders');
+  $('#lang-en').classList.toggle('active', locale === 'en');
+  $('#lang-zh').classList.toggle('active', locale === 'zh-CN');
+}
 function toast(msg, ms=3500) {
-  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
-  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms);
+  const n = $('#toast'); n.textContent = msg; n.style.display = 'block';
+  clearTimeout(n._h); n._h = setTimeout(() => n.style.display = 'none', ms);
 }
 async function api(path, body) {
   const opt = body === undefined ? {} :
@@ -136,26 +307,31 @@ async function load() {
   if (data.scan.running) setTimeout(load, 1500);
 }
 
+function fillAgentOptions(data) {
+  const sel = $('#agent');
+  const current = sel.value || data.agent;
+  sel.textContent = '';
+  for (const a of data.agents) {
+    const o = el('option', '', a.display_name + (a.discovered ? '' : ' ' + t('notDiscovered')));
+    o.value = a.type;
+    sel.appendChild(o);
+  }
+  sel.value = current;
+}
+
 function render(data) {
-  $('#storeroot').textContent = 'store: ' + data.store_root;
+  applyChrome();
+  fillAgentOptions(data);
+  $('#storeroot').textContent = t('store') + ': ' + data.store_root;
   const base = $('#baseline');
   if (data.baseline && data.baseline.sha) {
-    base.textContent = 'baseline ' + data.baseline.ref + ' @ ' + data.baseline.sha.slice(0, 12);
+    base.textContent = t('baseline') + ' ' + data.baseline.ref + ' @ ' + data.baseline.sha.slice(0, 12);
   } else {
-    base.textContent = data.baseline_error ? 'baseline unread: refresh origin/main' : '';
+    base.textContent = data.baseline_error ? t('baselineUnread') : '';
   }
   const scan = $('#scan');
-  scan.textContent = data.scan.running ? 'scanning sessions…' :
-    (data.scan.scanned_sessions ? `scanned ${data.scan.scanned_sessions} sessions` : '');
-  const sel = $('#agent');
-  if (!sel.options.length) {
-    for (const a of data.agents) {
-      const o = el('option', '', a.display_name + (a.discovered ? '' : ' (not discovered)'));
-      o.value = a.type;
-      sel.appendChild(o);
-    }
-    sel.value = data.agent;
-  }
+  scan.textContent = data.scan.running ? t('scanning') :
+    (data.scan.scanned_sessions ? t('scanned')(data.scan.scanned_sessions) : '');
   $('#agentver').value = data.current_version || '';
 
   const items = $('#items');
@@ -164,14 +340,16 @@ function render(data) {
 
   const wol = $('#wolist');
   wol.textContent = '';
-  if (!data.work_orders.length) wol.appendChild(el('li', '', 'No work orders yet.'));
+  if (!data.work_orders.length) wol.appendChild(el('li', '', t('noWorkOrders')));
   for (const wo of [...data.work_orders].reverse()) {
     const li = el('li');
     li.appendChild(el('span', 'wo-state ' + wo.state, wo.state.toUpperCase()));
     if (wo.overlay) li.appendChild(el('span', 'wo-state', ' · ' + wo.overlay));
-    li.appendChild(document.createTextNode(` ${wo.id} · ${wo.items.length} input(s) · ${wo.created_at} · ${wo.dir}` +
-      (wo.state === 'stale' ? ' — an input changed after freezing; regenerate' :
-        (wo.state === 'unsupported_schema' ? ' — regenerate as schema v2' : ''))));
+    let extra = '';
+    if (wo.state === 'stale') extra = t('staleHint');
+    else if (wo.state === 'unsupported_schema') extra = t('unsupportedHint');
+    li.appendChild(document.createTextNode(
+      ` ${wo.id} · ${wo.items.length} ${t('inputs')} · ${wo.created_at} · ${wo.dir}` + extra));
     if (wo.preflight_command) {
       li.appendChild(el('br'));
       li.appendChild(el('code', '', wo.preflight_command));
@@ -184,42 +362,43 @@ function renderItem(agent, item) {
   const card = el('div', 'item');
   const head = el('div', 'item-head');
   head.appendChild(el('span', 'id', item.id));
-  head.appendChild(el('h2', '', item.title));
+  head.appendChild(el('h2', '', pick(item, 'title', 'title_zh')));
   if (item.features && item.features.length)
-    head.appendChild(el('span', 'features', 'features: ' + item.features.join(', ')));
+    head.appendChild(el('span', 'features', t('features') + ': ' + item.features.join(', ')));
   card.appendChild(head);
-  card.appendChild(el('div', 'goal', item.goal));
-  card.appendChild(el('div', 'extract', 'Extractable: ' + item.extractable));
-  if (item.candidate_note) card.appendChild(el('div', 'cand-note', 'Candidate rule: ' + item.candidate_note));
+  card.appendChild(el('div', 'goal', pick(item, 'goal', 'goal_zh')));
+  card.appendChild(el('div', 'extract', t('extractable') + ': ' + pick(item, 'extractable', 'extractable_zh')));
+  const note = pick(item, 'candidate_note', 'candidate_note_zh');
+  if (note) card.appendChild(el('div', 'cand-note', t('candidateRule') + ': ' + note));
 
   if (item.candidate) {
     const c = item.candidate;
     const box = el('div', 'candidate');
-    box.appendChild(el('span', 'badge ' + c.precision, c.precision === 'exact' ? 'exact candidate' : 'low-confidence suggestion'));
+    box.appendChild(el('span', 'badge ' + c.precision, c.precision === 'exact' ? t('exactCandidate') : t('lowConfidence')));
     box.appendChild(document.createTextNode(' ' + (c.summary || '')));
     box.appendChild(el('br'));
-    box.appendChild(document.createTextNode('session ' + c.session_id.slice(0, 12) +
-      (c.turn_index ? ' · turn ' + c.turn_index : '') + ' '));
+    box.appendChild(document.createTextNode(t('session') + ' ' + c.session_id.slice(0, 12) +
+      (c.turn_index ? ' · ' + t('turn') + ' ' + c.turn_index : '') + ' '));
     if (c.resume_command) {
       const code = el('code', '', c.resume_command);
       box.appendChild(code);
-      const copy = el('button', '', 'copy resume command');
+      const copy = el('button', '', t('copyResume'));
       copy.style.marginLeft = '6px';
-      copy.onclick = () => { navigator.clipboard.writeText(c.resume_command); toast('resume command copied'); };
+      copy.onclick = () => { navigator.clipboard.writeText(c.resume_command); toast(t('resumeCopied')); };
       box.appendChild(copy);
     } else if (c.resume_id) {
-      box.appendChild(document.createTextNode('resume ID: '));
+      box.appendChild(document.createTextNode(t('resumeId') + ': '));
       box.appendChild(el('code', '', c.resume_id));
-      const copy = el('button', '', 'copy resume ID');
+      const copy = el('button', '', t('copyResumeId'));
       copy.style.marginLeft = '6px';
-      copy.onclick = () => { navigator.clipboard.writeText(c.resume_id); toast('resume ID copied'); };
+      copy.onclick = () => { navigator.clipboard.writeText(c.resume_id); toast(t('resumeIdCopied')); };
       box.appendChild(copy);
     } else {
-      box.appendChild(el('span', '', '(no native resume command or ID available)'));
+      box.appendChild(el('span', '', t('noResume')));
     }
     card.appendChild(box);
   } else {
-    card.appendChild(el('div', 'gap', 'No candidate found — an allowed gap. Do not manufacture a session for this scene.'));
+    card.appendChild(el('div', 'gap', t('noCandidate')));
   }
 
   const slots = el('div', 'slots');
@@ -232,53 +411,52 @@ function renderSlot(agent, item, slot) {
   const box = el('div', 'slot');
   box.dataset.logical = slot.logical_name;
   const h = el('h3');
-  h.appendChild(el('span', 'badge ' + slot.status, slot.status.replace('_', ' ')));
-  h.appendChild(document.createTextNode(' ' + slot.label + '  '));
+  h.appendChild(el('span', 'badge ' + slot.status, statusLabel(slot.status)));
+  h.appendChild(document.createTextNode(' ' + pick(slot, 'label', 'label_zh') + '  '));
   const fn = el('span', 'id', slot.logical_name);
   fn.style.fontSize = '11px'; fn.style.color = 'var(--muted)';
   h.appendChild(fn);
   box.appendChild(h);
-  box.appendChild(el('div', 'hint', slot.hint));
+  box.appendChild(el('div', 'hint', pick(slot, 'hint', 'hint_zh')));
 
   if (slot.not_applicable) {
-    box.appendChild(el('div', 'extract', 'Marked not applicable: ' + slot.not_applicable_reason));
+    box.appendChild(el('div', 'extract', t('notApplicable') + ': ' + slot.not_applicable_reason));
   }
   if (slot.local_unavailable)
-    box.appendChild(el('div', 'local-missing',
-      'Local image content unavailable. The accepted presentation stays valid; re-capture to inspect.'));
+    box.appendChild(el('div', 'local-missing', t('localMissing')));
 
   if (slot.capture && slot.image_url) {
     box.appendChild(el('div', 'thumb-label',
-      `current capture · hash ${slot.capture.hash.slice(0,12)} · imported ${slot.capture.imported_at}` +
-      (slot.capture.observed_version ? ' · observed with ' + slot.capture.observed_version : '')));
+      `${t('currentCapture')} · ${t('hash')} ${slot.capture.hash.slice(0,12)} · ${t('imported')} ${slot.capture.imported_at}` +
+      (slot.capture.observed_version ? ' · ' + t('observedWith') + ' ' + slot.capture.observed_version : '')));
     const img = el('img'); img.src = slot.image_url; img.alt = slot.logical_name;
     img.onclick = () => showLightbox(slot.image_url);
     box.appendChild(img);
   }
   if (slot.main_lock_image_url) {
-    box.appendChild(el('div', 'thumb-label', 'main lock version · hash ' + slot.main_lock_hash.slice(0,12)));
+    box.appendChild(el('div', 'thumb-label', t('mainLock') + ' · ' + t('hash') + ' ' + slot.main_lock_hash.slice(0,12)));
     const img = el('img'); img.src = slot.main_lock_image_url; img.alt = slot.logical_name + ' main lock';
     img.onclick = () => showLightbox(slot.main_lock_image_url);
     box.appendChild(img);
   }
 
   const actions = el('div', 'slot-actions');
-  const pick = el('button', '', 'choose image…');
+  const pickBtn = el('button', '', t('chooseImage'));
   const input = el('input'); input.type = 'file'; input.accept = 'image/png,image/jpeg,image/gif';
   input.style.display = 'none';
-  pick.onclick = () => input.click();
+  pickBtn.onclick = () => input.click();
   input.onchange = () => { if (input.files[0]) upload(agent, slot.logical_name, input.files[0]); };
-  actions.appendChild(pick); actions.appendChild(input);
+  actions.appendChild(pickBtn); actions.appendChild(input);
 
   if (slot.not_applicable) {
-    const clear = el('button', '', 'clear not-applicable');
+    const clear = el('button', '', t('clearNA'));
     clear.onclick = () => api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: false, reason: ''})
       .then(load).catch(e => toast(e.message));
     actions.appendChild(clear);
   } else {
-    const na = el('button', '', 'mark not-applicable…');
+    const na = el('button', '', t('markNA'));
     na.onclick = () => {
-      const reason = prompt('Why does this scene not exist for this Agent? (adapter research reason, required)');
+      const reason = prompt(t('naPrompt'));
       if (reason === null) return;
       api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: true, reason})
         .then(load).catch(e => toast(e.message));
@@ -287,9 +465,9 @@ function renderSlot(agent, item, slot) {
   }
   if (slot.capture) {
     const ver = el('input'); ver.type = 'text'; ver.className = 'ver-input';
-    ver.placeholder = 'observed version'; ver.value = slot.capture.observed_version || '';
+    ver.placeholder = t('observedVersion'); ver.value = slot.capture.observed_version || '';
     ver.onchange = () => api('/api/version', {agent, logical_name: slot.logical_name, version: ver.value})
-      .then(() => toast('observed version saved')).catch(e => toast(e.message));
+      .then(() => toast(t('versionSaved'))).catch(e => toast(e.message));
     actions.appendChild(ver);
   }
   box.appendChild(actions);
@@ -309,11 +487,11 @@ async function upload(agent, logicalName, file) {
   fd.append('agent', agent);
   fd.append('logical_name', logicalName);
   fd.append('file', file, file.name);
-  toast('importing ' + file.name + ' …');
+  toast(t('importing')(file.name));
   const res = await fetch('/api/upload', {method: 'POST', body: fd});
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { toast('import failed: ' + (data.error || res.statusText), 6000); return; }
-  toast('imported ' + logicalName + ' (' + data.capture.hash.slice(0,12) + ')');
+  if (!res.ok) { toast(t('importFailed') + ': ' + (data.error || res.statusText), 6000); return; }
+  toast(t('importedOk')(logicalName, data.capture.hash.slice(0,12)));
   load();
 }
 
@@ -329,25 +507,28 @@ $('#agent').onchange = () => {
 };
 $('#agentver').onchange = () => {
   api('/api/version', {agent: $('#agent').value, logical_name: '', version: $('#agentver').value})
-    .then(() => toast('installed version context saved')).catch(e => toast(e.message));
+    .then(() => toast(t('installedSaved'))).catch(e => toast(e.message));
 };
 $('#rescan').onclick = () => {
   api('/api/rescan', {agent: $('#agent').value})
-    .then(r => { toast(`rescan started (drop-ins imported: ${r.imported.length}, skipped: ${r.skipped.length})`); load(); })
+    .then(r => { toast(t('rescanStarted')(r.imported.length, r.skipped.length)); load(); })
     .catch(e => toast(e.message));
 };
 $('#refreshgit').onclick = () => {
   api('/api/git/refresh', {})
-    .then(r => { toast('origin/main is now ' + (r.baseline && r.baseline.sha ? r.baseline.sha.slice(0,12) : 'updated')); load(); })
+    .then(r => { toast(t('gitUpdated')(r.baseline && r.baseline.sha ? r.baseline.sha.slice(0,12) : t('gitUpdatedGeneric'))); load(); })
     .catch(e => toast(e.message, 6000));
 };
 $('#mkwo').onclick = () => {
   api('/api/work-order', {agent: $('#agent').value})
-    .then(r => { toast('work order frozen at ' + r.work_order.dir, 8000); load(); })
+    .then(r => { toast(t('woFrozen')(r.work_order.dir), 8000); load(); })
     .catch(e => toast(e.message, 6000));
 };
+$('#lang-en').onclick = () => setLocale('en');
+$('#lang-zh').onclick = () => setLocale('zh-CN');
 
-load().catch(e => toast('load failed: ' + e.message, 8000));
+applyChrome();
+load().catch(e => toast(t('loadFailed') + ': ' + e.message, 8000));
 </script>
 </body>
 </html>
