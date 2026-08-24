@@ -567,7 +567,18 @@ func (s *server) handleRescan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.refreshCandidates(req.Agent)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported, "skipped": skipped})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"imported": nonNilStrings(imported),
+		"skipped":  nonNilStrings(skipped),
+	})
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // handleWorkOrder freezes the pending inputs into a work order. This is the

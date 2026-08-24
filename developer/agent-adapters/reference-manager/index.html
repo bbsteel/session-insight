@@ -653,7 +653,7 @@ $('#agentver').onchange = () => {
 };
 $('#rescan').onclick = () => {
   api('/api/rescan', {agent: $('#agent').value})
-    .then(r => { toast(t('rescanStarted')(r.imported.length, r.skipped.length)); load(); })
+    .then(r => { toast(t('rescanStarted')((r.imported || []).length, (r.skipped || []).length)); load(); })
     .catch(e => toast(e.message));
 };
 $('#refreshgit').onclick = () => {

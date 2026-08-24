@@ -118,6 +118,20 @@ func TestServerRejectsBadUploads(t *testing.T) {
 	}
 }
 
+func TestServerRescanEmptyDropInsAreArrays(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	code, out := postJSON(t, ts.URL+"/api/rescan", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("rescan = %d %v", code, out)
+	}
+	if _, ok := out["imported"].([]any); !ok {
+		t.Fatalf("imported = %T %v, want JSON array", out["imported"], out["imported"])
+	}
+	if _, ok := out["skipped"].([]any); !ok {
+		t.Fatalf("skipped = %T %v, want JSON array", out["skipped"], out["skipped"])
+	}
+}
+
 func TestServerNotApplicableRequiresReason(t *testing.T) {
 	_, ts := testHTTPServer(t)
 	code, _ := postJSON(t, ts.URL+"/api/not-applicable",
