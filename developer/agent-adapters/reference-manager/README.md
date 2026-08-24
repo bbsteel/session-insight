@@ -82,4 +82,7 @@ hash only when the catalog knows them (no static directory exposure); uploads
 are size-capped and must decode as PNG/JPEG/GIF; candidate scanning is
 read-only against Agent session storage; `POST /api/work-orders/open` launches
 the OS folder opener only for a catalogued work-order id resolved under
-`.runtime/reference-work/` (the request never supplies a filesystem path).
+`.runtime/reference-work/` (the request never supplies a filesystem path). On
+Linux the opener is started in the user graphical session (`systemd-run
+--user`) so KDE Dolphin can create KIO workers; a direct spawn from this
+process inherits a stripped environment and fails with a KIO socket error.

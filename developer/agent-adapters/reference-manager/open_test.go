@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -111,8 +112,54 @@ func TestLaunchFolderManagerUsesLinuxOpener(t *testing.T) {
 	if err := launchFolderManagerOS("/tmp/work-order"); err != nil {
 		t.Fatalf("launchFolderManagerOS: %v", err)
 	}
-	want := []string{"/usr/bin/dolphin", "/tmp/work-order"}
-	if len(gotArgs) != 2 || gotArgs[0] != want[0] || gotArgs[1] != want[1] {
+	want := []string{"/usr/bin/dolphin", "--new-window", "--", "/tmp/work-order"}
+	if len(gotArgs) != len(want) {
 		t.Fatalf("argv = %v, want %v", gotArgs, want)
+	}
+	for i := range want {
+		if gotArgs[i] != want[i] {
+			t.Fatalf("argv = %v, want %v", gotArgs, want)
+		}
+	}
+}
+
+func TestLaunchFolderManagerUsesSystemdUserSession(t *testing.T) {
+	origGOOS, origLook, origStart := openRuntimeGOOS, lookOpenPath, startOpenCommand
+	t.Cleanup(func() {
+		openRuntimeGOOS = origGOOS
+		lookOpenPath = origLook
+		startOpenCommand = origStart
+	})
+	openRuntimeGOOS = "linux"
+	lookOpenPath = func(name string) (string, error) {
+		switch name {
+		case "systemd-run":
+			return "/usr/bin/systemd-run", nil
+		case "dolphin":
+			return "/usr/bin/dolphin", nil
+		default:
+			return "", os.ErrNotExist
+		}
+	}
+	var gotArgs []string
+	startOpenCommand = func(cmd *exec.Cmd) error {
+		gotArgs = append([]string(nil), cmd.Args...)
+		return nil
+	}
+	if err := launchFolderManagerOS("/tmp/work-order"); err != nil {
+		t.Fatalf("launchFolderManagerOS: %v", err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	for _, want := range []string{
+		"/usr/bin/systemd-run",
+		"--user",
+		"--",
+		"/usr/bin/dolphin",
+		"--new-window",
+		"/tmp/work-order",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("systemd-run argv %v missing %q", gotArgs, want)
+		}
 	}
 }
