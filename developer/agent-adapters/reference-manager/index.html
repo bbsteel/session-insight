@@ -44,11 +44,30 @@
            border-radius: 6px; padding: 4px 10px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); color: var(--primary-ink); border-color: var(--accent); font-weight: 600; }
-  main { padding: 16px 18px 80px; max-width: 1100px; margin: 0 auto; }
+  main { padding: 16px 18px 80px; max-width: 1320px; margin: 0 auto; }
   .notice { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
             padding: 10px 14px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+  .workspace { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+               gap: 16px; align-items: start; }
+  .nav { position: sticky; top: 64px; max-height: calc(100vh - 88px); overflow: auto;
+         background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .nav-heading { padding: 10px 12px 8px; font-size: 12px; font-weight: 600; color: var(--muted);
+                 border-bottom: 1px solid var(--border); position: sticky; top: 0;
+                 background: var(--panel); }
+  .nav-item { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto;
+              column-gap: 8px; row-gap: 2px; width: 100%; text-align: left;
+              border: 0; border-radius: 0; border-bottom: 1px solid var(--border);
+              padding: 8px 12px; background: transparent; color: inherit; cursor: pointer; }
+  .nav-item .id { grid-column: 1 / -1; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+  .nav-item .title { font-size: 13px; font-weight: 600; min-width: 0; }
+  .nav-item.active { background: color-mix(in srgb, var(--accent) 14%, transparent);
+                     box-shadow: inset 3px 0 0 var(--accent); }
+  .nav-item:hover { border-color: var(--border); background: var(--panel2); }
+  .nav-item.active:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .detail-empty { background: var(--panel); border: 1px dashed var(--border); border-radius: 10px;
+                  padding: 28px 18px; color: var(--muted); }
   .item { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-          margin-bottom: 14px; padding: 12px 14px; }
+          margin-bottom: 0; padding: 14px 16px; }
   .item-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .item-head .id { font-family: ui-monospace, monospace; color: var(--muted); }
   .item-head h2 { font-size: 15px; margin: 0; }
@@ -123,7 +142,10 @@
 </header>
 <main>
   <div class="notice" id="notice"></div>
-  <div id="items"></div>
+  <div class="workspace">
+    <nav class="nav" id="nav" aria-label="Checklist"></nav>
+    <div id="detail"></div>
+  </div>
   <section id="workorders">
     <h2 id="wo-heading">Work orders</h2>
     <ul id="wolist"></ul>
@@ -133,6 +155,7 @@
 <div id="lightbox"><img alt="preview"></div>
 <script>
 let STATE = null;
+let SELECTED_ID = '';
 const LOCALE_KEY = 'si-rm-locale';
 const THEME_KEY = 'si-rm-theme';
 const UI = {
@@ -144,7 +167,7 @@ const UI = {
     rescan: 'Rescan',
     refreshGit: 'Refresh origin/main',
     generate: 'Generate work order',
-    notice: 'Drop one complete native-CLI full-screen screenshot into a slot. Any terminal, any size. Missing items are allowed gaps — never fabricate scenes. Captures, session IDs and resume commands stay outside Git. used comes from the origin/main evidence lock, not a local accept button. The manager stops at the frozen work order.',
+    notice: 'Pick a screenshot on the left, then capture one complete native-CLI full screen into its slots. Any terminal, any size. Missing items are allowed gaps — never fabricate scenes. Captures, session IDs and resume commands stay outside Git. used comes from the origin/main evidence lock. The manager stops at the frozen work order.',
     workOrders: 'Work orders',
     noWorkOrders: 'No work orders yet.',
     store: 'store',
@@ -174,9 +197,9 @@ const UI = {
     observedWith: 'observed with',
     mainLock: 'main lock version',
     hash: 'hash',
-    chooseImage: 'choose image…',
-    clearNA: 'clear not-applicable',
-    markNA: 'mark not-applicable…',
+    chooseImage: 'Choose image…',
+    clearNA: 'Clear not applicable',
+    markNA: 'Mark not applicable',
     naPrompt: 'Why does this scene not exist for this Agent? (adapter research reason, required)',
     observedVersion: 'observed version',
     versionSaved: 'observed version saved',
@@ -196,6 +219,8 @@ const UI = {
     themeLight: 'Light',
     languageGroup: 'Language',
     themeGroup: 'Theme',
+    checklist: 'Screenshots',
+    selectItem: 'Select a screenshot on the left to see its requirements and capture slots.',
     status: {
       missing: 'missing', found: 'found', captured: 'captured', used: 'used',
       update_available: 'update available', not_applicable: 'not applicable',
@@ -209,7 +234,7 @@ const UI = {
     rescan: '重新扫描',
     refreshGit: '刷新 origin/main',
     generate: '生成工作单',
-    notice: '把一张完整的原生 CLI 全屏截图拖进槽位。任意终端、任意尺寸。缺项是允许的缺口——不要编造场景。截图、session ID 和 resume 命令不进 Git。used 来自 origin/main 的证据锁，不是本地接受按钮。管理器到冻结工作单为止。',
+    notice: '先在左侧选择一张图，再按右侧要求截取一张完整的原生 CLI 全屏。任意终端、任意尺寸。缺项是允许的缺口——不要编造场景。截图、session ID 和 resume 命令不进 Git。used 来自 origin/main 的证据锁。管理器到冻结工作单为止。',
     workOrders: '工作单',
     noWorkOrders: '还没有工作单。',
     store: '存储',
@@ -241,7 +266,7 @@ const UI = {
     hash: 'hash',
     chooseImage: '选择图片…',
     clearNA: '清除不适用',
-    markNA: '标为不适用…',
+    markNA: '标为不适用',
     naPrompt: '该场景为何不存在于这个 Agent？（需要适配器研究原因）',
     observedVersion: '观察版本',
     versionSaved: '已保存观察版本',
@@ -261,6 +286,8 @@ const UI = {
     themeLight: '明亮',
     languageGroup: '语言',
     themeGroup: '主题',
+    checklist: '截图清单',
+    selectItem: '请先在左侧选择一张图，再查看要求和选图。',
     status: {
       missing: '缺失', found: '已找到', captured: '已截图', used: '已使用',
       update_available: '有更新', not_applicable: '不适用',
@@ -319,6 +346,9 @@ function applyChrome() {
   $('#mkwo').textContent = t('generate');
   $('#notice').textContent = t('notice');
   $('#wo-heading').textContent = t('workOrders');
+  const navHead = $('#nav-heading');
+  if (navHead) navHead.textContent = t('checklist');
+  $('#nav').setAttribute('aria-label', t('checklist'));
   $('#lang-switch').setAttribute('aria-label', t('languageGroup'));
   $('#theme-switch').setAttribute('aria-label', t('themeGroup'));
   $('#lang-en').classList.toggle('active', locale === 'en');
@@ -381,9 +411,7 @@ function render(data) {
     (data.scan.scanned_sessions ? t('scanned')(data.scan.scanned_sessions) : '');
   $('#agentver').value = data.current_version || '';
 
-  const items = $('#items');
-  items.textContent = '';
-  for (const item of data.items) items.appendChild(renderItem(data.agent, item));
+  renderWorkspace(data);
 
   const wol = $('#wolist');
   wol.textContent = '';
@@ -403,6 +431,73 @@ function render(data) {
     }
     wol.appendChild(li);
   }
+}
+
+function itemHashId() {
+  const raw = (location.hash || '').replace(/^#/, '');
+  return new URLSearchParams(raw).get('item') || '';
+}
+
+function setSelectedItem(id, pushHash) {
+  SELECTED_ID = id;
+  if (pushHash !== false) {
+    const params = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    if (id) params.set('item', id);
+    else params.delete('item');
+    const next = params.toString();
+    const hash = next ? '#' + next : '';
+    if (location.hash !== hash) history.replaceState(null, '', location.pathname + location.search + hash);
+  }
+  if (STATE) renderWorkspace(STATE);
+}
+
+function primaryStatus(item) {
+  const order = ['update_available', 'captured', 'used', 'found', 'not_applicable', 'missing'];
+  let best = 'missing';
+  let rank = order.length;
+  for (const slot of item.slots || []) {
+    const i = order.indexOf(slot.status);
+    if (i >= 0 && i < rank) {
+      best = slot.status;
+      rank = i;
+    }
+  }
+  return best;
+}
+
+function renderWorkspace(data) {
+  const items = data.items || [];
+  if (!items.some((it) => it.id === SELECTED_ID)) {
+    SELECTED_ID = itemHashId();
+    if (!items.some((it) => it.id === SELECTED_ID)) SELECTED_ID = items[0] ? items[0].id : '';
+  }
+  const nav = $('#nav');
+  const prevScroll = nav.scrollTop;
+  nav.textContent = '';
+  const heading = el('div', 'nav-heading', t('checklist'));
+  heading.id = 'nav-heading';
+  nav.appendChild(heading);
+  for (const item of items) {
+    const btn = el('button', 'nav-item' + (item.id === SELECTED_ID ? ' active' : ''));
+    btn.type = 'button';
+    btn.appendChild(el('span', 'id', item.id));
+    const status = primaryStatus(item);
+    const titleRow = el('span', 'title', pick(item, 'title', 'title_zh'));
+    btn.appendChild(el('span', 'badge ' + status, statusLabel(status)));
+    btn.appendChild(titleRow);
+    btn.onclick = () => setSelectedItem(item.id);
+    nav.appendChild(btn);
+  }
+  nav.scrollTop = prevScroll;
+
+  const detail = $('#detail');
+  detail.textContent = '';
+  const selected = items.find((it) => it.id === SELECTED_ID);
+  if (!selected) {
+    detail.appendChild(el('div', 'detail-empty', t('selectItem')));
+    return;
+  }
+  detail.appendChild(renderItem(data.agent, selected));
 }
 
 function renderItem(agent, item) {
@@ -575,6 +670,10 @@ $('#lang-en').onclick = () => setLocale('en');
 $('#lang-zh').onclick = () => setLocale('zh-CN');
 $('#theme-dark').onclick = () => setTheme('dark');
 $('#theme-light').onclick = () => setTheme('light');
+window.addEventListener('hashchange', () => {
+  const id = itemHashId();
+  if (id !== SELECTED_ID) setSelectedItem(id, false);
+});
 
 applyChrome();
 load().catch(e => toast(t('loadFailed') + ': ' + e.message, 8000));
