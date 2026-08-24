@@ -13,7 +13,7 @@ import DeleteSessionDialog from './DeleteSessionDialog'
 import ExportImportModal from './ExportImportModal'
 import InstantTooltip from './InstantTooltip'
 import StarIcon from './StarIcon'
-import { InfoIcon } from './icons'
+import { InfoIcon, PanelLeftCloseIcon } from './icons'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { formatRelativeTime, getAgentLabel, isSessionLive } from '../sidebarRows'
 import { importedBadgeText } from '../importPresentation'
@@ -74,14 +74,14 @@ interface SidebarProps {
   selectedAgentType?: string | null
   focusTarget?: { id: string; agentType: string } | null
   onSelect: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
-  drawer?: boolean
-  onClose?: () => void
+  onHide?: () => void
+  sessionListShortcut?: string
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
   onSessionDeleted?: (session: SessionSummary) => void
 }
 
-export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, drawer, onClose, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
+export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, onHide, sessionListShortcut, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
   const { locale, t } = useI18n()
   const [now, setNow] = useState(Date.now())
   const [sessions, setSessions] = useState<SessionSummary[]>([])
@@ -183,28 +183,13 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
     }
   }, [])
 
-  // Auto-focus search when drawer opens on mobile
-  useEffect(() => {
-    if (isMobile && drawer) {
-      const timer = setTimeout(() => searchRef.current?.focus(), 100)
-      return () => clearTimeout(timer)
-    }
-  }, [isMobile, drawer])
-
-  // Esc to close drawer on mobile or context menu.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (contextMenu) {
-          setContextMenu(null)
-        } else if (isMobile && onClose) {
-          onClose()
-        }
-      }
+      if (e.key === 'Escape' && contextMenu) setContextMenu(null)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isMobile, onClose, contextMenu])
+  }, [contextMenu])
 
   useEffect(() => {
     const session = contextMenu?.session
@@ -834,6 +819,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   if (loading) {
     return (
       <aside
+        id="session-sidebar"
+        data-testid="session-sidebar"
         className="h-full flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-surface)]"
         style={{ width: effectiveWidth }}
       >
@@ -852,9 +839,10 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
   return (
     <aside
       ref={asideRef}
+      id="session-sidebar"
+      data-testid="session-sidebar"
       className="h-full flex-shrink-0 border-r border-[var(--border-default)] bg-[var(--bg-surface)] relative flex flex-col"
       style={{ width: effectiveWidth }}
-      role={isMobile ? 'dialog' : undefined}
       aria-label={t('sidebar.sessions')}
     >
       {/* Header */}
@@ -877,16 +865,18 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {isMobile && onClose && (
+          {onHide && (
           <button
-            onClick={onClose}
-            aria-label={t('sidebar.close')}
+            type="button"
+            onClick={onHide}
+            aria-label={t('sidebar.hide')}
+            title={t('sidebar.hideTitle', { shortcut: sessionListShortcut ?? 'Ctrl+B' })}
+            aria-controls="session-sidebar"
+            aria-expanded={true}
+            data-testid="sidebar-hide"
             className="ml-1 w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <PanelLeftCloseIcon />
           </button>
           )}
         </div>
