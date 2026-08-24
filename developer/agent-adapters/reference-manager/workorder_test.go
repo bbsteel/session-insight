@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,35 +106,98 @@ func TestWorkOrderUnsupportedSchema(t *testing.T) {
 	}
 }
 
-func TestWorkOrderSameSecondCollision(t *testing.T) {
+func TestCreateWorkOrderDirSameSecondCollision(t *testing.T) {
+	checkout := t.TempDir()
+	orig := workOrderTimestamp
+	workOrderTimestamp = func() string { return "20060102-150405" }
+	t.Cleanup(func() { workOrderTimestamp = orig })
+
+	firstID, firstDir, err := createWorkOrderDir(checkout, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID, secondDir, err := createWorkOrderDir(checkout, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstID == secondID || firstDir == secondDir {
+		t.Fatalf("same-second directories collided: %s %s", firstID, secondID)
+	}
+}
+
+func TestGenerateWorkOrderRefusesActiveDuplicate(t *testing.T) {
 	stubEmptyBaseline(t)
 	s := testStore(t)
 	checkout := t.TempDir()
 	importPNG(t, s, "claude", "04-thinking", 1)
-
-	orig := workOrderTimestamp
-	workOrderTimestamp = func() string { return "20060102-150405" }
-	defer func() { workOrderTimestamp = orig }()
 
 	first, err := generateWorkOrder(s, checkout, "claude", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := generateWorkOrder(s, checkout, "claude", nil)
+	if err == nil {
+		t.Fatalf("duplicate freeze succeeded as %s", second.ID)
+	}
+	var frozen *alreadyFrozenError
+	if !errors.As(err, &frozen) || frozen.Record.ID != first.ID {
+		t.Fatalf("duplicate freeze error = %v, want alreadyFrozenError for %s", err, first.ID)
+	}
+	cat, _ := s.catalogs.load("claude")
+	if len(cat.WorkOrders) != 1 {
+		t.Fatalf("catalog work orders = %d, want 1", len(cat.WorkOrders))
+	}
+	entries, err := os.ReadDir(workOrderRoot(checkout))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ID == second.ID {
-		t.Fatalf("same-second generations collided on ID %s", first.ID)
+	if len(entries) != 1 {
+		t.Fatalf("work-order directories = %d, want 1", len(entries))
 	}
-	for _, wo := range []*WorkOrderRecord{first, second} {
-		if _, err := os.Stat(filepath.Join(checkout, wo.Dir, "WORK_ORDER.md")); err != nil {
-			t.Errorf("work order %s missing its WORK_ORDER.md: %v", wo.ID, err)
-		}
+}
+
+func TestGenerateWorkOrderAfterInputChange(t *testing.T) {
+	stubEmptyBaseline(t)
+	s := testStore(t)
+	checkout := t.TempDir()
+	importPNG(t, s, "claude", "04-thinking", 1)
+	first, err := generateWorkOrder(s, checkout, "claude", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPNG(t, s, "claude", "04-thinking", 2)
+	second, err := generateWorkOrder(s, checkout, "claude", nil)
+	if err != nil {
+		t.Fatalf("changed input should freeze a new work order: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("changed input reused the stale work order id")
 	}
 	cat, _ := s.catalogs.load("claude")
 	if len(cat.WorkOrders) != 2 {
-		t.Fatalf("catalog must record both work orders, got %d", len(cat.WorkOrders))
+		t.Fatalf("catalog work orders = %d, want 2", len(cat.WorkOrders))
+	}
+}
+
+func TestGenerateWorkOrderAllowsNewPendingFile(t *testing.T) {
+	stubEmptyBaseline(t)
+	s := testStore(t)
+	checkout := t.TempDir()
+	importPNG(t, s, "claude", "04-thinking", 1)
+	first, err := generateWorkOrder(s, checkout, "claude", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPNG(t, s, "claude", "01-session-overview", 2)
+	second, err := generateWorkOrder(s, checkout, "claude", nil)
+	if err != nil {
+		t.Fatalf("new pending file should freeze a new work order: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("expanded pending set reused the previous work order id")
+	}
+	if len(second.Items) != 2 {
+		t.Fatalf("new work order items = %v, want both pending files", second.Items)
 	}
 }
 

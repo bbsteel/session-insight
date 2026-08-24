@@ -101,10 +101,71 @@ func createWorkOrderDir(checkoutDir, canonicalAgent string) (id string, dir stri
 	}
 }
 
+// alreadyFrozenError is returned when an active work order already freezes
+// the current pending input hashes. The caller should reuse that record.
+type alreadyFrozenError struct {
+	Record WorkOrderRecord
+}
+
+func (e *alreadyFrozenError) Error() string {
+	return fmt.Sprintf("active work order %s already freezes these inputs", e.Record.ID)
+}
+
+func pendingHashes(cat *AgentCatalog, pending []string) map[string]string {
+	out := map[string]string{}
+	for _, name := range pending {
+		st := cat.Items[name]
+		if st == nil || st.Current == nil {
+			continue
+		}
+		out[name] = st.Current.Hash
+	}
+	return out
+}
+
+func sameFrozenInputs(record WorkOrderRecord, hashes map[string]string) bool {
+	if record.SchemaVersion != WorkOrderSchemaV2 {
+		return false
+	}
+	if len(record.Frozen) == 0 || len(record.Frozen) != len(hashes) {
+		return false
+	}
+	for name, hash := range hashes {
+		if record.Frozen[name] != hash {
+			return false
+		}
+	}
+	return true
+}
+
+// activeWorkOrderForPending returns the latest active work order that already
+// freezes exactly this pending set. A changed capture makes the old order
+// stale and allows a new freeze; extra pending files are a new set.
+func activeWorkOrderForPending(cat *AgentCatalog, pending []string, lockHashes map[string]string) *WorkOrderRecord {
+	hashes := pendingHashes(cat, pending)
+	if len(hashes) == 0 || len(hashes) != len(pending) {
+		return nil
+	}
+	for i := len(cat.WorkOrders) - 1; i >= 0; i-- {
+		rec := cat.WorkOrders[i]
+		if workOrderState(rec, cat, lockHashes) != WorkOrderActive {
+			continue
+		}
+		if sameFrozenInputs(rec, hashes) {
+			return &cat.WorkOrders[i]
+		}
+	}
+	return nil
+}
+
 // generateWorkOrder freezes the pending inputs of one Agent into a work order
 // directory. The manager's boundary ends here: it never creates goals,
-// branches, PRs or product-code edits.
+// branches, PRs or product-code edits. An active work order for the same
+// frozen hashes is reused rather than duplicated.
 func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[string]*Candidate) (*WorkOrderRecord, error) {
+	s.generateMu.Lock()
+	defer s.generateMu.Unlock()
+
 	canonicalAgent, err := s.canonicalAgent(agent)
 	if err != nil {
 		return nil, err
@@ -126,6 +187,9 @@ func generateWorkOrder(s *Store, checkoutDir, agent string, candidates map[strin
 	pending := pendingInputs(cat, lockHashes)
 	if len(pending) == 0 {
 		return nil, fmt.Errorf("no pending reference inputs for %s; nothing to freeze", canonicalAgent)
+	}
+	if existing := activeWorkOrderForPending(cat, pending, lockHashes); existing != nil {
+		return nil, &alreadyFrozenError{Record: *existing}
 	}
 
 	id, dir, err := createWorkOrderDir(checkoutDir, canonicalAgent)

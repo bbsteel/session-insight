@@ -39,8 +39,10 @@ The tool binds `127.0.0.1` on a random OS-assigned port and prints a
   `.runtime/reference-work/<agent>-<id>/`. The markdown records full SHA-256
   hashes, the main baseline commit, the main lock summary, and a copy-paste
   `verify-work-order` command. A work order is `stale` when an input changes
-  after freezing; old schema work orders must be regenerated. The UI can open
-  that frozen directory in the desktop file manager.
+  after freezing; old schema work orders must be regenerated. An active work
+  order that already freezes the current pending hashes cannot be duplicated
+  — regenerate only after an input changes. The UI can open that frozen
+  directory in the desktop file manager.
 
 The manager's boundary ends at the work order: it does not create goals,
 branches or PRs, and does not edit product code. Local accept is disabled.

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Store layout (always outside the Git repository):
@@ -82,6 +83,9 @@ type Store struct {
 	// resolveAgent maps an agent ID to the registry's own canonical value.
 	// Injected so tests can run without the real reader registry.
 	resolveAgent func(string) (string, bool)
+	// generateMu serializes work-order freeze so two clicks cannot both
+	// observe "no active duplicate" and write two directories.
+	generateMu sync.Mutex
 }
 
 func newStore(root string, resolveAgent func(string) (string, bool)) *Store {

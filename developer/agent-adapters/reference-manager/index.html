@@ -43,6 +43,8 @@
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
            border-radius: 6px; padding: 4px 10px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--border); }
   button.primary { background: var(--accent); color: var(--primary-ink); border-color: var(--accent); font-weight: 600; }
   main { padding: 16px 18px 80px; max-width: 1320px; margin: 0 auto; }
   .notice { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
@@ -161,6 +163,7 @@
 <script>
 let STATE = null;
 let SELECTED_ID = '';
+let generatingWorkOrder = false;
 const LOCALE_KEY = 'si-rm-locale';
 const THEME_KEY = 'si-rm-theme';
 const UI = {
@@ -216,6 +219,10 @@ const UI = {
     gitUpdated: (sha) => 'origin/main is now ' + sha,
     gitUpdatedGeneric: 'updated',
     woFrozen: (dir) => 'work order frozen at ' + dir,
+    alreadyFrozen: (id) => 'already frozen in ' + id,
+    alreadyFrozenToast: (id) => 'these inputs are already frozen in ' + id,
+    nothingToFreeze: 'no pending inputs to freeze',
+    generatingWorkOrder: 'Generating…',
     openFolder: 'Open folder',
     openedFolder: (path) => 'opened ' + path,
     loadFailed: 'load failed',
@@ -285,6 +292,10 @@ const UI = {
     gitUpdated: (sha) => 'origin/main 现在是 ' + sha,
     gitUpdatedGeneric: '已更新',
     woFrozen: (dir) => '工作单已冻结在 ' + dir,
+    alreadyFrozen: (id) => '已冻结在 ' + id,
+    alreadyFrozenToast: (id) => '这些输入已冻结在 ' + id,
+    nothingToFreeze: '没有待冻结的输入',
+    generatingWorkOrder: '正在生成…',
     openFolder: '打开路径',
     openedFolder: (path) => '已打开 ' + path,
     loadFailed: '加载失败',
@@ -352,7 +363,7 @@ function applyChrome() {
   $('#agentver').placeholder = t('versionPlaceholder');
   $('#rescan').textContent = t('rescan');
   $('#refreshgit').textContent = t('refreshGit');
-  $('#mkwo').textContent = t('generate');
+  applyGenerateButton(STATE);
   $('#notice').textContent = t('notice');
   $('#wo-heading').textContent = t('workOrders');
   const navHead = $('#nav-heading');
@@ -391,8 +402,28 @@ async function api(path, body) {
     { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) };
   const res = await fetch(path, opt);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) {
+    const err = new Error(data.error || res.statusText);
+    err.payload = data;
+    throw err;
+  }
   return data;
+}
+
+function applyGenerateButton(data) {
+  const btn = $('#mkwo');
+  if (generatingWorkOrder) {
+    btn.disabled = true;
+    btn.textContent = t('generatingWorkOrder');
+    btn.removeAttribute('title');
+    return;
+  }
+  btn.textContent = t('generate');
+  const allowed = !!(data && data.can_generate_work_order);
+  btn.disabled = !allowed;
+  if (data && data.already_frozen_in) btn.title = t('alreadyFrozen')(data.already_frozen_in);
+  else if (!allowed) btn.title = t('nothingToFreeze');
+  else btn.removeAttribute('title');
 }
 
 function currentAgent() {
@@ -436,6 +467,7 @@ function render(data) {
   $('#agentver').value = data.current_version || '';
 
   renderWorkspace(data);
+  applyGenerateButton(data);
 
   const wol = $('#wolist');
   wol.textContent = '';
@@ -691,6 +723,9 @@ $('#refreshgit').onclick = () => {
     .catch(e => toast(e.message, 6000));
 };
 $('#mkwo').onclick = () => {
+  if (generatingWorkOrder || $('#mkwo').disabled) return;
+  generatingWorkOrder = true;
+  applyGenerateButton(STATE);
   api('/api/work-order', {agent: $('#agent').value})
     .then(r => {
       const id = r.work_order && r.work_order.id;
@@ -698,9 +733,22 @@ $('#mkwo').onclick = () => {
         label: t('openFolder'),
         onClick: () => openWorkOrderFolder(id),
       } : undefined);
-      load();
     })
-    .catch(e => toast(e.message, 6000));
+    .catch(e => {
+      const wo = e.payload && e.payload.work_order;
+      if (wo && wo.id) {
+        toast(t('alreadyFrozenToast')(wo.id), 12000, {
+          label: t('openFolder'),
+          onClick: () => openWorkOrderFolder(wo.id),
+        });
+        return;
+      }
+      toast(e.message, 6000);
+    })
+    .finally(() => {
+      generatingWorkOrder = false;
+      load().catch(err => toast(t('loadFailed') + ': ' + err.message, 8000));
+    });
 };
 $('#lang-en').onclick = () => setLocale('en');
 $('#lang-zh').onclick = () => setLocale('zh-CN');

@@ -163,7 +163,39 @@ func TestServerWorkOrderEndpoint(t *testing.T) {
 	if wo == nil || wo["dir"] == "" {
 		t.Fatalf("work order response missing record: %v", out)
 	}
-	_ = srv // state verified via API above
+	id, _ := wo["id"].(string)
+	if id == "" {
+		t.Fatalf("work order id missing: %v", out)
+	}
+
+	code, out = postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusConflict {
+		t.Fatalf("duplicate work order = %d %v, want 409", code, out)
+	}
+	if out["result_code"] != "work_order_already_active" {
+		t.Fatalf("duplicate result_code = %v", out["result_code"])
+	}
+	dup, _ := out["work_order"].(map[string]any)
+	if dup == nil || dup["id"] != id {
+		t.Fatalf("duplicate response must return existing work order %s: %v", id, out)
+	}
+
+	res, err := http.Get(ts.URL + "/api/state?agent=claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close() //nolint:errcheck
+	var state stateResponse
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state.CanGenerateWorkOrder {
+		t.Fatal("state must not allow generate while an active duplicate exists")
+	}
+	if state.AlreadyFrozenIn != id {
+		t.Fatalf("already_frozen_in = %q, want %s", state.AlreadyFrozenIn, id)
+	}
+	_ = srv
 }
 
 func TestServerOpenWorkOrderEndpoint(t *testing.T) {

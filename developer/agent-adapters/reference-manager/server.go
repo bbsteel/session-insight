@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -68,6 +69,10 @@ type stateResponse struct {
 	Items          []itemState     `json:"items"`
 	WorkOrders     []workOrderView `json:"work_orders"`
 	Scan           scanStatus      `json:"scan"`
+	// CanGenerateWorkOrder is false when nothing is pending, or when an
+	// active work order already freezes the current pending hashes.
+	CanGenerateWorkOrder bool   `json:"can_generate_work_order"`
+	AlreadyFrozenIn      string `json:"already_frozen_in,omitempty"`
 }
 
 type server struct {
@@ -308,6 +313,12 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 			State:           workOrderState(record, cat, lockHashes),
 			Overlay:         workOrderOverlay(record, cat, s.checkoutDir, lockHashes, headLockHashes, headSHA, baseline.SHA),
 		})
+	}
+	pending := pendingInputs(cat, lockHashes)
+	resp.CanGenerateWorkOrder = len(pending) > 0
+	if existing := activeWorkOrderForPending(cat, pending, lockHashes); existing != nil {
+		resp.CanGenerateWorkOrder = false
+		resp.AlreadyFrozenIn = existing.ID
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -602,6 +613,16 @@ func (s *server) handleWorkOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := generateWorkOrder(s.store, s.checkoutDir, req.Agent, candidates)
 	if err != nil {
+		var frozen *alreadyFrozenError
+		if errors.As(err, &frozen) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"ok":          false,
+				"result_code": "work_order_already_active",
+				"error":       frozen.Error(),
+				"work_order":  frozen.Record,
+			})
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
