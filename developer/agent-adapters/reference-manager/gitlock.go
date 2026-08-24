@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"strings"
@@ -60,6 +62,10 @@ func readGitBaseline(checkoutDir string) (GitBaseline, error) {
 // an empty lock (nothing used yet), not an unreadable baseline.
 var loadAgentLock = readAgentEvidenceLock
 
+func emptyEvidenceLock(agent string) *evidenceLockFile {
+	return &evidenceLockFile{SchemaVersion: 1, AgentType: agent, Captures: map[string]evidenceLockItem{}}
+}
+
 func readAgentEvidenceLock(checkoutDir, ref, agent string) (*evidenceLockFile, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("empty git ref")
@@ -67,15 +73,16 @@ func readAgentEvidenceLock(checkoutDir, ref, agent string) (*evidenceLockFile, e
 	if _, err := gitOutput(checkoutDir, "rev-parse", "--verify", ref); err != nil {
 		return nil, fmt.Errorf("git ref %s is unreadable: %w", ref, err)
 	}
-	data, err := gitOutputBytes(checkoutDir, "show", ref+":"+evidenceLockPath(agent))
+	spec := ref + ":" + evidenceLockPath(agent)
+	exists, err := gitObjectExists(checkoutDir, spec)
 	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "does not exist") ||
-			strings.Contains(msg, "exists on disk, but not in") ||
-			strings.Contains(msg, "not in '") ||
-			strings.Contains(msg, "Path '") {
-			return &evidenceLockFile{SchemaVersion: 1, AgentType: agent, Captures: map[string]evidenceLockItem{}}, nil
-		}
+		return nil, err
+	}
+	if !exists {
+		return emptyEvidenceLock(agent), nil
+	}
+	data, err := gitOutputBytes(checkoutDir, "show", spec)
+	if err != nil {
 		return nil, err
 	}
 	var lock evidenceLockFile
@@ -137,11 +144,34 @@ func gitOutput(checkoutDir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-func gitOutputBytes(checkoutDir string, args ...string) ([]byte, error) {
+func gitEnv() []string {
+	return append(os.Environ(), "LC_ALL=C", "LANG=C", "LANGUAGE=C")
+}
+
+func gitCommand(checkoutDir string, args ...string) *exec.Cmd {
 	cmd := exec.Command("git", args...)
 	if checkoutDir != "" {
 		cmd.Dir = checkoutDir
 	}
+	cmd.Env = gitEnv()
+	return cmd
+}
+
+func gitObjectExists(checkoutDir, spec string) (bool, error) {
+	cmd := gitCommand(checkoutDir, "cat-file", "-e", spec)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return false, nil
+	}
+	return false, err
+}
+
+func gitOutputBytes(checkoutDir string, args ...string) ([]byte, error) {
+	cmd := gitCommand(checkoutDir, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
