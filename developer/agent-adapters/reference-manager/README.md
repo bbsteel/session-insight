@@ -56,9 +56,17 @@ Everything lives outside the Git repository:
     └── <logical-name>.png    # optional manual drop-in, imported on scan
 ```
 
-Override the root with `SI_TERMINAL_REFERENCE_ROOT`. If the default home
-directory is not writable (for example a sandboxed agent shell), the tool
-falls back to `<checkout>/.runtime/terminal-references` and logs the path.
+Override the root with `SI_TERMINAL_REFERENCE_ROOT`. Sandboxed agents must
+grant write access to `~/.session-insight-dev` (Grok profile `session-insight`
+in `.grok/sandbox.toml`, Codex `writable_roots` in `.codex/config.toml`).
+Create that directory once if the sandbox requires it to exist:
+
+```bash
+mkdir -p ~/.session-insight-dev
+```
+
+If the default home store is still not writable, the tool falls back to
+`<checkout>/.runtime/terminal-references` and logs the path.
 Original screenshots,
 session IDs, resume commands, local paths and the catalog must never enter
 Git, PRs, issues or public logs. Work orders are written to the Git-ignored
