@@ -4,27 +4,46 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Terminal Reference Manager</title>
+<script>
+(function () {
+  var theme = localStorage.getItem('si-rm-theme');
+  document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+})();
+</script>
 <style>
-  :root {
+  :root, html[data-theme="dark"] {
+    color-scheme: dark;
     --bg: #14161a; --panel: #1d2026; --panel2: #232730; --border: #333945;
     --text: #d7dce3; --muted: #8b93a1; --accent: #5b9dff;
+    --primary-ink: #0d1117;
     --missing: #6b7280; --found: #5b9dff; --captured: #d9a13b;
     --used: #4caf7d; --update: #e0703a; --na: #9a7bd0;
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f3f5f8; --panel: #ffffff; --panel2: #eef1f6; --border: #d0d6e0;
+    --text: #1b2330; --muted: #5c6675; --accent: #2f6fed;
+    --primary-ink: #ffffff;
+    --missing: #7b8494; --found: #2f6fed; --captured: #c4841a;
+    --used: #2f8a57; --update: #c45a22; --na: #7a5cb8;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { position: sticky; top: 0; z-index: 10; background: var(--panel);
            border-bottom: 1px solid var(--border); padding: 10px 18px;
-           display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-  header h1 { font-size: 16px; margin: 0; }
+           display: grid; grid-template-columns: minmax(0, 1fr) auto;
+           gap: 10px 16px; align-items: start; }
+  .header-main { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; min-width: 0; }
+  .header-toggles { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
   header .meta { color: var(--muted); font-size: 12px; }
   select, input[type=text] { background: var(--panel2); color: var(--text);
            border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
            border-radius: 6px; padding: 4px 10px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
+  button.primary { background: var(--accent); color: var(--primary-ink); border-color: var(--accent); font-weight: 600; }
   main { padding: 16px 18px 80px; max-width: 1100px; margin: 0 auto; }
   .notice { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
             padding: 10px 14px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
@@ -38,6 +57,8 @@
   .extract, .cand-note { color: var(--muted); font-size: 12px; margin: 2px 0; }
   .badge { display: inline-block; border-radius: 10px; padding: 1px 9px; font-size: 11px;
            font-weight: 600; color: #0d1117; }
+  html[data-theme="light"] .badge.found,
+  html[data-theme="light"] .badge.exact { color: #fff; }
   .badge.missing { background: var(--missing); } .badge.found { background: var(--found); }
   .badge.captured { background: var(--captured); } .badge.used { background: var(--used); }
   .badge.update_available { background: var(--update); } .badge.not_applicable { background: var(--na); }
@@ -70,36 +91,38 @@
   #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none;
               align-items: center; justify-content: center; z-index: 30; cursor: zoom-out; }
   #lightbox img { max-width: 96vw; max-height: 96vh; }
-  .lang-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-left: auto; }
-  .lang-switch button { border: 0; border-radius: 0; padding: 4px 10px; }
-  .lang-switch button + button { border-left: 1px solid var(--border); }
-  .lang-switch button.active { background: var(--accent); color: #0d1117; font-weight: 600; }
+  .seg-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; white-space: nowrap; }
+  .seg-switch button { border: 0; border-radius: 0; padding: 4px 10px; }
+  .seg-switch button + button { border-left: 1px solid var(--border); }
+  .seg-switch button.active { background: var(--accent); color: var(--primary-ink); font-weight: 600; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Terminal Reference Manager</h1>
-  <label id="lbl-agent">Agent <select id="agent"></select></label>
-  <label id="lbl-ver">Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
-  <button id="rescan">Rescan</button>
-  <button id="refreshgit">Refresh origin/main</button>
-  <button id="mkwo" class="primary">Generate work order</button>
-  <span class="meta" id="storeroot"></span>
-  <span class="meta" id="baseline"></span>
-  <span class="meta" id="scan"></span>
-  <div class="lang-switch" role="group" aria-label="Language">
-    <button type="button" id="lang-en" data-locale="en">EN</button>
-    <button type="button" id="lang-zh" data-locale="zh-CN">中文</button>
+  <div class="header-main">
+    <h1>Terminal Reference Manager</h1>
+    <label id="lbl-agent">Agent <select id="agent"></select></label>
+    <label id="lbl-ver">Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
+    <button id="rescan">Rescan</button>
+    <button id="refreshgit">Refresh origin/main</button>
+    <button id="mkwo" class="primary">Generate work order</button>
+    <span class="meta" id="storeroot"></span>
+    <span class="meta" id="baseline"></span>
+    <span class="meta" id="scan"></span>
+  </div>
+  <div class="header-toggles">
+    <div class="seg-switch" id="lang-switch" role="group" aria-label="Language">
+      <button type="button" id="lang-en" data-locale="en">EN</button>
+      <button type="button" id="lang-zh" data-locale="zh-CN">中文</button>
+    </div>
+    <div class="seg-switch" id="theme-switch" role="group" aria-label="Theme">
+      <button type="button" id="theme-dark" data-theme="dark">Dark</button>
+      <button type="button" id="theme-light" data-theme="light">Light</button>
+    </div>
   </div>
 </header>
 <main>
   <div class="notice" id="notice"></div>
-    Drop one complete native-CLI full-screen screenshot into a slot. Any terminal, any size.
-    Missing items are allowed gaps &mdash; never fabricate scenes. Captures, session IDs and
-    resume commands stay outside Git. <code>used</code> comes from the
-    origin/main evidence lock, not a local accept button. The manager stops at
-    the frozen work order.
-  </div>
   <div id="items"></div>
   <section id="workorders">
     <h2 id="wo-heading">Work orders</h2>
@@ -111,6 +134,7 @@
 <script>
 let STATE = null;
 const LOCALE_KEY = 'si-rm-locale';
+const THEME_KEY = 'si-rm-theme';
 const UI = {
   en: {
     title: 'Terminal Reference Manager',
@@ -168,6 +192,10 @@ const UI = {
     staleHint: ' — an input changed after freezing; regenerate',
     unsupportedHint: ' — regenerate as schema v2',
     inputs: 'input(s)',
+    themeDark: 'Dark',
+    themeLight: 'Light',
+    languageGroup: 'Language',
+    themeGroup: 'Theme',
     status: {
       missing: 'missing', found: 'found', captured: 'captured', used: 'used',
       update_available: 'update available', not_applicable: 'not applicable',
@@ -229,6 +257,10 @@ const UI = {
     staleHint: ' — 冻结后输入已变化，请重新生成',
     unsupportedHint: ' — 请按 schema v2 重新生成',
     inputs: '项输入',
+    themeDark: '暗色',
+    themeLight: '明亮',
+    languageGroup: '语言',
+    themeGroup: '主题',
     status: {
       missing: '缺失', found: '已找到', captured: '已截图', used: '已使用',
       update_available: '有更新', not_applicable: '不适用',
@@ -260,14 +292,23 @@ function pick(obj, enKey, zhKey) {
   if (currentLocale() === 'zh-CN' && obj[zhKey]) return obj[zhKey];
   return obj[enKey] || '';
 }
+function currentTheme() {
+  return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
+}
 function setLocale(locale) {
   localStorage.setItem(LOCALE_KEY, locale);
   applyChrome();
   if (STATE) render(STATE);
 }
+function setTheme(theme) {
+  localStorage.setItem(THEME_KEY, theme === 'light' ? 'light' : 'dark');
+  applyChrome();
+}
 function applyChrome() {
   const locale = currentLocale();
+  const theme = currentTheme();
   document.documentElement.lang = locale === 'zh-CN' ? 'zh-CN' : 'en';
+  document.documentElement.dataset.theme = theme;
   document.title = t('title');
   $('header h1').textContent = t('title');
   $('#lbl-agent').firstChild.textContent = t('agent') + ' ';
@@ -278,8 +319,14 @@ function applyChrome() {
   $('#mkwo').textContent = t('generate');
   $('#notice').textContent = t('notice');
   $('#wo-heading').textContent = t('workOrders');
+  $('#lang-switch').setAttribute('aria-label', t('languageGroup'));
+  $('#theme-switch').setAttribute('aria-label', t('themeGroup'));
   $('#lang-en').classList.toggle('active', locale === 'en');
   $('#lang-zh').classList.toggle('active', locale === 'zh-CN');
+  $('#theme-dark').textContent = t('themeDark');
+  $('#theme-light').textContent = t('themeLight');
+  $('#theme-dark').classList.toggle('active', theme === 'dark');
+  $('#theme-light').classList.toggle('active', theme === 'light');
 }
 function toast(msg, ms=3500) {
   const n = $('#toast'); n.textContent = msg; n.style.display = 'block';
@@ -526,6 +573,8 @@ $('#mkwo').onclick = () => {
 };
 $('#lang-en').onclick = () => setLocale('en');
 $('#lang-zh').onclick = () => setLocale('zh-CN');
+$('#theme-dark').onclick = () => setTheme('dark');
+$('#theme-light').onclick = () => setTheme('light');
 
 applyChrome();
 load().catch(e => toast(t('loadFailed') + ': ' + e.message, 8000));
