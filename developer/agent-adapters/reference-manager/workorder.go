@@ -108,7 +108,7 @@ type alreadyFrozenError struct {
 }
 
 func (e *alreadyFrozenError) Error() string {
-	return fmt.Sprintf("active work order %s already freezes these inputs", e.Record.ID)
+	return fmt.Sprintf("these screenshots are already in work order %s", e.Record.ID)
 }
 
 func pendingHashes(cat *AgentCatalog, pending []string) map[string]string {
@@ -308,8 +308,8 @@ func renderWorkOrderMarkdown(agent string, record *WorkOrderRecord, entries []fr
 		fmt.Fprintf(&b, "- Installed Agent version context: %s\n", cat.CurrentVersion)
 	}
 	fmt.Fprintf(&b, "- Preflight: `%s`\n", record.PreflightCommand)
-	b.WriteString("\n## Frozen inputs\n\n")
-	b.WriteString("Every input hash below is frozen. If any input image changes after generation, this work order is void as acceptance input and must be regenerated.\n\n")
+	b.WriteString("\n## Captures in this work order\n\n")
+	b.WriteString("The hashes below are the snapshot this work order covers. If any of these images change after generation, this work order is void and must be regenerated.\n\n")
 	b.WriteString("| Logical file | Candidate SHA-256 | Main lock SHA-256 | Short | Features |\n|---|---|---|---|---|\n")
 	for _, e := range entries {
 		lockHash := record.MainLockHashes[e.logical]

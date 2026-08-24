@@ -35,14 +35,14 @@ The tool binds `127.0.0.1` on a random OS-assigned port and prints a
   researched reason). `used` is derived from the local `origin/main` evidence
   lock, never from a local accept button. Agent version changes are context,
   never bulk invalidation.
-- Freezes pending inputs into a schema v2 work order under
+- Writes pending captures into a schema v2 work order snapshot under
   `.runtime/reference-work/<agent>-<id>/`. The markdown records full SHA-256
   hashes, the main baseline commit, the main lock summary, and a copy-paste
-  `verify-work-order` command. A work order is `stale` when an input changes
-  after freezing; old schema work orders must be regenerated. An active work
-  order that already freezes the current pending hashes cannot be duplicated
-  — regenerate only after an input changes. The UI can open that frozen
-  directory in the desktop file manager.
+  `verify-work-order` command. A work order is `stale` when a capture changes
+  after it was written; old schema work orders must be regenerated. An active
+  work order that already covers the current pending hashes cannot be
+  duplicated — write a new one only after an input changes. The UI can open
+  that snapshot directory in the desktop file manager.
 
 The manager's boundary ends at the work order: it does not create goals,
 branches or PRs, and does not edit product code. Local accept is disabled.
