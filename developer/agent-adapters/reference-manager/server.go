@@ -24,7 +24,9 @@ type agentInfo struct {
 type slotState struct {
 	LogicalName string `json:"logical_name"`
 	Label       string `json:"label"`
+	LabelZH     string `json:"label_zh"`
 	Hint        string `json:"hint"`
+	HintZH      string `json:"hint_zh"`
 	Status      string `json:"status"`
 	// LocalUnavailable: the catalog references content whose blob is gone
 	// from this machine. Accepted presentation work stays valid.
@@ -269,7 +271,9 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 			ss := slotState{
 				LogicalName:      slot.LogicalName,
 				Label:            slot.Label,
+				LabelZH:          slot.LabelZH,
 				Hint:             slot.Hint,
+				HintZH:           slot.HintZH,
 				Status:           resolved.Status,
 				LocalUnavailable: resolved.LocalUnavailable,
 				MainLockHash:     mainLockHash,

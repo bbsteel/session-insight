@@ -81,6 +81,12 @@ func TestServerUploadAndState(t *testing.T) {
 	if thinking == nil {
 		t.Fatal("state must include 04-thinking")
 	}
+	if thinking.Slots[0].LabelZH == "" || thinking.Slots[0].HintZH == "" {
+		t.Fatal("state slots must include zh-CN label and hint")
+	}
+	if thinking.TitleZH == "" {
+		t.Fatal("state items must include zh-CN title")
+	}
 	if thinking.Slots[0].Status != StatusCaptured {
 		t.Fatalf("default slot status = %s, want captured", thinking.Slots[0].Status)
 	}
