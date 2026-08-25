@@ -93,8 +93,12 @@ func TestPendingInputsSkipMainLockMatches(t *testing.T) {
 	s := testStore(t)
 	rec := importPNG(t, s, "claude", "04-thinking", 1)
 	stubLockFor(t, "04-thinking", rec.Hash)
-	if _, err := generateWorkOrder(s, t.TempDir(), "claude", nil); err == nil {
+	_, err := generateWorkOrder(s, t.TempDir(), "claude", nil)
+	if err == nil {
 		t.Fatal("matching main lock should leave nothing pending")
+	}
+	if !strings.Contains(err.Error(), "no pending reference inputs") {
+		t.Fatalf("error = %v, want no-pending-inputs", err)
 	}
 }
 

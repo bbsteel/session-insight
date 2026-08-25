@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -149,7 +151,11 @@ func gitEnv() []string {
 }
 
 func gitCommand(checkoutDir string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
+	return gitCommandContext(context.Background(), checkoutDir, args...)
+}
+
+func gitCommandContext(ctx context.Context, checkoutDir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	if checkoutDir != "" {
 		cmd.Dir = checkoutDir
 	}
@@ -165,26 +171,48 @@ func gitObjectExists(checkoutDir, spec string) (bool, error) {
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return false, nil
+		if exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		// Git versions commonly return 128 for a missing ref:path entry,
+		// while using the same code for repository-level failures. The ref is
+		// verified by readAgentEvidenceLock before this helper is called, so
+		// only treat 128 as a missing path when its base ref is readable.
+		if exitErr.ExitCode() == 128 {
+			if ref, _, hasPath := strings.Cut(spec, ":"); hasPath {
+				if _, verifyErr := gitOutput(checkoutDir, "rev-parse", "--verify", ref); verifyErr == nil {
+					return false, nil
+				}
+			}
+		}
+		return false, err
 	}
 	return false, err
 }
 
 func gitOutputBytes(checkoutDir string, args ...string) ([]byte, error) {
-	cmd := gitCommand(checkoutDir, args...)
-	out, err := cmd.CombinedOutput()
+	return gitOutputBytesContext(context.Background(), checkoutDir, args...)
+}
+
+func gitOutputBytesContext(ctx context.Context, checkoutDir string, args ...string) ([]byte, error) {
+	cmd := gitCommandContext(ctx, checkoutDir, args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
+		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
 		}
 		return nil, fmt.Errorf("%s", msg)
 	}
-	return out, nil
+	return stdout.Bytes(), nil
 }
 
-func fetchOriginMain(checkoutDir string) error {
-	_, err := gitOutput(checkoutDir, "fetch", "origin", "main")
+func fetchOriginMain(ctx context.Context, checkoutDir string) error {
+	_, err := gitOutputBytesContext(ctx, checkoutDir, "fetch", "origin", "main")
 	return err
 }
 

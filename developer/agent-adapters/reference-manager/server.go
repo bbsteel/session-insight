@@ -82,19 +82,22 @@ type server struct {
 	readers     map[string]reader.BaseSessionReader
 	scanLimit   int
 
-	mu       sync.Mutex
-	reports  map[string]*CandidateReport
-	scanning map[string]bool
+	mu            sync.Mutex
+	reports       map[string]*CandidateReport
+	scanning      map[string]bool
+	mainLockMu    sync.Mutex
+	mainLockCache map[string][]string
 }
 
 func newServer(store *Store, checkoutDir string, readers []reader.BaseSessionReader, scanLimit int) *server {
 	s := &server{
-		store:       store,
-		checkoutDir: checkoutDir,
-		readers:     map[string]reader.BaseSessionReader{},
-		scanLimit:   scanLimit,
-		reports:     map[string]*CandidateReport{},
-		scanning:    map[string]bool{},
+		store:         store,
+		checkoutDir:   checkoutDir,
+		readers:       map[string]reader.BaseSessionReader{},
+		scanLimit:     scanLimit,
+		reports:       map[string]*CandidateReport{},
+		scanning:      map[string]bool{},
+		mainLockCache: map[string][]string{},
 	}
 	discovered := map[string]bool{}
 	for _, r := range readers {
@@ -328,6 +331,13 @@ func (s *server) mainLockHashes(agent string) []string {
 	if err != nil {
 		return nil
 	}
+	cacheKey := agent + "\x00" + baseline.SHA
+	s.mainLockMu.Lock()
+	cachedHashes, cached := s.mainLockCache[cacheKey]
+	s.mainLockMu.Unlock()
+	if cached {
+		return append([]string(nil), cachedHashes...)
+	}
 	lock, err := loadAgentLock(s.checkoutDir, baseline.SHA, agent)
 	if err != nil {
 		return nil
@@ -341,7 +351,16 @@ func (s *server) mainLockHashes(agent string) []string {
 		seen[hash] = true
 		out = append(out, hash)
 	}
+	s.mainLockMu.Lock()
+	s.mainLockCache[cacheKey] = append([]string(nil), out...)
+	s.mainLockMu.Unlock()
 	return out
+}
+
+func (s *server) clearMainLockCache() {
+	s.mainLockMu.Lock()
+	defer s.mainLockMu.Unlock()
+	s.mainLockCache = map[string][]string{}
 }
 
 func currentCapture(st *ItemState) *CaptureRecord {
@@ -430,23 +449,8 @@ func (s *server) handleWorkOrderPreflight(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "work order id is required")
 		return
 	}
-	var foundAgent string
-	for _, a := range s.agents {
-		cat, err := s.store.LoadCatalog(a.Type)
-		if err != nil {
-			continue
-		}
-		for _, rec := range cat.WorkOrders {
-			if rec.ID == id {
-				foundAgent = a.Type
-				break
-			}
-		}
-		if foundAgent != "" {
-			break
-		}
-	}
-	if foundAgent == "" {
+	_, foundAgent, found := s.findWorkOrderRecord(id)
+	if !found {
 		writeJSON(w, http.StatusConflict, &preflightResult{
 			OK: false, ResultCode: ResultPrivateInputMissing, WorkOrder: id,
 			Detail: "work order id is not in the local catalog",
@@ -462,7 +466,7 @@ func (s *server) handleWorkOrderPreflight(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleGitRefresh(w http.ResponseWriter, r *http.Request) {
-	if err := fetchOriginMain(s.checkoutDir); err != nil {
+	if err := fetchOriginMain(r.Context(), s.checkoutDir); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"ok":          false,
 			"result_code": ResultMainLockUnreadable,
@@ -470,6 +474,7 @@ func (s *server) handleGitRefresh(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.clearMainLockCache()
 	baseline, err := lookupBaseline(s.checkoutDir)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -629,9 +634,10 @@ func (s *server) handleWorkOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "work_order": record})
 }
 
-func (s *server) findWorkOrderRecord(id string) (WorkOrderRecord, bool) {
-	if strings.TrimSpace(id) == "" {
-		return WorkOrderRecord{}, false
+func (s *server) findWorkOrderRecord(id string) (WorkOrderRecord, string, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return WorkOrderRecord{}, "", false
 	}
 	for _, a := range s.agents {
 		cat, err := s.store.LoadCatalog(a.Type)
@@ -640,11 +646,11 @@ func (s *server) findWorkOrderRecord(id string) (WorkOrderRecord, bool) {
 		}
 		for _, rec := range cat.WorkOrders {
 			if rec.ID == id {
-				return rec, true
+				return rec, a.Type, true
 			}
 		}
 	}
-	return WorkOrderRecord{}, false
+	return WorkOrderRecord{}, "", false
 }
 
 // handleOpenWorkOrder opens a catalogued work-order directory in the desktop
@@ -663,7 +669,7 @@ func (s *server) handleOpenWorkOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, ok := s.findWorkOrderRecord(id); !ok {
+	if _, _, ok := s.findWorkOrderRecord(id); !ok {
 		writeError(w, http.StatusNotFound, "work order id is not in the local catalog")
 		return
 	}

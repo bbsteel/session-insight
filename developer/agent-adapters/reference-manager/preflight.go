@@ -54,23 +54,14 @@ func runVerifyWorkOrder(args []string) int {
 		writePreflight(&preflightResult{OK: false, ResultCode: ResultPrivateInputMissing, Detail: err.Error()})
 		return 1
 	}
-	preferred, err := defaultStoreRoot()
+	_, note, store, err := resolveReferenceStore(checkoutDir)
 	if err != nil {
 		writePreflight(&preflightResult{OK: false, ResultCode: ResultPrivateInputMissing, Detail: err.Error()})
 		return 1
 	}
-	root, _, err := ensureStoreRoot(preferred, checkoutFallbackStore(checkoutDir), os.Getenv(StoreRootEnv) == "")
-	if err != nil {
-		writePreflight(&preflightResult{OK: false, ResultCode: ResultPrivateInputMissing, Detail: err.Error()})
-		return 1
+	if note != "" {
+		fmt.Fprintln(os.Stderr, note)
 	}
-	store := newStore(root, func(agent string) (string, bool) {
-		def, ok := reader.AgentDefinition(agent)
-		if !ok {
-			return "", false
-		}
-		return def.AgentType, true
-	})
 	result := preflightWorkOrderFile(store, checkoutDir, *workOrder)
 	writePreflight(result)
 	if result.OK {
@@ -90,7 +81,7 @@ func preflightWorkOrderFile(store *Store, checkoutDir, workOrderPath string) *pr
 	}
 	agent, id, err := parseWorkOrderHeader(string(data))
 	if err != nil {
-		return &preflightResult{OK: false, ResultCode: ResultUnsupportedWorkOrderSchema, Detail: err.Error()}
+		return &preflightResult{OK: false, ResultCode: ResultUnsupportedWorkOrderSchema, Agent: agent, WorkOrder: id, Detail: err.Error()}
 	}
 	return preflightWorkOrderID(store, checkoutDir, agent, id, abs)
 }
@@ -200,7 +191,12 @@ func evaluatePreflight(store *Store, checkoutDir, agent string, record WorkOrder
 			return out
 		}
 		sum, err := hashFile(asset)
-		if err != nil || sum != frozen {
+		if err != nil {
+			out.ResultCode = ResultPrivateInputMissing
+			out.Detail = "read frozen asset " + name + ": " + err.Error()
+			return out
+		}
+		if sum != frozen {
 			out.ResultCode = ResultWorkOrderChanged
 			out.Detail = name
 			return out

@@ -26,6 +26,25 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, indexHTML) //nolint:errcheck
 }
 
+func resolveReferenceStore(checkoutDir string) (root, note string, store *Store, err error) {
+	preferredRoot, err := defaultStoreRoot()
+	if err != nil {
+		return "", "", nil, err
+	}
+	root, note, err = ensureStoreRoot(preferredRoot, checkoutFallbackStore(checkoutDir), os.Getenv(StoreRootEnv) == "")
+	if err != nil {
+		return "", "", nil, err
+	}
+	resolveAgent := func(agent string) (string, bool) {
+		def, ok := reader.AgentDefinition(agent)
+		if !ok {
+			return "", false
+		}
+		return def.AgentType, true
+	}
+	return root, note, newStore(root, resolveAgent), nil
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "verify-work-order" {
 		os.Exit(runVerifyWorkOrder(os.Args[2:]))
@@ -47,11 +66,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve checkout directory: %v", err)
 	}
-	preferred, err := defaultStoreRoot()
-	if err != nil {
-		log.Fatalf("reference store root: %v", err)
-	}
-	root, note, err := ensureStoreRoot(preferred, checkoutFallbackStore(checkoutDir), os.Getenv(StoreRootEnv) == "")
+	root, note, store, err := resolveReferenceStore(checkoutDir)
 	if err != nil {
 		log.Fatalf("reference store root: %v", err)
 	}
@@ -60,14 +75,6 @@ func main() {
 	}
 
 	readers := reader.Discover()
-	resolveAgent := func(agent string) (string, bool) {
-		def, ok := reader.AgentDefinition(agent)
-		if !ok {
-			return "", false
-		}
-		return def.AgentType, true
-	}
-	store := newStore(root, resolveAgent)
 	srv := newServer(store, checkoutDir, readers, *scanLimit)
 
 	selected := ""

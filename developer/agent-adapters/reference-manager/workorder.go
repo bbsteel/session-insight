@@ -29,7 +29,7 @@ func workOrderRoot(checkoutDir string) string {
 func pendingInputs(cat *AgentCatalog, lockHashes map[string]string) []string {
 	var out []string
 	for name, st := range cat.Items {
-		if st.NotApplicable || st.Current == nil {
+		if st == nil || st.NotApplicable || st.Current == nil {
 			continue
 		}
 		lockHash := lockHashFor(lockHashes, name, st.Current.Ext)
@@ -300,8 +300,8 @@ func renderWorkOrderMarkdown(agent string, record *WorkOrderRecord, entries []fr
 	fmt.Fprintf(&b, "# Terminal reference work order: %s\n\n", agent)
 	fmt.Fprintf(&b, "- Generated: %s\n", record.CreatedAt)
 	fmt.Fprintf(&b, "- Work order ID: `%s`\n", record.ID)
-	fmt.Fprintf(&b, "- work_order_schema_version: 2\n")
-	fmt.Fprintf(&b, "- Schema version: `2`\n")
+	fmt.Fprintf(&b, "- work_order_schema_version: %d\n", record.SchemaVersion)
+	fmt.Fprintf(&b, "- Schema version: `%d`\n", record.SchemaVersion)
 	fmt.Fprintf(&b, "- Baseline ref: `%s`\n", record.BaselineRef)
 	fmt.Fprintf(&b, "- Baseline commit: `%s`\n", record.BaselineSHA)
 	if cat.CurrentVersion != "" {

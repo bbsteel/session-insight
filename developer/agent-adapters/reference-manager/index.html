@@ -158,7 +158,7 @@
     <ul id="wolist"></ul>
   </section>
 </main>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 <div id="lightbox"><img alt="preview"></div>
 <script>
 let STATE = null;
@@ -378,8 +378,10 @@ function applyChrome() {
   $('#theme-dark').classList.toggle('active', theme === 'dark');
   $('#theme-light').classList.toggle('active', theme === 'light');
 }
-function toast(msg, ms=3500, action) {
+function toast(msg, ms=3500, action, assertive=false) {
   const n = $('#toast');
+  n.setAttribute('role', 'status');
+  n.setAttribute('aria-live', assertive ? 'assertive' : 'polite');
   n.replaceChildren();
   n.appendChild(document.createTextNode(msg));
   if (action && action.label && action.onClick) {
@@ -391,11 +393,14 @@ function toast(msg, ms=3500, action) {
   n.style.display = 'flex';
   clearTimeout(n._h); n._h = setTimeout(() => n.style.display = 'none', ms);
 }
+function toastFailure(msg, ms=8000, action) {
+  toast(msg, ms, action, true);
+}
 
 function openWorkOrderFolder(id) {
   return api('/api/work-orders/open', {id})
     .then(r => { toast(t('openedFolder')(r.path || id), 5000); })
-    .catch(e => { toast(e.message, 8000); });
+    .catch(e => { toastFailure(e.message); });
 }
 async function api(path, body) {
   const opt = body === undefined ? {} :
@@ -484,8 +489,9 @@ function render(data) {
     let extra = '';
     if (wo.state === 'stale') extra = t('staleHint');
     else if (wo.state === 'unsupported_schema') extra = t('unsupportedHint');
+    const workOrderInputCount = Array.isArray(wo.items) ? wo.items.length : 0;
     const meta = el('span', 'wo-meta',
-      `${wo.id} · ${wo.items.length} ${t('inputs')} · ${wo.created_at} · ${wo.dir}` + extra);
+      `${wo.id} · ${workOrderInputCount} ${t('inputs')} · ${wo.created_at} · ${wo.dir}` + extra);
     li.appendChild(meta);
     if (wo.preflight_command) {
       li.appendChild(el('code', '', wo.preflight_command));
@@ -654,7 +660,7 @@ function renderSlot(agent, item, slot) {
   if (slot.not_applicable) {
     const clear = el('button', '', t('clearNA'));
     clear.onclick = () => api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: false, reason: ''})
-      .then(load).catch(e => toast(e.message));
+      .then(load).catch(e => toastFailure(e.message));
     actions.appendChild(clear);
   } else {
     const na = el('button', '', t('markNA'));
@@ -662,7 +668,7 @@ function renderSlot(agent, item, slot) {
       const reason = prompt(t('naPrompt'));
       if (reason === null) return;
       api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: true, reason})
-        .then(load).catch(e => toast(e.message));
+        .then(load).catch(e => toastFailure(e.message));
     };
     actions.appendChild(na);
   }
@@ -670,7 +676,7 @@ function renderSlot(agent, item, slot) {
     const ver = el('input'); ver.type = 'text'; ver.className = 'ver-input';
     ver.placeholder = t('observedVersion'); ver.value = slot.capture.observed_version || '';
     ver.onchange = () => api('/api/version', {agent, logical_name: slot.logical_name, version: ver.value})
-      .then(() => toast(t('versionSaved'))).catch(e => toast(e.message));
+      .then(() => toast(t('versionSaved'))).catch(e => toastFailure(e.message));
     actions.appendChild(ver);
   }
   box.appendChild(actions);
@@ -693,7 +699,7 @@ async function upload(agent, logicalName, file) {
   toast(t('importing')(file.name));
   const res = await fetch('/api/upload', {method: 'POST', body: fd});
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { toast(t('importFailed') + ': ' + (data.error || res.statusText), 6000); return; }
+  if (!res.ok) { toastFailure(t('importFailed') + ': ' + (data.error || res.statusText), 6000); return; }
   toast(t('importedOk')(logicalName, data.capture.hash.slice(0,12)));
   load();
 }
@@ -710,17 +716,17 @@ $('#agent').onchange = () => {
 };
 $('#agentver').onchange = () => {
   api('/api/version', {agent: $('#agent').value, logical_name: '', version: $('#agentver').value})
-    .then(() => toast(t('installedSaved'))).catch(e => toast(e.message));
+    .then(() => toast(t('installedSaved'))).catch(e => toastFailure(e.message));
 };
 $('#rescan').onclick = () => {
   api('/api/rescan', {agent: $('#agent').value})
     .then(r => { toast(t('rescanStarted')((r.imported || []).length, (r.skipped || []).length)); load(); })
-    .catch(e => toast(e.message));
+    .catch(e => toastFailure(e.message));
 };
 $('#refreshgit').onclick = () => {
   api('/api/git/refresh', {})
     .then(r => { toast(t('gitUpdated')(r.baseline && r.baseline.sha ? r.baseline.sha.slice(0,12) : t('gitUpdatedGeneric'))); load(); })
-    .catch(e => toast(e.message, 6000));
+    .catch(e => toastFailure(e.message, 6000));
 };
 $('#mkwo').onclick = () => {
   if (generatingWorkOrder || $('#mkwo').disabled) return;
@@ -737,17 +743,18 @@ $('#mkwo').onclick = () => {
     .catch(e => {
       const wo = e.payload && e.payload.work_order;
       if (wo && wo.id) {
-        toast(t('alreadyFrozenToast')(wo.id), 12000, {
+        toastFailure(t('alreadyFrozenToast')(wo.id), 12000, {
           label: t('openFolder'),
           onClick: () => openWorkOrderFolder(wo.id),
         });
         return;
       }
-      toast(e.message, 6000);
+      toastFailure(e.message, 6000);
     })
     .finally(() => {
       generatingWorkOrder = false;
-      load().catch(err => toast(t('loadFailed') + ': ' + err.message, 8000));
+      applyGenerateButton(STATE);
+      load().catch(err => toastFailure(t('loadFailed') + ': ' + err.message));
     });
 };
 $('#lang-en').onclick = () => setLocale('en');
@@ -760,7 +767,7 @@ window.addEventListener('hashchange', () => {
 });
 
 applyChrome();
-load().catch(e => toast(t('loadFailed') + ': ' + e.message, 8000));
+load().catch(e => toastFailure(t('loadFailed') + ': ' + e.message));
 </script>
 </body>
 </html>

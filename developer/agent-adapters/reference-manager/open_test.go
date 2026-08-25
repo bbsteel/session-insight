@@ -54,6 +54,10 @@ func TestConfinedWorkOrderDirAcceptsExistingFolder(t *testing.T) {
 	if got != want {
 		t.Fatalf("path = %s, want %s", got, want)
 	}
+	trimmedPath, err := confinedWorkOrderDir(checkout, "  "+id+"  ")
+	if err != nil || trimmedPath != want {
+		t.Fatalf("trimmed path = %s, err=%v, want %s", trimmedPath, err, want)
+	}
 }
 
 func TestConfinedWorkOrderDirRejectsTraversalAndMissing(t *testing.T) {

@@ -122,10 +122,10 @@ func resolveStatus(st *ItemState, hasCandidate bool, blobExists bool, mainLockHa
 	if !blobExists {
 		out.LocalUnavailable = true
 	}
-	switch {
-	case mainLockHash == "":
+	switch mainLockHash {
+	case "":
 		out.Status = StatusCaptured
-	case mainLockHash == st.Current.Hash:
+	case st.Current.Hash:
 		out.Status = StatusUsed
 	default:
 		out.Status = StatusUpdateAvailable

@@ -44,6 +44,7 @@ func validateWorkOrderID(id string) error {
 // checkout's .runtime/reference-work. The ID is the only path input; catalog
 // Dir fields and request paths cannot point elsewhere.
 func confinedWorkOrderDir(checkoutDir, id string) (string, error) {
+	id = strings.TrimSpace(id)
 	if err := validateWorkOrderID(id); err != nil {
 		return "", err
 	}

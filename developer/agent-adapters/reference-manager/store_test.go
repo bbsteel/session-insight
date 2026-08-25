@@ -11,12 +11,25 @@ import (
 	"testing"
 )
 
+func skipWhenDirectoryWritable(t *testing.T, directory string) {
+	t.Helper()
+	probe, err := os.CreateTemp(directory, ".writability-probe-*")
+	if err != nil {
+		return
+	}
+	probePath := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probePath)
+	t.Skipf("directory %s is writable in this test environment", directory)
+}
+
 func TestEnsureStoreRootFallsBackWhenPreferredUnwritable(t *testing.T) {
 	blocked := t.TempDir()
 	if err := os.Chmod(blocked, 0o555); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
+	skipWhenDirectoryWritable(t, blocked)
 	preferred := filepath.Join(blocked, "terminal-references")
 	checkout := t.TempDir()
 	fallback := checkoutFallbackStore(checkout)
@@ -37,6 +50,28 @@ func TestEnsureStoreRootFallsBackWhenPreferredUnwritable(t *testing.T) {
 
 	if _, _, err := ensureStoreRoot(preferred, fallback, false); err == nil {
 		t.Fatal("explicit store must not fall back")
+	}
+}
+
+func TestEnsureStoreRootFallsBackWhenExistingPreferredUnwritable(t *testing.T) {
+	preferredParent := t.TempDir()
+	preferred := filepath.Join(preferredParent, "terminal-references")
+	if err := os.MkdirAll(preferred, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(preferred, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(preferred, 0o755) })
+	skipWhenDirectoryWritable(t, preferred)
+
+	fallback := checkoutFallbackStore(t.TempDir())
+	root, note, err := ensureStoreRoot(preferred, fallback, true)
+	if err != nil {
+		t.Fatalf("ensureStoreRoot: %v", err)
+	}
+	if root != fallback || note == "" {
+		t.Fatalf("root=%s note=%q, want fallback with note", root, note)
 	}
 }
 

@@ -89,3 +89,10 @@ func TestReadAgentEvidenceLockReadsJSON(t *testing.T) {
 		t.Fatalf("hash = %s", got)
 	}
 }
+
+func TestGitObjectExistsReportsRepositoryErrors(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := gitObjectExists(dir, "HEAD"); err == nil {
+		t.Fatal("invalid repository must not be reported as a missing object")
+	}
+}

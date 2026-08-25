@@ -29,9 +29,6 @@ func fileExists(path string) bool {
 // workOrderOverlay reports development progress without changing evidence
 // status. Data sources are the ones named in the implementation design.
 func workOrderOverlay(record WorkOrderRecord, cat *AgentCatalog, checkoutDir string, lockHashes map[string]string, headLockHashes map[string]string, headSHA, baselineSHA string) string {
-	if record.SchemaVersion != WorkOrderSchemaV2 {
-		return ""
-	}
 	state := workOrderState(record, cat, lockHashes)
 	if state == WorkOrderConsumed {
 		return OverlayMerged

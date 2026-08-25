@@ -54,22 +54,43 @@ func checkoutFallbackStore(checkoutDir string) string {
 	return filepath.Join(checkoutDir, ".runtime", "terminal-references")
 }
 
-// ensureStoreRoot creates preferred. If that fails and allowFallback is set,
-// it creates fallback instead and returns a warning note.
+// ensureStoreRoot creates and probes preferred. If that fails and allowFallback
+// is set, it creates and probes fallback instead and returns a warning note.
 func ensureStoreRoot(preferred, fallback string, allowFallback bool) (root, note string, err error) {
 	if preferred == "" {
 		return "", "", fmt.Errorf("empty store root")
 	}
-	if err := os.MkdirAll(preferred, 0o755); err == nil {
+	preferredErr := ensureWritableStoreRoot(preferred)
+	if preferredErr == nil {
 		return preferred, "", nil
-	} else if !allowFallback || fallback == "" || fallback == preferred {
-		return "", "", fmt.Errorf("create store %s: %w", preferred, err)
-	} else {
-		if err2 := os.MkdirAll(fallback, 0o755); err2 != nil {
-			return "", "", fmt.Errorf("create store %s: %v (fallback %s: %w)", preferred, err, fallback, err2)
-		}
-		return fallback, fmt.Sprintf("default store %s is not writable (%v); using %s", preferred, err, fallback), nil
 	}
+	if !allowFallback || fallback == "" || fallback == preferred {
+		return "", "", fmt.Errorf("create store %s: %w", preferred, preferredErr)
+	}
+	fallbackErr := ensureWritableStoreRoot(fallback)
+	if fallbackErr != nil {
+		return "", "", fmt.Errorf("create store %s: %v (fallback %s: %w)", preferred, preferredErr, fallback, fallbackErr)
+	}
+	return fallback, fmt.Sprintf("default store %s is not writable (%v); using %s", preferred, preferredErr, fallback), nil
+}
+
+func ensureWritableStoreRoot(root string) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	probe, err := os.CreateTemp(root, ".writability-probe-*")
+	if err != nil {
+		return err
+	}
+	probePath := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probePath)
+		return err
+	}
+	if err := os.Remove(probePath); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Store owns the on-disk reference data of every Agent.
@@ -338,16 +359,10 @@ func (s *Store) lookupBlob(agent, hash string, extraHashes ...string) (path stri
 			known[extra] = true
 		}
 	}
-	knownHash := ""
-	for catalogHash := range known {
-		if catalogHash == hash {
-			knownHash = catalogHash
-			break
-		}
-	}
-	if knownHash == "" {
+	if !known[hash] {
 		return "", "", fmt.Errorf("unknown image")
 	}
+	knownHash := hash
 	// The on-disk blob name carries the authoritative extension (a frozen
 	// input's capture record may no longer be current or accepted).
 	matches, err := filepath.Glob(s.blobPath(canonicalAgent, knownHash, ".*"))

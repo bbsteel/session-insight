@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -69,5 +70,22 @@ func TestPreflightWorkOrderFile(t *testing.T) {
 	got := preflightWorkOrderFile(s, checkout, path)
 	if !got.OK {
 		t.Fatalf("file preflight = %+v", got)
+	}
+}
+
+func TestPreflightWorkOrderFileKeepsHeaderOnSchemaError(t *testing.T) {
+	store := testStore(t)
+	checkout := t.TempDir()
+	path := filepath.Join(checkout, "WORK_ORDER.md")
+	content := []byte("# Terminal reference work order: claude\n\n- Work order ID: `claude-20260824-080455`\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := preflightWorkOrderFile(store, checkout, path)
+	if got.OK || got.ResultCode != ResultUnsupportedWorkOrderSchema {
+		t.Fatalf("preflight = %+v", got)
+	}
+	if got.Agent != "claude" || got.WorkOrder != "claude-20260824-080455" {
+		t.Fatalf("header = agent %q work order %q", got.Agent, got.WorkOrder)
 	}
 }
