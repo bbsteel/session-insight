@@ -1,16 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -72,8 +74,12 @@ func readAgentEvidenceLock(checkoutDir, ref, agent string) (*evidenceLockFile, e
 	if ref == "" {
 		return nil, fmt.Errorf("empty git ref")
 	}
-	if _, err := gitOutput(checkoutDir, "rev-parse", "--verify", ref); err != nil {
+	refResult, err := gitBatchCheck(checkoutDir, ref)
+	if err != nil {
 		return nil, fmt.Errorf("git ref %s is unreadable: %w", ref, err)
+	}
+	if !refResult.Exists {
+		return nil, fmt.Errorf("git ref %s is unreadable", ref)
 	}
 	spec := ref + ":" + evidenceLockPath(agent)
 	exists, err := gitObjectExists(checkoutDir, spec)
@@ -83,7 +89,7 @@ func readAgentEvidenceLock(checkoutDir, ref, agent string) (*evidenceLockFile, e
 	if !exists {
 		return emptyEvidenceLock(agent), nil
 	}
-	data, err := gitOutputBytes(checkoutDir, "show", spec)
+	data, err := gitBatchShow(checkoutDir, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -164,30 +170,111 @@ func gitCommandContext(ctx context.Context, checkoutDir string, args ...string) 
 }
 
 func gitObjectExists(checkoutDir, spec string) (bool, error) {
-	cmd := gitCommand(checkoutDir, "cat-file", "-e", spec)
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		if exitErr.ExitCode() == 1 {
-			return false, nil
-		}
-		// Git versions commonly return 128 for a missing ref:path entry,
-		// while using the same code for repository-level failures. The ref is
-		// verified by readAgentEvidenceLock before this helper is called, so
-		// only treat 128 as a missing path when its base ref is readable.
-		if exitErr.ExitCode() == 128 {
-			if ref, _, hasPath := strings.Cut(spec, ":"); hasPath {
-				if _, verifyErr := gitOutput(checkoutDir, "rev-parse", "--verify", ref); verifyErr == nil {
-					return false, nil
-				}
-			}
-		}
+	result, err := gitBatchCheck(checkoutDir, spec)
+	if err != nil {
 		return false, err
 	}
-	return false, err
+	return result.Exists, nil
+}
+
+type gitBatchCheckResult struct {
+	ObjectType string
+	Exists     bool
+}
+
+func gitBatchCheck(checkoutDir, spec string) (gitBatchCheckResult, error) {
+	return gitBatchCheckContext(context.Background(), checkoutDir, spec)
+}
+
+func gitBatchCheckContext(ctx context.Context, checkoutDir, spec string) (gitBatchCheckResult, error) {
+	if strings.ContainsAny(spec, "\r\n") {
+		return gitBatchCheckResult{}, fmt.Errorf("invalid git object name")
+	}
+	cmd := gitCommandContext(ctx, checkoutDir, "cat-file", "--batch-check")
+	cmd.Stdin = strings.NewReader(spec + "\n")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return gitBatchCheckResult{}, gitCommandError(err, stderr.String())
+	}
+	responseLine, err := bufio.NewReader(&stdout).ReadString('\n')
+	if err != nil {
+		return gitBatchCheckResult{}, fmt.Errorf("read git object status: %w", err)
+	}
+	responseFields := strings.SplitN(strings.TrimSuffix(responseLine, "\n"), " ", 3)
+	if len(responseFields) < 2 {
+		return gitBatchCheckResult{}, fmt.Errorf("unexpected git object status")
+	}
+	if responseFields[1] == "missing" {
+		if err := verifyGitRepository(ctx, checkoutDir); err != nil {
+			return gitBatchCheckResult{}, err
+		}
+		return gitBatchCheckResult{}, nil
+	}
+	if responseFields[1] == "ambiguous" {
+		return gitBatchCheckResult{}, fmt.Errorf("git object name is ambiguous")
+	}
+	if len(responseFields) != 3 {
+		return gitBatchCheckResult{}, fmt.Errorf("unexpected git object status")
+	}
+	return gitBatchCheckResult{ObjectType: responseFields[1], Exists: true}, nil
+}
+
+func verifyGitRepository(ctx context.Context, checkoutDir string) error {
+	_, err := gitOutputBytesContext(ctx, checkoutDir, "rev-parse", "--git-dir")
+	return err
+}
+
+func gitBatchShow(checkoutDir, spec string) ([]byte, error) {
+	return gitBatchShowContext(context.Background(), checkoutDir, spec)
+}
+
+func gitBatchShowContext(ctx context.Context, checkoutDir, spec string) ([]byte, error) {
+	if strings.ContainsAny(spec, "\r\n") {
+		return nil, fmt.Errorf("invalid git object name")
+	}
+	cmd := gitCommandContext(ctx, checkoutDir, "cat-file", "--batch")
+	cmd.Stdin = strings.NewReader(spec + "\n")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, gitCommandError(err, stderr.String())
+	}
+	reader := bufio.NewReader(&stdout)
+	header, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("read git object header: %w", err)
+	}
+	headerFields := strings.SplitN(strings.TrimSuffix(header, "\n"), " ", 3)
+	if len(headerFields) < 2 {
+		return nil, fmt.Errorf("unexpected git object header")
+	}
+	if headerFields[1] == "missing" {
+		return nil, fmt.Errorf("git object %s is missing", spec)
+	}
+	if len(headerFields) != 3 {
+		return nil, fmt.Errorf("unexpected git object header")
+	}
+	objectSize, err := strconv.ParseInt(headerFields[2], 10, 64)
+	if err != nil || objectSize < 0 || objectSize > 64<<20 {
+		return nil, fmt.Errorf("invalid git object size")
+	}
+	objectData := make([]byte, objectSize)
+	if _, err := io.ReadFull(reader, objectData); err != nil {
+		return nil, fmt.Errorf("read git object: %w", err)
+	}
+	separator, err := reader.ReadByte()
+	if err != nil {
+		return nil, fmt.Errorf("read git object separator: %w", err)
+	}
+	if separator != '\n' {
+		return nil, fmt.Errorf("invalid git object separator")
+	}
+	return objectData, nil
 }
 
 func gitOutputBytes(checkoutDir string, args ...string) ([]byte, error) {
@@ -202,13 +289,17 @@ func gitOutputBytesContext(ctx context.Context, checkoutDir string, args ...stri
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return nil, fmt.Errorf("%s", msg)
+		return nil, gitCommandError(err, stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+func gitCommandError(commandErr error, stderr string) error {
+	message := strings.TrimSpace(stderr)
+	if message == "" {
+		message = commandErr.Error()
+	}
+	return fmt.Errorf("%s", message)
 }
 
 func fetchOriginMain(ctx context.Context, checkoutDir string) error {

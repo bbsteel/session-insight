@@ -67,7 +67,12 @@ func confinedWorkOrderDir(checkoutDir, id string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("work order directory not found")
 	}
-	info, err := os.Stat(resolvedTarget)
+	rootHandle, err := os.OpenInRoot(rootAbs, id)
+	if err != nil {
+		return "", fmt.Errorf("work order directory not found")
+	}
+	defer rootHandle.Close() //nolint:errcheck
+	info, err := rootHandle.Stat()
 	if err != nil {
 		return "", fmt.Errorf("work order directory not found")
 	}
