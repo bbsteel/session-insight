@@ -61,6 +61,27 @@ For **every** change set (including small fixes and agent-instruction edits):
 - Confirm the target-specific prerequisites and build matrix used by `.github/workflows/release.yml` wherever the environment permits. If the release matrix cannot be exercised before tagging, add or use an equivalent candidate-commit preflight workflow before publishing.
 - Never create a release first and repair a component or dependency after the release build fails. A post-tag workflow check is follow-up verification, not a substitute for the preflight gate.
 
+### Sandbox writable roots (Reference Manager)
+
+The default terminal-reference store is `~/.session-insight-dev/` (override
+with `SI_TERMINAL_REFERENCE_ROOT`). It is outside the git checkout on purpose
+and is not covered by a workspace-only sandbox.
+
+Sandboxed agents must grant write access to that directory instead of treating
+a home-store `permission denied` as a reason to keep captures in the product
+tree:
+
+- **Grok:** project `.grok/sandbox.toml` defines profile `session-insight`
+  with `read_write = ["~/.session-insight-dev"]`. Start with
+  `grok --sandbox session-insight`, or set `[sandbox] profile = "session-insight"`
+  in `~/.grok/config.toml`.
+- **Codex:** project `.codex/config.toml` sets
+  `sandbox_workspace_write.writable_roots` to `~/.session-insight-dev`.
+
+Create `~/.session-insight-dev` once if the sandbox requires the directory to
+exist before granting write (`mkdir -p ~/.session-insight-dev`). Escalate only
+that path; do not disable the sandbox for the whole home directory.
+
 ### GitHub authentication from sandboxed agents
 
 - A sandboxed command may be unable to access the host keyring even when the user has a valid `gh` login. If `gh auth status` fails inside the sandbox, do not immediately conclude that the stored credential is invalid or ask the user to log in again.

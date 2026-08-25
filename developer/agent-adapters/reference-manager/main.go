@@ -26,27 +26,15 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, indexHTML) //nolint:errcheck
 }
 
-func main() {
-	scanLimit := flag.Int("scan-sessions", 30, "most recent sessions to scan per Agent for candidates")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: terminal-reference [agent]\n\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Starts the local terminal Reference Manager (loopback only, random port).\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Without an agent argument all onboarded Agents are available in the picker.\n\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Environment:\n  %s\toverride the reference store root (default ~/.session-insight-dev/terminal-references)\n\n", StoreRootEnv)
-		flag.PrintDefaults()
-	}
-	flag.Parse()
-
-	root, err := defaultStoreRoot()
+func resolveReferenceStore(checkoutDir string) (root, note string, store *Store, err error) {
+	preferredRoot, err := defaultStoreRoot()
 	if err != nil {
-		log.Fatalf("reference store root: %v", err)
+		return "", "", nil, err
 	}
-	checkoutDir, err := os.Getwd()
+	root, note, err = ensureStoreRoot(preferredRoot, checkoutFallbackStore(checkoutDir), os.Getenv(StoreRootEnv) == "")
 	if err != nil {
-		log.Fatalf("resolve checkout directory: %v", err)
+		return "", "", nil, err
 	}
-
-	readers := reader.Discover()
 	resolveAgent := func(agent string) (string, bool) {
 		def, ok := reader.AgentDefinition(agent)
 		if !ok {
@@ -54,7 +42,39 @@ func main() {
 		}
 		return def.AgentType, true
 	}
-	store := newStore(root, resolveAgent)
+	return root, note, newStore(root, resolveAgent), nil
+}
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "verify-work-order" {
+		os.Exit(runVerifyWorkOrder(os.Args[2:]))
+	}
+
+	scanLimit := flag.Int("scan-sessions", 30, "most recent sessions to scan per Agent for candidates")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: terminal-reference [agent]\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "       terminal-reference verify-work-order --work-order <WORK_ORDER.md>\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Starts the local terminal Reference Manager (loopback only, random port).\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Without an agent argument all onboarded Agents are available in the picker.\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "verify-work-order is the coding-agent preflight; it prints a JSON result code.\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Environment:\n  %s\toverride the reference store root (default ~/.session-insight-dev/terminal-references)\n\n", StoreRootEnv)
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	checkoutDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("resolve checkout directory: %v", err)
+	}
+	root, note, store, err := resolveReferenceStore(checkoutDir)
+	if err != nil {
+		log.Fatalf("reference store root: %v", err)
+	}
+	if note != "" {
+		log.Print(note)
+	}
+
+	readers := reader.Discover()
 	srv := newServer(store, checkoutDir, readers, *scanLimit)
 
 	selected := ""

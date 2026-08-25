@@ -1,0 +1,7 @@
+# Extra writable roots for Codex workspace-write sandbox.
+# Private terminal-reference screenshots live outside the git checkout.
+# Create the directory once if the sandbox requires it to exist:
+#   mkdir -p ~/.session-insight-dev
+
+[sandbox_workspace_write]
+writable_roots = ["~/.session-insight-dev"]

@@ -11,6 +11,7 @@ CLI, injects keystrokes or creates sessions.
 ```bash
 ./scripts/terminal-reference          # all onboarded Agents
 ./scripts/terminal-reference grok     # one Agent
+./scripts/terminal-reference verify-work-order --work-order /abs/path/WORK_ORDER.md
 ```
 
 The tool binds `127.0.0.1` on a random OS-assigned port and prints a
@@ -31,15 +32,20 @@ The tool binds `127.0.0.1` on a random OS-assigned port and prints a
   store directory on scan — no `prepare`/`--capture` command exists.
 - Tracks per-logical-file evidence states: `missing`, `found`, `captured`,
   `used`, `update_available`, `not_applicable` (the last only via an explicit
-  researched reason). Agent version changes are context, never bulk
-  invalidation.
-- Freezes pending inputs (hash-locked) into an incremental work order under
-  `.runtime/reference-work/<agent>-<id>/` and flags a work order `stale` when
-  any frozen input changes afterwards.
+  researched reason). `used` is derived from the local `origin/main` evidence
+  lock, never from a local accept button. Agent version changes are context,
+  never bulk invalidation.
+- Writes pending captures into a schema v2 work order snapshot under
+  `.runtime/reference-work/<agent>-<id>/`. The markdown records full SHA-256
+  hashes, the main baseline commit, the main lock summary, and a copy-paste
+  `verify-work-order` command. A work order is `stale` when a capture changes
+  after it was written; old schema work orders must be regenerated. An active
+  work order that already covers the current pending hashes cannot be
+  duplicated — write a new one only after an input changes. The UI can open
+  that snapshot directory in the desktop file manager.
 
 The manager's boundary ends at the work order: it does not create goals,
-branches or PRs, does not edit product code and never auto-marks
-`update_available` as `used`.
+branches or PRs, and does not edit product code. Local accept is disabled.
 
 ## Storage and privacy
 
@@ -53,7 +59,18 @@ Everything lives outside the Git repository:
     └── <logical-name>.png    # optional manual drop-in, imported on scan
 ```
 
-Override the root with `SI_TERMINAL_REFERENCE_ROOT`. Original screenshots,
+Override the root with `SI_TERMINAL_REFERENCE_ROOT`. Sandboxed agents must
+grant write access to `~/.session-insight-dev` (Grok profile `session-insight`
+in `.grok/sandbox.toml`, Codex `writable_roots` in `.codex/config.toml`).
+Create that directory once if the sandbox requires it to exist:
+
+```bash
+mkdir -p ~/.session-insight-dev
+```
+
+If the default home store is still not writable, the tool falls back to
+`<checkout>/.runtime/terminal-references` and logs the path.
+Original screenshots,
 session IDs, resume commands, local paths and the catalog must never enter
 Git, PRs, issues or public logs. Work orders are written to the Git-ignored
 `.runtime/reference-work/` directory of the current checkout.
@@ -63,4 +80,9 @@ Git, PRs, issues or public logs. Work orders are written to the Git-ignored
 Loopback-only listener on a random port; image blobs are served by content
 hash only when the catalog knows them (no static directory exposure); uploads
 are size-capped and must decode as PNG/JPEG/GIF; candidate scanning is
-read-only against Agent session storage.
+read-only against Agent session storage; `POST /api/work-orders/open` launches
+the OS folder opener only for a catalogued work-order id resolved under
+`.runtime/reference-work/` (the request never supplies a filesystem path). On
+Linux the opener is started in the user graphical session (`systemd-run
+--user`) so KDE Dolphin can create KIO workers; a direct spawn from this
+process inherits a stripped environment and fails with a KIO socket error.
