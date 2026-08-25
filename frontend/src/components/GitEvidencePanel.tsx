@@ -11,6 +11,7 @@ import type {
   SessionChangeRequestLink,
   SessionGitEvidenceEnvelope,
   SessionGitRepositoryEvidence,
+  SessionRecordedChangeReference,
 } from '../gitEvidence'
 import { formatDate, useI18n } from '../i18n'
 import { useModalFocus } from '../modalFocus'
@@ -28,6 +29,13 @@ function changeIdentity(link: SessionChangeRequestLink): string {
   return [repository, object].filter(Boolean).join(' · ') || link.change.provider
 }
 
+function recordedReferenceName(entry: SessionRecordedChangeReference): string {
+  const repository = entry.reference.target_repository_slug
+  const number = entry.reference.display_number
+  if (repository && number) return `${repository}#${number}`
+  return entry.reference.normalized_url
+}
+
 function AssessmentBadge({ state }: { state: string }) {
   const { t } = useI18n()
   const tone = state === 'exact'
@@ -42,6 +50,7 @@ export default function GitEvidencePanel({ session, onClose, onSelectSession }: 
   const { locale, t } = useI18n()
   const [evidence, setEvidence] = useState<SessionGitEvidenceEnvelope | null>(null)
   const [links, setLinks] = useState<SessionChangeRequestLink[]>([])
+  const [derived, setDerived] = useState<SessionRecordedChangeReference[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lookupOpen, setLookupOpen] = useState(false)
@@ -68,7 +77,8 @@ export default function GitEvidencePanel({ session, onClose, onSelectSession }: 
         evidenceEtagRef.current = evidenceResult.etag
         setEvidence(evidenceResult.evidence)
       }
-      setLinks(storedLinks)
+      setLinks(storedLinks.links)
+      setDerived(storedLinks.derived)
     } catch (cause) {
       setError(cause instanceof APIError ? cause.code : 'git_evidence_load_failed')
     } finally {
@@ -160,9 +170,9 @@ export default function GitEvidencePanel({ session, onClose, onSelectSession }: 
               <section className="mb-5">
                 <div className="mb-2 flex items-center justify-between">
                   <h3 className="text-nav font-semibold text-[var(--text-primary)]">{t('git.links.title')}</h3>
-                  <span className="text-meta text-[var(--text-muted)]">{t('git.links.count', { count: links.length })}</span>
+                  <span className="text-meta text-[var(--text-muted)]">{t('git.links.count', { count: links.length + derived.length })}</span>
                 </div>
-                {links.length === 0 ? (
+                {links.length === 0 && derived.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-[var(--border-default)] px-4 py-5 text-center text-helper text-[var(--text-muted)]">
                     {t('git.links.empty')}
                   </div>
@@ -188,6 +198,30 @@ export default function GitEvidencePanel({ session, onClose, onSelectSession }: 
                           {unlinking === link.link_id ? t('git.links.unlinking') : t('git.links.unlink')}
                         </button>
                       </div>
+                    ))}
+                    {derived.map(entry => (
+                      <a
+                        key={`derived-${entry.reference.normalized_url}`}
+                        href={entry.reference.normalized_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-primary)] px-3 py-2 hover:border-[var(--accent-blue)]"
+                        data-testid="session-change-request-derived"
+                      >
+                        <span className="rounded border border-[var(--border-muted)] px-1.5 py-0.5 text-meta text-[var(--text-secondary)]">
+                          {t(`git.provider.${entry.reference.provider}`)}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-helper font-medium text-[var(--accent-blue)]">{recordedReferenceName(entry)}</div>
+                          <div className="mt-0.5 text-meta text-[var(--text-muted)]">
+                            {t(entry.kind === 'created' ? 'git.match.created' : 'git.match.mentioned')}
+                            {' · '}
+                            {t('git.links.automatic')}
+                            {' · '}
+                            {formatDate(locale, entry.recorded_at)}
+                          </div>
+                        </div>
+                      </a>
                     ))}
                   </div>
                 )}
