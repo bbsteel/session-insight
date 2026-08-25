@@ -926,13 +926,14 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <StarIcon size={16} filled={bookmarksOnly} />
           </button>
         </InstantTooltip>
-        <AgentFilter
-          agents={effectiveAgents}
-          selected={agentFilter}
-          onSelect={setAgentFilter}
-          compact
-        />
       </div>
+
+      {/* Agent Filter */}
+      <AgentFilter
+        agents={effectiveAgents}
+        selected={agentFilter}
+        onSelect={setAgentFilter}
+      />
 
       {/* Project Filter */}
       <ProjectFilter
