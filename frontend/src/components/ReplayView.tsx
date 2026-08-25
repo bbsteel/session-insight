@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState, useRef, useMemo, startTransition } from 'react'
-import { addBookmark, APIError, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
+import { addBookmark, APIError, createSnippet, fetchAgents, fetchCollaborationDetail, fetchLiveRevision, fetchPositions, fetchSession, fetchSessionEdits, fetchSettings, openFile, removeBookmark, resolveFile, updateBookmarkNote, watchSessionsChanged } from '../api'
 import { DEFAULT_FILE_OPEN_EXTS, extractPathMatches, extractPathsAt, parseExtList, type PathMatch } from '../filePathDetection'
 import { extractTerminalUrlMatches, type TerminalUrlMatch } from '../terminalUrlDetection'
 import type { AgentInfo, EditCall, PositionsResponse, SessionDetail } from '../types'
@@ -105,6 +105,7 @@ interface Props {
   // same back-to-parent breadcrumb as dock navigation.
   searchRootRef?: { sessionId: string; childAgentType: string; root: { id: string; agentType: string; name: string } } | null
   onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
+  onOpenCodingQuotas?: () => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
 }
@@ -127,7 +128,7 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, bookmarkChange, onBookmarkChange }: Props) {
+export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, onOpenCodingQuotas, bookmarkChange, onBookmarkChange }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
@@ -278,7 +279,32 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [bookmarkError, setBookmarkError] = useState<string | null>(null)
   const [noteEditorOpen, setNoteEditorOpen] = useState(false)
+  const [snippetSaving, setSnippetSaving] = useState(false)
+  const [snippetNotice, setSnippetNotice] = useState<string | null>(null)
   const termControlRef = useRef<TerminalControl | null>(null)
+  const saveSnippet = useCallback(async (content: string, sourceKind: 'selection' | 'assistant', turnIndex?: number) => {
+    if (!session || snippetSaving || !content.trim()) return
+    setSnippetSaving(true)
+    setSnippetNotice(null)
+    try {
+      await createSnippet({
+        content,
+        agent_type: session.agent_type,
+        session_id: session.id,
+        session_name: session.name,
+        project: session.project,
+        source_kind: sourceKind,
+        ...(turnIndex === undefined ? {} : { turn_index: turnIndex }),
+      })
+      setSnippetNotice('snippets.saved')
+    } catch {
+      setSnippetNotice('snippets.saveFailed')
+    } finally {
+      setSnippetSaving(false)
+    }
+  }, [session, snippetSaving])
+  const saveSnippetRef = useRef(saveSnippet)
+  saveSnippetRef.current = saveSnippet
   const handleToggleFollow = useCallback(() => {
     setFollowOutput(currentlyFollowing => {
       const shouldFollow = !currentlyFollowing
@@ -309,6 +335,25 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   // once (on cols-ready) but must see the latest positions and fold mapping.
   const positionsRef = useRef<PositionsResponse | null>(null)
   useEffect(() => { positionsRef.current = positionsData }, [positionsData])
+  const assistantPositionByOriginalRowRef = useRef(new Map<number, PositionsResponse['positions'][number]>())
+  useEffect(() => {
+    const orderedPositions = [...(positionsData?.positions ?? [])]
+      .sort((firstPosition, secondPosition) => firstPosition.line_start - secondPosition.line_start)
+    const positionsByOriginalRow = new Map<number, PositionsResponse['positions'][number]>()
+
+    for (const [positionIndex, position] of orderedPositions.entries()) {
+      if (position.kind !== 'assistant') continue
+      const nextPositionStart = orderedPositions[positionIndex + 1]?.line_start ?? positionsData?.total_lines ?? position.line_start + 1
+      const positionEndLine = position.line_end ?? Math.max(position.line_start, nextPositionStart - 1)
+      for (let originalRow = position.line_start; originalRow <= positionEndLine; originalRow += 1) {
+        positionsByOriginalRow.set(originalRow, position)
+      }
+    }
+
+    assistantPositionByOriginalRowRef.current = positionsByOriginalRow
+  }, [positionsData])
+  const sessionRef = useRef(session)
+  sessionRef.current = session
   const sessionCwdRef = useRef('')
   useEffect(() => { sessionCwdRef.current = session?.cwd ?? '' }, [session])
   // Hover-time path existence results, keyed by cwd+path (rows repeat paths).
@@ -377,6 +422,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       cellColumn: meta.cellColumn,
       textOffset: meta.textOffset,
       lineText: meta.lineText,
+      selectionText: ctrl?.getSelectionText() ?? '',
       collapsedFoldKeys: ctrl?.getCollapsedFoldKeys() ?? [],
       selectedFile: selectedFile ?? meta.selectedFile,
       fileOnly: true,
@@ -454,8 +500,37 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           openFilePopover(bufLine, meta, null, data as PathMatch)
         },
       },
+      {
+        // Every assistant row gets an xterm-owned floating action at the
+        // right edge. The matcher is last so links and file paths within a
+        // reply retain their more specific interactions.
+        match: (_text: string, bufferLine?: number) => {
+          if (bufferLine === undefined) return []
+          const terminalControl = termControlRef.current
+          const originalRow = terminalControl ? terminalControl.toOriginalLine(bufferLine) : bufferLine
+          const assistantPosition = assistantPositionByOriginalRowRef.current.get(originalRow)
+          return assistantPosition ? [{ data: assistantPosition }] : []
+        },
+        tooltip: t('snippets.saveCurrentAssistant'),
+        hoverAction: {
+          label: t('snippets.quickSave'),
+          cellWidth: 8,
+        },
+        onActivate: (_bufLine: number, data: unknown) => {
+          const assistantPosition = data as PositionsResponse['positions'][number]
+          const assistantContent = sessionRef.current?.turns.find(turn => turn.turn_index === assistantPosition.turn_index)?.assistant_message
+            || assistantPosition.label
+          void saveSnippetRef.current(assistantContent, 'assistant', assistantPosition.turn_index)
+        },
+      },
     ])
   }, [openFilePopover, resolveFileCandidate, t])
+
+  // Assistant-row actions depend on the asynchronously loaded positions map;
+  // rescan when it arrives so the hover button is available without a resize.
+  useEffect(() => {
+    registerMatchers()
+  }, [positionsData, registerMatchers])
 
   // 列数没变时(例如「分析↔终端」来回切换导致的终端重挂载)必须保留现有
   // positions:positions 拉取 effect 的依赖不会变化、不会重拉,这里若无条件
@@ -969,7 +1044,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C') ||
         (e.ctrlKey && e.key === 'Insert')
       if (!isCopy) return
-      const selectedText = window.getSelection()?.toString() ?? ''
+      const selectedText = termControlRef.current?.getSelectionText() ?? ''
       if (selectedText.length === 0) return
       e.preventDefault()
       void navigator.clipboard.writeText(selectedText)
@@ -1015,7 +1090,21 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   }, [ctxMenu, edits, positionsData, session, resolveFileCandidate, resolveRowFile])
 
   const ctxMenuSections = useMemo((): TerminalMenuSection[] => {
-    const selectedText = window.getSelection()?.toString() ?? ''
+    const selectedText = ctxMenu?.selectionText ?? termControlRef.current?.getSelectionText() ?? ''
+    const transcriptPositions = [...(positionsData?.positions ?? [])]
+      .sort((firstPosition, secondPosition) => firstPosition.line_start - secondPosition.line_start)
+    const currentAssistantPosition = ctxMenu?.originalRow === null || ctxMenu?.originalRow === undefined
+      ? undefined
+      : transcriptPositions.find((position, positionIndex) => {
+          if (position.kind !== 'assistant') return false
+
+          const positionEndLine = position.line_end
+            ?? (transcriptPositions[positionIndex + 1]?.line_start ?? Infinity) - 1
+          return position.line_start <= ctxMenu.originalRow! && positionEndLine >= ctxMenu.originalRow!
+        })
+    const currentAssistantContent = currentAssistantPosition
+      ? session?.turns.find(turn => turn.turn_index === currentAssistantPosition.turn_index)?.assistant_message || currentAssistantPosition.label
+      : ''
     const copyText = (text: string) => {
       void navigator.clipboard.writeText(text)
       setCtxMenu(null)
@@ -1115,6 +1204,24 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             disabled: selectedText.length === 0,
             onClick: () => copyText(selectedText),
           },
+          {
+            label: t('snippets.saveSelection'),
+            disabled: selectedText.length === 0 || snippetSaving,
+            onClick: () => {
+              void saveSnippet(selectedText, 'selection')
+              setCtxMenu(null)
+            },
+          },
+          ...(currentAssistantPosition && currentAssistantContent.trim()
+            ? [{
+                label: t('snippets.saveCurrentAssistant'),
+                disabled: snippetSaving,
+                onClick: () => {
+                  void saveSnippet(currentAssistantContent, 'assistant', currentAssistantPosition.turn_index)
+                  setCtxMenu(null)
+                },
+              }]
+            : []),
           { label: t('replay.copySessionId'), onClick: () => copyText(session?.id ?? '') },
           {
             label: t('replay.copyCwd'),
@@ -1196,7 +1303,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       ],
     })
     return sections
-  }, [bookmarkBusy, ctxMenu, fileTarget, folds, followOutput, handleToggleFollow, jump, positionsData, session, sessionIsLive, t, toggleBookmark])
+  }, [bookmarkBusy, ctxMenu, fileTarget, folds, followOutput, handleToggleFollow, jump, positionsData, saveSnippet, session, sessionIsLive, snippetSaving, t, toggleBookmark])
 
   // Positions remapped into the current (post-fold) buffer rows for the
   // minimap and scroll math. Identity while nothing is collapsed.
@@ -1567,7 +1674,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   if (!sessionId) return (
     <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalSearch onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center px-6">
           <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
@@ -1580,7 +1687,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   if (loading) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalSearch onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
       <div className="p-4 space-y-3">{Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-surface)] p-3">
           <div className="h-5 w-44 bg-[var(--bg-surface-hover)] rounded-sm animate-pulse" />
@@ -1602,7 +1709,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       : ''
     return (
       <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)] flex flex-col">
-        <GlobalSearch onSelect={onSelect} />
+        <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
         {session && (
           <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px' }}>
             <button
@@ -1754,6 +1861,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       || '')
     : ''
   const findShortcut = /Mac|iPhone|iPad|iPod/i.test(uaPlatform) ? '⌘F' : 'Ctrl+F'
+  const sidebarShortcut = /Mac|iPhone|iPad|iPod/i.test(uaPlatform) ? '⌘B' : 'Ctrl+B'
   const tokenExactFull =
     tokenHeader.kind === 'value' ? formatTokenCount(locale, tokenHeader.total, 'full') : ''
   const tokenHeaderText =
@@ -1769,7 +1877,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   return (
     <main className="flex-1 flex flex-col min-w-[360px] overflow-hidden relative">
-      <GlobalSearch onSelect={onSelect} />
+      <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
       <header className="relative flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }} data-testid="session-toolbar">
         <div className="flex items-center gap-2">
           <ResumeTerminalControl session={session} />
@@ -1844,6 +1952,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           {bookmarkError && (
             <span className="text-meta text-[var(--error)]" role="status">
               {t(bookmarkError)}
+            </span>
+          )}
+          {snippetNotice && (
+            <span className={`text-meta ${snippetNotice === 'snippets.saved' ? 'text-[var(--success)]' : 'text-[var(--error)]'}`} role="status">
+              {t(snippetNotice)}
             </span>
           )}
           {openFileError && (
@@ -2074,10 +2187,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 ['j / ↓', t('replay.shortcutNext')],
                 ['k / ↑', t('replay.shortcutPrevious')],
                 [findShortcut, t('replay.shortcutFind')],
+                [sidebarShortcut, t('replay.shortcutSidebar')],
                 ['?', t('replay.shortcutHelp')],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3">
-                  <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[60px] text-center">{key}</kbd>
+                  <kbd className="bg-[var(--bg-inset)] px-1.5 py-0.5 rounded-sm border border-[var(--border-default)] text-meta text-[var(--text-primary)] min-w-[4.5rem] text-center">{key}</kbd>
                   <span className="text-[var(--text-secondary)]">{desc}</span>
                 </div>
               ))}
@@ -2251,6 +2365,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               onPinnedChange={setNavPinned}
               onWidthChange={setNavPanelWidth}
               onJump={handlePanelJump}
+              savingSnippet={snippetSaving}
+              onSaveAssistantSnippet={(turnIndex, fallbackContent) => {
+                const assistantContent = session.turns.find(turn => turn.turn_index === turnIndex)?.assistant_message || fallbackContent
+                void saveSnippet(assistantContent, 'assistant', turnIndex)
+              }}
               onClose={() => {
                 setShowUserPanel(false)
                 setNavPinned(false)

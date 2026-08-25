@@ -1,4 +1,4 @@
-import type { AgentInfo, EditCall, PositionsResponse, ResumePlan, ResumeResult, SearchResult, SessionDetail, SessionSummary, SessionTerminalStatus, TerminalFocusResult } from './types'
+import type { AgentInfo, EditCall, PositionsResponse, ResumePlan, ResumeResult, SearchResult, SessionDetail, SessionSummary, SessionTerminalStatus, Snippet, TerminalFocusResult } from './types'
 import type { CollaborationGraphDTO, FactEvidenceDTO } from './collaboration/types.js'
 import type {
   ChangeHostPreview,
@@ -62,6 +62,62 @@ export interface VersionInfo {
   version: string
   /** 开发构建的 commit（含 -dirty 标记）；release 构建为空字符串 */
   commit: string
+}
+
+export type CodingQuotaStatus =
+  | 'available'
+  | 'stale'
+  | 'not_configured'
+  | 'unauthorized'
+  | 'rate_limited'
+  | 'network_error'
+  | 'invalid_data'
+  | 'unsupported'
+
+export interface CodingQuotaWindow {
+  id: string
+  remaining_percent?: number
+  used_percent?: number
+  remaining_amount?: number
+  used_amount?: number
+  limit_amount?: number
+  unit?: string
+  reset_at?: string
+  window_seconds?: number
+}
+
+export interface CodingQuotaSnapshot {
+  provider_id: string
+  status: CodingQuotaStatus
+  reason_code?: string
+  windows?: CodingQuotaWindow[]
+  observed_at?: string
+  attempted_at?: string
+  stale?: boolean
+  source_kind?: string
+  plan_label?: string
+  supports_exact_quota: boolean
+}
+
+export interface CodingQuotaProvider {
+  id: string
+  display_name_key: string
+  description_key: string
+  quota_strategy_key?: string
+  documentation_url: string
+  supports_exact_quota: boolean
+  snapshot: CodingQuotaSnapshot
+}
+
+export interface CodingQuotaResponse {
+  providers: CodingQuotaProvider[]
+}
+
+export async function fetchCodingQuotas(forceRefresh = false): Promise<CodingQuotaResponse> {
+  const endpoint = forceRefresh ? '/api/coding-quotas/refresh' : '/api/coding-quotas'
+  const res = await fetch(endpoint, forceRefresh ? { method: 'POST' } : undefined)
+  if (!res.ok) throw await responseError(res, 'coding_quotas_load_failed')
+  return readJson<CodingQuotaResponse>(res, 'coding quotas')
 }
 
 // 版本信息在进程生命周期内不变，缓存一次请求供侧边栏 footer 与「关于」页共用。
@@ -321,6 +377,30 @@ export async function fetchBookmarks(): Promise<SessionSummary[]> {
   const res = await fetch('/api/bookmarks')
   if (!res.ok) throw await responseError(res, 'bookmarks_load_failed')
   return readJson<SessionSummary[]>(res, 'bookmarks')
+}
+
+export async function fetchSnippets(): Promise<Snippet[]> {
+  const res = await fetch('/api/snippets')
+  if (!res.ok) throw await responseError(res, 'snippets_load_failed')
+  return readJson<Snippet[]>(res, 'snippets')
+}
+
+export async function createSnippet(snippet: Omit<Snippet, 'id' | 'created_at'>): Promise<Snippet> {
+  const res = await fetch('/api/snippets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(snippet),
+  })
+  if (!res.ok) throw await responseError(res, 'snippet_save_failed')
+  return readJson<Snippet>(res, 'snippet')
+}
+
+export async function deleteSnippet(id: number): Promise<void> {
+  const res = await fetch(`/api/snippets/${id}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) throw await responseError(res, 'snippet_delete_failed')
 }
 
 export async function addBookmark(session: Pick<SessionSummary, 'id' | 'agent_type'>): Promise<void> {

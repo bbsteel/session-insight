@@ -4,6 +4,7 @@ import type { SearchResult } from '../types'
 import AgentIcon from './AgentIcon'
 import AISettingsModal from './AISettingsModal'
 import SettingsDialog from './SettingsDialog'
+import CodingQuotaPreview from './CodingQuotaPreview'
 import { LanguageSwitch } from './LanguageSwitch'
 import { ThemeSwitch } from './ThemeToggle'
 import { formatRelativeTime, useI18n, type Locale } from '../i18n'
@@ -137,7 +138,22 @@ function ClockIcon() {
   )
 }
 
-export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => void }) {
+function QuotaIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <rect x="7" y="12" width="2.5" height="5" rx="0.5" />
+      <rect x="11" y="9" width="2.5" height="8" rx="0.5" />
+      <rect x="15" y="6" width="2.5" height="11" rx="0.5" />
+    </svg>
+  )
+}
+
+export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
+  onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => void
+  onOpenCodingQuotas?: () => void
+}) {
   const { locale, t } = useI18n()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
@@ -528,7 +544,44 @@ export default function GlobalSearch({ onSelect }: { onSelect?: (id: string, age
           </div>
         )}
       </div>
+      <div className="flex flex-shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => { window.location.hash = '/snippets' }}
+          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          title={t('snippets.open')}
+          data-testid="global-snippets"
+        >
+          {t('snippets.open')}
+        </button>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event('si-open-change-request-lookup'))}
+          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          title={t('git.lookup.open')}
+          data-testid="global-change-request-lookup"
+        >
+          {t('git.lookup.short')}
+        </button>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event('si-open-export-import'))}
+          aria-label={t('sidebar.exportImport')}
+          title={t('sidebar.exportImport')}
+          className="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          data-testid="global-export-import"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v12" />
+            <polyline points="7 10 12 15 17 10" />
+            <path d="M4 21h16" />
+          </svg>
+        </button>
+      </div>
       <div className="ml-auto flex items-center gap-1.5">
+        {onOpenCodingQuotas && (
+          <CodingQuotaPreview icon={<QuotaIcon />} onOpen={onOpenCodingQuotas} />
+        )}
         <LanguageSwitch />
         <ThemeSwitch />
         <div className="relative">
