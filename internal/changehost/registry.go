@@ -23,19 +23,30 @@ var (
 // host and its read-only HTTP client. Registration never performs network I/O.
 type ProviderFactory func(HostIdentity, *HTTPClient) (Provider, error)
 
+// RegisteredReferenceParser binds one URL parser to a concrete host. Built-in
+// providers register one parser per kind; OpenAPI host profiles register one
+// parser per (host, active profile revision), all sharing the "openapi" kind.
+type RegisteredReferenceParser struct {
+	ID     string
+	HostID string
+	Parser ReferenceParser
+}
+
 // Registry is the provider-owned source of truth for parsing and runtime
 // implementations. Consumers inspect provider capabilities through Provider;
 // they do not maintain a parallel provider matrix.
 type Registry struct {
-	mu        sync.RWMutex
-	parsers   map[model.ChangeProviderKind]ReferenceParser
-	factories map[model.ChangeProviderKind]ProviderFactory
+	mu          sync.RWMutex
+	parsers     map[model.ChangeProviderKind]ReferenceParser
+	factories   map[model.ChangeProviderKind]ProviderFactory
+	hostParsers map[string]RegisteredReferenceParser
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		parsers:   make(map[model.ChangeProviderKind]ReferenceParser),
-		factories: make(map[model.ChangeProviderKind]ProviderFactory),
+		parsers:     make(map[model.ChangeProviderKind]ReferenceParser),
+		factories:   make(map[model.ChangeProviderKind]ProviderFactory),
+		hostParsers: make(map[string]RegisteredReferenceParser),
 	}
 }
 
@@ -120,6 +131,51 @@ func (r *Registry) RegisterFactory(kind model.ChangeProviderKind, factory Provid
 	return nil
 }
 
+// RegisterHostParser adds one host-bound parser. Host-bound parsers all share
+// the OpenAPI provider kind; their ID (host+profile) keeps them distinct.
+func (r *Registry) RegisterHostParser(parser RegisteredReferenceParser) error {
+	if err := validateRegisteredHostParser(parser); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.hostParsers[parser.ID]; exists {
+		return fmt.Errorf("%w: %s", ErrDuplicateProvider, parser.ID)
+	}
+	r.hostParsers[parser.ID] = parser
+	return nil
+}
+
+// ReplaceHostParsers atomically swaps the full host-bound parser set so a
+// profile activation or revocation never leaves a mixed view behind. A nil
+// slice clears every host-bound parser.
+func (r *Registry) ReplaceHostParsers(parsers []RegisteredReferenceParser) error {
+	replacement := make(map[string]RegisteredReferenceParser, len(parsers))
+	for _, parser := range parsers {
+		if err := validateRegisteredHostParser(parser); err != nil {
+			return err
+		}
+		if _, exists := replacement[parser.ID]; exists {
+			return fmt.Errorf("%w: %s", ErrDuplicateProvider, parser.ID)
+		}
+		replacement[parser.ID] = parser
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hostParsers = replacement
+	return nil
+}
+
+func validateRegisteredHostParser(parser RegisteredReferenceParser) error {
+	if parser.ID == "" || parser.HostID == "" || nilInterface(parser.Parser) {
+		return fmt.Errorf("%w: invalid host parser", ErrProviderNotFound)
+	}
+	if parser.Parser.Kind() != model.ChangeProviderOpenAPI {
+		return fmt.Errorf("%w: host-bound parsers must use the %q provider kind", ErrProviderContract, model.ChangeProviderOpenAPI)
+	}
+	return nil
+}
+
 func (r *Registry) NewProvider(kind model.ChangeProviderKind, host HostIdentity, client *HTTPClient) (Provider, error) {
 	if client == nil || !model.IsKnownChangeProviderKind(kind) || kind == model.ChangeProviderGeneric || host.Provider != kind || !sameHostIdentity(host, client.approved.Identity()) {
 		return nil, ErrProviderContract
@@ -169,12 +225,15 @@ func (r *Registry) ParseReference(raw string) (model.ChangeRequestReference, boo
 func (r *Registry) ResolveReference(raw string) (model.ChangeRequestReference, error) {
 	parsers := r.orderedParsers()
 	matches := make([]model.ChangeRequestReference, 0, 1)
-	for _, parser := range parsers {
-		if parser.Kind() == model.ChangeProviderGeneric {
+	for _, candidate := range parsers {
+		if candidate.parser.Kind() == model.ChangeProviderGeneric {
 			continue
 		}
-		ref, ok := parser.ParseReference(raw)
-		if !ok || ref.Provider != parser.Kind() {
+		ref, ok := candidate.parser.ParseReference(raw)
+		if !ok || ref.Provider != candidate.parser.Kind() {
+			continue
+		}
+		if candidate.hostID != "" && ref.HostID != candidate.hostID {
 			continue
 		}
 		if validation := model.ValidateChangeRequestReference(ref); validation.OK() {
@@ -187,11 +246,11 @@ func (r *Registry) ResolveReference(raw string) (model.ChangeRequestReference, e
 	if len(matches) > 1 {
 		return model.ChangeRequestReference{}, ErrAmbiguousReference
 	}
-	for _, parser := range parsers {
-		if parser.Kind() != model.ChangeProviderGeneric {
+	for _, candidate := range parsers {
+		if candidate.parser.Kind() != model.ChangeProviderGeneric {
 			continue
 		}
-		ref, ok := parser.ParseReference(raw)
+		ref, ok := candidate.parser.ParseReference(raw)
 		if ok && ref.Provider == model.ChangeProviderGeneric {
 			if validation := model.ValidateChangeRequestReference(ref); validation.OK() {
 				return ref, nil
@@ -211,12 +270,12 @@ func (r *Registry) ParseRemote(raw string) (model.HostedRepositoryReference, boo
 func (r *Registry) ResolveRemote(raw string) (model.HostedRepositoryReference, error) {
 	parsers := r.orderedParsers()
 	matches := make([]model.HostedRepositoryReference, 0, 1)
-	for _, parser := range parsers {
-		if parser.Kind() == model.ChangeProviderGeneric {
+	for _, candidate := range parsers {
+		if candidate.parser.Kind() == model.ChangeProviderGeneric {
 			continue
 		}
-		ref, ok := parser.ParseRemote(raw)
-		if ok && ref.Provider == parser.Kind() && validRepositoryReference(ref) {
+		ref, ok := candidate.parser.ParseRemote(raw)
+		if ok && ref.Provider == candidate.parser.Kind() && validRepositoryReference(ref) {
 			matches = append(matches, ref)
 		}
 	}
@@ -226,11 +285,11 @@ func (r *Registry) ResolveRemote(raw string) (model.HostedRepositoryReference, e
 	if len(matches) > 1 {
 		return model.HostedRepositoryReference{}, ErrAmbiguousReference
 	}
-	for _, parser := range parsers {
-		if parser.Kind() != model.ChangeProviderGeneric {
+	for _, candidate := range parsers {
+		if candidate.parser.Kind() != model.ChangeProviderGeneric {
 			continue
 		}
-		ref, ok := parser.ParseRemote(raw)
+		ref, ok := candidate.parser.ParseRemote(raw)
 		if ok && ref.Provider == model.ChangeProviderGeneric && validRepositoryReference(ref) {
 			return ref, nil
 		}
@@ -280,7 +339,30 @@ func (r *Registry) Kinds() []model.ChangeProviderKind {
 	return kinds
 }
 
-func (r *Registry) orderedParsers() []ReferenceParser {
+// HostParsers returns the registered host-bound parsers in stable ID order.
+func (r *Registry) HostParsers() []RegisteredReferenceParser {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]string, 0, len(r.hostParsers))
+	for id := range r.hostParsers {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	parsers := make([]RegisteredReferenceParser, 0, len(ids))
+	for _, id := range ids {
+		parsers = append(parsers, r.hostParsers[id])
+	}
+	return parsers
+}
+
+// registryParser pairs a parser with the host it is bound to. Kind-registered
+// built-in parsers carry an empty hostID.
+type registryParser struct {
+	parser ReferenceParser
+	hostID string
+}
+
+func (r *Registry) orderedParsers() []registryParser {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	kinds := make([]model.ChangeProviderKind, 0, len(r.parsers))
@@ -296,9 +378,23 @@ func (r *Registry) orderedParsers() []ReferenceParser {
 		}
 		return kinds[i] < kinds[j]
 	})
-	parsers := make([]ReferenceParser, 0, len(kinds))
+	hostIDs := make([]string, 0, len(r.hostParsers))
+	for id := range r.hostParsers {
+		hostIDs = append(hostIDs, id)
+	}
+	sort.Strings(hostIDs)
+	parsers := make([]registryParser, 0, len(kinds)+len(hostIDs))
 	for _, kind := range kinds {
-		parsers = append(parsers, r.parsers[kind])
+		if kind == model.ChangeProviderGeneric {
+			continue
+		}
+		parsers = append(parsers, registryParser{parser: r.parsers[kind]})
+	}
+	for _, id := range hostIDs {
+		parsers = append(parsers, registryParser{parser: r.hostParsers[id].Parser, hostID: r.hostParsers[id].HostID})
+	}
+	if generic, ok := r.parsers[model.ChangeProviderGeneric]; ok {
+		parsers = append(parsers, registryParser{parser: generic})
 	}
 	return parsers
 }

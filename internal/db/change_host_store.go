@@ -20,9 +20,12 @@ type ChangeHostRecord struct {
 	AllowHTTP           bool                        `json:"allow_http"`
 	AllowPrivateNetwork bool                        `json:"allow_private_network"`
 	Assessment          model.GitEvidenceAssessment `json:"assessment"`
-	ApprovedAt          *time.Time                  `json:"approved_at,omitempty"`
-	RevokedAt           *time.Time                  `json:"revoked_at,omitempty"`
-	LastCheckedAt       *time.Time                  `json:"last_checked_at,omitempty"`
+	// CredentialReference points at the host credential (keyring:/env:). It is
+	// storage-internal: never projected into API DTOs or logs.
+	CredentialReference string     `json:"-"`
+	ApprovedAt          *time.Time `json:"approved_at,omitempty"`
+	RevokedAt           *time.Time `json:"revoked_at,omitempty"`
+	LastCheckedAt       *time.Time `json:"last_checked_at,omitempty"`
 }
 
 func (db *DB) StoreChangeHostPreview(record ChangeHostRecord) error {
@@ -143,11 +146,39 @@ func (db *DB) TouchChangeHost(hostID string, checkedAt time.Time, assessment mod
 	return nil
 }
 
+// SetChangeHostCredentialReference attaches or clears (empty reference) the
+// credential pointer of a non-revoked host. The reference is validated but its
+// secret is never read here.
+func (db *DB) SetChangeHostCredentialReference(hostID string, reference model.CredentialReference) error {
+	if reference != "" {
+		if _, ok := model.ParseCredentialReference(string(reference)); !ok {
+			return fmt.Errorf("invalid Change Request host credential reference")
+		}
+	}
+	result, err := db.conn.Exec(`
+		UPDATE change_hosts SET credential_reference = ?
+		WHERE host_id = ? AND lifecycle <> 'revoked'`,
+		string(reference), hostID,
+	)
+	if err != nil {
+		return fmt.Errorf("set Change Request host credential reference: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("non-revoked Change Request host does not exist")
+	}
+	return nil
+}
+
 func (db *DB) ChangeHost(hostID string) (ChangeHostRecord, bool, error) {
 	row := db.conn.QueryRow(`
 		SELECT host_id, provider, display_origin, endpoint_origins_json,
 		       lifecycle, allow_http, allow_private_network,
-		       state, reason_code, approved_at, revoked_at, last_checked_at
+		       state, reason_code, approved_at, revoked_at, last_checked_at,
+		       credential_reference
 		FROM change_hosts WHERE host_id = ?`, hostID)
 	record, err := scanChangeHost(row)
 	if err == sql.ErrNoRows {
@@ -163,7 +194,8 @@ func (db *DB) ListChangeHosts() ([]ChangeHostRecord, error) {
 	rows, err := db.conn.Query(`
 		SELECT host_id, provider, display_origin, endpoint_origins_json,
 		       lifecycle, allow_http, allow_private_network,
-		       state, reason_code, approved_at, revoked_at, last_checked_at
+		       state, reason_code, approved_at, revoked_at, last_checked_at,
+		       credential_reference
 		FROM change_hosts ORDER BY provider, display_origin, host_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list Change Request hosts: %w", err)
@@ -188,7 +220,7 @@ func scanChangeHost(scanner rowScanner) (ChangeHostRecord, error) {
 	if err := scanner.Scan(
 		&record.HostID, &record.Provider, &record.DisplayOrigin, &endpointsJSON,
 		&record.Lifecycle, &allowHTTP, &allowPrivate, &state, &reason,
-		&approvedAt, &revokedAt, &checkedAt,
+		&approvedAt, &revokedAt, &checkedAt, &record.CredentialReference,
 	); err != nil {
 		return record, err
 	}
