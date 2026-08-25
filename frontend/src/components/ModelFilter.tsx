@@ -140,7 +140,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
-  const [expandedRect, setExpandedRect] = useState<{ left: number; top: number } | null>(null)
+  const [panelRect, setPanelRect] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -157,13 +157,28 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     : ''
   const count = selectedProvider?.session_count ?? selectedModel?.session_count ?? total
 
+  // The open panel tiles all models into the content area to the right of the
+  // sidebar (fixed positioning escapes the sidebar's width constraint), so the
+  // full model list is visible at a glance instead of scrolled in a narrow
+  // dropdown that covers the session list.
+  const computePanelRect = () => {
+    const anchor = containerRef.current?.getBoundingClientRect()
+    if (!anchor) return null
+    const width = Math.min(660, window.innerWidth - 16)
+    const left = Math.max(8, Math.min(anchor.right + 8, window.innerWidth - width - 8))
+    const top = Math.max(8, anchor.top)
+    const maxHeight = Math.max(240, window.innerHeight - top - 16)
+    return { left, top, width, maxHeight }
+  }
+
   useEffect(() => {
     if (!open) {
       setSearch('')
       setExpandedKey(null)
-      setExpandedRect(null)
+      setPanelRect(null)
       return
     }
+    setPanelRect(computePanelRect())
     setTimeout(() => searchRef.current?.focus(), 0)
     const onClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -173,11 +188,14 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     const onEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
+    const onResize = () => setPanelRect(computePanelRect())
     document.addEventListener('mousedown', onClickOutside)
     window.addEventListener('keydown', onEscape)
+    window.addEventListener('resize', onResize)
     return () => {
       document.removeEventListener('mousedown', onClickOutside)
       window.removeEventListener('keydown', onEscape)
+      window.removeEventListener('resize', onResize)
     }
   }, [open])
 
@@ -245,11 +263,12 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
           </svg>
         </button>
 
-        {open && (
+        {open && panelRect && (
           <div
             role="listbox"
             aria-label={t('filter.modelsLabel')}
-            className="absolute top-full mt-1 left-0 right-0 z-[var(--z-dropdown)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg"
+            style={{ position: 'fixed', left: panelRect.left, top: panelRect.top, width: panelRect.width, maxHeight: panelRect.maxHeight }}
+            className="z-[var(--z-dropdown)] flex flex-col rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg"
           >
             <div className="p-1.5 border-b border-[var(--border-default)]">
               <div className="relative">
@@ -267,116 +286,120 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
               </div>
             </div>
 
-            <div className="max-h-[28rem] overflow-y-auto py-1">
-              {!search.trim() && (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected === ''}
-                  onClick={() => pick('')}
-                  className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === '' ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                  }`}
-                >
-                  <span className="text-[var(--text-muted)] flex-shrink-0">
-                    <ModelIcon meta={{ id: 'all-models', provider: '', label: t('filter.allModels'), iconKey: 'all-models' }} size={18} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-body text-[var(--text-primary)]">{t('filter.allModels')}</span>
-                  </span>
-                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
-                </button>
-              )}
+            <div className="flex min-h-0 flex-1">
+              <div className="min-w-0 flex-1 overflow-y-auto py-1">
+                {!search.trim() && (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selected === ''}
+                    onClick={() => pick('')}
+                    className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
+                      selected === '' ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                    }`}
+                  >
+                    <span className="text-[var(--text-muted)] flex-shrink-0">
+                      <ModelIcon meta={{ id: 'all-models', provider: '', label: t('filter.allModels'), iconKey: 'all-models' }} size={18} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-body text-[var(--text-primary)]">{t('filter.allModels')}</span>
+                    </span>
+                    <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
+                  </button>
+                )}
 
-              {sorted.map(model => {
-                const isExpanded = expandedKey === model.key
+                <div className="grid gap-0.5 px-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))' }}>
+                  {sorted.map(model => {
+                    const isExpanded = expandedKey === model.key
+                    const isSelected = selected === model.key || model.providers.some(p => p.key === selected)
+                    const hasMultipleProviders = model.providers.length > 1
+                    return (
+                      <button
+                        key={model.key}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => {
+                          if (hasMultipleProviders) {
+                            setExpandedKey(isExpanded ? null : model.key)
+                          } else {
+                            pick(model.providers[0]?.key ?? model.key)
+                          }
+                        }}
+                        title={`${model.providerSummary} / ${model.label}`}
+                        className={`px-2 py-1 flex items-center gap-2 text-left rounded transition-colors duration-fast ${
+                          isExpanded || isSelected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                        }`}
+                      >
+                        <span className="flex-shrink-0"><ModelIcon meta={model} size={20} /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-body text-[var(--text-primary)]">{model.label}</span>
+                          <span className="block truncate text-helper text-[var(--text-muted)]">{model.providerSummary}</span>
+                        </span>
+                        <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
+                        {hasMultipleProviders && (
+                          <svg
+                            className={`w-3 h-3 text-[var(--text-muted)] flex-shrink-0 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <polyline points="9 6 15 12 9 18" />
+                          </svg>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {visible.length === 0 && (
+                  <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noModels')}</div>
+                )}
+              </div>
+
+              {expandedKey && (() => {
+                const expandedModel = models.find(m => m.key === expandedKey)
+                if (!expandedModel) return null
                 return (
-                  <div key={model.key} className="relative">
+                  <div role="group" aria-label={expandedModel.label} className="w-44 flex-shrink-0 overflow-y-auto border-l border-[var(--border-default)] py-1">
                     <button
                       type="button"
                       role="option"
-                      aria-selected={selected === model.key || model.providers.some(p => p.key === selected)}
-                      onClick={e => {
-                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                        setExpandedRect({ left: rect.right + 4, top: rect.top })
-                        setExpandedKey(isExpanded ? null : model.key)
-                      }}
-                      className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                        isExpanded ? 'bg-[var(--bg-surface-hover)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                      aria-selected={selected === expandedModel.key}
+                      onClick={() => pick(expandedModel.key)}
+                      className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
+                        selected === expandedModel.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
                       }`}
                     >
-                      <span className="flex-shrink-0"><ModelIcon meta={model} size={20} /></span>
-                      <span className="min-w-0 flex-1" title={`${model.providerSummary} / ${model.label}`}>
-                        <span className="block truncate text-body text-[var(--text-primary)]">{model.label}</span>
-                        <span className="block truncate text-helper text-[var(--text-muted)]">{model.providerSummary}</span>
+                      <span className="w-2 h-2 rounded-full bg-[var(--accent-blue)] flex-shrink-0" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-helper text-[var(--text-primary)]">{t('filter.allProviders')}</span>
                       </span>
-                      <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
-                      <svg
-                        className={`w-3 h-3 text-[var(--text-muted)] flex-shrink-0 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
-                        viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <polyline points="9 6 15 12 9 18" />
-                      </svg>
+                      <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{expandedModel.session_count}</span>
                     </button>
+                    {expandedModel.providers.map(provider => (
+                      <button
+                        key={provider.key}
+                        type="button"
+                        role="option"
+                        aria-selected={selected === provider.key}
+                        onClick={() => pick(provider.key)}
+                        className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
+                          selected === provider.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-[var(--text-muted)]/60 flex-shrink-0" aria-hidden="true" />
+                        <span className="min-w-0 flex-1" title={`${provider.provider} / ${expandedModel.label}`}>
+                          <span className="block truncate text-helper text-[var(--text-primary)]">{provider.provider}</span>
+                        </span>
+                        <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{provider.session_count}</span>
+                      </button>
+                    ))}
                   </div>
                 )
-              })}
-
-              {visible.length === 0 && (
-                <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noModels')}</div>
-              )}
+              })()}
             </div>
           </div>
         )}
-
-        {open && expandedKey && expandedRect && (() => {
-          const model = models.find(m => m.key === expandedKey)
-          if (!model) return null
-          return (
-            <div
-              style={{ position: 'fixed', left: expandedRect.left, top: expandedRect.top }}
-              className="min-w-44 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg z-[var(--z-dropdown)] py-1"
-              onMouseLeave={() => { setExpandedKey(null); setExpandedRect(null) }}
-            >
-              {model.providers.length > 1 && (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected === model.key}
-                  onClick={() => pick(model.key)}
-                  className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === model.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-[var(--accent-blue)] flex-shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-helper text-[var(--text-primary)]">{t('filter.allProviders')}</span>
-                  </span>
-                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
-                </button>
-              )}
-              {model.providers.map(provider => (
-                <button
-                  key={provider.key}
-                  type="button"
-                  role="option"
-                  aria-selected={selected === provider.key}
-                  onClick={() => pick(provider.key)}
-                  className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === provider.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-[var(--text-muted)]/60 flex-shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 flex-1" title={`${provider.provider} / ${model.label}`}>
-                    <span className="block truncate text-helper text-[var(--text-primary)]">{provider.provider}</span>
-                  </span>
-                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{provider.session_count}</span>
-                </button>
-              ))}
-            </div>
-          )
-        })()}
       </div>
     </div>
   )
