@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func testHTTPServer(t *testing.T) (*server, *httptest.Server) {
 	t.Helper()
+	stubEmptyBaseline(t)
 	store := testStore(t)
 	srv := newServer(store, t.TempDir(), nil, 5)
 	ts := httptest.NewServer(srv.routes())
@@ -80,6 +82,12 @@ func TestServerUploadAndState(t *testing.T) {
 	if thinking == nil {
 		t.Fatal("state must include 04-thinking")
 	}
+	if thinking.Slots[0].LabelZH == "" || thinking.Slots[0].HintZH == "" {
+		t.Fatal("state slots must include zh-CN label and hint")
+	}
+	if thinking.TitleZH == "" {
+		t.Fatal("state items must include zh-CN title")
+	}
 	if thinking.Slots[0].Status != StatusCaptured {
 		t.Fatalf("default slot status = %s, want captured", thinking.Slots[0].Status)
 	}
@@ -108,6 +116,20 @@ func TestServerRejectsBadUploads(t *testing.T) {
 	}
 	if code, _ := uploadFile(t, ts, "../claude", "04-thinking", pngBytes(t, 1), "x.png"); code != http.StatusBadRequest {
 		t.Fatalf("traversal agent = %d, want 400", code)
+	}
+}
+
+func TestServerRescanEmptyDropInsAreArrays(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	code, out := postJSON(t, ts.URL+"/api/rescan", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("rescan = %d %v", code, out)
+	}
+	if _, ok := out["imported"].([]any); !ok {
+		t.Fatalf("imported = %T %v, want JSON array", out["imported"], out["imported"])
+	}
+	if _, ok := out["skipped"].([]any); !ok {
+		t.Fatalf("skipped = %T %v, want JSON array", out["skipped"], out["skipped"])
 	}
 }
 
@@ -141,7 +163,97 @@ func TestServerWorkOrderEndpoint(t *testing.T) {
 	if wo == nil || wo["dir"] == "" {
 		t.Fatalf("work order response missing record: %v", out)
 	}
-	_ = srv // state verified via API above
+	id, _ := wo["id"].(string)
+	if id == "" {
+		t.Fatalf("work order id missing: %v", out)
+	}
+
+	code, out = postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusConflict {
+		t.Fatalf("duplicate work order = %d %v, want 409", code, out)
+	}
+	if out["result_code"] != "work_order_already_active" {
+		t.Fatalf("duplicate result_code = %v", out["result_code"])
+	}
+	dup, _ := out["work_order"].(map[string]any)
+	if dup == nil || dup["id"] != id {
+		t.Fatalf("duplicate response must return existing work order %s: %v", id, out)
+	}
+
+	res, err := http.Get(ts.URL + "/api/state?agent=claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close() //nolint:errcheck
+	var state stateResponse
+	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state.CanGenerateWorkOrder {
+		t.Fatal("state must not allow generate while an active duplicate exists")
+	}
+	if state.AlreadyFrozenIn != id {
+		t.Fatalf("already_frozen_in = %q, want %s", state.AlreadyFrozenIn, id)
+	}
+	_ = srv
+}
+
+func TestServerOpenWorkOrderEndpoint(t *testing.T) {
+	srv, ts := testHTTPServer(t)
+	if code, out := uploadFile(t, ts, "claude", "04-thinking", pngBytes(t, 1), "shot.png"); code != http.StatusOK {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	code, out := postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("work order = %d %v", code, out)
+	}
+	wo, _ := out["work_order"].(map[string]any)
+	id, _ := wo["id"].(string)
+	if id == "" {
+		t.Fatalf("work order id missing: %v", out)
+	}
+
+	var opened []string
+	origLaunch := launchFolderManager
+	launchFolderManager = func(dir string) error {
+		opened = append(opened, dir)
+		return nil
+	}
+	t.Cleanup(func() { launchFolderManager = origLaunch })
+
+	code, out = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":`+jsonString(id)+`}`)
+	if code != http.StatusOK {
+		t.Fatalf("open = %d %v", code, out)
+	}
+	if len(opened) != 1 {
+		t.Fatalf("launch count = %d, want 1", len(opened))
+	}
+	want := filepath.Join(srv.checkoutDir, ".runtime", "reference-work", id)
+	want, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened[0] != want {
+		t.Fatalf("opened %s, want %s", opened[0], want)
+	}
+	if out["path"] != want {
+		t.Fatalf("response path = %v, want %s", out["path"], want)
+	}
+
+	if code, _ = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":"../secret"}`); code != http.StatusBadRequest {
+		t.Fatalf("traversal open = %d, want 400", code)
+	}
+	if code, _ = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":"missing-20260824-080455"}`); code != http.StatusNotFound {
+		t.Fatalf("unknown id open = %d, want 404", code)
+	}
+	if code, _ = postJSON(t, ts.URL+"/api/work-orders/open", `{"id":""}`); code != http.StatusBadRequest {
+		t.Fatalf("empty id open = %d, want 400", code)
+	}
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 func TestServerImageGating(t *testing.T) {
@@ -197,4 +309,53 @@ func TestServerOmitsURLForMissingBlob(t *testing.T) {
 		return
 	}
 	t.Fatal("state must include 04-thinking")
+}
+
+func TestServerAcceptRemoved(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	code, out := postJSON(t, ts.URL+"/api/accept", `{"agent":"claude","logical_name":"04-thinking"}`)
+	if code != http.StatusGone {
+		t.Fatalf("accept = %d %v, want 410", code, out)
+	}
+	if out["result_code"] != "accept_removed" {
+		t.Fatalf("result_code = %v", out["result_code"])
+	}
+}
+
+func TestServerWorkOrderIsSchemaV2(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	if code, out := uploadFile(t, ts, "claude", "04-thinking", pngBytes(t, 1), "shot.png"); code != http.StatusOK {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	code, out := postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("work order = %d %v", code, out)
+	}
+	wo, _ := out["work_order"].(map[string]any)
+	if wo["schema_version"] != float64(2) {
+		t.Fatalf("schema_version = %v, want 2", wo["schema_version"])
+	}
+	if wo["preflight_command"] == "" || wo["baseline_sha"] == "" {
+		t.Fatalf("v2 fields missing: %v", wo)
+	}
+}
+
+func TestServerWorkOrderPreflight(t *testing.T) {
+	_, ts := testHTTPServer(t)
+	if code, out := uploadFile(t, ts, "claude", "04-thinking", pngBytes(t, 1), "shot.png"); code != http.StatusOK {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	code, out := postJSON(t, ts.URL+"/api/work-order", `{"agent":"claude"}`)
+	if code != http.StatusOK {
+		t.Fatalf("work order = %d %v", code, out)
+	}
+	wo, _ := out["work_order"].(map[string]any)
+	id, _ := wo["id"].(string)
+	code, out = postJSON(t, ts.URL+"/api/work-orders/preflight", `{"id":"`+id+`"}`)
+	if code != http.StatusOK {
+		t.Fatalf("preflight = %d %v", code, out)
+	}
+	if out["ok"] != true || out["result_code"] != ResultOK {
+		t.Fatalf("preflight body = %v", out)
+	}
 }
