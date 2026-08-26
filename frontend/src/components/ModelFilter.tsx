@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import anthropicIcon from '@lobehub/icons-static-svg/icons/anthropic.svg'
 import azureIcon from '@lobehub/icons-static-svg/icons/azureai-color.svg'
 import bytedanceIcon from '@lobehub/icons-static-svg/icons/bytedance-color.svg'
@@ -25,6 +25,15 @@ import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg'
 import { fallbackModelColor, modelMeta, type ModelMeta } from '../modelMeta'
 import { AllAgentsIcon } from './AgentFilter'
 import { useI18n } from '../i18n'
+import {
+  getModelSortPref,
+  setModelSortPref,
+  sortModels,
+  type ModelSortKey,
+  type ModelSortPref,
+} from '../modelSort'
+import SortControls from './SortControls'
+import { useAnchoredPanelRect } from './useAnchoredPanelRect'
 
 const openCodeIcon = '/icons/opencode-logo-light-square.png'
 const hyIcon = '/icons/hy.webp'
@@ -39,6 +48,8 @@ export interface ModelEntry {
   iconKey: string
   label: string
   session_count: number
+  /** ISO timestamp of the most recent session activity on this model (empty if unknown). */
+  last_active: string
   providers: ModelProviderEntry[]
 }
 
@@ -86,6 +97,11 @@ const MODEL_ICONS: Record<string, string> = {
 const ICON_BACKPLATES: Record<string, string> = {
   kimi: '#1783ff',
 }
+
+const SORT_KEYS: ModelSortKey[] = ['name', 'sessions', 'recent']
+
+/** Widest panel the flat model grid opens at; clamped to the viewport. */
+const PANEL_MAX_WIDTH = 660
 
 function ModelIcon({ meta, size = 16 }: { meta: Pick<ModelMeta, 'id' | 'iconKey' | 'provider' | 'label'>; size?: number }) {
   if (meta.iconKey === 'all-models') {
@@ -135,14 +151,31 @@ function ModelIcon({ meta, size = 16 }: { meta: Pick<ModelMeta, 'id' | 'iconKey'
   )
 }
 
+/**
+ * One selectable tile in the flat grid. Multi-provider models flatten into one
+ * tile per provider plus a leading aggregate tile that selects the model across
+ * all providers — every choice is a single click, with no second-level flyout.
+ */
+interface ModelTile {
+  /** Selection key passed to onSelect: the provider key, or the model key for the aggregate tile. */
+  selectionKey: string
+  modelKey: string
+  iconMeta: Pick<ModelMeta, 'id' | 'iconKey' | 'provider' | 'label'>
+  label: string
+  /** Provider name, or the "all providers" line on the aggregate tile. */
+  subtitle: string
+  sessionCount: number
+  isAggregate: boolean
+}
+
 export default function ModelFilter({ models, selected, onSelect }: ModelFilterProps) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [expandedKey, setExpandedKey] = useState<string | null>(null)
-  const [panelRect, setPanelRect] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
+  const [currentSortPref, setCurrentSortPref] = useState<ModelSortPref>(() => getModelSortPref())
   const containerRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const panelRect = useAnchoredPanelRect(open, containerRef, PANEL_MAX_WIDTH)
 
   const total = models.reduce((n, m) => n + m.session_count, 0)
   const selectedModel = selected
@@ -157,28 +190,11 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     : ''
   const count = selectedProvider?.session_count ?? selectedModel?.session_count ?? total
 
-  // The open panel tiles all models into the content area to the right of the
-  // sidebar (fixed positioning escapes the sidebar's width constraint), so the
-  // full model list is visible at a glance instead of scrolled in a narrow
-  // dropdown that covers the session list.
-  const computePanelRect = () => {
-    const anchor = containerRef.current?.getBoundingClientRect()
-    if (!anchor) return null
-    const width = Math.min(660, window.innerWidth - 16)
-    const left = Math.max(8, Math.min(anchor.right + 8, window.innerWidth - width - 8))
-    const top = Math.max(8, anchor.top)
-    const maxHeight = Math.max(240, window.innerHeight - top - 16)
-    return { left, top, width, maxHeight }
-  }
-
   useEffect(() => {
     if (!open) {
       setSearch('')
-      setExpandedKey(null)
-      setPanelRect(null)
       return
     }
-    setPanelRect(computePanelRect())
     setTimeout(() => searchRef.current?.focus(), 0)
     const onClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -188,14 +204,11 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     const onEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
-    const onResize = () => setPanelRect(computePanelRect())
     document.addEventListener('mousedown', onClickOutside)
     window.addEventListener('keydown', onEscape)
-    window.addEventListener('resize', onResize)
     return () => {
       document.removeEventListener('mousedown', onClickOutside)
       window.removeEventListener('keydown', onEscape)
-      window.removeEventListener('resize', onResize)
     }
   }, [open])
 
@@ -204,25 +217,58 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     setOpen(false)
   }
 
-  const visible = search.trim()
-    ? models.map(model => {
-      const q = search.toLowerCase()
-      const modelMatches =
-        model.name.toLowerCase().includes(q) ||
-        model.label.toLowerCase().includes(q) ||
-        model.provider.toLowerCase().includes(q) ||
-        model.providerSummary.toLowerCase().includes(q)
-      const providers = modelMatches
-        ? model.providers
-        : model.providers.filter(p => p.provider.toLowerCase().includes(q) || p.providerKey.toLowerCase().includes(q))
-      return modelMatches || providers.length > 0 ? { ...model, providers } : null
-    }).filter((model): model is ModelEntry => model !== null)
-    : models
-  const sorted = [...visible].sort((a, b) => {
-    if (a.id === 'Other' && b.id !== 'Other') return 1
-    if (b.id === 'Other' && a.id !== 'Other') return -1
-    return a.id.localeCompare(b.id)
-  })
+  const applySort = (newSortPref: ModelSortPref) => {
+    setCurrentSortPref(newSortPref)
+    setModelSortPref(newSortPref)
+  }
+
+  const tiles = useMemo<ModelTile[]>(() => {
+    const sortedModels = sortModels(models, currentSortPref.key, currentSortPref.order)
+    return sortedModels.flatMap(model => {
+      if (model.providers.length <= 1) {
+        const provider = model.providers[0]
+        return [{
+          selectionKey: provider?.key ?? model.key,
+          modelKey: model.key,
+          iconMeta: model,
+          label: model.label,
+          subtitle: provider?.provider ?? model.providerSummary,
+          sessionCount: model.session_count,
+          isAggregate: false,
+        }]
+      }
+      const aggregateTile: ModelTile = {
+        selectionKey: model.key,
+        modelKey: model.key,
+        iconMeta: model,
+        label: model.label,
+        subtitle: t('filter.allProviders'),
+        sessionCount: model.session_count,
+        isAggregate: true,
+      }
+      const providerTiles: ModelTile[] = model.providers.map(provider => ({
+        selectionKey: provider.key,
+        modelKey: model.key,
+        iconMeta: model,
+        label: model.label,
+        subtitle: provider.provider,
+        sessionCount: provider.session_count,
+        isAggregate: false,
+      }))
+      return [aggregateTile, ...providerTiles]
+    })
+  }, [models, currentSortPref, t])
+
+  const visibleTiles = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return tiles
+    return tiles.filter(tile =>
+      tile.label.toLowerCase().includes(query) ||
+      // Aggregate tiles match on the model label only — their shared
+      // "all providers" subtitle matches nothing meaningful.
+      (!tile.isAggregate && tile.subtitle.toLowerCase().includes(query)),
+    )
+  }, [tiles, search])
 
   if (models.length === 0) return null
 
@@ -286,117 +332,64 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
               </div>
             </div>
 
-            <div className="flex min-h-0 flex-1">
-              <div className="min-w-0 flex-1 overflow-y-auto py-1">
-                {!search.trim() && (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={selected === ''}
-                    onClick={() => pick('')}
-                    className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                      selected === '' ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                    }`}
-                  >
-                    <span className="text-[var(--text-muted)] flex-shrink-0">
-                      <ModelIcon meta={{ id: 'all-models', provider: '', label: t('filter.allModels'), iconKey: 'all-models' }} size={18} />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-body text-[var(--text-primary)]">{t('filter.allModels')}</span>
-                    </span>
-                    <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
-                  </button>
-                )}
+            <SortControls
+              keys={SORT_KEYS}
+              nameKey="name"
+              currentSortPref={currentSortPref}
+              onSortPrefChange={applySort}
+              groupLabel={t('filter.sort.label')}
+            />
 
-                <div className="grid gap-0.5 px-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))' }}>
-                  {sorted.map(model => {
-                    const isExpanded = expandedKey === model.key
-                    const isSelected = selected === model.key || model.providers.some(p => p.key === selected)
-                    const hasMultipleProviders = model.providers.length > 1
-                    return (
-                      <button
-                        key={model.key}
-                        type="button"
-                        role="option"
-                        aria-selected={isSelected}
-                        onClick={() => {
-                          if (hasMultipleProviders) {
-                            setExpandedKey(isExpanded ? null : model.key)
-                          } else {
-                            pick(model.providers[0]?.key ?? model.key)
-                          }
-                        }}
-                        title={`${model.providerSummary} / ${model.label}`}
-                        className={`px-2 py-1 flex items-center gap-2 text-left rounded transition-colors duration-fast ${
-                          isExpanded || isSelected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                        }`}
-                      >
-                        <span className="flex-shrink-0"><ModelIcon meta={model} size={20} /></span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-body text-[var(--text-primary)]">{model.label}</span>
-                          <span className="block truncate text-helper text-[var(--text-muted)]">{model.providerSummary}</span>
-                        </span>
-                        <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
-                        {hasMultipleProviders && (
-                          <svg
-                            className={`w-3 h-3 text-[var(--text-muted)] flex-shrink-0 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
-                            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                            aria-hidden="true"
-                          >
-                            <polyline points="9 6 15 12 9 18" />
-                          </svg>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
+            <div className="min-h-0 flex-1 overflow-y-auto py-1">
+              {!search.trim() && (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selected === ''}
+                  onClick={() => pick('')}
+                  className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
+                    selected === '' ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                  }`}
+                >
+                  <span className="text-[var(--text-muted)] flex-shrink-0">
+                    <ModelIcon meta={{ id: 'all-models', provider: '', label: t('filter.allModels'), iconKey: 'all-models' }} size={18} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-body text-[var(--text-primary)]">{t('filter.allModels')}</span>
+                  </span>
+                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{total}</span>
+                </button>
+              )}
 
-                {visible.length === 0 && (
-                  <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noModels')}</div>
-                )}
-              </div>
-
-              {expandedKey && (() => {
-                const expandedModel = models.find(m => m.key === expandedKey)
-                if (!expandedModel) return null
-                return (
-                  <div role="group" aria-label={expandedModel.label} className="w-44 flex-shrink-0 overflow-y-auto border-l border-[var(--border-default)] py-1">
+              <div className="grid gap-0.5 px-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))' }}>
+                {visibleTiles.map(tile => {
+                  const isSelected = selected === tile.selectionKey
+                  return (
                     <button
+                      key={tile.selectionKey}
                       type="button"
                       role="option"
-                      aria-selected={selected === expandedModel.key}
-                      onClick={() => pick(expandedModel.key)}
-                      className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
-                        selected === expandedModel.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                      aria-selected={isSelected}
+                      onClick={() => pick(tile.selectionKey)}
+                      title={`${tile.subtitle} / ${tile.label}`}
+                      className={`px-2 py-1 flex items-center gap-2 text-left rounded transition-colors duration-fast ${
+                        isSelected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
                       }`}
                     >
-                      <span className="w-2 h-2 rounded-full bg-[var(--accent-blue)] flex-shrink-0" aria-hidden="true" />
+                      <span className="flex-shrink-0"><ModelIcon meta={tile.iconMeta} size={20} /></span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-helper text-[var(--text-primary)]">{t('filter.allProviders')}</span>
+                        <span className="block truncate text-body text-[var(--text-primary)]">{tile.label}</span>
+                        <span className={`block truncate text-helper ${tile.isAggregate ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'}`}>{tile.subtitle}</span>
                       </span>
-                      <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{expandedModel.session_count}</span>
+                      <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{tile.sessionCount}</span>
                     </button>
-                    {expandedModel.providers.map(provider => (
-                      <button
-                        key={provider.key}
-                        type="button"
-                        role="option"
-                        aria-selected={selected === provider.key}
-                        onClick={() => pick(provider.key)}
-                        className={`w-full px-2.5 py-1.5 flex items-center gap-2 text-left transition-colors duration-fast ${
-                          selected === provider.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                        }`}
-                      >
-                        <span className="w-2 h-2 rounded-full bg-[var(--text-muted)]/60 flex-shrink-0" aria-hidden="true" />
-                        <span className="min-w-0 flex-1" title={`${provider.provider} / ${expandedModel.label}`}>
-                          <span className="block truncate text-helper text-[var(--text-primary)]">{provider.provider}</span>
-                        </span>
-                        <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{provider.session_count}</span>
-                      </button>
-                    ))}
-                  </div>
-                )
-              })()}
+                  )
+                })}
+              </div>
+
+              {visibleTiles.length === 0 && (
+                <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noModels')}</div>
+              )}
             </div>
           </div>
         )}
