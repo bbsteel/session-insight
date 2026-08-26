@@ -77,6 +77,73 @@ func TestReplaceChangeRequestCreationEvidenceRejectsInvalidItems(t *testing.T) {
 	}
 }
 
+func TestSessionChangeRequestCreationEvidenceOrdersChronologically(t *testing.T) {
+	database := openTestDB(t)
+	insertTestSession(t, database, "grok", "recorder")
+	older := validCreationEvidence("sha256:pair")
+	older.EvidenceID = "cr-create-older"
+	older.EventID = "older"
+	older.RecordedAt = time.Date(2026, 8, 11, 16, 0, 0, 0, time.UTC)
+	newer := validCreationEvidence("sha256:pair")
+	newer.EvidenceID = "cr-create-newer"
+	newer.EventID = "newer"
+	newer.Reference.TargetRepositorySlug = "acme/gadgets"
+	newer.Reference.DisplayNumber = "7"
+	newer.Reference.NormalizedURL = "https://github.com/acme/gadgets/pull/7"
+	newer.RecordedAt = time.Date(2026, 8, 11, 17, 0, 0, 0, time.UTC)
+	if err := database.ReplaceSessionChangeRequestCreationEvidence(
+		"grok", "recorder", "sha256:pair",
+		[]model.ChangeRequestCreationEvidence{newer, older},
+	); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := database.SessionChangeRequestCreationEvidence("grok", "recorder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evidence) != 2 || evidence[0].EvidenceID != "cr-create-older" || evidence[1].EvidenceID != "cr-create-newer" {
+		t.Fatalf("chronological order = %+v", evidence)
+	}
+	if evidence[0].Assessment.State != model.GitEvidenceExact {
+		t.Fatalf("assessment not restored as exact: %+v", evidence[0].Assessment)
+	}
+}
+
+func TestSessionChangeRequestCreationEvidenceExcludesExplicitlyLinked(t *testing.T) {
+	database, _, link := setupChangeRequestLinkTest(t, "link-root", "link-entry")
+	defer database.Close()
+	if _, err := database.StoreSessionChangeRequestLink(link); err != nil {
+		t.Fatal(err)
+	}
+	// The snapshot fixture records its web URL as a url alias, and the explicit
+	// link above covers it; the same reference must not reappear as a derived
+	// panel entry.
+	linked := validCreationEvidence("sha256:covered")
+	linked.EvidenceID = "cr-create-linked"
+	linked.EventID = "linked"
+	linked.Reference.DisplayOrigin = "https://github.example"
+	linked.Reference.NormalizedURL = "https://github.example/acme/widgets/pull/42"
+	unrelated := validCreationEvidence("sha256:covered")
+	unrelated.EvidenceID = "cr-create-unrelated"
+	unrelated.EventID = "unrelated"
+	unrelated.Reference.TargetRepositorySlug = "acme/gadgets"
+	unrelated.Reference.DisplayNumber = "7"
+	unrelated.Reference.NormalizedURL = "https://github.com/acme/gadgets/pull/7"
+	if err := database.ReplaceSessionChangeRequestCreationEvidence(
+		"codex", "link-root", "sha256:covered",
+		[]model.ChangeRequestCreationEvidence{linked, unrelated},
+	); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := database.SessionChangeRequestCreationEvidence("codex", "link-root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evidence) != 1 || evidence[0].EvidenceID != "cr-create-unrelated" {
+		t.Fatalf("explicitly linked reference was not excluded: %+v", evidence)
+	}
+}
+
 func TestChangeRequestCreationSessionsOrdersNewestFirstAndBoundsLimit(t *testing.T) {
 	database := openTestDB(t)
 	insertTestSession(t, database, "codex", "newer")

@@ -155,6 +155,94 @@ func TestAutomaticResolveFindsLocalCreationEvidenceWithoutHostApproval(t *testin
 	}
 }
 
+func TestSessionChangeRequestsIncludeRecordedReferences(t *testing.T) {
+	database := openCollabAPIDB(t)
+	seedCollabSession(t, database, "grok", "recorder", false)
+	recordedAt := time.Date(2026, 8, 24, 3, 54, 31, 0, time.UTC)
+	created := model.ChangeRequestCreationEvidence{
+		EvidenceID: "cr-create-grok",
+		Reference: model.ChangeRequestReference{
+			Provider: model.ChangeProviderGitHub, DisplayOrigin: "https://github.com",
+			TargetRepositorySlug: "acme/widgets", DisplayNumber: "163",
+			NormalizedURL: "https://github.com/acme/widgets/pull/163",
+		},
+		CommandKind: "github_cli_pr_create", ToolName: "Run", EventID: "invoke",
+		TurnIndex: 3, RecordedAt: recordedAt,
+		SourceRevision: "index:grok:recorder:1", Assessment: model.ExactGitEvidence(),
+	}
+	mentioned := model.ChangeRequestCreationEvidence{
+		EvidenceID: "cr-mention-grok",
+		Reference: model.ChangeRequestReference{
+			Provider: model.ChangeProviderGitHub, DisplayOrigin: "https://github.com",
+			TargetRepositorySlug: "acme/widgets", DisplayNumber: "94",
+			NormalizedURL: "https://github.com/acme/widgets/pull/94",
+		},
+		CommandKind: "change_request_url", ToolName: "message", EventID: "assistant",
+		TurnIndex: 3, RecordedAt: recordedAt.Add(-time.Hour),
+		SourceRevision: "index:grok:recorder:1", Assessment: model.ExactGitEvidence(),
+	}
+	if err := database.ReplaceSessionChangeRequestCreationEvidence(
+		"grok", "recorder", "index:grok:recorder:1",
+		[]model.ChangeRequestCreationEvidence{created, mentioned},
+	); err != nil {
+		t.Fatal(err)
+	}
+	server := New(database, nil)
+	response := serveChangeRequestAPI(server, "GET", "/api/sessions/recorder/change-requests?agent=grok", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Links   []model.SessionChangeRequestLink `json:"links"`
+		Derived []sessionRecordedChangeReference `json:"derived"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Links) != 0 {
+		t.Fatalf("unexpected explicit links: %+v", body.Links)
+	}
+	if len(body.Derived) != 2 ||
+		body.Derived[0].Kind != "mentioned" || body.Derived[0].Reference.DisplayNumber != "94" ||
+		body.Derived[1].Kind != "created" || body.Derived[1].Reference.DisplayNumber != "163" {
+		t.Fatalf("unexpected derived references: %+v", body.Derived)
+	}
+	if !body.Derived[1].RecordedAt.Equal(recordedAt) || body.Derived[1].ToolName != "Run" || body.Derived[1].TurnIndex != 3 {
+		t.Fatalf("derived entry lost provenance: %+v", body.Derived[1])
+	}
+}
+
+func TestDeriveRecordedChangeReferencesCreatedSupersedesMention(t *testing.T) {
+	reference := model.ChangeRequestReference{
+		Provider: model.ChangeProviderGitHub, DisplayOrigin: "https://github.com",
+		TargetRepositorySlug: "acme/widgets", DisplayNumber: "42",
+		NormalizedURL: "https://github.com/acme/widgets/pull/42",
+	}
+	recordedAt := time.Date(2026, 8, 11, 16, 17, 21, 0, time.UTC)
+	base := model.ChangeRequestCreationEvidence{
+		EvidenceID: "cr-base", Reference: reference, ToolName: "exec", EventID: "invoke",
+		RecordedAt: recordedAt, SourceRevision: "sha256:one", Assessment: model.ExactGitEvidence(),
+	}
+	mention := base
+	mention.EvidenceID = "cr-mention"
+	mention.CommandKind = "change_request_url"
+	mention.ToolName = "message"
+	mention.RecordedAt = recordedAt.Add(-time.Hour)
+	created := base
+	created.EvidenceID = "cr-create"
+	created.CommandKind = "github_cli_pr_create"
+
+	derived := deriveRecordedChangeReferences([]model.ChangeRequestCreationEvidence{mention, created})
+	if len(derived) != 1 || derived[0].Kind != "created" {
+		t.Fatalf("creation did not supersede mention: %+v", derived)
+	}
+
+	mentionOnly := deriveRecordedChangeReferences([]model.ChangeRequestCreationEvidence{mention})
+	if len(mentionOnly) != 1 || mentionOnly[0].Kind != "mentioned" {
+		t.Fatalf("standalone mention not kept: %+v", mentionOnly)
+	}
+}
+
 func TestResolveChangeRequestFailsClosedOnMalformedInput(t *testing.T) {
 	database := openCollabAPIDB(t)
 	server := New(database, nil)

@@ -81,6 +81,56 @@ func (db *DB) HasSessionChangeRequestCreationIndex(agentType, sessionID string) 
 	return exists, err
 }
 
+// SessionChangeRequestCreationEvidence returns one session's recorded creation
+// and mention facts in chronological order. References already covered by an
+// explicit user link are excluded so derived panel entries never duplicate a
+// deliberate binding.
+func (db *DB) SessionChangeRequestCreationEvidence(agentType, sessionID string) ([]model.ChangeRequestCreationEvidence, error) {
+	rows, err := db.conn.Query(`
+		SELECT evidence.evidence_id, evidence.provider, evidence.display_origin,
+		       evidence.target_repository_slug, evidence.display_number,
+		       evidence.normalized_url, evidence.command_kind, evidence.tool_name,
+		       evidence.event_id, evidence.tool_call_id, evidence.turn_index,
+		       evidence.invocation_id, evidence.recorded_at, evidence.source_revision
+		FROM session_change_request_creation_evidence evidence
+		WHERE evidence.agent_type=? AND evidence.session_id=?
+		  AND NOT EXISTS (
+		    SELECT 1 FROM change_request_aliases alias
+		    JOIN session_change_requests linked ON linked.change_id = alias.change_id
+		    WHERE alias.alias_kind='url'
+		      AND alias.alias_value=evidence.normalized_url
+		      AND linked.root_agent_type=evidence.agent_type
+		      AND linked.root_session_id=evidence.session_id
+		  )
+		ORDER BY evidence.recorded_at, evidence.evidence_id`, agentType, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("query Session Change Request creation evidence: %w", err)
+	}
+	defer rows.Close()
+	result := make([]model.ChangeRequestCreationEvidence, 0)
+	for rows.Next() {
+		var item model.ChangeRequestCreationEvidence
+		var provider, recordedAt string
+		if err := rows.Scan(
+			&item.EvidenceID, &provider, &item.Reference.DisplayOrigin,
+			&item.Reference.TargetRepositorySlug, &item.Reference.DisplayNumber,
+			&item.Reference.NormalizedURL, &item.CommandKind, &item.ToolName,
+			&item.EventID, &item.ToolCallID, &item.TurnIndex, &item.InvocationID,
+			&recordedAt, &item.SourceRevision,
+		); err != nil {
+			return nil, fmt.Errorf("scan Session Change Request creation evidence: %w", err)
+		}
+		item.Reference.Provider = model.ChangeProviderKind(provider)
+		item.RecordedAt, err = parseStoredTime(recordedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse Change Request creation time: %w", err)
+		}
+		item.Assessment = model.ExactGitEvidence()
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (db *DB) SessionChangeRequestCreationIndexState(agentType, sessionID string) (string, bool, bool, error) {
 	var sourceRevision string
 	var exists, hasEvidence int
