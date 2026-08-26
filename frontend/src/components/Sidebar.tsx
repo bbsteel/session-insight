@@ -655,7 +655,6 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           session_count: entry.sessionCount,
           last_active: entry.last_active,
           ...entry.meta,
-          providerSummary: providers.length === 1 ? providers[0].provider : `${providers.length} Providers`,
           providers,
         }
       })

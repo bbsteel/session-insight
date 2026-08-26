@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import anthropicIcon from '@lobehub/icons-static-svg/icons/anthropic.svg'
 import azureIcon from '@lobehub/icons-static-svg/icons/azureai-color.svg'
 import bytedanceIcon from '@lobehub/icons-static-svg/icons/bytedance-color.svg'
@@ -44,7 +44,6 @@ export interface ModelEntry {
   name: string
   provider: string
   providerKey: string
-  providerSummary: string
   iconKey: string
   label: string
   session_count: number
@@ -151,27 +150,11 @@ function ModelIcon({ meta, size = 16 }: { meta: Pick<ModelMeta, 'id' | 'iconKey'
   )
 }
 
-/**
- * One selectable tile in the flat grid. Multi-provider models flatten into one
- * tile per provider plus a leading aggregate tile that selects the model across
- * all providers — every choice is a single click, with no second-level flyout.
- */
-interface ModelTile {
-  /** Selection key passed to onSelect: the provider key, or the model key for the aggregate tile. */
-  selectionKey: string
-  modelKey: string
-  iconMeta: Pick<ModelMeta, 'id' | 'iconKey' | 'provider' | 'label'>
-  label: string
-  /** Provider name, or the "all providers" line on the aggregate tile. */
-  subtitle: string
-  sessionCount: number
-  isAggregate: boolean
-}
-
 export default function ModelFilter({ models, selected, onSelect }: ModelFilterProps) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [expandedModelKeys, setExpandedModelKeys] = useState<ReadonlySet<string>>(new Set())
   const [currentSortPref, setCurrentSortPref] = useState<ModelSortPref>(() => getModelSortPref())
   const containerRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -184,15 +167,23 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
   const selectedProvider = selectedModel?.providers.find(p => p.key === selected)
   const selectedMeta = selectedModel ?? modelMeta(selected)
   const label = selectedModel?.label ?? selectedMeta.label
+
+  /** Subtitle for a model: its single provider's name, or a localized provider count. */
+  const providerLine = (model: ModelEntry) =>
+    model.providers.length === 1
+      ? model.providers[0].provider
+      : t('filter.providerCount', { count: model.providers.length })
+
   // Only show a provider line when a concrete model/provider is selected — not for "All Models".
   const providerLabel = selected
-    ? (selectedProvider?.provider ?? selectedModel?.providerSummary ?? selectedMeta.provider)
+    ? (selectedProvider?.provider ?? (selectedModel ? providerLine(selectedModel) : selectedMeta.provider))
     : ''
   const count = selectedProvider?.session_count ?? selectedModel?.session_count ?? total
 
   useEffect(() => {
     if (!open) {
       setSearch('')
+      setExpandedModelKeys(new Set())
       return
     }
     setTimeout(() => searchRef.current?.focus(), 0)
@@ -222,53 +213,41 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     setModelSortPref(newSortPref)
   }
 
-  const tiles = useMemo<ModelTile[]>(() => {
-    const sortedModels = sortModels(models, currentSortPref.key, currentSortPref.order)
-    return sortedModels.flatMap(model => {
-      if (model.providers.length <= 1) {
-        const provider = model.providers[0]
-        return [{
-          selectionKey: provider?.key ?? model.key,
-          modelKey: model.key,
-          iconMeta: model,
-          label: model.label,
-          subtitle: provider?.provider ?? model.providerSummary,
-          sessionCount: model.session_count,
-          isAggregate: false,
-        }]
-      }
-      const aggregateTile: ModelTile = {
-        selectionKey: model.key,
-        modelKey: model.key,
-        iconMeta: model,
-        label: model.label,
-        subtitle: t('filter.allProviders'),
-        sessionCount: model.session_count,
-        isAggregate: true,
-      }
-      const providerTiles: ModelTile[] = model.providers.map(provider => ({
-        selectionKey: provider.key,
-        modelKey: model.key,
-        iconMeta: model,
-        label: model.label,
-        subtitle: provider.provider,
-        sessionCount: provider.session_count,
-        isAggregate: false,
-      }))
-      return [aggregateTile, ...providerTiles]
+  const toggleProviders = (modelKey: string) => {
+    setExpandedModelKeys(prev => {
+      const next = new Set(prev)
+      if (next.has(modelKey)) next.delete(modelKey)
+      else next.add(modelKey)
+      return next
     })
-  }, [models, currentSortPref, t])
+  }
 
-  const visibleTiles = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    if (!query) return tiles
-    return tiles.filter(tile =>
-      tile.label.toLowerCase().includes(query) ||
-      // Aggregate tiles match on the model label only — their shared
-      // "all providers" subtitle matches nothing meaningful.
-      (!tile.isAggregate && tile.subtitle.toLowerCase().includes(query)),
+  const sortedModels = useMemo(
+    () => sortModels(models, currentSortPref.key, currentSortPref.order),
+    [models, currentSortPref],
+  )
+
+  const query = search.trim().toLowerCase()
+  const visibleModels = useMemo(() => {
+    if (!query) return sortedModels
+    return sortedModels.filter(model =>
+      model.label.toLowerCase().includes(query) ||
+      model.name.toLowerCase().includes(query) ||
+      model.providers.some(p => p.provider.toLowerCase().includes(query)),
     )
-  }, [tiles, search])
+  }, [sortedModels, query])
+  // A model matched only through one of its providers opens expanded so the
+  // matching provider tile is visible without a second click.
+  const autoExpandedKeys = useMemo(() => {
+    if (!query) return new Set<string>()
+    return new Set(
+      visibleModels
+        .filter(model =>
+          !model.label.toLowerCase().includes(query) &&
+          !model.name.toLowerCase().includes(query))
+        .map(model => model.key),
+    )
+  }, [visibleModels, query])
 
   if (models.length === 0) return null
 
@@ -362,32 +341,98 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
               )}
 
               <div className="grid gap-0.5 px-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))' }}>
-                {visibleTiles.map(tile => {
-                  const isSelected = selected === tile.selectionKey
+                {visibleModels.map(model => {
+                  const isExpanded = expandedModelKeys.has(model.key) || autoExpandedKeys.has(model.key)
+                  const isSelected = selected === model.key || model.providers.some(p => p.key === selected)
+                  const hasMultipleProviders = model.providers.length > 1
                   return (
-                    <button
-                      key={tile.selectionKey}
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      onClick={() => pick(tile.selectionKey)}
-                      title={`${tile.subtitle} / ${tile.label}`}
-                      className={`px-2 py-1 flex items-center gap-2 text-left rounded transition-colors duration-fast ${
-                        isSelected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                      }`}
-                    >
-                      <span className="flex-shrink-0"><ModelIcon meta={tile.iconMeta} size={20} /></span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-body text-[var(--text-primary)]">{tile.label}</span>
-                        <span className={`block truncate text-helper ${tile.isAggregate ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'}`}>{tile.subtitle}</span>
-                      </span>
-                      <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{tile.sessionCount}</span>
-                    </button>
+                    <Fragment key={model.key}>
+                      {/*
+                        The model tile is a div[role=option] (not a <button>) so
+                        the provider chevron can be a real nested button.
+                      */}
+                      <div
+                        role="option"
+                        aria-selected={isSelected}
+                        tabIndex={0}
+                        onClick={() => pick(model.key)}
+                        onKeyDown={e => {
+                          if (e.target !== e.currentTarget) return
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            pick(model.key)
+                          }
+                        }}
+                        title={`${providerLine(model)} / ${model.label}`}
+                        className={`px-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                          isSelected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                        }`}
+                      >
+                        <span className="flex-shrink-0"><ModelIcon meta={model} size={20} /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-body text-[var(--text-primary)]">{model.label}</span>
+                          <span className="block truncate text-helper text-[var(--text-muted)]">{providerLine(model)}</span>
+                        </span>
+                        <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
+                        {hasMultipleProviders && (
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-label={t('filter.toggleProviders', { model: model.label })}
+                            title={t('filter.toggleProviders', { model: model.label })}
+                            onClick={e => {
+                              e.stopPropagation()
+                              toggleProviders(model.key)
+                            }}
+                            className="w-4 h-4 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] flex-shrink-0 transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                          >
+                            <svg
+                              className={`w-3 h-3 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
+                              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <polyline points="9 6 15 12 9 18" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                      {/*
+                        Expanded provider tiles insert inline right after their
+                        model tile: the panel chrome, scroll position, and every
+                        tile above stay exactly where they were — only content
+                        below the insertion point shifts down.
+                      */}
+                      {isExpanded && model.providers.map(provider => (
+                        <div
+                          key={provider.key}
+                          role="option"
+                          aria-selected={selected === provider.key}
+                          tabIndex={0}
+                          onClick={() => pick(provider.key)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              pick(provider.key)
+                            }
+                          }}
+                          title={`${provider.provider} / ${model.label}`}
+                          className={`pl-6 pr-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                            selected === provider.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                          }`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)]/60 flex-shrink-0" aria-hidden="true" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-helper text-[var(--text-primary)]">{provider.provider}</span>
+                          </span>
+                          <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{provider.session_count}</span>
+                        </div>
+                      ))}
+                    </Fragment>
                   )
                 })}
               </div>
 
-              {visibleTiles.length === 0 && (
+              {visibleModels.length === 0 && (
                 <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noModels')}</div>
               )}
             </div>
