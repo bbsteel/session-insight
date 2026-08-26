@@ -97,6 +97,17 @@ func FormatEventsWithPositionsOpts(events []model.RenderEvent, cols int, opts Op
 // current line → line count); an empty session reports the conventional
 // minimum of 1.
 func formatEvents(events []model.RenderEvent, cols int, opts Options) (string, []RenderPosition, int) {
+	return formatEventsWithProfile(events, cols, opts, profileFor(events))
+}
+
+// formatEventsWithProfile is the shared render pass with an explicit profile.
+// Production FormatEvents still selects the profile via profileFor; Slice B
+// uses this helper only to prove the neutral compiler matches that baseline.
+func formatEventsWithProfile(events []model.RenderEvent, cols int, opts Options, p *Profile) (string, []RenderPosition, int) {
+	if p == nil {
+		cp := defaultProfile
+		p = &cp
+	}
 	if cols <= 0 {
 		cols = TermWidth
 	}
@@ -105,7 +116,6 @@ func formatEvents(events []model.RenderEvent, cols int, opts Options) (string, [
 		bWidth = 40
 	}
 
-	p := profileFor(events)
 	if p.Preprocess != nil {
 		p.Preprocess(events)
 	}

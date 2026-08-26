@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/presentation"
 	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 )
@@ -90,6 +91,41 @@ func TestHandleListAgentsReturnsFullCatalog(t *testing.T) {
 		t.Error("imported missing from catalog")
 	} else if imp.CanDelete || imp.CanTerminate {
 		t.Errorf("imported can_delete=%v can_terminate=%v, want both false", imp.CanDelete, imp.CanTerminate)
+	}
+
+	for _, a := range agents {
+		if a.TerminalPresentation.State != presentation.StateNeutral {
+			t.Errorf("%s: terminal_presentation.state=%s want neutral", a.Type, a.TerminalPresentation.State)
+		}
+		if a.TerminalPresentation.SchemaVersion != presentation.SchemaVersion {
+			t.Errorf("%s: schema_version=%d", a.Type, a.TerminalPresentation.SchemaVersion)
+		}
+		if a.TerminalPresentation.ApplicableFeatureCount != 20 {
+			t.Errorf("%s: applicable_feature_count=%d want 20", a.Type, a.TerminalPresentation.ApplicableFeatureCount)
+		}
+		if a.TerminalPresentation.VerifiedFeatureCount != 0 {
+			t.Errorf("%s: verified_feature_count=%d want 0 in Slice B", a.Type, a.TerminalPresentation.VerifiedFeatureCount)
+		}
+		switch a.Type {
+		case "claude", "chrys", "grok":
+			if a.MigrationState != presentation.MigrationLegacyUnverified {
+				t.Errorf("%s: migration_state=%q want legacy_unverified", a.Type, a.MigrationState)
+			}
+		case "imported":
+			if a.MigrationState != "" {
+				t.Errorf("imported migration_state=%q", a.MigrationState)
+			}
+			if a.TerminalPresentation.FallbackReasonCode != presentation.ReasonNonNativeSource {
+				t.Errorf("imported fallback reason=%s", a.TerminalPresentation.FallbackReasonCode)
+			}
+			if a.TerminalPresentation.ProfileID != presentation.ProfileNeutralV1 {
+				t.Errorf("imported profile_id=%s", a.TerminalPresentation.ProfileID)
+			}
+		default:
+			if a.MigrationState != "" {
+				t.Errorf("%s: unexpected migration_state %q", a.Type, a.MigrationState)
+			}
+		}
 	}
 }
 
