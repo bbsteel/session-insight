@@ -22,7 +22,7 @@ import perplexityIcon from '@lobehub/icons-static-svg/icons/perplexity-color.svg
 import qwenIcon from '@lobehub/icons-static-svg/icons/qwen-color.svg'
 import xaiIcon from '@lobehub/icons-static-svg/icons/xai.svg'
 import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg'
-import { fallbackModelColor, modelMeta, type ModelMeta } from '../modelMeta'
+import { fallbackModelColor, modelMeta, providerIconMeta, type ModelMeta } from '../modelMeta'
 import { AllAgentsIcon } from './AgentFilter'
 import { useI18n } from '../i18n'
 import {
@@ -101,6 +101,16 @@ const SORT_KEYS: ModelSortKey[] = ['name', 'sessions', 'recent']
 
 /** Widest panel the flat model grid opens at; clamped to the viewport. */
 const PANEL_MAX_WIDTH = 660
+
+/**
+ * Tile grid geometry. The column count is derived from the panel width and
+ * passed to the grid as an explicit repeat() so DOM row chunking (needed to
+ * place the provider strip directly below its model tile's row) can never
+ * disagree with the CSS layout.
+ */
+const GRID_MIN_TILE_WIDTH = 172
+const GRID_GAP_PX = 2 // gap-0.5
+const GRID_SIDE_PADDING_PX = 8 // px-1
 
 function ModelIcon({ meta, size = 16 }: { meta: Pick<ModelMeta, 'id' | 'iconKey' | 'provider' | 'label'>; size?: number }) {
   if (meta.iconKey === 'all-models') {
@@ -249,6 +259,18 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     )
   }, [visibleModels, query])
 
+  const columnCount = panelRect
+    ? Math.max(1, Math.floor((panelRect.width - GRID_SIDE_PADDING_PX + GRID_GAP_PX) / (GRID_MIN_TILE_WIDTH + GRID_GAP_PX)))
+    : 3
+
+  const tileRows = useMemo(() => {
+    const rows: ModelEntry[][] = []
+    for (let i = 0; i < visibleModels.length; i += columnCount) {
+      rows.push(visibleModels.slice(i, i + columnCount))
+    }
+    return rows
+  }, [visibleModels, columnCount])
+
   if (models.length === 0) return null
 
   return (
@@ -340,19 +362,19 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                 </button>
               )}
 
-              <div className="grid gap-0.5 px-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(172px, 1fr))' }}>
-                {visibleModels.map(model => {
-                  const isExpanded = expandedModelKeys.has(model.key) || autoExpandedKeys.has(model.key)
-                  const isSelected = selected === model.key || model.providers.some(p => p.key === selected)
-                  const hasMultipleProviders = model.providers.length > 1
-                  return (
-                    <Fragment key={model.key}>
-                      {/*
-                        The model tile is a div[role=option] (not a <button>) so
-                        the provider chevron can be a real nested button.
-                      */}
-                      <div
-                        role="option"
+              <div className="grid gap-0.5 px-1" style={{ gridTemplateColumns: `repeat(${columnCount}, 1fr)` }}>
+                {tileRows.map((row, rowIndex) => (
+                  <Fragment key={rowIndex}>
+                    {row.map(model => {
+                      const isExpanded = expandedModelKeys.has(model.key) || autoExpandedKeys.has(model.key)
+                      const isSelected = selected === model.key || model.providers.some(p => p.key === selected)
+                      const hasMultipleProviders = model.providers.length > 1
+                      return (
+                        // The model tile is a div[role=option] (not a <button>) so
+                        // the provider chip can be a real nested button.
+                        <div
+                          key={model.key}
+                          role="option"
                         aria-selected={isSelected}
                         tabIndex={0}
                         onClick={() => pick(model.key)}
@@ -365,72 +387,91 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                         }}
                         title={`${providerLine(model)} / ${model.label}`}
                         className={`px-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                          isSelected ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                          isSelected
+                            ? 'bg-[var(--bg-surface-selected)]'
+                            : isExpanded
+                              ? 'bg-[var(--bg-surface-hover)]'
+                              : 'hover:bg-[var(--bg-surface-hover)]'
                         }`}
                       >
                         <span className="flex-shrink-0"><ModelIcon meta={model} size={20} /></span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-body text-[var(--text-primary)]">{model.label}</span>
-                          <span className="block truncate text-helper text-[var(--text-muted)]">{providerLine(model)}</span>
+                          {hasMultipleProviders ? (
+                            // The provider count is the expand affordance: an
+                            // accent chip that IS the toggle, not decorative text.
+                            <button
+                              type="button"
+                              aria-expanded={isExpanded}
+                              aria-label={t('filter.toggleProviders', { model: model.label })}
+                              title={t('filter.toggleProviders', { model: model.label })}
+                              onClick={e => {
+                                e.stopPropagation()
+                                toggleProviders(model.key)
+                              }}
+                              className="mt-0.5 -ml-1 inline-flex items-center gap-0.5 rounded px-1 text-helper font-medium text-[var(--accent-blue)] hover:bg-[var(--bg-inset)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                            >
+                              {providerLine(model)}
+                              <svg
+                                className={`w-3 h-3 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <polyline points="9 6 15 12 9 18" />
+                              </svg>
+                            </button>
+                          ) : (
+                            <span className="block truncate text-helper text-[var(--text-muted)]">{providerLine(model)}</span>
+                          )}
                         </span>
                         <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
-                        {hasMultipleProviders && (
-                          <button
-                            type="button"
-                            aria-expanded={isExpanded}
-                            aria-label={t('filter.toggleProviders', { model: model.label })}
-                            title={t('filter.toggleProviders', { model: model.label })}
-                            onClick={e => {
-                              e.stopPropagation()
-                              toggleProviders(model.key)
-                            }}
-                            className="w-4 h-4 flex items-center justify-center rounded-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-inset)] flex-shrink-0 transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
-                          >
-                            <svg
-                              className={`w-3 h-3 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
-                              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                              aria-hidden="true"
-                            >
-                              <polyline points="9 6 15 12 9 18" />
-                            </svg>
-                          </button>
-                        )}
                       </div>
-                      {/*
-                        Expanded provider tiles insert inline right after their
-                        model tile: the panel chrome, scroll position, and every
-                        tile above stay exactly where they were — only content
-                        below the insertion point shifts down.
-                      */}
-                      {isExpanded && model.providers.map(provider => (
-                        <div
-                          key={provider.key}
-                          role="option"
-                          aria-selected={selected === provider.key}
-                          tabIndex={0}
-                          onClick={() => pick(provider.key)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault()
-                              pick(provider.key)
-                            }
-                          }}
-                          title={`${provider.provider} / ${model.label}`}
-                          className={`pl-6 pr-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                            selected === provider.key ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                          }`}
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--text-muted)]/60 flex-shrink-0" aria-hidden="true" />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-helper text-[var(--text-primary)]">{provider.provider}</span>
-                          </span>
-                          <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{provider.session_count}</span>
+                    )
+                  })}
+                  {/*
+                    Expanded providers render as a full-width strip DIRECTLY
+                    BELOW the model tile's row: distinct background, an
+                    open/stretch animation (si-provider-strip-in), and provider
+                    chips with their own icons. The panel chrome, scroll
+                    position, and every tile in the rows above stay exactly
+                    where they were — only rows below shift down.
+                  */}
+                  {row
+                    .filter(model => expandedModelKeys.has(model.key) || autoExpandedKeys.has(model.key))
+                    .map(model => (
+                      <div
+                        key={`${model.key}-providers`}
+                        role="group"
+                        aria-label={model.label}
+                        className="si-provider-strip rounded"
+                        style={{ gridColumn: '1 / -1' }}
+                      >
+                        <div className="my-0.5 flex flex-wrap items-center gap-1.5 rounded bg-[var(--bg-inset)] px-2 py-1.5">
+                          {model.providers.map(provider => (
+                            <button
+                              key={provider.key}
+                              type="button"
+                              role="option"
+                              aria-selected={selected === provider.key}
+                              onClick={() => pick(provider.key)}
+                              title={`${provider.provider} / ${model.label}`}
+                              className={`inline-flex h-7 items-center gap-1.5 rounded-full border pl-1.5 pr-2 text-helper transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                                selected === provider.key
+                                  ? 'border-[var(--accent-blue)] bg-[var(--bg-surface-selected)] text-[var(--text-primary)]'
+                                  : 'border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--accent-blue)]'
+                              }`}
+                            >
+                              <ModelIcon meta={providerIconMeta(provider.providerKey)} size={14} />
+                              <span className="truncate">{provider.provider}</span>
+                              <span className="text-[var(--text-muted)] tabular-nums">{provider.session_count}</span>
+                            </button>
+                          ))}
                         </div>
-                      ))}
-                    </Fragment>
-                  )
-                })}
-              </div>
+                      </div>
+                    ))}
+                </Fragment>
+              ))}
+            </div>
 
               {visibleModels.length === 0 && (
                 <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noModels')}</div>
