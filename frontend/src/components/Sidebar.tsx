@@ -605,6 +605,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       meta: ReturnType<typeof modelMeta>
       modelName: string
       sessionCount: number
+      last_active: string
+      lastUpdatedMs: number
       providers: Map<string, { provider: string; providerKey: string; sessionCount: number }>
     }>()
     for (const s of sessions) {
@@ -615,8 +617,14 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       const key = sessionModelKey(s)
       const entry = counts.get(key)
       const providerKey = sessionModelProviderKey(s)
+      const parsedUpdatedMs = Date.parse(s.updated_at)
+      const updatedMs = Number.isFinite(parsedUpdatedMs) ? parsedUpdatedMs : 0
       if (entry) {
         entry.sessionCount++
+        if (updatedMs > entry.lastUpdatedMs) {
+          entry.lastUpdatedMs = updatedMs
+          entry.last_active = s.updated_at
+        }
         const provider = entry.providers.get(providerKey)
         if (provider) provider.sessionCount++
         else entry.providers.set(providerKey, { provider: meta.provider, providerKey: meta.providerKey, sessionCount: 1 })
@@ -625,6 +633,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           meta,
           modelName: s.model_name,
           sessionCount: 1,
+          last_active: updatedMs > 0 ? s.updated_at : '',
+          lastUpdatedMs: updatedMs,
           providers: new Map([[providerKey, { provider: meta.provider, providerKey: meta.providerKey, sessionCount: 1 }]]),
         })
       }
@@ -643,8 +653,8 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
           key,
           name: entry.modelName,
           session_count: entry.sessionCount,
+          last_active: entry.last_active,
           ...entry.meta,
-          providerSummary: providers.length === 1 ? providers[0].provider : `${providers.length} Providers`,
           providers,
         }
       })

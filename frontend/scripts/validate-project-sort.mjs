@@ -70,7 +70,7 @@ async function pageWaitStable() {
 async function runLocale(page, locale, labels) {
   console.log(`\n=== locale ${locale} ===`)
   await setLocale(page, locale)
-  const listbox = await openProjectDropdown(page, labels.allProjects, labels.projectsLabel)
+  let listbox = await openProjectDropdown(page, labels.allProjects, labels.projectsLabel)
 
   const group = listbox.getByRole('group', { name: labels.sortLabel })
   await group.waitFor({ state: 'visible' })
@@ -89,6 +89,58 @@ async function runLocale(page, locale, labels) {
     assert(ok, `sessions desc violated at ${i}: ${JSON.stringify(rows.slice(0, 8))}`)
   }
   console.log(`default sessions desc ok (${rows.length} projects)`)
+
+  const searchInput = listbox.getByPlaceholder(labels.searchProjects, { exact: true })
+  const searchTerm = rows[0].name.trim()
+  assert(searchTerm.length > 0, 'first project must have a searchable name')
+  await searchInput.fill(searchTerm)
+  await pageWaitStable()
+  const filteredRows = await optionRows(listbox, labels.allProjects)
+  const normalizedSearchTerm = searchTerm.toLowerCase()
+  assert(filteredRows.length > 0, `project search returned no results for ${JSON.stringify(searchTerm)}`)
+  assert(
+    filteredRows.every(row => row.name.toLowerCase().includes(normalizedSearchTerm)),
+    `project search returned a non-matching row: ${JSON.stringify(filteredRows)}`,
+  )
+  console.log(`project search ok (${filteredRows.length} matching project${filteredRows.length === 1 ? '' : 's'})`)
+  await searchInput.fill('')
+  await pageWaitStable()
+  rows = await optionRows(listbox, labels.allProjects)
+  assert(rows.length >= 2, 'clearing project search should restore the project list')
+
+  const originalViewport = page.viewportSize()
+  assert(originalViewport, 'expected a fixed viewport for resize validation')
+  const resizedViewport = {
+    width: Math.max(760, Math.min(originalViewport.width - 160, 1024)),
+    height: Math.max(520, Math.min(originalViewport.height - 160, 720)),
+  }
+  await page.setViewportSize(resizedViewport)
+  await pageWaitStable()
+  const resizedPanelBox = await listbox.boundingBox()
+  assert(resizedPanelBox, 'project panel should remain visible after viewport resize')
+  assert(resizedPanelBox.x >= 0 && resizedPanelBox.y >= 0, `resized panel starts outside viewport: ${JSON.stringify(resizedPanelBox)}`)
+  assert(
+    resizedPanelBox.x + resizedPanelBox.width <= resizedViewport.width + 1 &&
+      resizedPanelBox.y + resizedPanelBox.height <= resizedViewport.height + 1,
+    `resized panel overflows viewport: ${JSON.stringify(resizedPanelBox)}`,
+  )
+  assert(resizedPanelBox.width <= 720 + 1, `resized panel exceeds its max width: ${JSON.stringify(resizedPanelBox)}`)
+  const resizedTriggerBox = page.locator('button[aria-haspopup="listbox"]').filter({ hasText: labels.allProjects }).first()
+  const resizedTriggerBounds = await resizedTriggerBox.boundingBox()
+  assert(resizedTriggerBounds, 'project trigger should remain visible after viewport resize')
+  assert(
+    resizedPanelBox.x >= resizedTriggerBounds.x + resizedTriggerBounds.width - 1,
+    `resized panel should stay beside its trigger: panel=${JSON.stringify(resizedPanelBox)} trigger=${JSON.stringify(resizedTriggerBounds)}`,
+  )
+  console.log(`viewport resize ok (${resizedViewport.width}×${resizedViewport.height})`)
+  await page.setViewportSize(originalViewport)
+  await pageWaitStable()
+
+  await page.mouse.click(5, 5)
+  await listbox.waitFor({ state: 'hidden' })
+  assert(await page.getByRole('listbox', { name: labels.projectsLabel }).count() === 0, 'outside click should close the project panel')
+  console.log('outside click closes panel')
+  listbox = await openProjectDropdown(page, labels.allProjects, labels.projectsLabel)
 
   await group.getByRole('button', { name: labels.name, exact: true }).click()
   await pageWaitStable()
@@ -161,8 +213,9 @@ async function main() {
 
   await runLocale(page, 'en', {
     allProjects: 'All projects',
+    searchProjects: 'Search projects…',
     projectsLabel: 'Filter sessions by project',
-    sortLabel: 'Sort projects',
+    sortLabel: 'Sort',
     name: 'Name',
     sessions: 'Sessions',
     recent: 'Recent',
@@ -170,8 +223,9 @@ async function main() {
 
   await runLocale(page, 'zh-CN', {
     allProjects: '全部项目',
+    searchProjects: '搜索项目…',
     projectsLabel: '按项目筛选会话',
-    sortLabel: '项目排序',
+    sortLabel: '排序',
     name: '名称',
     sessions: '会话数',
     recent: '最近活跃',
