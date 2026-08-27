@@ -38,9 +38,10 @@ func resolveValid(decl Declaration) Resolved {
 
 	densityDecl := decl.ProfileDimensions[DimensionDensity]
 	density := resolveDimension(DimensionDensity, densityDecl)
-	if density.State == DimensionStateVerified {
+	switch density.State {
+	case DimensionStateVerified:
 		anyVerified = true
-	} else if density.State == DimensionStateNeutral {
+	case DimensionStateNeutral:
 		anyNeutralOrPartial = true
 	}
 	profileDimensions := map[DimensionID]ResolvedDimension{
