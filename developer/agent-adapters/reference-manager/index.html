@@ -4,32 +4,72 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Terminal Reference Manager</title>
+<script>
+(function () {
+  var theme = localStorage.getItem('si-rm-theme');
+  document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+})();
+</script>
 <style>
-  :root {
+  :root, html[data-theme="dark"] {
+    color-scheme: dark;
     --bg: #14161a; --panel: #1d2026; --panel2: #232730; --border: #333945;
     --text: #d7dce3; --muted: #8b93a1; --accent: #5b9dff;
+    --primary-ink: #0d1117;
     --missing: #6b7280; --found: #5b9dff; --captured: #d9a13b;
     --used: #4caf7d; --update: #e0703a; --na: #9a7bd0;
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f3f5f8; --panel: #ffffff; --panel2: #eef1f6; --border: #d0d6e0;
+    --text: #1b2330; --muted: #5c6675; --accent: #2f6fed;
+    --primary-ink: #ffffff;
+    --missing: #7b8494; --found: #2f6fed; --captured: #c4841a;
+    --used: #2f8a57; --update: #c45a22; --na: #7a5cb8;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { position: sticky; top: 0; z-index: 10; background: var(--panel);
            border-bottom: 1px solid var(--border); padding: 10px 18px;
-           display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-  header h1 { font-size: 16px; margin: 0; }
+           display: grid; grid-template-columns: minmax(0, 1fr) auto;
+           gap: 10px 16px; align-items: start; }
+  .header-main { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; min-width: 0; }
+  .header-toggles { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
   header .meta { color: var(--muted); font-size: 12px; }
   select, input[type=text] { background: var(--panel2); color: var(--text);
            border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
            border-radius: 6px; padding: 4px 10px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
-  main { padding: 16px 18px 80px; max-width: 1100px; margin: 0 auto; }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--border); }
+  button.primary { background: var(--accent); color: var(--primary-ink); border-color: var(--accent); font-weight: 600; }
+  main { padding: 16px 18px 80px; max-width: 1320px; margin: 0 auto; }
   .notice { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
             padding: 10px 14px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+  .workspace { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+               gap: 16px; align-items: start; }
+  .nav { position: sticky; top: 64px; max-height: calc(100vh - 88px); overflow: auto;
+         background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .nav-heading { padding: 10px 12px 8px; font-size: 12px; font-weight: 600; color: var(--muted);
+                 border-bottom: 1px solid var(--border); position: sticky; top: 0;
+                 background: var(--panel); }
+  .nav-item { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto;
+              column-gap: 8px; row-gap: 2px; width: 100%; text-align: left;
+              border: 0; border-radius: 0; border-bottom: 1px solid var(--border);
+              padding: 8px 12px; background: transparent; color: inherit; cursor: pointer; }
+  .nav-item .id { grid-column: 1 / -1; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+  .nav-item .title { font-size: 13px; font-weight: 600; min-width: 0; }
+  .nav-item.active { background: color-mix(in srgb, var(--accent) 14%, transparent);
+                     box-shadow: inset 3px 0 0 var(--accent); }
+  .nav-item:hover { border-color: var(--border); background: var(--panel2); }
+  .nav-item.active:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .detail-empty { background: var(--panel); border: 1px dashed var(--border); border-radius: 10px;
+                  padding: 28px 18px; color: var(--muted); }
   .item { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-          margin-bottom: 14px; padding: 12px 14px; }
+          margin-bottom: 0; padding: 14px 16px; }
   .item-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .item-head .id { font-family: ui-monospace, monospace; color: var(--muted); }
   .item-head h2 { font-size: 15px; margin: 0; }
@@ -38,6 +78,8 @@
   .extract, .cand-note { color: var(--muted); font-size: 12px; margin: 2px 0; }
   .badge { display: inline-block; border-radius: 10px; padding: 1px 9px; font-size: 11px;
            font-weight: 600; color: #0d1117; }
+  html[data-theme="light"] .badge.found,
+  html[data-theme="light"] .badge.exact { color: #fff; }
   .badge.missing { background: var(--missing); } .badge.found { background: var(--found); }
   .badge.captured { background: var(--captured); } .badge.used { background: var(--used); }
   .badge.update_available { background: var(--update); } .badge.not_applicable { background: var(--na); }
@@ -59,44 +101,219 @@
   .ver-input { width: 130px; font-size: 12px; }
   .local-missing { color: var(--update); font-size: 12px; }
   #workorders { margin-top: 22px; }
-  #workorders li { margin: 4px 0; font-size: 13px; }
+  #workorders li { margin: 8px 0; font-size: 13px; display: flex; flex-wrap: wrap;
+                   align-items: baseline; gap: 6px 8px; }
+  #workorders .wo-meta { flex: 1 1 240px; min-width: 0; }
+  #workorders code { display: block; width: 100%; font-size: 11px; color: var(--muted);
+                     word-break: break-all; }
   .wo-state { font-weight: 600; }
   .wo-state.active { color: var(--found); } .wo-state.stale { color: var(--update); }
   .wo-state.consumed { color: var(--used); }
+  .wo-state.unsupported_schema { color: var(--update); }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
            background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px;
-           padding: 8px 16px; display: none; z-index: 20; max-width: 80vw; }
+           padding: 8px 16px; display: none; z-index: 20; max-width: 80vw;
+           align-items: center; gap: 10px; flex-wrap: wrap; }
   #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none;
               align-items: center; justify-content: center; z-index: 30; cursor: zoom-out; }
   #lightbox img { max-width: 96vw; max-height: 96vh; }
+  .seg-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; white-space: nowrap; }
+  .seg-switch button { border: 0; border-radius: 0; padding: 4px 10px; }
+  .seg-switch button + button { border-left: 1px solid var(--border); }
+  .seg-switch button.active { background: var(--accent); color: var(--primary-ink); font-weight: 600; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Terminal Reference Manager</h1>
-  <label>Agent <select id="agent"></select></label>
-  <label>Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
-  <button id="rescan">Rescan</button>
-  <button id="mkwo" class="primary">Generate work order</button>
-  <span class="meta" id="storeroot"></span>
-  <span class="meta" id="scan"></span>
+  <div class="header-main">
+    <h1>Terminal Reference Manager</h1>
+    <label id="lbl-agent">Agent <select id="agent"></select></label>
+    <label id="lbl-ver">Installed version <input type="text" id="agentver" class="ver-input" placeholder="context only"></label>
+    <button id="rescan">Rescan</button>
+    <button id="refreshgit">Refresh origin/main</button>
+    <button id="mkwo" class="primary">Generate work order</button>
+    <span class="meta" id="storeroot"></span>
+    <span class="meta" id="baseline"></span>
+    <span class="meta" id="scan"></span>
+  </div>
+  <div class="header-toggles">
+    <div class="seg-switch" id="lang-switch" role="group" aria-label="Language">
+      <button type="button" id="lang-en" data-locale="en">EN</button>
+      <button type="button" id="lang-zh" data-locale="zh-CN">中文</button>
+    </div>
+    <div class="seg-switch" id="theme-switch" role="group" aria-label="Theme">
+      <button type="button" id="theme-dark" data-theme="dark">Dark</button>
+      <button type="button" id="theme-light" data-theme="light">Light</button>
+    </div>
+  </div>
 </header>
 <main>
-  <div class="notice">
-    Drop one complete native-CLI full-screen screenshot into a slot. Any terminal, any size.
-    Missing items are allowed gaps &mdash; never fabricate scenes. Captures, session IDs and
-    resume commands stay outside Git. The manager stops at the frozen work order.
+  <div class="notice" id="notice"></div>
+  <div class="workspace">
+    <nav class="nav" id="nav" aria-label="Checklist"></nav>
+    <div id="detail"></div>
   </div>
-  <div id="items"></div>
   <section id="workorders">
-    <h2>Work orders</h2>
+    <h2 id="wo-heading">Work orders</h2>
     <ul id="wolist"></ul>
   </section>
 </main>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 <div id="lightbox"><img alt="preview"></div>
 <script>
 let STATE = null;
+let SELECTED_ID = '';
+let generatingWorkOrder = false;
+const LOCALE_KEY = 'si-rm-locale';
+const THEME_KEY = 'si-rm-theme';
+const UI = {
+  en: {
+    title: 'Terminal Reference Manager',
+    agent: 'Agent',
+    installedVersion: 'Installed version',
+    versionPlaceholder: 'context only',
+    rescan: 'Rescan',
+    refreshGit: 'Refresh origin/main',
+    generate: 'Generate work order',
+    notice: 'Pick a screenshot on the left, then capture one complete native-CLI full screen into its slots. Any terminal, any size. Missing items are allowed gaps — never fabricate scenes. Captures, session IDs and resume commands stay outside Git. used comes from the origin/main evidence lock. Generate work order writes a snapshot folder of the current screenshots; the manager stops there and does not edit product code.',
+    workOrders: 'Work orders',
+    noWorkOrders: 'No work orders yet.',
+    store: 'store',
+    baseline: 'baseline',
+    baselineUnread: 'baseline unread: refresh origin/main',
+    scanning: 'scanning sessions…',
+    scanned: (n) => `scanned ${n} sessions`,
+    notDiscovered: '(not discovered)',
+    features: 'features',
+    extractable: 'Extractable',
+    candidateRule: 'Candidate rule',
+    exactCandidate: 'exact candidate',
+    lowConfidence: 'low-confidence suggestion',
+    session: 'session',
+    turn: 'turn',
+    copyResume: 'copy resume command',
+    resumeCopied: 'resume command copied',
+    copyResumeId: 'copy resume ID',
+    resumeIdCopied: 'resume ID copied',
+    resumeId: 'resume ID',
+    noResume: '(no native resume command or ID available)',
+    noCandidate: 'No candidate found — an allowed gap. Do not manufacture a session for this scene.',
+    notApplicable: 'Marked not applicable',
+    localMissing: 'Local image content unavailable. The lock version stays valid; re-capture to inspect.',
+    currentCapture: 'current capture',
+    imported: 'imported',
+    observedWith: 'observed with',
+    mainLock: 'main lock version',
+    hash: 'hash',
+    chooseImage: 'Choose image…',
+    clearNA: 'Clear not applicable',
+    markNA: 'Mark not applicable',
+    naPrompt: 'Why does this scene not exist for this Agent? (adapter research reason, required)',
+    observedVersion: 'observed version',
+    versionSaved: 'observed version saved',
+    installedSaved: 'installed version context saved',
+    importing: (name) => 'importing ' + name + ' …',
+    importFailed: 'import failed',
+    importedOk: (name, hash) => 'imported ' + name + ' (' + hash + ')',
+    rescanStarted: (imp, skip) => `rescan started (drop-ins imported: ${imp}, skipped: ${skip})`,
+    gitUpdated: (sha) => 'origin/main is now ' + sha,
+    gitUpdatedGeneric: 'updated',
+    woFrozen: (dir) => 'work order saved at ' + dir,
+    alreadyFrozen: (id) => 'current screenshots already have work order ' + id,
+    alreadyFrozenToast: (id) => 'these screenshots are already in work order ' + id,
+    nothingToFreeze: 'no new screenshots to put in a work order',
+    generatingWorkOrder: 'Generating…',
+    openFolder: 'Open folder',
+    openedFolder: (path) => 'opened ' + path,
+    loadFailed: 'load failed',
+    staleHint: ' — a screenshot changed after this work order; generate again',
+    unsupportedHint: ' — regenerate as schema v2',
+    inputs: 'input(s)',
+    themeDark: 'Dark',
+    themeLight: 'Light',
+    languageGroup: 'Language',
+    themeGroup: 'Theme',
+    checklist: 'Screenshots',
+    selectItem: 'Select a screenshot on the left to see its requirements and capture slots.',
+    status: {
+      missing: 'missing', found: 'found', captured: 'captured', used: 'used',
+      update_available: 'update available', not_applicable: 'not applicable',
+    },
+  },
+  'zh-CN': {
+    title: '终端参考管理器',
+    agent: 'Agent',
+    installedVersion: '已安装版本',
+    versionPlaceholder: '仅作上下文',
+    rescan: '重新扫描',
+    refreshGit: '刷新 origin/main',
+    generate: '生成工作单',
+    notice: '先在左侧选择一张图，再按右侧要求截取一张完整的原生 CLI 全屏。任意终端、任意尺寸。缺项是允许的缺口——不要编造场景。截图、session ID 和 resume 命令不进 Git。used 来自 origin/main 的证据锁。点「生成工作单」会把当前截图写成一份快照目录；管理器到此为止，不会改产品代码。',
+    workOrders: '工作单',
+    noWorkOrders: '还没有工作单。',
+    store: '存储',
+    baseline: '基线',
+    baselineUnread: '基线不可读：请刷新 origin/main',
+    scanning: '正在扫描会话…',
+    scanned: (n) => `已扫描 ${n} 个会话`,
+    notDiscovered: '（未发现）',
+    features: '特征',
+    extractable: '可提取',
+    candidateRule: '候选规则',
+    exactCandidate: '精确候选',
+    lowConfidence: '低置信度建议',
+    session: '会话',
+    turn: '回合',
+    copyResume: '复制 resume 命令',
+    resumeCopied: '已复制 resume 命令',
+    copyResumeId: '复制 resume ID',
+    resumeIdCopied: '已复制 resume ID',
+    resumeId: 'resume ID',
+    noResume: '（没有原生 resume 命令或 ID）',
+    noCandidate: '没有找到候选——这是允许的缺口。不要为此场景制造会话。',
+    notApplicable: '已标为不适用',
+    localMissing: '本地图片不可用。证据锁版本仍然有效；重新截图即可查看。',
+    currentCapture: '当前截图',
+    imported: '导入于',
+    observedWith: '观察版本',
+    mainLock: 'main 锁版本',
+    hash: 'hash',
+    chooseImage: '选择图片…',
+    clearNA: '清除不适用',
+    markNA: '标为不适用',
+    naPrompt: '该场景为何不存在于这个 Agent？（需要适配器研究原因）',
+    observedVersion: '观察版本',
+    versionSaved: '已保存观察版本',
+    installedSaved: '已保存已安装版本上下文',
+    importing: (name) => '正在导入 ' + name + ' …',
+    importFailed: '导入失败',
+    importedOk: (name, hash) => '已导入 ' + name + ' (' + hash + ')',
+    rescanStarted: (imp, skip) => `已开始重扫（导入 drop-in ${imp}，跳过 ${skip}）`,
+    gitUpdated: (sha) => 'origin/main 现在是 ' + sha,
+    gitUpdatedGeneric: '已更新',
+    woFrozen: (dir) => '工作单已写到 ' + dir,
+    alreadyFrozen: (id) => '当前截图已有工作单 ' + id,
+    alreadyFrozenToast: (id) => '当前截图已经在工作单 ' + id + ' 里，不用再生成',
+    nothingToFreeze: '没有需要写入工作单的新截图',
+    generatingWorkOrder: '正在生成…',
+    openFolder: '打开路径',
+    openedFolder: (path) => '已打开 ' + path,
+    loadFailed: '加载失败',
+    staleHint: ' — 生成后又改了截图，请重新生成',
+    unsupportedHint: ' — 请按 schema v2 重新生成',
+    inputs: '项输入',
+    themeDark: '暗色',
+    themeLight: '明亮',
+    languageGroup: '语言',
+    themeGroup: '主题',
+    checklist: '截图清单',
+    selectItem: '请先在左侧选择一张图，再查看要求和选图。',
+    status: {
+      missing: '缺失', found: '已找到', captured: '已截图', used: '已使用',
+      update_available: '有更新', not_applicable: '不适用',
+    },
+  },
+};
 
 const $ = (sel, el=document) => el.querySelector(sel);
 const el = (tag, cls, text) => {
@@ -105,17 +322,113 @@ const el = (tag, cls, text) => {
   if (text !== undefined) e.textContent = text;
   return e;
 };
-function toast(msg, ms=3500) {
-  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
-  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms);
+function currentLocale() {
+  const stored = localStorage.getItem(LOCALE_KEY);
+  if (stored === 'zh-CN' || stored === 'en') return stored;
+  return (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+}
+function t(key) {
+  const pack = UI[currentLocale()] || UI.en;
+  return pack[key] ?? UI.en[key] ?? key;
+}
+function statusLabel(status) {
+  const pack = UI[currentLocale()] || UI.en;
+  return (pack.status && pack.status[status]) || status.replace('_', ' ');
+}
+function pick(obj, enKey, zhKey) {
+  if (currentLocale() === 'zh-CN' && obj[zhKey]) return obj[zhKey];
+  return obj[enKey] || '';
+}
+function currentTheme() {
+  return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
+}
+function setLocale(locale) {
+  localStorage.setItem(LOCALE_KEY, locale);
+  applyChrome();
+  if (STATE) render(STATE);
+}
+function setTheme(theme) {
+  localStorage.setItem(THEME_KEY, theme === 'light' ? 'light' : 'dark');
+  applyChrome();
+}
+function applyChrome() {
+  const locale = currentLocale();
+  const theme = currentTheme();
+  document.documentElement.lang = locale === 'zh-CN' ? 'zh-CN' : 'en';
+  document.documentElement.dataset.theme = theme;
+  document.title = t('title');
+  $('header h1').textContent = t('title');
+  $('#lbl-agent').firstChild.textContent = t('agent') + ' ';
+  $('#lbl-ver').firstChild.textContent = t('installedVersion') + ' ';
+  $('#agentver').placeholder = t('versionPlaceholder');
+  $('#rescan').textContent = t('rescan');
+  $('#refreshgit').textContent = t('refreshGit');
+  applyGenerateButton(STATE);
+  $('#notice').textContent = t('notice');
+  $('#wo-heading').textContent = t('workOrders');
+  const navHead = $('#nav-heading');
+  if (navHead) navHead.textContent = t('checklist');
+  $('#nav').setAttribute('aria-label', t('checklist'));
+  $('#lang-switch').setAttribute('aria-label', t('languageGroup'));
+  $('#theme-switch').setAttribute('aria-label', t('themeGroup'));
+  $('#lang-en').classList.toggle('active', locale === 'en');
+  $('#lang-zh').classList.toggle('active', locale === 'zh-CN');
+  $('#theme-dark').textContent = t('themeDark');
+  $('#theme-light').textContent = t('themeLight');
+  $('#theme-dark').classList.toggle('active', theme === 'dark');
+  $('#theme-light').classList.toggle('active', theme === 'light');
+}
+function toast(msg, ms=3500, action, assertive=false) {
+  const n = $('#toast');
+  n.setAttribute('role', 'status');
+  n.setAttribute('aria-live', assertive ? 'assertive' : 'polite');
+  n.replaceChildren();
+  n.appendChild(document.createTextNode(msg));
+  if (action && action.label && action.onClick) {
+    const b = el('button', 'primary', action.label);
+    b.type = 'button';
+    b.onclick = (e) => { e.stopPropagation(); action.onClick(); };
+    n.appendChild(b);
+  }
+  n.style.display = 'flex';
+  clearTimeout(n._h); n._h = setTimeout(() => n.style.display = 'none', ms);
+}
+function toastFailure(msg, ms=8000, action) {
+  toast(msg, ms, action, true);
+}
+
+function openWorkOrderFolder(id) {
+  return api('/api/work-orders/open', {id})
+    .then(r => { toast(t('openedFolder')(r.path || id), 5000); })
+    .catch(e => { toastFailure(e.message); });
 }
 async function api(path, body) {
   const opt = body === undefined ? {} :
     { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) };
   const res = await fetch(path, opt);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) {
+    const err = new Error(data.error || res.statusText);
+    err.payload = data;
+    throw err;
+  }
   return data;
+}
+
+function applyGenerateButton(data) {
+  const btn = $('#mkwo');
+  if (generatingWorkOrder) {
+    btn.disabled = true;
+    btn.textContent = t('generatingWorkOrder');
+    btn.removeAttribute('title');
+    return;
+  }
+  btn.textContent = t('generate');
+  const allowed = !!(data && data.can_generate_work_order);
+  btn.disabled = !allowed;
+  if (data && data.already_frozen_in) btn.title = t('alreadyFrozen')(data.already_frozen_in);
+  else if (!allowed) btn.title = t('nothingToFreeze');
+  else btn.removeAttribute('title');
 }
 
 function currentAgent() {
@@ -131,78 +444,170 @@ async function load() {
   if (data.scan.running) setTimeout(load, 1500);
 }
 
-function render(data) {
-  $('#storeroot').textContent = 'store: ' + data.store_root;
-  const scan = $('#scan');
-  scan.textContent = data.scan.running ? 'scanning sessions…' :
-    (data.scan.scanned_sessions ? `scanned ${data.scan.scanned_sessions} sessions` : '');
+function fillAgentOptions(data) {
   const sel = $('#agent');
-  if (!sel.options.length) {
-    for (const a of data.agents) {
-      const o = el('option', '', a.display_name + (a.discovered ? '' : ' (not discovered)'));
-      o.value = a.type;
-      sel.appendChild(o);
-    }
-    sel.value = data.agent;
+  const current = sel.value || data.agent;
+  sel.textContent = '';
+  for (const a of data.agents) {
+    const o = el('option', '', a.display_name + (a.discovered ? '' : ' ' + t('notDiscovered')));
+    o.value = a.type;
+    sel.appendChild(o);
   }
+  sel.value = current;
+}
+
+function render(data) {
+  applyChrome();
+  fillAgentOptions(data);
+  $('#storeroot').textContent = t('store') + ': ' + data.store_root;
+  const base = $('#baseline');
+  if (data.baseline && data.baseline.sha) {
+    base.textContent = t('baseline') + ' ' + data.baseline.ref + ' @ ' + data.baseline.sha.slice(0, 12);
+  } else {
+    base.textContent = data.baseline_error ? t('baselineUnread') : '';
+  }
+  const scan = $('#scan');
+  scan.textContent = data.scan.running ? t('scanning') :
+    (data.scan.scanned_sessions ? t('scanned')(data.scan.scanned_sessions) : '');
   $('#agentver').value = data.current_version || '';
 
-  const items = $('#items');
-  items.textContent = '';
-  for (const item of data.items) items.appendChild(renderItem(data.agent, item));
+  renderWorkspace(data);
+  applyGenerateButton(data);
 
   const wol = $('#wolist');
   wol.textContent = '';
-  if (!data.work_orders.length) wol.appendChild(el('li', '', 'No work orders yet.'));
+  if (!data.work_orders.length) wol.appendChild(el('li', '', t('noWorkOrders')));
   for (const wo of [...data.work_orders].reverse()) {
     const li = el('li');
+    const openBtn = el('button', '', t('openFolder'));
+    openBtn.type = 'button';
+    openBtn.title = wo.dir || wo.id;
+    openBtn.onclick = () => openWorkOrderFolder(wo.id);
+    li.appendChild(openBtn);
     li.appendChild(el('span', 'wo-state ' + wo.state, wo.state.toUpperCase()));
-    li.appendChild(document.createTextNode(` ${wo.id} · ${wo.items.length} input(s) · ${wo.created_at} · ${wo.dir}` +
-      (wo.state === 'stale' ? ' — an input changed after freezing; regenerate' : '')));
+    if (wo.overlay) li.appendChild(el('span', 'wo-state', ' · ' + wo.overlay));
+    let extra = '';
+    if (wo.state === 'stale') extra = t('staleHint');
+    else if (wo.state === 'unsupported_schema') extra = t('unsupportedHint');
+    const workOrderInputCount = Array.isArray(wo.items) ? wo.items.length : 0;
+    const meta = el('span', 'wo-meta',
+      `${wo.id} · ${workOrderInputCount} ${t('inputs')} · ${wo.created_at} · ${wo.dir}` + extra);
+    li.appendChild(meta);
+    if (wo.preflight_command) {
+      li.appendChild(el('code', '', wo.preflight_command));
+    }
     wol.appendChild(li);
   }
+}
+
+function itemHashId() {
+  const raw = (location.hash || '').replace(/^#/, '');
+  return new URLSearchParams(raw).get('item') || '';
+}
+
+function setSelectedItem(id, pushHash) {
+  SELECTED_ID = id;
+  if (pushHash !== false) {
+    const params = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    if (id) params.set('item', id);
+    else params.delete('item');
+    const next = params.toString();
+    const hash = next ? '#' + next : '';
+    if (location.hash !== hash) history.replaceState(null, '', location.pathname + location.search + hash);
+  }
+  if (STATE) renderWorkspace(STATE);
+}
+
+function primaryStatus(item) {
+  const order = ['update_available', 'captured', 'used', 'found', 'not_applicable', 'missing'];
+  let best = 'missing';
+  let rank = order.length;
+  for (const slot of item.slots || []) {
+    const i = order.indexOf(slot.status);
+    if (i >= 0 && i < rank) {
+      best = slot.status;
+      rank = i;
+    }
+  }
+  return best;
+}
+
+function renderWorkspace(data) {
+  const items = data.items || [];
+  if (!items.some((it) => it.id === SELECTED_ID)) {
+    SELECTED_ID = itemHashId();
+    if (!items.some((it) => it.id === SELECTED_ID)) SELECTED_ID = items[0] ? items[0].id : '';
+  }
+  const nav = $('#nav');
+  const prevScroll = nav.scrollTop;
+  nav.textContent = '';
+  const heading = el('div', 'nav-heading', t('checklist'));
+  heading.id = 'nav-heading';
+  nav.appendChild(heading);
+  for (const item of items) {
+    const btn = el('button', 'nav-item' + (item.id === SELECTED_ID ? ' active' : ''));
+    btn.type = 'button';
+    btn.appendChild(el('span', 'id', item.id));
+    const status = primaryStatus(item);
+    const titleRow = el('span', 'title', pick(item, 'title', 'title_zh'));
+    btn.appendChild(el('span', 'badge ' + status, statusLabel(status)));
+    btn.appendChild(titleRow);
+    btn.onclick = () => setSelectedItem(item.id);
+    nav.appendChild(btn);
+  }
+  nav.scrollTop = prevScroll;
+
+  const detail = $('#detail');
+  detail.textContent = '';
+  const selected = items.find((it) => it.id === SELECTED_ID);
+  if (!selected) {
+    detail.appendChild(el('div', 'detail-empty', t('selectItem')));
+    return;
+  }
+  detail.appendChild(renderItem(data.agent, selected));
 }
 
 function renderItem(agent, item) {
   const card = el('div', 'item');
   const head = el('div', 'item-head');
   head.appendChild(el('span', 'id', item.id));
-  head.appendChild(el('h2', '', item.title));
+  head.appendChild(el('h2', '', pick(item, 'title', 'title_zh')));
   if (item.features && item.features.length)
-    head.appendChild(el('span', 'features', 'features: ' + item.features.join(', ')));
+    head.appendChild(el('span', 'features', t('features') + ': ' + item.features.join(', ')));
   card.appendChild(head);
-  card.appendChild(el('div', 'goal', item.goal));
-  card.appendChild(el('div', 'extract', 'Extractable: ' + item.extractable));
-  if (item.candidate_note) card.appendChild(el('div', 'cand-note', 'Candidate rule: ' + item.candidate_note));
+  card.appendChild(el('div', 'goal', pick(item, 'goal', 'goal_zh')));
+  card.appendChild(el('div', 'extract', t('extractable') + ': ' + pick(item, 'extractable', 'extractable_zh')));
+  const note = pick(item, 'candidate_note', 'candidate_note_zh');
+  if (note) card.appendChild(el('div', 'cand-note', t('candidateRule') + ': ' + note));
 
   if (item.candidate) {
     const c = item.candidate;
     const box = el('div', 'candidate');
-    box.appendChild(el('span', 'badge ' + c.precision, c.precision === 'exact' ? 'exact candidate' : 'low-confidence suggestion'));
+    box.appendChild(el('span', 'badge ' + c.precision, c.precision === 'exact' ? t('exactCandidate') : t('lowConfidence')));
     box.appendChild(document.createTextNode(' ' + (c.summary || '')));
     box.appendChild(el('br'));
-    box.appendChild(document.createTextNode('session ' + c.session_id.slice(0, 12) +
-      (c.turn_index ? ' · turn ' + c.turn_index : '') + ' '));
+    box.appendChild(document.createTextNode(t('session') + ' ' + c.session_id.slice(0, 12) +
+      (c.turn_index ? ' · ' + t('turn') + ' ' + c.turn_index : '') + ' '));
     if (c.resume_command) {
       const code = el('code', '', c.resume_command);
       box.appendChild(code);
-      const copy = el('button', '', 'copy resume command');
+      const copy = el('button', '', t('copyResume'));
       copy.style.marginLeft = '6px';
-      copy.onclick = () => { navigator.clipboard.writeText(c.resume_command); toast('resume command copied'); };
+      copy.onclick = () => { navigator.clipboard.writeText(c.resume_command); toast(t('resumeCopied')); };
       box.appendChild(copy);
     } else if (c.resume_id) {
-      box.appendChild(document.createTextNode('resume ID: '));
+      box.appendChild(document.createTextNode(t('resumeId') + ': '));
       box.appendChild(el('code', '', c.resume_id));
-      const copy = el('button', '', 'copy resume ID');
+      const copy = el('button', '', t('copyResumeId'));
       copy.style.marginLeft = '6px';
-      copy.onclick = () => { navigator.clipboard.writeText(c.resume_id); toast('resume ID copied'); };
+      copy.onclick = () => { navigator.clipboard.writeText(c.resume_id); toast(t('resumeIdCopied')); };
       box.appendChild(copy);
     } else {
-      box.appendChild(el('span', '', '(no native resume command or ID available)'));
+      box.appendChild(el('span', '', t('noResume')));
     }
     card.appendChild(box);
   } else {
-    card.appendChild(el('div', 'gap', 'No candidate found — an allowed gap. Do not manufacture a session for this scene.'));
+    card.appendChild(el('div', 'gap', t('noCandidate')));
   }
 
   const slots = el('div', 'slots');
@@ -215,71 +620,63 @@ function renderSlot(agent, item, slot) {
   const box = el('div', 'slot');
   box.dataset.logical = slot.logical_name;
   const h = el('h3');
-  h.appendChild(el('span', 'badge ' + slot.status, slot.status.replace('_', ' ')));
-  h.appendChild(document.createTextNode(' ' + slot.label + '  '));
+  h.appendChild(el('span', 'badge ' + slot.status, statusLabel(slot.status)));
+  h.appendChild(document.createTextNode(' ' + pick(slot, 'label', 'label_zh') + '  '));
   const fn = el('span', 'id', slot.logical_name);
   fn.style.fontSize = '11px'; fn.style.color = 'var(--muted)';
   h.appendChild(fn);
   box.appendChild(h);
-  box.appendChild(el('div', 'hint', slot.hint));
+  box.appendChild(el('div', 'hint', pick(slot, 'hint', 'hint_zh')));
 
   if (slot.not_applicable) {
-    box.appendChild(el('div', 'extract', 'Marked not applicable: ' + slot.not_applicable_reason));
+    box.appendChild(el('div', 'extract', t('notApplicable') + ': ' + slot.not_applicable_reason));
   }
   if (slot.local_unavailable)
-    box.appendChild(el('div', 'local-missing',
-      'Local image content unavailable. The accepted presentation stays valid; re-capture to inspect.'));
+    box.appendChild(el('div', 'local-missing', t('localMissing')));
 
   if (slot.capture && slot.image_url) {
     box.appendChild(el('div', 'thumb-label',
-      `current capture · hash ${slot.capture.hash.slice(0,12)} · imported ${slot.capture.imported_at}` +
-      (slot.capture.observed_version ? ' · observed with ' + slot.capture.observed_version : '')));
+      `${t('currentCapture')} · ${t('hash')} ${slot.capture.hash.slice(0,12)} · ${t('imported')} ${slot.capture.imported_at}` +
+      (slot.capture.observed_version ? ' · ' + t('observedWith') + ' ' + slot.capture.observed_version : '')));
     const img = el('img'); img.src = slot.image_url; img.alt = slot.logical_name;
     img.onclick = () => showLightbox(slot.image_url);
     box.appendChild(img);
   }
-  if (slot.accepted_image_url) {
-    box.appendChild(el('div', 'thumb-label', 'accepted version in use · hash ' + slot.accepted_hash.slice(0,12)));
-    const img = el('img'); img.src = slot.accepted_image_url; img.alt = slot.logical_name + ' accepted';
-    img.onclick = () => showLightbox(slot.accepted_image_url);
+  if (slot.main_lock_image_url) {
+    box.appendChild(el('div', 'thumb-label', t('mainLock') + ' · ' + t('hash') + ' ' + slot.main_lock_hash.slice(0,12)));
+    const img = el('img'); img.src = slot.main_lock_image_url; img.alt = slot.logical_name + ' main lock';
+    img.onclick = () => showLightbox(slot.main_lock_image_url);
     box.appendChild(img);
   }
 
   const actions = el('div', 'slot-actions');
-  const pick = el('button', '', 'choose image…');
+  const pickBtn = el('button', '', t('chooseImage'));
   const input = el('input'); input.type = 'file'; input.accept = 'image/png,image/jpeg,image/gif';
   input.style.display = 'none';
-  pick.onclick = () => input.click();
+  pickBtn.onclick = () => input.click();
   input.onchange = () => { if (input.files[0]) upload(agent, slot.logical_name, input.files[0]); };
-  actions.appendChild(pick); actions.appendChild(input);
+  actions.appendChild(pickBtn); actions.appendChild(input);
 
-  if (slot.status === 'captured' || slot.status === 'update_available') {
-    const acc = el('button', '', slot.status === 'captured' ? 'mark accepted' : 'accept update');
-    acc.title = 'Record the current capture as the content version the presentation is built from';
-    acc.onclick = () => api('/api/accept', {agent, logical_name: slot.logical_name})
-      .then(load).catch(e => toast(e.message));
-    actions.appendChild(acc);
-  }
   if (slot.not_applicable) {
-    const clear = el('button', '', 'clear not-applicable');
+    const clear = el('button', '', t('clearNA'));
     clear.onclick = () => api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: false, reason: ''})
-      .then(load).catch(e => toast(e.message));
+      .then(load).catch(e => toastFailure(e.message));
     actions.appendChild(clear);
   } else {
-    const na = el('button', '', 'mark not-applicable…');
+    const na = el('button', '', t('markNA'));
     na.onclick = () => {
-      const reason = prompt('Why does this scene not exist for this Agent? (adapter research reason, required)');
+      const reason = prompt(t('naPrompt'));
       if (reason === null) return;
       api('/api/not-applicable', {agent, logical_name: slot.logical_name, value: true, reason})
-        .then(load).catch(e => toast(e.message));
+        .then(load).catch(e => toastFailure(e.message));
     };
     actions.appendChild(na);
   }
   if (slot.capture) {
     const ver = el('input'); ver.type = 'text'; ver.className = 'ver-input';
-    ver.placeholder = 'observed version'; ver.value = slot.capture.observed_version || '';
+    ver.placeholder = t('observedVersion'); ver.value = slot.capture.observed_version || '';
     ver.onchange = () => api('/api/version', {agent, logical_name: slot.logical_name, version: ver.value})
-      .then(() => toast('observed version saved')).catch(e => toast(e.message));
+      .then(() => toast(t('versionSaved'))).catch(e => toastFailure(e.message));
     actions.appendChild(ver);
   }
   box.appendChild(actions);
@@ -299,11 +696,11 @@ async function upload(agent, logicalName, file) {
   fd.append('agent', agent);
   fd.append('logical_name', logicalName);
   fd.append('file', file, file.name);
-  toast('importing ' + file.name + ' …');
+  toast(t('importing')(file.name));
   const res = await fetch('/api/upload', {method: 'POST', body: fd});
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { toast('import failed: ' + (data.error || res.statusText), 6000); return; }
-  toast('imported ' + logicalName + ' (' + data.capture.hash.slice(0,12) + ')');
+  if (!res.ok) { toastFailure(t('importFailed') + ': ' + (data.error || res.statusText), 6000); return; }
+  toast(t('importedOk')(logicalName, data.capture.hash.slice(0,12)));
   load();
 }
 
@@ -319,20 +716,58 @@ $('#agent').onchange = () => {
 };
 $('#agentver').onchange = () => {
   api('/api/version', {agent: $('#agent').value, logical_name: '', version: $('#agentver').value})
-    .then(() => toast('installed version context saved')).catch(e => toast(e.message));
+    .then(() => toast(t('installedSaved'))).catch(e => toastFailure(e.message));
 };
 $('#rescan').onclick = () => {
   api('/api/rescan', {agent: $('#agent').value})
-    .then(r => { toast(`rescan started (drop-ins imported: ${r.imported.length}, skipped: ${r.skipped.length})`); load(); })
-    .catch(e => toast(e.message));
+    .then(r => { toast(t('rescanStarted')((r.imported || []).length, (r.skipped || []).length)); load(); })
+    .catch(e => toastFailure(e.message));
+};
+$('#refreshgit').onclick = () => {
+  api('/api/git/refresh', {})
+    .then(r => { toast(t('gitUpdated')(r.baseline && r.baseline.sha ? r.baseline.sha.slice(0,12) : t('gitUpdatedGeneric'))); load(); })
+    .catch(e => toastFailure(e.message, 6000));
 };
 $('#mkwo').onclick = () => {
+  if (generatingWorkOrder || $('#mkwo').disabled) return;
+  generatingWorkOrder = true;
+  applyGenerateButton(STATE);
   api('/api/work-order', {agent: $('#agent').value})
-    .then(r => { toast('work order frozen at ' + r.work_order.dir, 8000); load(); })
-    .catch(e => toast(e.message, 6000));
+    .then(r => {
+      const id = r.work_order && r.work_order.id;
+      toast(t('woFrozen')(r.work_order.dir), 12000, id ? {
+        label: t('openFolder'),
+        onClick: () => openWorkOrderFolder(id),
+      } : undefined);
+    })
+    .catch(e => {
+      const wo = e.payload && e.payload.work_order;
+      if (wo && wo.id) {
+        toastFailure(t('alreadyFrozenToast')(wo.id), 12000, {
+          label: t('openFolder'),
+          onClick: () => openWorkOrderFolder(wo.id),
+        });
+        return;
+      }
+      toastFailure(e.message, 6000);
+    })
+    .finally(() => {
+      generatingWorkOrder = false;
+      applyGenerateButton(STATE);
+      load().catch(err => toastFailure(t('loadFailed') + ': ' + err.message));
+    });
 };
+$('#lang-en').onclick = () => setLocale('en');
+$('#lang-zh').onclick = () => setLocale('zh-CN');
+$('#theme-dark').onclick = () => setTheme('dark');
+$('#theme-light').onclick = () => setTheme('light');
+window.addEventListener('hashchange', () => {
+  const id = itemHashId();
+  if (id !== SELECTED_ID) setSelectedItem(id, false);
+});
 
-load().catch(e => toast('load failed: ' + e.message, 8000));
+applyChrome();
+load().catch(e => toastFailure(t('loadFailed') + ': ' + e.message));
 </script>
 </body>
 </html>

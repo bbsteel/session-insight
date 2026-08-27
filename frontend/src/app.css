@@ -301,6 +301,18 @@ body {
   background: transparent;
 }
 
+/* Model filter provider strip: the expanded provider row stretches open below
+   the model tile's row (max-height + fade) so the new full-width row is
+   clearly noticeable. */
+@keyframes si-provider-strip-in {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 220px; }
+}
+.si-provider-strip {
+  animation: si-provider-strip-in 180ms ease-out;
+  overflow: hidden;
+}
+
 /* Terminal jump-landing flash: one iteration = hold then fade, so the
    animation iteration count is the user-visible pulse count
    (si-jump-flash-pulses in localStorage, default 2). */

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bbsteel/session-insight/internal/presentation"
 	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 	"github.com/bbsteel/session-insight/internal/reader/chrys"
@@ -296,6 +297,62 @@ func TestCatalogMatrixDump(t *testing.T) {
 		t.Logf("wrote capability matrix to %s", out)
 	}
 	t.Log("\n" + matrix)
+}
+
+func TestRegisteredAgentDefinitionsPresentationsConform(t *testing.T) {
+	defs := reader.RegisteredAgentDefinitions()
+	if len(defs) != 8 {
+		t.Fatalf("registered catalog length=%d want 8", len(defs))
+	}
+	legacy := map[string]bool{"claude": true, "chrys": true, "grok": true}
+	for _, def := range defs {
+		def := def
+		agentType := def.Capabilities.AgentType
+		t.Run(agentType, func(t *testing.T) {
+			if def.Presentation.AgentType != agentType {
+				t.Errorf("presentation AgentType=%q", def.Presentation.AgentType)
+			}
+			presentation.AssertConformance(t, def.Presentation)
+			if reader.UsesDeclarationResolver(agentType) {
+				t.Error("Slice B must keep UsesDeclarationResolver false")
+			}
+			if legacy[agentType] {
+				if def.MigrationState != presentation.MigrationLegacyUnverified {
+					t.Errorf("migration_state=%q want legacy_unverified", def.MigrationState)
+				}
+				resolved := presentation.Resolve(def.Presentation)
+				if resolved.State != presentation.StateNeutral {
+					t.Errorf("Slice B declaration state=%s; legacy styles stay on profileFor", resolved.State)
+				}
+				return
+			}
+			if def.MigrationState != "" {
+				t.Errorf("unexpected migration_state %q", def.MigrationState)
+			}
+			if agentType == "imported" {
+				if def.Presentation.ProfileID != presentation.ProfileNeutralV1 {
+					t.Errorf("profile_id=%s want %s", def.Presentation.ProfileID, presentation.ProfileNeutralV1)
+				}
+				resolved := presentation.Resolve(def.Presentation)
+				if resolved.FallbackReasonCode != presentation.ReasonNonNativeSource {
+					t.Errorf("fallback reason=%s", resolved.FallbackReasonCode)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentDefinitionsProjectsRegisteredCapabilities(t *testing.T) {
+	caps := reader.AgentDefinitions()
+	registered := reader.RegisteredAgentDefinitions()
+	if len(caps) != len(registered) {
+		t.Fatalf("AgentDefinitions=%d Registered=%d", len(caps), len(registered))
+	}
+	for i := range caps {
+		if caps[i].AgentType != registered[i].Capabilities.AgentType {
+			t.Fatalf("projection mismatch at %d: %s vs %s", i, caps[i].AgentType, registered[i].Capabilities.AgentType)
+		}
+	}
 }
 
 func agentTypes(defs []capability.AgentCapabilities) []string {

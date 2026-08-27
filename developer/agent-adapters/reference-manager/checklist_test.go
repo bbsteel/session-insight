@@ -19,13 +19,22 @@ func TestChecklistShape(t *testing.T) {
 			t.Errorf("duplicate item id %q", item.ID)
 		}
 		seen[item.ID] = true
-		if item.Title == "" || item.Goal == "" {
-			t.Errorf("item %s: title and goal are required", item.ID)
+		if item.Title == "" || item.Goal == "" || item.TitleZH == "" || item.GoalZH == "" {
+			t.Errorf("item %s: title/goal are required in en and zh-CN", item.ID)
+		}
+		if item.Extractable != "" && item.ExtractableZH == "" {
+			t.Errorf("item %s: extractable_zh is required when extractable is set", item.ID)
+		}
+		if item.CandidateNote != "" && item.CandidateNoteZH == "" {
+			t.Errorf("item %s: candidate_note_zh is required when candidate_note is set", item.ID)
 		}
 		if len(item.Slots) == 0 || item.Slots[0].LogicalName != item.ID {
 			t.Errorf("item %s: first slot must be the default state named after the item", item.ID)
 		}
 		for _, slot := range item.Slots {
+			if slot.Label == "" || slot.LabelZH == "" || slot.Hint == "" || slot.HintZH == "" {
+				t.Errorf("slot %s: label/hint are required in en and zh-CN", slot.LogicalName)
+			}
 			if !knownLogicalNames[slot.LogicalName] {
 				t.Errorf("slot %s missing from known logical names", slot.LogicalName)
 			}
@@ -69,5 +78,43 @@ func TestFoldPairs(t *testing.T) {
 				t.Errorf("%s: fold slot %d = %q, want %q", id, i, gotSlots[i], wantSlots[i])
 			}
 		}
+	}
+}
+
+func TestCanonicalFeatureCatalog(t *testing.T) {
+	seen := map[string]bool{}
+	for _, item := range checklist {
+		for _, id := range item.Features {
+			if id == "density" {
+				t.Fatalf("%s must not map density as a feature", item.ID)
+			}
+			if !isCanonicalFeature(id) {
+				t.Errorf("%s maps unknown feature %q", item.ID, id)
+			}
+			seen[id] = true
+		}
+	}
+	for _, id := range canonicalFeatureIDs {
+		if !seen[id] {
+			t.Errorf("canonical feature %s is not mapped from any screenshot item", id)
+		}
+	}
+	if itemFeatures("01-session-overview")[0] != "turn_boundary" {
+		t.Fatalf("01 must map to turn_boundary, got %v", itemFeatures("01-session-overview"))
+	}
+	if itemFeatures("06-tool-running")[0] != "tool_running" {
+		t.Fatalf("06 must map to tool_running")
+	}
+	if itemFeatures("09-tool-timeout")[0] != "tool_result_timeout" {
+		t.Fatalf("09 must map to tool_result_timeout")
+	}
+	if itemFeatures("10-tool-rejected")[0] != "tool_result_rejected" {
+		t.Fatalf("10 must map to tool_result_rejected")
+	}
+	if itemFeatures("20-tool-group")[0] != "tool_group" {
+		t.Fatalf("20 must map to tool_group")
+	}
+	if itemFeatures("21-nested-fold")[0] != "nested_fold" {
+		t.Fatalf("21 must map to nested_fold")
 	}
 }

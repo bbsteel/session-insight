@@ -1,0 +1,15 @@
+# Extra writable roots for this repository.
+#
+# The default terminal-reference store lives at ~/.session-insight-dev,
+# outside the git checkout. Grok's built-in `workspace` profile cannot
+# mkdir there. Use this profile:
+#
+#   grok --sandbox session-insight
+#
+# or set `[sandbox] profile = "session-insight"` in ~/.grok/config.toml.
+# Create the directory once if the kernel grant requires it to exist:
+#   mkdir -p ~/.session-insight-dev
+
+[profiles.session-insight]
+extends = "workspace"
+read_write = ["~/.session-insight-dev"]

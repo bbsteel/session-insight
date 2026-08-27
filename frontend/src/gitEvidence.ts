@@ -119,6 +119,22 @@ export interface SessionChangeRequestLink {
   evidence: GitEvidenceLink[]
 }
 
+// A PR/MR reference the session itself recorded (created via CLI or mentioned
+// in the transcript). Derived from exact creation evidence; no explicit user
+// link and no per-agent Git snapshot contract is required.
+export interface SessionRecordedChangeReference {
+  kind: 'created' | 'mentioned' | string
+  reference: ChangeRequestReference
+  tool_name: string
+  turn_index: number
+  recorded_at: string
+}
+
+export interface SessionChangeRequestList {
+  links: SessionChangeRequestLink[]
+  derived: SessionRecordedChangeReference[]
+}
+
 export interface SessionGitRepositoryEvidence {
   repository_entry_key: string
   revision: number

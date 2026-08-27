@@ -1,8 +1,21 @@
 // Project filter list sort: name / session count / recent activity, with order.
-// Preference is stored in localStorage so the dropdown reopens with the same order.
+// Preference is stored in localStorage so the panel reopens with the same order.
+// Generic plumbing lives in sortPreference.ts.
+
+import {
+  activityMs,
+  compareNames,
+  compareOrdered,
+  defaultSortOrder,
+  isSortOrder,
+  readSortPref,
+  writeSortPref,
+  type SortOrder,
+  type SortPref,
+} from './sortPreference.js'
 
 export type ProjectSortKey = 'name' | 'sessions' | 'recent'
-export type ProjectSortOrder = 'asc' | 'desc'
+export type ProjectSortOrder = SortOrder
 
 export interface ProjectEntry {
   name: string
@@ -11,10 +24,7 @@ export interface ProjectEntry {
   last_active: string
 }
 
-export interface ProjectSortPref {
-  key: ProjectSortKey
-  order: ProjectSortOrder
-}
+export type ProjectSortPref = SortPref<ProjectSortKey>
 
 const STORAGE_KEY = 'si-project-sort'
 export const DEFAULT_PROJECT_SORT: ProjectSortPref = { key: 'sessions', order: 'desc' }
@@ -22,7 +32,7 @@ export const DEFAULT_PROJECT_SORT: ProjectSortPref = { key: 'sessions', order: '
 /** Default sort order when the user switches to a sort key. */
 export function defaultOrderForKey(key: ProjectSortKey): ProjectSortOrder {
   // Name: A→Z; sessions/recent: most first.
-  return key === 'name' ? 'asc' : 'desc'
+  return defaultSortOrder(key, 'name')
 }
 
 export function isProjectSortKey(v: unknown): v is ProjectSortKey {
@@ -30,41 +40,15 @@ export function isProjectSortKey(v: unknown): v is ProjectSortKey {
 }
 
 export function isProjectSortOrder(v: unknown): v is ProjectSortOrder {
-  return v === 'asc' || v === 'desc'
+  return isSortOrder(v)
 }
 
 export function getProjectSortPref(): ProjectSortPref {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { ...DEFAULT_PROJECT_SORT }
-    const parsed = JSON.parse(raw) as { key?: unknown; order?: unknown; dir?: unknown }
-    // Prefer `order`; accept legacy `dir` from the first ship of this feature.
-    const order = isProjectSortOrder(parsed.order)
-      ? parsed.order
-      : isProjectSortOrder(parsed.dir)
-        ? parsed.dir
-        : null
-    if (isProjectSortKey(parsed.key) && order) {
-      return { key: parsed.key, order }
-    }
-  } catch {
-    // ignore corrupt or unavailable storage
-  }
-  return { ...DEFAULT_PROJECT_SORT }
+  return readSortPref(STORAGE_KEY, isProjectSortKey, DEFAULT_PROJECT_SORT)
 }
 
 export function setProjectSortPref(pref: ProjectSortPref): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(pref))
-  } catch {
-    // ignore
-  }
-}
-
-function activityMs(iso: string): number {
-  if (!iso) return 0
-  const parsed = Date.parse(iso)
-  return Number.isFinite(parsed) ? parsed : 0
+  writeSortPref(STORAGE_KEY, pref)
 }
 
 /**
@@ -77,11 +61,10 @@ export function compareProjects(
   key: ProjectSortKey,
   order: ProjectSortOrder,
 ): number {
-  const sign = order === 'asc' ? 1 : -1
   let cmp = 0
   switch (key) {
     case 'name':
-      cmp = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      cmp = compareNames(a.name, b.name)
       break
     case 'sessions':
       cmp = a.session_count - b.session_count
@@ -90,8 +73,7 @@ export function compareProjects(
       cmp = activityMs(a.last_active) - activityMs(b.last_active)
       break
   }
-  if (cmp !== 0) return cmp * sign
-  return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  return compareOrdered(cmp, order, compareNames(a.name, b.name))
 }
 
 export function sortProjects(

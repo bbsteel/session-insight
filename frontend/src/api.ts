@@ -6,6 +6,7 @@ import type {
   ChangeRequestRelationship,
   ChangeRequestResolveResponse,
   SessionChangeRequestLink,
+  SessionChangeRequestList,
   SessionGitEvidenceEnvelope,
 } from './gitEvidence.js'
 import { localize } from './i18nRuntime.js'
@@ -276,12 +277,11 @@ export async function fetchSessionGitEvidence(
   }
 }
 
-export async function fetchSessionChangeRequests(id: string, agent: string): Promise<SessionChangeRequestLink[]> {
+export async function fetchSessionChangeRequests(id: string, agent: string): Promise<SessionChangeRequestList> {
   const params = new URLSearchParams({ agent })
   const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/change-requests?${params}`)
   if (!res.ok) throw await responseError(res, 'change_requests_load_failed')
-  const payload = await readJson<{ links: SessionChangeRequestLink[] }>(res, 'Change Request links')
-  return payload.links
+  return readJson<SessionChangeRequestList>(res, 'Change Request links')
 }
 
 export async function fetchSessionGitPatch(

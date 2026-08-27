@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Store layout (always outside the Git repository):
@@ -49,6 +50,49 @@ func defaultStoreRoot() (string, error) {
 	return filepath.Join(home, ".session-insight-dev", "terminal-references"), nil
 }
 
+func checkoutFallbackStore(checkoutDir string) string {
+	return filepath.Join(checkoutDir, ".runtime", "terminal-references")
+}
+
+// ensureStoreRoot creates and probes preferred. If that fails and allowFallback
+// is set, it creates and probes fallback instead and returns a warning note.
+func ensureStoreRoot(preferred, fallback string, allowFallback bool) (root, note string, err error) {
+	if preferred == "" {
+		return "", "", fmt.Errorf("empty store root")
+	}
+	preferredErr := ensureWritableStoreRoot(preferred)
+	if preferredErr == nil {
+		return preferred, "", nil
+	}
+	if !allowFallback || fallback == "" || fallback == preferred {
+		return "", "", fmt.Errorf("create store %s: %w", preferred, preferredErr)
+	}
+	fallbackErr := ensureWritableStoreRoot(fallback)
+	if fallbackErr != nil {
+		return "", "", fmt.Errorf("create store %s: %v (fallback %s: %w)", preferred, preferredErr, fallback, fallbackErr)
+	}
+	return fallback, fmt.Sprintf("default store %s is not writable (%v); using %s", preferred, preferredErr, fallback), nil
+}
+
+func ensureWritableStoreRoot(root string) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	probe, err := os.CreateTemp(root, ".writability-probe-*")
+	if err != nil {
+		return err
+	}
+	probePath := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probePath)
+		return err
+	}
+	if err := os.Remove(probePath); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Store owns the on-disk reference data of every Agent.
 //
 // Every caller-supplied identifier (agent, logical file name, content hash)
@@ -60,6 +104,9 @@ type Store struct {
 	// resolveAgent maps an agent ID to the registry's own canonical value.
 	// Injected so tests can run without the real reader registry.
 	resolveAgent func(string) (string, bool)
+	// generateMu serializes work-order freeze so two clicks cannot both
+	// observe "no active duplicate" and write two directories.
+	generateMu sync.Mutex
 }
 
 func newStore(root string, resolveAgent func(string) (string, bool)) *Store {
@@ -170,8 +217,8 @@ func (s *Store) Import(agent, logicalName string, r io.Reader, originalName stri
 		if other != canonicalName && st.Current != nil && st.Current.Hash == hash {
 			return nil, fmt.Errorf("identical image already assigned to %s; one image cannot stand in for two states", other)
 		}
-		if other != canonicalName && st.AcceptedHash != "" && st.AcceptedHash == hash {
-			return nil, fmt.Errorf("identical image is the accepted content of %s; one image cannot stand in for two states", other)
+		if other != canonicalName && st.LegacyAcceptedHash != "" && st.LegacyAcceptedHash == hash {
+			return nil, fmt.Errorf("identical image is retained content of %s; one image cannot stand in for two states", other)
 		}
 	}
 	if st := cat.Items[canonicalName]; st != nil && st.Current != nil && st.Current.Hash == hash {
@@ -278,8 +325,8 @@ func servableHashes(cat *AgentCatalog) map[string]bool {
 		if st.Current != nil {
 			out[st.Current.Hash] = true
 		}
-		if st.AcceptedHash != "" {
-			out[st.AcceptedHash] = true
+		if st.LegacyAcceptedHash != "" {
+			out[st.LegacyAcceptedHash] = true
 		}
 	}
 	for _, wo := range cat.WorkOrders {
@@ -294,7 +341,7 @@ func servableHashes(cat *AgentCatalog) map[string]bool {
 // the hash. The served path is built from catalog-owned and on-disk values,
 // not from the request. The store directory is never exposed as static
 // content.
-func (s *Store) lookupBlob(agent, hash string) (path string, ext string, err error) {
+func (s *Store) lookupBlob(agent, hash string, extraHashes ...string) (path string, ext string, err error) {
 	canonicalAgent, err := s.canonicalAgent(agent)
 	if err != nil {
 		return "", "", err
@@ -306,16 +353,16 @@ func (s *Store) lookupBlob(agent, hash string) (path string, ext string, err err
 	if err != nil {
 		return "", "", err
 	}
-	knownHash := ""
-	for catalogHash := range servableHashes(cat) {
-		if catalogHash == hash {
-			knownHash = catalogHash
-			break
+	known := servableHashes(cat)
+	for _, extra := range extraHashes {
+		if extra != "" {
+			known[extra] = true
 		}
 	}
-	if knownHash == "" {
+	if !known[hash] {
 		return "", "", fmt.Errorf("unknown image")
 	}
+	knownHash := hash
 	// The on-disk blob name carries the authoritative extension (a frozen
 	// input's capture record may no longer be current or accepted).
 	matches, err := filepath.Glob(s.blobPath(canonicalAgent, knownHash, ".*"))
