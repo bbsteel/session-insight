@@ -112,6 +112,17 @@ const GRID_MIN_TILE_WIDTH = 172
 const GRID_GAP_PX = 2 // gap-0.5
 const GRID_SIDE_PADDING_PX = 8 // px-1
 
+function modelTextMatchesSearchQuery(model: ModelEntry, searchQuery: string): boolean {
+  return model.label.toLowerCase().includes(searchQuery) || model.name.toLowerCase().includes(searchQuery)
+}
+
+function modelProviderMatchesSearchQuery(model: ModelEntry, searchQuery: string): boolean {
+  return model.providers.some(provider =>
+    provider.provider.toLowerCase().includes(searchQuery) ||
+    provider.providerKey.toLowerCase().includes(searchQuery),
+  )
+}
+
 function ModelIcon({ meta, size = 16 }: { meta: Pick<ModelMeta, 'id' | 'iconKey' | 'provider' | 'label'>; size?: number }) {
   if (meta.iconKey === 'all-models') {
     return (
@@ -241,9 +252,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
   const visibleModels = useMemo(() => {
     if (!query) return sortedModels
     return sortedModels.filter(model =>
-      model.label.toLowerCase().includes(query) ||
-      model.name.toLowerCase().includes(query) ||
-      model.providers.some(p => p.provider.toLowerCase().includes(query)),
+      modelTextMatchesSearchQuery(model, query) || modelProviderMatchesSearchQuery(model, query),
     )
   }, [sortedModels, query])
   // A model matched only through one of its providers opens expanded so the
@@ -253,8 +262,9 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
     return new Set(
       visibleModels
         .filter(model =>
-          !model.label.toLowerCase().includes(query) &&
-          !model.name.toLowerCase().includes(query))
+          !modelTextMatchesSearchQuery(model, query) &&
+          modelProviderMatchesSearchQuery(model, query),
+        )
         .map(model => model.key),
     )
   }, [visibleModels, query])
@@ -312,8 +322,6 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
 
         {open && panelRect && (
           <div
-            role="listbox"
-            aria-label={t('filter.modelsLabel')}
             style={{ position: 'fixed', left: panelRect.left, top: panelRect.top, width: panelRect.width, maxHeight: panelRect.maxHeight }}
             className="z-[var(--z-dropdown)] flex flex-col rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg"
           >
@@ -341,7 +349,11 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
               groupLabel={t('filter.sort.label')}
             />
 
-            <div className="min-h-0 flex-1 overflow-y-auto py-1">
+            <div
+              role="listbox"
+              aria-label={t('filter.modelsLabel')}
+              className="min-h-0 flex-1 overflow-y-auto py-1"
+            >
               {!search.trim() && (
                 <button
                   type="button"
@@ -370,64 +382,62 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                       const isSelected = selected === model.key || model.providers.some(p => p.key === selected)
                       const hasMultipleProviders = model.providers.length > 1
                       return (
-                        // The model tile is a div[role=option] (not a <button>) so
-                        // the provider chip can be a real nested button.
                         <div
                           key={model.key}
-                          role="option"
-                        aria-selected={isSelected}
-                        tabIndex={0}
-                        onClick={() => pick(model.key)}
-                        onKeyDown={e => {
-                          if (e.target !== e.currentTarget) return
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            pick(model.key)
-                          }
-                        }}
-                        title={`${providerLine(model)} / ${model.label}`}
-                        className={`px-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
-                          isSelected
-                            ? 'bg-[var(--bg-surface-selected)]'
-                            : isExpanded
-                              ? 'bg-[var(--bg-surface-hover)]'
-                              : 'hover:bg-[var(--bg-surface-hover)]'
-                        }`}
-                      >
-                        <span className="flex-shrink-0"><ModelIcon meta={model} size={20} /></span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-body text-[var(--text-primary)]">{model.label}</span>
-                          {hasMultipleProviders ? (
-                            // The provider count is the expand affordance: an
-                            // accent chip that IS the toggle, not decorative text.
+                          className="relative min-w-0"
+                        >
+                          <div
+                            role="option"
+                            aria-selected={isSelected}
+                            tabIndex={0}
+                            onClick={() => pick(model.key)}
+                            onKeyDown={e => {
+                              if (e.target !== e.currentTarget) return
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                pick(model.key)
+                              }
+                            }}
+                            title={`${providerLine(model)} / ${model.label}`}
+                            className={`px-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                              isSelected
+                                ? 'bg-[var(--bg-surface-selected)]'
+                                : isExpanded
+                                  ? 'bg-[var(--bg-surface-hover)]'
+                                  : 'hover:bg-[var(--bg-surface-hover)]'
+                            } ${hasMultipleProviders ? 'pb-5' : ''}`}
+                          >
+                            <span className="flex-shrink-0"><ModelIcon meta={model} size={20} /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-body text-[var(--text-primary)]">{model.label}</span>
+                              {!hasMultipleProviders && (
+                                <span className="block truncate text-helper text-[var(--text-muted)]">{providerLine(model)}</span>
+                              )}
+                            </span>
+                            <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
+                          </div>
+                          {hasMultipleProviders && (
                             <button
                               type="button"
                               aria-expanded={isExpanded}
                               aria-label={t('filter.toggleProviders', { model: model.label })}
                               title={t('filter.toggleProviders', { model: model.label })}
-                              onClick={e => {
-                                e.stopPropagation()
-                                toggleProviders(model.key)
-                              }}
-                              className="mt-0.5 -ml-1 inline-flex items-center gap-0.5 rounded px-1 text-helper font-medium text-[var(--accent-blue)] hover:bg-[var(--bg-inset)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                              onClick={() => toggleProviders(model.key)}
+                              className="absolute bottom-1 left-7 inline-flex max-w-[calc(100%-2rem)] items-center gap-0.5 rounded px-1 text-helper font-medium text-[var(--accent-blue)] hover:bg-[var(--bg-inset)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                             >
-                              {providerLine(model)}
+                              <span className="truncate">{providerLine(model)}</span>
                               <svg
-                                className={`w-3 h-3 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
+                                className={`w-3 h-3 flex-shrink-0 transition-transform duration-fast ${isExpanded ? 'rotate-90' : ''}`}
                                 viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                                 aria-hidden="true"
                               >
                                 <polyline points="9 6 15 12 9 18" />
                               </svg>
                             </button>
-                          ) : (
-                            <span className="block truncate text-helper text-[var(--text-muted)]">{providerLine(model)}</span>
                           )}
-                        </span>
-                        <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{model.session_count}</span>
-                      </div>
-                    )
-                  })}
+                        </div>
+                      )
+                    })}
                   {/*
                     Expanded providers render as a full-width strip DIRECTLY
                     BELOW the model tile's row: distinct background, an
