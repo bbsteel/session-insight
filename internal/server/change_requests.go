@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bbsteel/session-insight/internal/changeevidence"
 	"github.com/bbsteel/session-insight/internal/changehost"
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/model"
@@ -117,6 +118,44 @@ func (s *Server) handleGetGitEvidencePatch(w http.ResponseWriter, r *http.Reques
 	_, _ = w.Write(patch)
 }
 
+// sessionRecordedChangeReference is a PR/MR reference the session itself
+// recorded — created via a CLI command or mentioned in the transcript. It is
+// derived from exact creation evidence and needs no explicit user link, so it
+// works for every Agent regardless of local Git snapshot support.
+type sessionRecordedChangeReference struct {
+	Kind       string                       `json:"kind"` // created | mentioned
+	Reference  model.ChangeRequestReference `json:"reference"`
+	ToolName   string                       `json:"tool_name"`
+	TurnIndex  int                          `json:"turn_index"`
+	RecordedAt time.Time                    `json:"recorded_at"`
+}
+
+// deriveRecordedChangeReferences projects creation evidence into panel
+// entries. A recorded creation supersedes a mention of the same URL.
+func deriveRecordedChangeReferences(evidence []model.ChangeRequestCreationEvidence) []sessionRecordedChangeReference {
+	createdURLs := make(map[string]bool, len(evidence))
+	for _, item := range evidence {
+		if item.CommandKind == changeevidence.CommandGitHubCLI || item.CommandKind == changeevidence.CommandGitLabCLI {
+			createdURLs[item.Reference.NormalizedURL] = true
+		}
+	}
+	derived := make([]sessionRecordedChangeReference, 0, len(evidence))
+	for _, item := range evidence {
+		if item.CommandKind == changeevidence.CommandChangeRequestURL && createdURLs[item.Reference.NormalizedURL] {
+			continue
+		}
+		kind := "mentioned"
+		if item.CommandKind != changeevidence.CommandChangeRequestURL {
+			kind = "created"
+		}
+		derived = append(derived, sessionRecordedChangeReference{
+			Kind: kind, Reference: item.Reference,
+			ToolName: item.ToolName, TurnIndex: item.TurnIndex, RecordedAt: item.RecordedAt,
+		})
+	}
+	return derived
+}
+
 func (s *Server) handleGetSessionChangeRequests(w http.ResponseWriter, r *http.Request) {
 	agentType, sessionID, ok := s.requireIndexedSession(w, r)
 	if !ok {
@@ -128,9 +167,16 @@ func (s *Server) handleGetSessionChangeRequests(w http.ResponseWriter, r *http.R
 		writeAPIError(w, http.StatusInternalServerError, "internal")
 		return
 	}
+	evidence, err := s.DB.SessionChangeRequestCreationEvidence(agentType, sessionID)
+	if err != nil {
+		log.Printf("GET Session Change Request creation evidence %s/%s: %v", agentType, sessionID, err)
+		writeAPIError(w, http.StatusInternalServerError, "internal")
+		return
+	}
 	writeJSONStatus(w, http.StatusOK, struct {
-		Links []model.SessionChangeRequestLink `json:"links"`
-	}{Links: links})
+		Links   []model.SessionChangeRequestLink `json:"links"`
+		Derived []sessionRecordedChangeReference `json:"derived"`
+	}{Links: links, Derived: deriveRecordedChangeReferences(evidence)})
 }
 
 func (s *Server) handleBindSessionChangeRequest(w http.ResponseWriter, r *http.Request) {
