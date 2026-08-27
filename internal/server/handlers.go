@@ -14,6 +14,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/llm"
 	"github.com/bbsteel/session-insight/internal/model"
+	"github.com/bbsteel/session-insight/internal/presentation"
 	"github.com/bbsteel/session-insight/internal/reader"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 	"github.com/bbsteel/session-insight/internal/render"
@@ -908,14 +909,16 @@ func (s *Server) handleSessionAnalytics(w http.ResponseWriter, r *http.Request) 
 // invent counts. CanDelete / CanTerminate are derived from the adapter-owned
 // capability declaration so the UI does not hard-code agent types.
 type AgentInfo struct {
-	Type            string                                                       `json:"type"`
-	DisplayName     string                                                       `json:"display_name"`
-	AdapterRevision int                                                          `json:"adapter_revision"`
-	Discovered      bool                                                         `json:"discovered"`
-	SessionCount    int                                                          `json:"session_count"`
-	CanDelete       bool                                                         `json:"can_delete"`
-	CanTerminate    bool                                                         `json:"can_terminate"`
-	Capabilities    map[capability.CapabilityID]capability.CapabilityDeclaration `json:"capabilities"`
+	Type                 string                                                       `json:"type"`
+	DisplayName          string                                                       `json:"display_name"`
+	AdapterRevision      int                                                          `json:"adapter_revision"`
+	Discovered           bool                                                         `json:"discovered"`
+	SessionCount         int                                                          `json:"session_count"`
+	CanDelete            bool                                                         `json:"can_delete"`
+	CanTerminate         bool                                                         `json:"can_terminate"`
+	Capabilities         map[capability.CapabilityID]capability.CapabilityDeclaration `json:"capabilities"`
+	TerminalPresentation presentation.PublicSummary                                   `json:"terminal_presentation"`
+	MigrationState       presentation.MigrationState                                  `json:"migration_state,omitempty"`
 }
 
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
@@ -938,21 +941,24 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	defs := reader.AgentDefinitions()
+	defs := reader.RegisteredAgentDefinitions()
 	agents := make([]AgentInfo, 0, len(defs))
 	for _, def := range defs {
+		caps := def.Capabilities
 		info := AgentInfo{
-			Type:            def.AgentType,
-			DisplayName:     def.DisplayName,
-			AdapterRevision: def.AdapterRevision,
-			Capabilities:    def.Capabilities,
-			CanDelete:       def.Capabilities[capability.CapabilityDelete].State == capability.CapabilityExact,
-			CanTerminate:    def.Capabilities[capability.CapabilityTerminate].State == capability.CapabilityExact,
+			Type:                 caps.AgentType,
+			DisplayName:          caps.DisplayName,
+			AdapterRevision:      caps.AdapterRevision,
+			Capabilities:         caps.Capabilities,
+			CanDelete:            caps.Capabilities[capability.CapabilityDelete].State == capability.CapabilityExact,
+			CanTerminate:         caps.Capabilities[capability.CapabilityTerminate].State == capability.CapabilityExact,
+			TerminalPresentation: presentation.NewPublicSummary(presentation.Resolve(def.Presentation)),
+			MigrationState:       def.MigrationState,
 		}
-		if rd, ok := byType[def.AgentType]; ok {
+		if rd, ok := byType[caps.AgentType]; ok {
 			info.Discovered = true
 			if dbCounts != nil {
-				info.SessionCount = dbCounts[def.AgentType]
+				info.SessionCount = dbCounts[caps.AgentType]
 			} else {
 				// No DB (or count query failed): fall back to reader ListSessions
 				// so tests without a database and degraded runtimes still work.
@@ -960,7 +966,7 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					// Keep the Agent in the catalog as discovered; do not invent a
 					// count. Surface the failure in logs so a stuck reader is visible.
-					log.Printf("GET /api/agents: ListSessions(%s): %v", def.AgentType, err)
+					log.Printf("GET /api/agents: ListSessions(%s): %v", caps.AgentType, err)
 				} else {
 					for _, sess := range sessions {
 						if !sess.IsSubagent {

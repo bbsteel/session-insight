@@ -104,14 +104,14 @@ func newServer(store *Store, checkoutDir string, readers []reader.BaseSessionRea
 		s.readers[r.AgentType()] = r
 		discovered[r.AgentType()] = true
 	}
-	for _, def := range reader.AgentDefinitions() {
-		if def.AgentType == "imported" {
+	for _, def := range reader.RegisteredAgentDefinitions() {
+		if def.Capabilities.AgentType == "imported" {
 			continue // imported sessions have no native CLI to reference
 		}
 		s.agents = append(s.agents, agentInfo{
-			Type:        def.AgentType,
-			DisplayName: def.DisplayName,
-			Discovered:  discovered[def.AgentType],
+			Type:        def.Capabilities.AgentType,
+			DisplayName: def.Capabilities.DisplayName,
+			Discovered:  discovered[def.Capabilities.AgentType],
 		})
 	}
 	sort.Slice(s.agents, func(i, j int) bool { return s.agents[i].Type < s.agents[j].Type })

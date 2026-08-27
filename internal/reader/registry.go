@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sort"
 
+	"github.com/bbsteel/session-insight/internal/presentation"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 	"github.com/bbsteel/session-insight/internal/reader/chrys"
 	"github.com/bbsteel/session-insight/internal/reader/claude"
@@ -18,38 +19,76 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
 )
 
-// AgentDefinitions returns the static capability catalog for every supported
-// Agent. The catalog is always available, even when an Agent's local storage
-// is not installed or discovered.
-//
-// Declarations are owned by each adapter package; this function only
-// aggregates exports and never re-states capability values.
-// Order is stable: sorted by AgentType ascending.
-func AgentDefinitions() []capability.AgentCapabilities {
-	defs := []capability.AgentCapabilities{
-		claude.Capabilities(),
-		chrys.Capabilities(),
-		codex.Capabilities(),
-		copilot.Capabilities(),
-		grok.Capabilities(),
-		hermes.Capabilities(),
-		imported.Capabilities(),
-		opencode.Capabilities(),
+// RegisteredAgentDefinition aggregates adapter-owned capability and
+// presentation declarations. The registry copies exports; it does not restate
+// field values.
+type RegisteredAgentDefinition struct {
+	Capabilities   capability.AgentCapabilities
+	Presentation   presentation.Declaration
+	MigrationState presentation.MigrationState
+}
+
+// RegisteredAgentDefinitions returns the static capability+presentation
+// catalog for every supported Agent. Order is stable: sorted by AgentType.
+func RegisteredAgentDefinitions() []RegisteredAgentDefinition {
+	defs := []RegisteredAgentDefinition{
+		{Capabilities: claude.Capabilities(), Presentation: claude.Presentation(), MigrationState: claude.PresentationMigrationState()},
+		{Capabilities: chrys.Capabilities(), Presentation: chrys.Presentation(), MigrationState: chrys.PresentationMigrationState()},
+		{Capabilities: codex.Capabilities(), Presentation: codex.Presentation(), MigrationState: codex.PresentationMigrationState()},
+		{Capabilities: copilot.Capabilities(), Presentation: copilot.Presentation(), MigrationState: copilot.PresentationMigrationState()},
+		{Capabilities: grok.Capabilities(), Presentation: grok.Presentation(), MigrationState: grok.PresentationMigrationState()},
+		{Capabilities: hermes.Capabilities(), Presentation: hermes.Presentation(), MigrationState: hermes.PresentationMigrationState()},
+		{Capabilities: imported.Capabilities(), Presentation: imported.Presentation(), MigrationState: imported.PresentationMigrationState()},
+		{Capabilities: opencode.Capabilities(), Presentation: opencode.Presentation(), MigrationState: opencode.PresentationMigrationState()},
 	}
 	sort.Slice(defs, func(i, j int) bool {
-		return defs[i].AgentType < defs[j].AgentType
+		return defs[i].Capabilities.AgentType < defs[j].Capabilities.AgentType
 	})
 	return defs
 }
 
-// AgentDefinition returns the static declaration for agentType, if known.
-func AgentDefinition(agentType string) (capability.AgentCapabilities, bool) {
-	for _, d := range AgentDefinitions() {
-		if d.AgentType == agentType {
+// RegisteredAgentDefinitionByType returns the aggregated declaration for
+// agentType, if known.
+func RegisteredAgentDefinitionByType(agentType string) (RegisteredAgentDefinition, bool) {
+	for _, d := range RegisteredAgentDefinitions() {
+		if d.Capabilities.AgentType == agentType {
 			return d, true
 		}
 	}
-	return capability.AgentCapabilities{}, false
+	return RegisteredAgentDefinition{}, false
+}
+
+// AgentDefinitions returns the capability-only catalog. It is implemented as
+// a projection of RegisteredAgentDefinitions so callers that have not yet
+// migrated keep a stable signature.
+func AgentDefinitions() []capability.AgentCapabilities {
+	registered := RegisteredAgentDefinitions()
+	defs := make([]capability.AgentCapabilities, len(registered))
+	for i, d := range registered {
+		defs[i] = d.Capabilities
+	}
+	return defs
+}
+
+// AgentDefinition returns the static capability declaration for agentType, if known.
+func AgentDefinition(agentType string) (capability.AgentCapabilities, bool) {
+	d, ok := RegisteredAgentDefinitionByType(agentType)
+	if !ok {
+		return capability.AgentCapabilities{}, false
+	}
+	return d.Capabilities, true
+}
+
+// UsesDeclarationResolver reports whether production ANSI/positions should
+// compile this Agent's presentation declaration. Slice B keeps every Agent
+// on the current profileFor path; Slice F flips Agents one at a time after
+// evidence, fixtures, and visual review land.
+func UsesDeclarationResolver(agentType string) bool {
+	switch agentType {
+	// Slice F adds cases as each Agent leaves legacy_unverified.
+	default:
+		return false
+	}
 }
 
 // Discover returns BaseSessionReader instances for Agents whose storage exists
