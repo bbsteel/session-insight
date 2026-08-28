@@ -89,6 +89,7 @@ go build -tags sqlite_fts5 -o session-insight.exe .
 
 ```powershell
 $env:PORT = "9090"
+$env:SI_INDEXER_ENABLED = "0" # 仅适用于 linked worktree；主 checkout 始终启用
 $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\projects"
 .\session-insight.exe
 ```

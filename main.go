@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +34,43 @@ var (
 	version = "dev"
 	commit  = ""
 )
+
+const indexerEnabledEnvironmentVariable = "SI_INDEXER_ENABLED"
+
+// isPrimaryCheckout reports whether workingDirectory is the primary checkout.
+// Linked worktrees store .git as a file, while the primary checkout stores it
+// as a directory. The primary checkout is the production instance and must
+// always keep live indexing enabled.
+func isPrimaryCheckout(workingDirectory string) bool {
+	gitPath := filepath.Join(workingDirectory, ".git")
+	gitInfo, err := os.Stat(gitPath)
+	return err == nil && gitInfo.IsDir()
+}
+
+// resolveIndexerEnabled applies the agent-controlled startup switch. The
+// primary checkout deliberately ignores a disabled value so production keeps
+// its live index; standalone binaries default to enabled for compatibility.
+func resolveIndexerEnabled(configuredValue string, primaryCheckout bool) (bool, string) {
+	trimmedValue := strings.TrimSpace(configuredValue)
+	if primaryCheckout {
+		if trimmedValue == "" {
+			return true, "primary checkout"
+		}
+		return true, "primary checkout forces enabled"
+	}
+
+	switch strings.ToLower(trimmedValue) {
+	case "", "1", "true", "yes", "on":
+		if trimmedValue == "" {
+			return true, "default enabled"
+		}
+		return true, indexerEnabledEnvironmentVariable + " enabled"
+	case "0", "false", "no", "off":
+		return false, indexerEnabledEnvironmentVariable + " disabled"
+	default:
+		return true, fmt.Sprintf("invalid %s=%q; default enabled", indexerEnabledEnvironmentVariable, configuredValue)
+	}
+}
 
 // indexStatusAdapter maps indexer.Progress to the server HTTP DTO without
 // coupling server ↔ indexer packages beyond this thin main-process wire-up.
@@ -88,6 +126,14 @@ func main() {
 		return
 	}
 
+	workingDirectory, workingDirectoryErr := os.Getwd()
+	primaryCheckout := workingDirectoryErr == nil && isPrimaryCheckout(workingDirectory)
+	indexerEnabled, indexerReason := resolveIndexerEnabled(
+		os.Getenv(indexerEnabledEnvironmentVariable),
+		primaryCheckout,
+	)
+	log.Printf("[indexer] startup enabled=%t (%s)", indexerEnabled, indexerReason)
+
 	readers := reader.Discover()
 	log.Printf("Discovered %d agent reader(s)", len(readers))
 	for _, r := range readers {
@@ -99,49 +145,54 @@ func main() {
 	importRoot := filepath.Join(dataDir, "imports")
 	readers = append(readers, imported.New(importRoot))
 
-	idx := indexer.New(database, readers)
 	srv := server.New(database, readers)
 	srv.Version = version
 	srv.Commit = commit
-	srv.SetIndexStatus(indexStatusAdapter{idx})
 	srv.SetImportRoot(importRoot)
-	srv.SetIndexKicker(idx.KickAgent)
 
-	// 索引轮产生实际变更后才通知：SSE 发出时数据已落库，侧栏重拉读到的
-	// 就是新数据（/api/sessions 直接从 SQLite 出），也不会跟索引轮抢 CPU。
-	idx.OnChanged = srv.NotifySessionsChanged
+	if indexerEnabled {
+		idx := indexer.New(database, readers)
+		srv.SetIndexStatus(indexStatusAdapter{idx})
+		srv.SetIndexKicker(idx.KickAgent)
 
-	// 不阻塞 HTTP 启动：后台一个劲索引；搜索栏通过 /api/index/status 显示进度。
-	// Kick 立即跑首轮（schema 升级清空 watermark 后的全量重扫也走这里）。
-	go idx.RunBackground(context.Background())
-	idx.Kick()
+		// 索引轮产生实际变更后才通知：SSE 发出时数据已落库，侧栏重拉读到的
+		// 就是新数据（/api/sessions 直接从 SQLite 出），也不会跟索引轮抢 CPU。
+		idx.OnChanged = srv.NotifySessionsChanged
 
-	// 文件监听：会话文件一变 → 踢一轮增量索引（落库后由 OnChanged 通知侧栏）。
-	// 追加写走 5s 慢窗口——活跃会话的持续写入不再每 500ms 全量重索引，
-	// 代价只是侧栏计数/搜索晚几秒；新会话 Create 走 500ms 快窗口，秒级出现。
-	// 打开中的会话走 revision 轮询直读文件，不经过这条索引管道，不受影响。
-	// 监听器起不来只降级为"手动刷新页面"，不影响其他功能。
-	roots := 0
-	for _, r := range readers {
-		p, ok := r.(reader.WatchRootProvider)
-		if !ok {
-			continue
+		// 不阻塞 HTTP 启动：后台一个劲索引；搜索栏通过 /api/index/status 显示进度。
+		// Kick 立即跑首轮（schema 升级清空 watermark 后的全量重扫也走这里）。
+		go idx.RunBackground(context.Background())
+		idx.Kick()
+
+		// 文件监听：会话文件一变 → 踢一轮增量索引（落库后由 OnChanged 通知侧栏）。
+		// 追加写走 5s 慢窗口——活跃会话的持续写入不再每 500ms 全量重索引，
+		// 代价只是侧栏计数/搜索晚几秒；新会话 Create 走 500ms 快窗口，秒级出现。
+		// 打开中的会话走 revision 轮询直读文件，不经过这条索引管道，不受影响。
+		// 监听器起不来只降级为"手动刷新页面"，不影响其他功能。
+		roots := 0
+		for _, r := range readers {
+			p, ok := r.(reader.WatchRootProvider)
+			if !ok {
+				continue
+			}
+			agentType := r.AgentType()
+			watcher, err := watch.New(500*time.Millisecond, 5*time.Second, func() {
+				idx.KickAgent(agentType)
+			})
+			if err != nil {
+				log.Printf("%s watcher unavailable, live sidebar refresh disabled for this agent: %v", agentType, err)
+				continue
+			}
+			for _, root := range p.WatchRoots() {
+				watcher.Add(root)
+				roots++
+			}
+			go watcher.Run()
 		}
-		agentType := r.AgentType()
-		watcher, err := watch.New(500*time.Millisecond, 5*time.Second, func() {
-			idx.KickAgent(agentType)
-		})
-		if err != nil {
-			log.Printf("%s watcher unavailable, live sidebar refresh disabled for this agent: %v", agentType, err)
-			continue
-		}
-		for _, root := range p.WatchRoots() {
-			watcher.Add(root)
-			roots++
-		}
-		go watcher.Run()
+		log.Printf("Watching %d session root(s) for live sidebar refresh", roots)
+	} else {
+		log.Printf("[indexer] background indexing and source watchers are disabled")
 	}
-	log.Printf("Watching %d session root(s) for live sidebar refresh", roots)
 
 	fileServer := http.FileServer(http.FS(frontendFS))
 	srv.Mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -113,6 +113,7 @@ See [BUILD.md](BUILD.md) for the full Windows build guide (requires MSYS2 + ming
 |----------------------|---------|-------------|
 | `PORT` | `8080` | HTTP port |
 | `SI_DATA_DIR` | `~/.session-insight` | Override the application database directory |
+| `SI_INDEXER_ENABLED` | `1` | Enable or disable background indexing in a linked worktree; the primary checkout always forces `1` |
 | `CHRYS_SESSION_ROOT_DIR` | — | Override Chrys session root directory |
 | `HERMES_HOME` | `~/.hermes` | Override Hermes state directory; Session Insight reads `state.db` inside it |
 

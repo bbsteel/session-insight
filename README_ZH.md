@@ -113,6 +113,7 @@ bash run.sh all
 |----------|--------|------|
 | `PORT` | `8080` | HTTP 监听端口 |
 | `SI_DATA_DIR` | `~/.session-insight` | 覆盖应用数据库目录 |
+| `SI_INDEXER_ENABLED` | `1` | 在 linked worktree 中启用或关闭后台索引；主 checkout 始终强制为 `1` |
 | `CHRYS_SESSION_ROOT_DIR` | — | 覆盖 Chrys 会话根目录 |
 | `HERMES_HOME` | `~/.hermes` | 覆盖 Hermes 状态目录；Session Insight 会读取其中的 `state.db` |
 

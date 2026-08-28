@@ -10,7 +10,8 @@ param(
   [Parameter(Mandatory = $true)][string]$LogPath,
   [Parameter(Mandatory = $true)][string]$ErrLogPath,
   [string]$Port = "8080",
-  [string]$DataDir
+  [string]$DataDir,
+  [string]$IndexerEnabled = "1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +37,7 @@ if ($PSBoundParameters.ContainsKey('DataDir') -and $DataDir -and $DataDir.Trim()
 @(
   "@echo off"
   "set `"PORT=$Port`""
+  "set `"SI_INDEXER_ENABLED=$IndexerEnabled`""
   $dataLine
   "cd /d `"$WorkDir`""
   "`"$BinPath`" >> `"$LogPath`" 2>> `"$ErrLogPath`""
@@ -50,6 +52,7 @@ $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Argumen
 if ($null -eq $created -or $created.ReturnValue -ne 0) {
   # Fallback: Start-Process (may die with parent job in sandboxed agents).
   $env:PORT = $Port
+  $env:SI_INDEXER_ENABLED = $IndexerEnabled
   if ($PSBoundParameters.ContainsKey('DataDir') -and $DataDir -and $DataDir.Trim().Length -gt 0) {
     $env:SI_DATA_DIR = $DataDir
   } else {

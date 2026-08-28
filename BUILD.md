@@ -89,6 +89,7 @@ You can configure it via environment variables:
 
 ```powershell
 $env:PORT = "9090"
+$env:SI_INDEXER_ENABLED = "0" # linked worktrees only; the primary checkout always enables it
 $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\projects"
 .\session-insight.exe
 ```
