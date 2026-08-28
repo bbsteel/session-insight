@@ -129,6 +129,20 @@ export function modelMeta(modelName: string, modelProvider = ''): ModelMeta {
   }
 }
 
+/**
+ * Icon/display meta for a bare provider key (e.g. the provider tiles of a
+ * multi-provider model), independent of any model name.
+ */
+export function providerIconMeta(providerKey: string): Pick<ModelMeta, 'id' | 'iconKey' | 'provider' | 'label'> {
+  const alias = aliasFor(providerKey)
+  return {
+    id: providerKey,
+    iconKey: alias?.iconKey ?? providerKey.toLowerCase(),
+    provider: alias?.provider ?? titleCaseToken(providerKey),
+    label: alias?.provider ?? titleCaseToken(providerKey),
+  }
+}
+
 export function fallbackModelColor(key: string): string {
   const palette = [
     '#2563eb', '#0891b2', '#059669', '#7c3aed', '#db2777',

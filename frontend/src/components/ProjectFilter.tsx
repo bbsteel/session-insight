@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import {
-  defaultOrderForKey,
   getProjectSortPref,
   setProjectSortPref,
   sortProjects,
   type ProjectEntry,
   type ProjectSortKey,
-  type ProjectSortOrder,
   type ProjectSortPref,
 } from '../projectSort'
+import SortControls from './SortControls'
+import { useAnchoredPanelRect } from './useAnchoredPanelRect'
 
 export type { ProjectEntry }
 
@@ -18,6 +18,11 @@ interface ProjectFilterProps {
   selected: string
   onSelect: (project: string) => void
 }
+
+const SORT_KEYS: ProjectSortKey[] = ['name', 'sessions', 'recent']
+
+/** Widest panel the flat project grid opens at; clamped to the viewport. */
+const PANEL_MAX_WIDTH = 720
 
 function FolderIcon({ size = 16 }: { size?: number }) {
   return (
@@ -37,19 +42,6 @@ function FolderIcon({ size = 16 }: { size?: number }) {
   )
 }
 
-const SORT_KEYS: ProjectSortKey[] = ['name', 'sessions', 'recent']
-
-function sortKeyLabel(translate: (key: string) => string, key: ProjectSortKey): string {
-  switch (key) {
-    case 'name':
-      return translate('filter.projectSort.name')
-    case 'sessions':
-      return translate('filter.projectSort.sessions')
-    case 'recent':
-      return translate('filter.projectSort.recent')
-  }
-}
-
 export default function ProjectFilter({ projects, selected, onSelect }: ProjectFilterProps) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
@@ -57,6 +49,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
   const [currentSortPref, setCurrentSortPref] = useState<ProjectSortPref>(() => getProjectSortPref())
   const containerRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const panelRect = useAnchoredPanelRect(open, containerRef, PANEL_MAX_WIDTH)
 
   const total = projects.reduce((n, p) => n + p.session_count, 0)
   const selectedEntry = selected ? projects.find(p => p.name === selected) : undefined
@@ -95,16 +88,6 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
     setProjectSortPref(newSortPref)
   }
 
-  const selectSortKey = (key: ProjectSortKey) => {
-    if (key === currentSortPref.key) return
-    applySort({ key, order: defaultOrderForKey(key) })
-  }
-
-  const toggleOrder = () => {
-    const order: ProjectSortOrder = currentSortPref.order === 'asc' ? 'desc' : 'asc'
-    applySort({ ...currentSortPref, order })
-  }
-
   const sortedProjects = useMemo(
     () => sortProjects(projects, currentSortPref.key, currentSortPref.order),
     [projects, currentSortPref.key, currentSortPref.order],
@@ -115,9 +98,6 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
     : sortedProjects
 
   if (projects.length === 0) return null
-
-  const orderLabel = currentSortPref.order === 'asc' ? t('filter.projectSort.asc') : t('filter.projectSort.desc')
-  const orderAria = t('filter.projectSort.toggleOrder', { order: orderLabel })
 
   return (
     <div className="px-4 pb-2 flex-shrink-0">
@@ -150,11 +130,12 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
           </svg>
         </button>
 
-        {open && (
+        {open && panelRect && (
           <div
             role="listbox"
             aria-label={t('filter.projectsLabel')}
-            className="absolute top-full mt-1 left-0 right-0 z-[var(--z-dropdown)] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg"
+            style={{ position: 'fixed', left: panelRect.left, top: panelRect.top, width: panelRect.width, maxHeight: panelRect.maxHeight }}
+            className="z-[var(--z-dropdown)] flex flex-col rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-lg"
           >
             {/* Search box */}
             <div className="p-1.5 border-b border-[var(--border-default)]">
@@ -173,56 +154,16 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
               </div>
             </div>
 
-            {/* Sort controls */}
-            <div
-              className="px-1.5 py-1.5 border-b border-[var(--border-default)] flex items-center gap-1"
-              role="group"
-              aria-label={t('filter.projectSort.label')}
-            >
-              <div className="flex flex-1 min-w-0 rounded border border-[var(--border-default)] overflow-hidden">
-                {SORT_KEYS.map(key => {
-                  const active = currentSortPref.key === key
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => selectSortKey(key)}
-                      aria-pressed={active}
-                      title={sortKeyLabel(t, key)}
-                      className={`flex-1 min-w-0 h-6 px-1 text-[10px] leading-none truncate transition-colors duration-fast ${
-                        active
-                          ? 'bg-[var(--bg-surface-selected)] text-[var(--text-primary)] font-medium'
-                          : 'bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-                      }`}
-                    >
-                      {sortKeyLabel(t, key)}
-                    </button>
-                  )
-                })}
-              </div>
-              <button
-                type="button"
-                onClick={toggleOrder}
-                aria-label={orderAria}
-                title={orderAria}
-                className="flex-shrink-0 h-6 w-6 inline-flex items-center justify-center rounded border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] transition-colors duration-fast"
-              >
-                {currentSortPref.order === 'asc' ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="12" y1="19" x2="12" y2="5" />
-                    <polyline points="5 12 12 5 19 12" />
-                  </svg>
-                ) : (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <polyline points="19 12 12 19 5 12" />
-                  </svg>
-                )}
-              </button>
-            </div>
+            <SortControls
+              keys={SORT_KEYS}
+              nameKey="name"
+              currentSortPref={currentSortPref}
+              onSortPrefChange={applySort}
+              groupLabel={t('filter.sort.label')}
+            />
 
-            {/* Options */}
-            <div className="max-h-60 overflow-y-auto py-1">
+            {/* Options: flat grid so the full project list is visible at a glance */}
+            <div className="min-h-0 flex-1 overflow-y-auto py-1">
               {!search.trim() && (
                 <button
                   type="button"
@@ -239,22 +180,24 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
                 </button>
               )}
 
-              {visible.map(p => (
-                <button
-                  key={p.name}
-                  type="button"
-                  role="option"
-                  aria-selected={selected === p.name}
-                  onClick={() => pick(p.name)}
-                  className={`w-full px-2.5 py-2 flex items-center gap-2 text-left transition-colors duration-fast ${
-                    selected === p.name ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
-                  }`}
-                >
-                  <span className="text-[var(--accent-blue)] flex-shrink-0"><FolderIcon size={16} /></span>
-                  <span className="text-body text-[var(--text-primary)] truncate" title={p.name}>{p.name}</span>
-                  <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{p.session_count}</span>
-                </button>
-              ))}
+              <div className="grid gap-0.5 px-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+                {visible.map(p => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    role="option"
+                    aria-selected={selected === p.name}
+                    onClick={() => pick(p.name)}
+                    className={`px-2.5 py-2 flex items-center gap-2 text-left rounded transition-colors duration-fast ${
+                      selected === p.name ? 'bg-[var(--bg-surface-selected)]' : 'hover:bg-[var(--bg-surface-hover)]'
+                    }`}
+                  >
+                    <span className="text-[var(--accent-blue)] flex-shrink-0"><FolderIcon size={16} /></span>
+                    <span className="min-w-0 flex-1 text-body text-[var(--text-primary)] truncate" title={p.name}>{p.name}</span>
+                    <span className="ml-auto text-helper text-[var(--text-muted)] flex-shrink-0 tabular-nums">{p.session_count}</span>
+                  </button>
+                ))}
+              </div>
 
               {visible.length === 0 && (
                 <div className="px-2.5 py-3 text-center text-helper text-[var(--text-muted)]">{t('filter.noProjects')}</div>
