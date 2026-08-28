@@ -933,35 +933,37 @@ func migrate(conn *sql.DB) error {
 	// rebuilt v34 objects (widened CHECKs, extra columns) and recorded a
 	// version this binary does not own. The physical-schema audit would then
 	// report "v34 incompatible table …" and refuse to start. Skip those
-	// audits when the recorded schema is ahead; extra objects are unused.
+	// audits when the recorded schema is ahead; extra objects are unused. No
+	// migration owned by this binary can be pending once its recorded version
+	// is ahead, so leave migrate immediately.
 	if maxVersion > currentSchemaVersion {
 		log.Printf("database schema version %d is newer than this binary (supports %d); skipping git-association schema audits", maxVersion, currentSchemaVersion)
-	} else {
-		if err := migrateGitAssociationV34(conn); err != nil {
-			return err
-		}
-		// Version 35 adds Session↔Change Request links, repository-scoped reverse
-		// lookup, sync ordering, and source-repository alias constraints. It is a
-		// separate physical-schema audit so partially created pre-release v34
-		// databases are repaired without pretending upstream v33 owned these rows.
-		if err := migrateGitAssociationV35(conn); err != nil {
-			return err
-		}
-		// Version 36 preserves explicitly unavailable special/missing worktree
-		// entries instead of forcing the capture layer to drop or misclassify them.
-		if err := migrateGitAssociationV36(conn); err != nil {
-			return err
-		}
-		// Version 37 indexes exact, local PR/MR creation evidence independently
-		// from optional hosted metadata and network approval.
-		if err := migrateGitAssociationV37(conn); err != nil {
-			return err
-		}
-		// Version 40 stores recognized PR/MR URLs from any session text, not only
-		// GitHub/GitLab CLI create commands.
-		if err := migrateGitAssociationV40(conn); err != nil {
-			return err
-		}
+		return nil
+	}
+	if err := migrateGitAssociationV34(conn); err != nil {
+		return err
+	}
+	// Version 35 adds Session↔Change Request links, repository-scoped reverse
+	// lookup, sync ordering, and source-repository alias constraints. It is a
+	// separate physical-schema audit so partially created pre-release v34
+	// databases are repaired without pretending upstream v33 owned these rows.
+	if err := migrateGitAssociationV35(conn); err != nil {
+		return err
+	}
+	// Version 36 preserves explicitly unavailable special/missing worktree
+	// entries instead of forcing the capture layer to drop or misclassify them.
+	if err := migrateGitAssociationV36(conn); err != nil {
+		return err
+	}
+	// Version 37 indexes exact, local PR/MR creation evidence independently
+	// from optional hosted metadata and network approval.
+	if err := migrateGitAssociationV37(conn); err != nil {
+		return err
+	}
+	// Version 40 stores recognized PR/MR URLs from any session text, not only
+	// GitHub/GitLab CLI create commands.
+	if err := migrateGitAssociationV40(conn); err != nil {
+		return err
 	}
 	// Version 41: persistent local excerpts. The CREATE TABLE above safely
 	// creates it for both fresh installs and existing databases.
