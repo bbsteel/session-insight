@@ -194,6 +194,17 @@ func (v *profileValidator) add(code ProfileIssueCode, field, detail string) {
 	v.issues = append(v.issues, ValidationIssue{Code: code, Field: field, Detail: detail})
 }
 
+// normalizeOriginValue canonicalizes an absolute http(s) origin: scheme and
+// host are lowercased so equivalent spellings compare equal everywhere the
+// allowlist is consulted.
+func normalizeOriginValue(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", false
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), true
+}
+
 // validateOriginValue requires an absolute http(s) origin: scheme, host, and
 // optional port only. Paths, queries, fragments, and userinfo are rejected so
 // an origin can never smuggle a token or pin one API path.
@@ -208,7 +219,8 @@ func validateOriginValue(v *profileValidator, field, raw string) string {
 		v.add(IssueProfileContractInvalid, field, "must not contain userinfo, path, query, or fragment data")
 		return ""
 	}
-	return strings.ToLower(u.Scheme) + "://" + u.Host
+	origin, _ := normalizeOriginValue(raw)
+	return origin
 }
 
 // validatePathTemplate enforces the restricted template grammar: literal
@@ -337,8 +349,8 @@ func validateOperation(v *profileValidator, field string, id OperationID, operat
 	if origin != "" {
 		listed := false
 		for _, rawEndpoint := range profile.EndpointOrigins {
-			if endpoint, err := url.Parse(rawEndpoint); err == nil &&
-				strings.ToLower(endpoint.Scheme)+"://"+endpoint.Host == origin {
+			endpointOrigin, ok := normalizeOriginValue(rawEndpoint)
+			if ok && endpointOrigin == origin {
 				listed = true
 				break
 			}
@@ -392,6 +404,11 @@ func validateOperation(v *profileValidator, field string, id OperationID, operat
 	validateOperationResponse(v, field+".response", id, operation.Response)
 }
 
+// referenceParameterNames is the closed set of logical reference parameters
+// the reference template declares: the repository locator and the change
+// number. `reference.*` bindings may only name these.
+var referenceParameterNames = map[string]bool{"repository": true, "number": true}
+
 // validateParameterBinding enforces the closed binding grammar:
 // reference.<path-parameter>, operation.<operation-id>.<field>, or
 // literal:<fixed non-sensitive value>.
@@ -403,6 +420,10 @@ func validateParameterBinding(v *profileValidator, field string, owner Operation
 	if name, ok := strings.CutPrefix(binding, "reference."); ok {
 		if !templateParameterPattern.MatchString(name) {
 			v.add(IssueProfileContractInvalid, field, "reference bindings must name a valid reference parameter")
+			return
+		}
+		if !referenceParameterNames[name] {
+			v.add(IssueMappingIncomplete, field, "reference bindings must name a declared reference parameter")
 		}
 		return
 	}
@@ -441,6 +462,15 @@ func validatePagination(v *profileValidator, field string, pagination Pagination
 			v.add(IssueProfileContractInvalid, field+"."+name, "invalid query parameter name")
 		}
 	}
+	// per_page is a query parameter name in every mode that allows it; when
+	// set, it must always be a syntactically valid parameter name.
+	if pagination.PerPageParameter != "" && !templateParameterPattern.MatchString(pagination.PerPageParameter) {
+		v.add(IssueProfileContractInvalid, field+".per_page_parameter", "invalid query parameter name")
+	}
+	if pagination.PerPageParameter != "" &&
+		(pagination.Mode == PaginationCursorBody || pagination.Mode == PaginationCursorHeader) {
+		v.add(IssueProfileContractInvalid, field+".per_page_parameter", "cursor modes forbid a per-page parameter")
+	}
 	switch pagination.Mode {
 	case PaginationNone:
 		if pagination.PageParameter != "" || pagination.PerPageParameter != "" ||
@@ -450,9 +480,6 @@ func validatePagination(v *profileValidator, field string, pagination Pagination
 		}
 	case PaginationPageNumber:
 		requireName("page_parameter", pagination.PageParameter)
-		if pagination.PerPageParameter != "" && !templateParameterPattern.MatchString(pagination.PerPageParameter) {
-			v.add(IssueProfileContractInvalid, field+".per_page_parameter", "invalid query parameter name")
-		}
 		if pagination.CursorParameter != "" || pagination.NextCursorPointer != "" || pagination.NextCursorHeader != "" {
 			v.add(IssueProfileContractInvalid, field, "page_number mode forbids cursor fields")
 		}
@@ -542,16 +569,22 @@ func validateOperationResponse(v *profileValidator, field string, id OperationID
 
 func validateCapabilities(v *profileValidator, profile Profile) {
 	capabilities := profile.Capabilities
-	for field, state := range map[string]CapabilityState{
-		"capabilities.metadata":      capabilities.Metadata,
-		"capabilities.file_set":      capabilities.FileSet,
-		"capabilities.patches":       capabilities.Patches,
-		"capabilities.modes":         capabilities.Modes,
-		"capabilities.commits":       capabilities.Commits,
-		"capabilities.repository_id": capabilities.RepositoryID,
-	} {
-		if !IsKnownCapabilityState(state) {
-			v.add(IssueProfileContractInvalid, field, "unknown capability state")
+	// Iterate in a fixed order: ValidationIssues documents a stable order and
+	// Error() reports the first issue, so map iteration is not allowed here.
+	capabilityStates := []struct {
+		field string
+		state CapabilityState
+	}{
+		{"capabilities.metadata", capabilities.Metadata},
+		{"capabilities.file_set", capabilities.FileSet},
+		{"capabilities.patches", capabilities.Patches},
+		{"capabilities.modes", capabilities.Modes},
+		{"capabilities.commits", capabilities.Commits},
+		{"capabilities.repository_id", capabilities.RepositoryID},
+	}
+	for _, capability := range capabilityStates {
+		if !IsKnownCapabilityState(capability.state) {
+			v.add(IssueProfileContractInvalid, capability.field, "unknown capability state")
 		}
 	}
 	if capabilities.ContentAnchor != "" && !contentAnchorValues[capabilities.ContentAnchor] {
@@ -582,14 +615,19 @@ func validateCapabilities(v *profileValidator, profile Profile) {
 }
 
 func validateLimits(v *profileValidator, limits Limits) {
-	for field, value := range map[string]int64{
-		"limits.maximum_files":          limits.MaximumFiles,
-		"limits.maximum_commits":        limits.MaximumCommits,
-		"limits.maximum_pages":          limits.MaximumPages,
-		"limits.maximum_response_bytes": limits.MaximumResponseBytes,
-	} {
-		if value < 0 {
-			v.add(IssueProfileContractInvalid, field, "limits must not be negative")
+	// Fixed order, same determinism rule as validateCapabilities.
+	limitFields := []struct {
+		field string
+		value int64
+	}{
+		{"limits.maximum_files", limits.MaximumFiles},
+		{"limits.maximum_commits", limits.MaximumCommits},
+		{"limits.maximum_pages", limits.MaximumPages},
+		{"limits.maximum_response_bytes", limits.MaximumResponseBytes},
+	}
+	for _, limit := range limitFields {
+		if limit.value < 0 {
+			v.add(IssueProfileContractInvalid, limit.field, "limits must not be negative")
 		}
 	}
 }

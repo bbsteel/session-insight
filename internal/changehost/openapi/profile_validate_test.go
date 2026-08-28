@@ -266,3 +266,50 @@ func TestValidateProfileRejectsDraftShapedMissingMappings(t *testing.T) {
 		t.Fatalf("empty field mapping must be reported incomplete: %+v", issues)
 	}
 }
+
+func TestValidateProfileRejectsUndeclaredReferenceBinding(t *testing.T) {
+	profile := validTestProfile()
+	profile.Operations.ResolveChange.Parameters["number"] = "reference.unknown"
+	issues := ValidateProfile(profile)
+	found := false
+	for _, issue := range issues {
+		if issue.Code == IssueMappingIncomplete && strings.Contains(issue.Field, "parameters.number") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("reference.unknown must be rejected as undeclared: %+v", issues)
+	}
+}
+
+func TestValidateProfileRejectsPerPageInCursorModes(t *testing.T) {
+	profile := validTestProfile()
+	profile.Operations.ListFiles.Pagination.PerPageParameter = "per_page"
+	issues := ValidateProfile(profile)
+	found := false
+	for _, issue := range issues {
+		if issue.Code == IssueProfileContractInvalid && strings.Contains(issue.Field, "per_page_parameter") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("per_page in cursor_body mode must be rejected: %+v", issues)
+	}
+
+	// Valid name in page_number mode stays accepted.
+	profile = validTestProfile()
+	profile.Operations.ListFiles.Pagination = Pagination{
+		Mode: PaginationPageNumber, PageParameter: "page", PerPageParameter: "per_page",
+	}
+	if issues := ValidateProfile(profile); !issues.OK() {
+		t.Fatalf("valid page_number pagination rejected: %+v", issues)
+	}
+}
+
+func TestValidateProfileOriginComparisonIgnoresHostCase(t *testing.T) {
+	profile := validTestProfile()
+	profile.EndpointOrigins = []string{"https://REVIEW.internal", "https://API.review.internal"}
+	if issues := ValidateProfile(profile); !issues.OK() {
+		t.Fatalf("equivalent host spellings must validate: %+v", issues)
+	}
+}

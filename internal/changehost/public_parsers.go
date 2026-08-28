@@ -81,8 +81,9 @@ func (GitHubParser) ParseRemote(raw string) (model.HostedRepositoryReference, bo
 		return model.HostedRepositoryReference{}, false
 	}
 	return model.HostedRepositoryReference{
-		Provider: model.ChangeProviderGitHub, DisplayOrigin: publicGitHubOrigin,
-		Slug: slug, SanitizedRemote: publicGitHubOrigin + "/" + slug,
+		Provider: model.ChangeProviderGitHub, HostID: PublicGitHubHostKey,
+		DisplayOrigin: publicGitHubOrigin,
+		Slug:          slug, SanitizedRemote: publicGitHubOrigin + "/" + slug,
 	}, true
 }
 
@@ -118,8 +119,9 @@ func (GitLabParser) ParseRemote(raw string) (model.HostedRepositoryReference, bo
 		return model.HostedRepositoryReference{}, false
 	}
 	return model.HostedRepositoryReference{
-		Provider: model.ChangeProviderGitLab, DisplayOrigin: publicGitLabOrigin,
-		Slug: slug, SanitizedRemote: publicGitLabOrigin + "/" + slug,
+		Provider: model.ChangeProviderGitLab, HostID: PublicGitLabHostKey,
+		DisplayOrigin: publicGitLabOrigin,
+		Slug:          slug, SanitizedRemote: publicGitLabOrigin + "/" + slug,
 	}, true
 }
 

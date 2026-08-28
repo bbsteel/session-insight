@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -104,11 +103,13 @@ func TestHTTPClientAppliesProfileDeclaredCredentialHeader(t *testing.T) {
 	if _, err := client.Do(context.Background(), OperationResolveChange, http.MethodGet, "https://api.github.com/repos/acme/widgets/pulls/42", nil); err != nil {
 		t.Fatal(err)
 	}
+	// Failure output must never include the captured header set: it holds the
+	// credential value. Report presence booleans only.
 	if seen.Get("PRIVATE-TOKEN") != "token-value" {
-		t.Fatalf("profile-declared header missing: %v", seen)
+		t.Fatalf("profile-declared header missing (present=%v)", seen.Get("PRIVATE-TOKEN") != "")
 	}
 	if seen.Get("Authorization") != "" {
-		t.Fatalf("credential source must not set its own header: %v", seen)
+		t.Fatalf("credential source must not set its own header (authorization_present=%v)", seen.Get("Authorization") != "")
 	}
 }
 
@@ -129,9 +130,11 @@ func TestHTTPClientRejectsInvalidResolvedAuthentication(t *testing.T) {
 }
 
 func TestHTTPClientStripsCustomCredentialHeaderOnRedirect(t *testing.T) {
-	seen := []string{}
+	// Track credential-header presence per request, never the value itself:
+	// failure output must stay free of credential material.
+	seen := []bool{}
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		seen = append(seen, request.URL.Host+" token="+request.Header.Get("PRIVATE-TOKEN"))
+		seen = append(seen, request.Header.Get("PRIVATE-TOKEN") != "")
 		if request.URL.Host == "github.com" {
 			header := http.Header{"Location": {"https://api.github.com/repos/acme/widgets/pulls/42"}}
 			return response(request, http.StatusFound, "", header), nil
@@ -151,7 +154,7 @@ func TestHTTPClientStripsCustomCredentialHeaderOnRedirect(t *testing.T) {
 	if _, err := client.Do(context.Background(), OperationResolveChange, http.MethodGet, "https://github.com/acme/widgets/pull/42", nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(seen) != 2 || !strings.Contains(seen[0], "s3cret") || strings.Contains(seen[1], "s3cret") {
-		t.Fatalf("redirect credential policy violated: %v", seen)
+	if len(seen) != 2 || !seen[0] || seen[1] {
+		t.Fatalf("redirect credential policy violated: credential header presence per hop = %v", seen)
 	}
 }

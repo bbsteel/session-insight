@@ -1,6 +1,13 @@
 package model
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
+
+// ErrInvalidCredentialReference marks a reference that fails the
+// keyring:/env: contract.
+var ErrInvalidCredentialReference = errors.New("invalid credential reference")
 
 // CredentialReferenceScheme identifies where a secret lives. The reference
 // itself is safe to persist; the secret it points to is never stored in the

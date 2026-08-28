@@ -46,6 +46,26 @@ type ChangeHostProfileRecord struct {
 	LastFailureCode     string                   `json:"last_failure_code,omitempty"`
 }
 
+// profileMatchesRecord enforces that the decoded document and the row agree
+// on identity, display name, and provenance digest. Without this a row could
+// show metadata belonging to a different document.
+func profileMatchesRecord(record ChangeHostProfileRecord, profile openapi.Profile) error {
+	if profile.SchemaVersion != record.SchemaVersion || profile.ProfileID != record.ProfileID ||
+		profile.ProfileRevision != record.ProfileRevision || profile.HostID != record.HostID {
+		return fmt.Errorf("change host profile document does not match its row identity")
+	}
+	if profile.Adapter != openapi.AdapterKind {
+		return fmt.Errorf("change host profile document must use the %q adapter", openapi.AdapterKind)
+	}
+	if profile.DisplayName != record.DisplayName || profile.SpecDigest != record.SpecDigest {
+		return fmt.Errorf("change host profile row metadata does not match its document")
+	}
+	if _, ok := model.ParseCredentialReference(profile.Authentication.CredentialReference); !ok {
+		return fmt.Errorf("change host profile credential reference is invalid")
+	}
+	return nil
+}
+
 // validateProfileRecord enforces the storage-level invariants: the document
 // decodes, its identity matches the row, and verified-or-later revisions pass
 // the full structural contract. Drafts may still be mid-inference, so only
@@ -61,15 +81,8 @@ func validateProfileRecord(record ChangeHostProfileRecord) error {
 	if err != nil {
 		return err
 	}
-	if profile.SchemaVersion != record.SchemaVersion || profile.ProfileID != record.ProfileID ||
-		profile.ProfileRevision != record.ProfileRevision || profile.HostID != record.HostID {
-		return fmt.Errorf("change host profile document does not match its row identity")
-	}
-	if profile.Adapter != openapi.AdapterKind {
-		return fmt.Errorf("change host profile document must use the %q adapter", openapi.AdapterKind)
-	}
-	if _, ok := model.ParseCredentialReference(profile.Authentication.CredentialReference); !ok {
-		return fmt.Errorf("change host profile credential reference is invalid")
+	if err := profileMatchesRecord(record, profile); err != nil {
+		return err
 	}
 	switch record.Lifecycle {
 	case openapi.ProfileVerified, openapi.ProfileActive, openapi.ProfileDegraded:
@@ -130,12 +143,13 @@ func (db *DB) UpdateChangeHostProfileDraft(profileID, profileJSON, reportJSON st
 	if err != nil {
 		return err
 	}
-	if profile.ProfileID != existing.ProfileID || profile.HostID != existing.HostID ||
-		profile.ProfileRevision != existing.ProfileRevision || profile.SchemaVersion != existing.SchemaVersion {
-		return fmt.Errorf("change host profile document does not match its row identity")
-	}
-	if _, ok := model.ParseCredentialReference(profile.Authentication.CredentialReference); !ok {
-		return fmt.Errorf("change host profile credential reference is invalid")
+	// The draft update lets the digest follow the document (a re-probe may
+	// carry a newer digest), while identity and display name stay pinned to
+	// the row.
+	checkRecord := existing
+	checkRecord.SpecDigest = profile.SpecDigest
+	if err := profileMatchesRecord(checkRecord, profile); err != nil {
+		return err
 	}
 	if !json.Valid([]byte(reportJSON)) {
 		return fmt.Errorf("change host profile inference report is not valid JSON")
@@ -216,7 +230,11 @@ func (db *DB) MarkChangeHostProfileVerified(profileID string, verifiedAt time.Ti
 	if record.Lifecycle != openapi.ProfileDraft && record.Lifecycle != openapi.ProfileInvalid {
 		return ErrChangeHostProfileConflict
 	}
-	if issues := openapi.ValidateProfile(mustDecodeProfile(record)); !issues.OK() {
+	profile := mustDecodeProfile(record)
+	if err := profileMatchesRecord(record, profile); err != nil {
+		return err
+	}
+	if issues := openapi.ValidateProfile(profile); !issues.OK() {
 		return issues
 	}
 	now := model.FormatTime(time.Now().UTC())
@@ -235,16 +253,18 @@ func (db *DB) MarkChangeHostProfileVerified(profileID string, verifiedAt time.Ti
 // ActivateChangeHostProfile atomically makes one verified revision the active
 // profile of its host. Any previously active revision is revoked in the same
 // transaction so a host never has zero or two active revisions mid-switch.
-// The host itself must be approved.
+// The host itself must be approved. The host row's credential reference is
+// synchronized from the activated profile so host status reflects the
+// credential the runtime will actually use.
 func (db *DB) ActivateChangeHostProfile(profileID string, activatedAt time.Time) error {
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var hostID, lifecycle string
-	err = tx.QueryRow(`SELECT host_id, lifecycle FROM change_host_profiles WHERE profile_id = ?`, profileID).
-		Scan(&hostID, &lifecycle)
+	var hostID, lifecycle, profileJSON string
+	err = tx.QueryRow(`SELECT host_id, lifecycle, profile_json FROM change_host_profiles WHERE profile_id = ?`, profileID).
+		Scan(&hostID, &lifecycle, &profileJSON)
 	if err == sql.ErrNoRows {
 		return ErrChangeHostProfileNotFound
 	}
@@ -253,6 +273,14 @@ func (db *DB) ActivateChangeHostProfile(profileID string, activatedAt time.Time)
 	}
 	if lifecycle != string(openapi.ProfileVerified) {
 		return ErrChangeHostProfileConflict
+	}
+	profile, err := openapi.DecodeProfile([]byte(profileJSON))
+	if err != nil {
+		return fmt.Errorf("activate change host profile: %w", err)
+	}
+	credentialReference, ok := model.ParseCredentialReference(profile.Authentication.CredentialReference)
+	if !ok {
+		return fmt.Errorf("activate change host profile: %w", model.ErrInvalidCredentialReference)
 	}
 	var hostLifecycle string
 	if err := tx.QueryRow(`SELECT lifecycle FROM change_hosts WHERE host_id = ?`, hostID).Scan(&hostLifecycle); err != nil {
@@ -268,6 +296,12 @@ func (db *DB) ActivateChangeHostProfile(profileID string, activatedAt time.Time)
 		model.FormatTime(activatedAt), hostID,
 	); err != nil {
 		return fmt.Errorf("activate change host profile: demote previous: %w", err)
+	}
+	if _, err := tx.Exec(`
+		UPDATE change_hosts SET credential_reference = ? WHERE host_id = ? AND lifecycle = 'approved'`,
+		string(credentialReference), hostID,
+	); err != nil {
+		return fmt.Errorf("activate change host profile: sync credential reference: %w", err)
 	}
 	result, err := tx.Exec(`
 		UPDATE change_host_profiles

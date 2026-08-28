@@ -335,3 +335,50 @@ func TestV43MigrationIsIdempotentAndPreservesRows(t *testing.T) {
 		t.Fatalf("profile did not survive reopen: exists=%v lifecycle=%v err=%v", exists, stored.Lifecycle, err)
 	}
 }
+
+func TestV43ActivationSyncsCredentialReferenceToHost(t *testing.T) {
+	database := openV43TestDB(t)
+	storeApprovedOpenAPIHost(t, database, "review-company-internal")
+
+	record := profileRecord("profile-1", "review-company-internal", 1, openapi.ProfileDraft)
+	record.ProfileJSON = validStoreProfile(t, "profile-1", "review-company-internal", 1)
+	if err := database.CreateChangeHostProfileDraft(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkChangeHostProfileVerified("profile-1", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ActivateChangeHostProfile("profile-1", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	host, exists, err := database.ChangeHost("review-company-internal")
+	if err != nil || !exists {
+		t.Fatal(err)
+	}
+	if host.CredentialReference != "env:REVIEW_TOKEN" {
+		t.Fatalf("activation must sync the profile credential reference to the host: %q", host.CredentialReference)
+	}
+}
+
+func TestV43ProfileRowMetadataMustMatchDocument(t *testing.T) {
+	database := openV43TestDB(t)
+	storeApprovedOpenAPIHost(t, database, "review-company-internal")
+
+	// DisplayName mismatch between the row and the document is rejected.
+	record := profileRecord("profile-1", "review-company-internal", 1, openapi.ProfileDraft)
+	record.DisplayName = "Different Name"
+	record.ProfileJSON = validStoreProfile(t, "profile-1", "review-company-internal", 1)
+	if err := database.CreateChangeHostProfileDraft(record); err == nil ||
+		!strings.Contains(err.Error(), "row metadata") {
+		t.Fatalf("display name mismatch accepted: %v", err)
+	}
+
+	// SpecDigest mismatch is rejected the same way.
+	record = profileRecord("profile-1", "review-company-internal", 1, openapi.ProfileDraft)
+	record.SpecDigest = "sha256:" + strings.Repeat("d", 64)
+	record.ProfileJSON = validStoreProfile(t, "profile-1", "review-company-internal", 1)
+	if err := database.CreateChangeHostProfileDraft(record); err == nil ||
+		!strings.Contains(err.Error(), "row metadata") {
+		t.Fatalf("spec digest mismatch accepted: %v", err)
+	}
+}

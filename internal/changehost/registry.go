@@ -275,7 +275,15 @@ func (r *Registry) ResolveRemote(raw string) (model.HostedRepositoryReference, e
 			continue
 		}
 		ref, ok := candidate.parser.ParseRemote(raw)
-		if ok && ref.Provider == candidate.parser.Kind() && validRepositoryReference(ref) {
+		if !ok || ref.Provider != candidate.parser.Kind() {
+			continue
+		}
+		// Host-bound parsers must stamp their host: a reference without the
+		// matching host ID is not a match for this parser.
+		if candidate.hostID != "" && ref.HostID != candidate.hostID {
+			continue
+		}
+		if validRepositoryReference(ref) {
 			matches = append(matches, ref)
 		}
 	}
@@ -299,6 +307,11 @@ func (r *Registry) ResolveRemote(raw string) (model.HostedRepositoryReference, e
 
 func validRepositoryReference(ref model.HostedRepositoryReference) bool {
 	if !model.IsKnownChangeProviderKind(ref.Provider) || strings.TrimSpace(ref.Slug) == "" || strings.TrimSpace(ref.Slug) != ref.Slug {
+		return false
+	}
+	// An OpenAPI reference must name its host; host selection never relies on
+	// the provider kind alone.
+	if ref.Provider == model.ChangeProviderOpenAPI && ref.HostID == "" {
 		return false
 	}
 	if issue := validateOrigin("display_origin", ref.DisplayOrigin); issue != nil {

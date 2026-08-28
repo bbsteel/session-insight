@@ -341,10 +341,13 @@ type HostedRepositoryIdentity struct {
 }
 
 type HostedRepositoryReference struct {
-	Provider        ChangeProviderKind `json:"provider"`
-	DisplayOrigin   string             `json:"display_origin"`
-	Slug            string             `json:"slug"`
-	SanitizedRemote string             `json:"sanitized_remote"`
+	Provider ChangeProviderKind `json:"provider"`
+	// HostID binds an OpenAPI-profile reference to exactly one approved host.
+	// Built-in providers fill their fixed public host key; Generic stays empty.
+	HostID          string `json:"host_id,omitempty"`
+	DisplayOrigin   string `json:"display_origin"`
+	Slug            string `json:"slug"`
+	SanitizedRemote string `json:"sanitized_remote"`
 }
 
 type ChangeRequestReference struct {

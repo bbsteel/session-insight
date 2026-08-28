@@ -40,8 +40,9 @@ func (p *stubHostParser) ParseRemote(raw string) (model.HostedRepositoryReferenc
 		return model.HostedRepositoryReference{}, false
 	}
 	return model.HostedRepositoryReference{
-		Provider: model.ChangeProviderOpenAPI, DisplayOrigin: p.origin,
-		Slug: "team/repo", SanitizedRemote: p.origin + "/team/repo",
+		Provider: model.ChangeProviderOpenAPI, HostID: p.hostID,
+		DisplayOrigin: p.origin,
+		Slug:          "team/repo", SanitizedRemote: p.origin + "/team/repo",
 	}, true
 }
 
@@ -156,5 +157,49 @@ func TestRegistryHostParserHostIDMismatchIsNotAMatch(t *testing.T) {
 	if reference, ok := registry.ParseReference("https://review.internal/projects/team/repo/pulls/1234"); ok &&
 		reference.Provider == model.ChangeProviderOpenAPI {
 		t.Fatalf("mismatched host ID produced an openapi reference: %+v", reference)
+	}
+}
+
+func TestRegistryResolveRemoteBindsHostParserHostID(t *testing.T) {
+	registry := NewDefaultRegistry()
+	parser := &stubHostParser{hostID: "review-company-internal", origin: "https://review.internal", remote: true}
+	if err := registry.RegisterHostParser(RegisteredReferenceParser{
+		ID: "review-company-internal/profile-1", HostID: parser.hostID, Parser: parser,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	remote, err := registry.ResolveRemote("https://review.internal/team/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.Provider != model.ChangeProviderOpenAPI || remote.HostID != "review-company-internal" {
+		t.Fatalf("host parser remote lost its host binding: %+v", remote)
+	}
+}
+
+func TestRegistryResolveRemoteRejectsMismatchedHostID(t *testing.T) {
+	registry := NewDefaultRegistry()
+	// The parser stamps a different host ID than its registration; the
+	// registry must not trust the reference.
+	parser := &stubHostParser{hostID: "other-host", origin: "https://review.internal", remote: true}
+	if err := registry.RegisterHostParser(RegisteredReferenceParser{ID: "a", HostID: "expected-host", Parser: parser}); err != nil {
+		t.Fatal(err)
+	}
+	// A generic fallback reference is fine; an openapi-bound one is not.
+	remote, err := registry.ResolveRemote("https://review.internal/team/repo")
+	if err == nil && remote.Provider == model.ChangeProviderOpenAPI {
+		t.Fatalf("mismatched host ID produced an openapi remote reference: %+v", remote)
+	}
+}
+
+func TestRegistryResolveRemoteRejectsHostlessOpenAPIReference(t *testing.T) {
+	registry := NewDefaultRegistry()
+	parser := &stubHostParser{hostID: "", origin: "https://review.internal", remote: true}
+	if err := registry.RegisterHostParser(RegisteredReferenceParser{ID: "a", HostID: "expected-host", Parser: parser}); err != nil {
+		t.Fatal(err)
+	}
+	remote, err := registry.ResolveRemote("https://review.internal/team/repo")
+	if err == nil && remote.Provider == model.ChangeProviderOpenAPI {
+		t.Fatalf("hostless openapi remote reference must not validate: %+v", remote)
 	}
 }
