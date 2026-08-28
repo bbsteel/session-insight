@@ -67,7 +67,10 @@ type HTTPResult struct {
 	Body         []byte
 	ETag         string
 	LastModified string
-	Metadata     ResultMetadata
+	// Link carries the raw RFC 8288 Link header value so pagination inference
+	// can detect a "next" relation without exposing other response headers.
+	Link     string
+	Metadata ResultMetadata
 }
 
 // HTTPClient is a GET/HEAD-only client scoped to one immutable ApprovedHost.
@@ -299,7 +302,8 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 	}
 	result := HTTPResult{
 		StatusCode: response.StatusCode, Body: body, ETag: response.Header.Get("ETag"),
-		LastModified: response.Header.Get("Last-Modified"), Metadata: metadata,
+		LastModified: response.Header.Get("Last-Modified"), Link: response.Header.Get("Link"),
+		Metadata: metadata,
 	}
 	if code, failed := responseErrorCode(response.StatusCode, metadata); failed {
 		result.Body = nil

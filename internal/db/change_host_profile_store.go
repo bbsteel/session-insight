@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -109,6 +110,46 @@ func (db *DB) CreateChangeHostProfileDraft(record ChangeHostProfileRecord) error
 		return fmt.Errorf("create change host profile: %w", err)
 	}
 	return nil
+}
+
+// UpdateChangeHostProfileDraft replaces the document and inference report of
+// a draft/invalid profile (a probe or mapping edit). Identity fields are
+// immutable; active profiles can never pass through here.
+func (db *DB) UpdateChangeHostProfileDraft(profileID, profileJSON, reportJSON string) error {
+	existing, exists, err := db.ChangeHostProfile(profileID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrChangeHostProfileNotFound
+	}
+	if existing.Lifecycle != openapi.ProfileDraft && existing.Lifecycle != openapi.ProfileInvalid {
+		return ErrChangeHostProfileConflict
+	}
+	profile, err := openapi.DecodeProfile([]byte(profileJSON))
+	if err != nil {
+		return err
+	}
+	if profile.ProfileID != existing.ProfileID || profile.HostID != existing.HostID ||
+		profile.ProfileRevision != existing.ProfileRevision || profile.SchemaVersion != existing.SchemaVersion {
+		return fmt.Errorf("change host profile document does not match its row identity")
+	}
+	if _, ok := model.ParseCredentialReference(profile.Authentication.CredentialReference); !ok {
+		return fmt.Errorf("change host profile credential reference is invalid")
+	}
+	if !json.Valid([]byte(reportJSON)) {
+		return fmt.Errorf("change host profile inference report is not valid JSON")
+	}
+	result, err := db.conn.Exec(`
+		UPDATE change_host_profiles
+		SET profile_json = ?, inference_report_json = ?, spec_digest = ?, updated_at = ?
+		WHERE profile_id = ? AND lifecycle IN ('draft','invalid')`,
+		profileJSON, reportJSON, profile.SpecDigest, model.FormatTime(time.Now().UTC()), profileID,
+	)
+	if err != nil {
+		return fmt.Errorf("update change host profile draft: %w", err)
+	}
+	return requireOneRow(result, ErrChangeHostProfileConflict)
 }
 
 func (db *DB) ChangeHostProfile(profileID string) (ChangeHostProfileRecord, bool, error) {
