@@ -927,6 +927,19 @@ func migrate(conn *sql.DB) error {
 	// independent SessionInsight processes cannot interleave partial schemas.
 	// It deliberately leaves index_watermarks untouched: current worktree
 	// state is not a trustworthy historical session-start baseline.
+	//
+	// The default index.db is shared across the primary checkout and any
+	// process that opens ~/.session-insight. A newer binary may already have
+	// rebuilt v34 objects (widened CHECKs, extra columns) and recorded a
+	// version this binary does not own. The physical-schema audit would then
+	// report "v34 incompatible table …" and refuse to start. Skip those
+	// audits when the recorded schema is ahead; extra objects are unused. No
+	// migration owned by this binary can be pending once its recorded version
+	// is ahead, so leave migrate immediately.
+	if maxVersion > currentSchemaVersion {
+		log.Printf("database schema version %d is newer than this binary (supports %d); skipping git-association schema audits", maxVersion, currentSchemaVersion)
+		return nil
+	}
 	if err := migrateGitAssociationV34(conn); err != nil {
 		return err
 	}

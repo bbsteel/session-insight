@@ -89,6 +89,60 @@ func TestV37UpgradesAndRepairsMissingObjects(t *testing.T) {
 	}
 }
 
+func TestOpenSkipsGitAssociationAuditWhenSchemaIsNewer(t *testing.T) {
+	dir := t.TempDir()
+	database, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := database.Conn()
+	if _, err := conn.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`DROP TABLE change_hosts`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`CREATE TABLE change_hosts (
+		host_id TEXT PRIMARY KEY,
+		provider TEXT NOT NULL CHECK (provider IN ('github','gitlab','gitea','forgejo','bitbucket_cloud','bitbucket_data_center','azure_devops','gerrit','openapi','generic')),
+		scheme TEXT NOT NULL DEFAULT 'https' CHECK (scheme IN ('https','http')),
+		hostname TEXT NOT NULL,
+		port INTEGER NOT NULL DEFAULT 443 CHECK (port BETWEEN 1 AND 65535),
+		display_origin TEXT NOT NULL,
+		endpoint_origins_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(endpoint_origins_json)),
+		credential_reference TEXT NOT NULL DEFAULT '',
+		allow_http INTEGER NOT NULL DEFAULT 0 CHECK (allow_http IN (0,1)),
+		allow_private_network INTEGER NOT NULL DEFAULT 0 CHECK (allow_private_network IN (0,1)),
+		lifecycle TEXT NOT NULL CHECK (lifecycle IN ('preview','approved','revoked')),
+		state TEXT NOT NULL CHECK (state IN ('exact','estimated','missing','unavailable')),
+		reason_code TEXT NOT NULL DEFAULT '',
+		approved_at TEXT,
+		revoked_at TEXT,
+		last_checked_at TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`INSERT INTO schema_migrations(version) VALUES (?)`, currentSchemaVersion+1); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open newer schema: %v", err)
+	}
+	defer reopened.Close()
+	var version int
+	if err := reopened.Conn().QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != currentSchemaVersion+1 {
+		t.Fatalf("schema version = %d, want %d", version, currentSchemaVersion+1)
+	}
+}
+
 func TestV37RejectsIncompatiblePhysicalSchema(t *testing.T) {
 	database, err := Open(t.TempDir())
 	if err != nil {
