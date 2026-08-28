@@ -94,6 +94,11 @@ $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\p
 .\session-insight.exe
 ```
 
+`SI_INDEXER_ENABLED` 接受 `1`、`true`、`yes`、`on` 表示启用索引，接受
+`0`、`false`、`no`、`off` 表示关闭索引。未设置或值无效时回退为启用。在
+linked worktree 中关闭后本地索引会保持过期，并会停用源文件 watcher、初始索引
+和定期 reconciliation。主 checkout 始终强制启用索引。
+
 启动后会用实际监听地址打开浏览器（`http://127.0.0.1:<port>/`）。若默认 `PORT` 已被占用并回退到系统分配端口，打开的也是回退后的地址。
 
 ## 常见问题

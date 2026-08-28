@@ -99,9 +99,15 @@ configure_checkout_runtime() {
     PORT="${PORT:-$PRIMARY_PORT}"
     SI_DATA_DIR="${SI_DATA_DIR:-}"
     requested_indexer_enabled="${SI_INDEXER_ENABLED:-}"
-    if [[ "${requested_indexer_enabled,,}" =~ ^(0|false|no|off)$ ]]; then
-      echo "WARNING: ignoring SI_INDEXER_ENABLED=$requested_indexer_enabled in primary checkout (indexer is always enabled)" >&2
-    fi
+    # Bash 3 (the default macOS shell) has no lowercase parameter expansion.
+    # Normalize through POSIX tools before matching the accepted disabled values.
+    local normalized_indexer_enabled
+    normalized_indexer_enabled="$(printf '%s' "$requested_indexer_enabled" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$normalized_indexer_enabled" in
+      0|false|no|off)
+        echo "WARNING: ignoring SI_INDEXER_ENABLED=$requested_indexer_enabled in primary checkout (indexer is always enabled)" >&2
+        ;;
+    esac
     SI_INDEXER_ENABLED=1
   fi
 }
@@ -135,12 +141,14 @@ pid_is_owned() {
 
   # Windows: compare process image path via PowerShell (no /proc).
   if [[ "$IS_WINDOWS" -eq 1 ]] && command -v powershell.exe >/dev/null 2>&1; then
-    local proc_path want
+    local proc_path want normalized_proc_path normalized_binary_path
     proc_path=$(powershell.exe -NoProfile -Command \
       "(Get-Process -Id $pid -ErrorAction SilentlyContinue).Path" 2>/dev/null | tr -d '\r')
     want=$(win_path "$BIN_PATH")
     # Case-insensitive path compare (Windows).
-    [[ -n "$proc_path" && "${proc_path,,}" == "${want,,}" ]]
+    normalized_proc_path=$(printf '%s' "$proc_path" | tr '[:upper:]' '[:lower:]')
+    normalized_binary_path=$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')
+    [[ -n "$proc_path" && "$normalized_proc_path" == "$normalized_binary_path" ]]
     return
   fi
 
