@@ -24,6 +24,13 @@ type SnapshotSyncResult struct {
 	Snapshot  SnapshotResult
 }
 
+// ProfileProvenance is implemented by profile-driven providers so snapshots
+// record which immutable mapping revision produced them.
+type ProfileProvenance interface {
+	ProfileID() string
+	ProfileRevision() int
+}
+
 // SyncSnapshot captures and atomically publishes one immutable provider
 // snapshot. An empty requestedVersion means "current" and is the only form
 // allowed to advance the cache head; a fixed historical request remains
@@ -66,11 +73,16 @@ func SyncSnapshot(
 			Content: append([]byte(nil), content.Content...),
 		})
 	}
-	changeKey, err := store.StoreChangeRequestSnapshot(db.ChangeRequestSnapshotWrite{
+	write := db.ChangeRequestSnapshotWrite{
 		Snapshot: result.Snapshot, SyncStartedAt: syncStartedAt,
 		UpdateCacheHead: requestedVersion == "", Contents: contents,
 		Quota: options.Quota,
-	})
+	}
+	if provenance, ok := provider.(ProfileProvenance); ok {
+		write.ProfileID = provenance.ProfileID()
+		write.ProfileRevision = provenance.ProfileRevision()
+	}
+	changeKey, err := store.StoreChangeRequestSnapshot(write)
 	if err != nil {
 		return SnapshotSyncResult{}, err
 	}

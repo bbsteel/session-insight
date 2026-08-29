@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -142,6 +143,12 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 			quota.ManagerOptions{},
 		),
 	}
+	// Active OpenAPI host profiles must keep parsing across restarts; a
+	// restore failure degrades to built-in parsing only and surfaces in the
+	// server log, never as a startup crash.
+	if err := s.restoreOpenAPIHostParsers(); err != nil {
+		log.Printf("restore OpenAPI host parsers: %v", err)
+	}
 	s.registerRoutes()
 	return s
 }
@@ -177,6 +184,8 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("POST /api/change-host-profiles/{profileId}/probe", s.handleProbeChangeHostProfile)
 	s.Mux.HandleFunc("PATCH /api/change-host-profiles/{profileId}/mapping", s.handlePatchChangeHostProfileMapping)
 	s.Mux.HandleFunc("POST /api/change-host-profiles/{profileId}/verify", s.handleVerifyChangeHostProfile)
+	s.Mux.HandleFunc("POST /api/change-host-profiles/{profileId}/activate", s.handleActivateChangeHostProfile)
+	s.Mux.HandleFunc("POST /api/change-host-profiles/{profileId}/test", s.handleTestChangeHostProfile)
 	s.Mux.HandleFunc("POST /api/change-host-profiles/{profileId}/revoke", s.handleRevokeChangeHostProfile)
 	s.Mux.HandleFunc("GET /api/change-hosts/{hostKey}/status", s.handleGetChangeHostStatus)
 	s.Mux.HandleFunc("POST /api/change-hosts/{hostKey}/refresh", s.handleRefreshChangeHost)

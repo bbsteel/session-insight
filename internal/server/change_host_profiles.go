@@ -773,5 +773,10 @@ func (s *Server) handleRevokeChangeHostProfile(w http.ResponseWriter, r *http.Re
 		writeAPIError(w, http.StatusInternalServerError, "internal")
 		return
 	}
+	// A revoked profile stops parsing immediately and atomically.
+	if err := s.refreshOpenAPIHostParsers(); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

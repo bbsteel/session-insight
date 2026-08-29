@@ -374,10 +374,16 @@ func scoreCommitLeaf(leaf observedField) []FieldCandidate {
 		return candidates
 	}
 	switch name {
-	case "subject", "message", "title", "summary":
-		add("subject", 0.85, "string", nil, "name_match")
-	case "authorname", "author", "committer", "committername":
-		add("author_name", 0.8, "string", nil, "name_match")
+	case "subject":
+		add("subject", 0.95, "string", nil, "name_exact")
+	case "message":
+		add("subject", 0.9, "string", nil, "name_match")
+	case "title", "summary":
+		add("subject", 0.8, "string", nil, "name_similar")
+	case "authorname":
+		add("author_name", 0.95, "string", nil, "name_exact")
+	case "author", "committer", "committername":
+		add("author_name", 0.9, "string", nil, "name_match")
 	case "authoredat", "authoreddate", "authordate", "createdat":
 		if isRFC3339(text) {
 			add("authored_at", 0.9, "rfc3339", &FieldTransform{Name: TransformRFC3339Time}, "rfc3339_value")

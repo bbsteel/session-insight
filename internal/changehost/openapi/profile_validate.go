@@ -548,9 +548,9 @@ func validateOperationResponse(v *profileValidator, field string, id OperationID
 			v.add(IssueProfileContractInvalid, selectorField, "unknown standard field")
 			continue
 		}
-		if selector.Pointer == "" {
+		if selector.Pointer == "" && name != "diff_text" {
 			v.add(IssueMappingIncomplete, selectorField+".pointer", "a field selector requires a JSON pointer")
-		} else {
+		} else if selector.Pointer != "" {
 			validateJSONPointer(v, selectorField+".pointer", selector.Pointer)
 		}
 		if selector.Transform != nil {
