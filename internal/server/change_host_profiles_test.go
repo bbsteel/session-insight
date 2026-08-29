@@ -23,20 +23,20 @@ func fictionalReviewPlatform(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		switch {
-		case r.URL.Path == "/api/projects/team/repo/reviews/1234":
+		switch r.URL.Path {
+		case "/api/projects/team/repo/reviews/1234":
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{
 				"id": 8842,
 				"number": 1234,
 				"title": "Add retry budget",
 				"state": "open",
-				"web_url": "` + "http://" + r.Host + `/projects/team/repo/pulls/1234",
+				"web_url": "`+"http://"+r.Host+`/projects/team/repo/pulls/1234",
 				"repository": {"slug": "team/repo"},
 				"source": {"latestCommit": "0123456789abcdef0123456789abcdef01234567", "branch": "feature/retry"},
 				"destination": {"branch": "main"}
 			}`)
-		case r.URL.Path == "/api/projects/team/repo/reviews/1234/files":
+		case "/api/projects/team/repo/reviews/1234/files":
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{"values": [
 				{"path": "src/main.go", "status": "modified", "diff": "@@ -1 +1 @@\n-old\n+new"},

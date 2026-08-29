@@ -219,9 +219,6 @@ func TestParseDocumentLimits(t *testing.T) {
 		t.Fatal("document without paths accepted")
 	}
 	// Excessive nesting is rejected.
-	deep := `{"openapi":"3.0.3","paths":{"a":0}`
-	deep = strings.Repeat(`{"a":`, maxDocumentDepth+2) + `0` + strings.Repeat(`}`, maxDocumentDepth+2)
-	_ = deep
 	nested := strings.Repeat(`{"a":`, maxDocumentDepth+2) + `0` + strings.Repeat(`}`, maxDocumentDepth+2)
 	if _, err := ParseDocument([]byte(nested)); err == nil {
 		t.Fatal("deeply nested document accepted")

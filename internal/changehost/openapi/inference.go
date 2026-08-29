@@ -56,9 +56,7 @@ func InferChangeFields(response any, ctx InferenceContext) []FieldCandidate {
 	leaves := collectLeaves(response, "", 0)
 	scored := []FieldCandidate{}
 	for _, leaf := range leaves {
-		for _, candidate := range scoreChangeLeaf(leaf, ctx) {
-			scored = append(scored, candidate)
-		}
+		scored = append(scored, scoreChangeLeaf(leaf, ctx)...)
 	}
 	return bestCandidatesPerField(scored)
 }
@@ -331,24 +329,24 @@ func scoreFileLeaf(leaf observedField) []FieldCandidate {
 	if !isString {
 		return candidates
 	}
-	switch {
-	case name == "path" || name == "filepath" || name == "newpath" || name == "filename":
+	switch name {
+	case "path", "filepath", "newpath", "filename":
 		add("path", 0.9, "string", nil, "name_match")
-	case name == "oldpath" || name == "previouspath":
+	case "oldpath", "previouspath":
 		add("old_path", 0.9, "string", nil, "name_match")
-	case name == "status" || name == "state" || name == "changetype":
+	case "status", "state", "changetype":
 		confidence := 0.7
 		if looksLikeFileStatus(text) {
 			confidence = 0.95
 		}
 		add("status", confidence, "string", &FieldTransform{Name: TransformFileStatus}, "status_value")
-	case name == "patch" || name == "diff" || name == "hunks":
+	case "patch", "diff", "hunks":
 		confidence := 0.6
 		if strings.Contains(text, "@@") || strings.HasPrefix(text, "diff ") {
 			confidence = 0.95
 		}
 		add("patch", confidence, "string", nil, "patch_shape")
-	case name == "oldmode" || name == "newmode":
+	case "oldmode", "newmode":
 		add(strings.Replace(name, "mode", "_mode", 1), 0.85, "string", nil, "name_match")
 	}
 	return candidates
