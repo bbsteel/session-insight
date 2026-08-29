@@ -6,6 +6,12 @@ FRONTEND_DIR="$ROOT_DIR/frontend"
 BIN_PATH="${BIN_PATH:-$ROOT_DIR/session-insight}"
 PORT="${PORT:-8080}"
 
+if [[ -d "$ROOT_DIR/.git" ]]; then
+  SI_INDEXER_ENABLED=1
+else
+  SI_INDEXER_ENABLED="${SI_INDEXER_ENABLED:-1}"
+fi
+
 cd "$ROOT_DIR"
 
 echo "==> Building frontend"
@@ -22,4 +28,5 @@ go build -tags sqlite_fts5 -o "$BIN_PATH" .
 echo "==> Starting SessionInsight"
 echo "    URL: http://127.0.0.1:$PORT/"
 echo "    Binary: $BIN_PATH"
-exec env PORT="$PORT" "$BIN_PATH"
+echo "    Indexer enabled: $SI_INDEXER_ENABLED"
+exec env PORT="$PORT" SI_INDEXER_ENABLED="$SI_INDEXER_ENABLED" "$BIN_PATH"

@@ -113,6 +113,7 @@ bash run.sh all
 |----------|--------|------|
 | `PORT` | `8080` | HTTP 监听端口 |
 | `SI_DATA_DIR` | `~/.session-insight` | 覆盖应用数据库目录 |
+| `SI_INDEXER_ENABLED` | `1` | 接受 `1`、`true`、`yes`、`on`（启用）或 `0`、`false`、`no`、`off`（关闭）；未设置或值无效时回退为启用。在 linked worktree 中关闭后本地索引会保持过期，并会停用源文件 watcher、初始索引和定期 reconciliation；主 checkout 始终强制为 `1` |
 | `CHRYS_SESSION_ROOT_DIR` | — | 覆盖 Chrys 会话根目录 |
 | `HERMES_HOME` | `~/.hermes` | 覆盖 Hermes 状态目录；Session Insight 会读取其中的 `state.db` |
 
