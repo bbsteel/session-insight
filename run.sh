@@ -69,7 +69,7 @@ select_worktree_listen_port() {
 # worktree across restarts, while different worktrees remain isolated.
 # The primary checkout retains the historical 8080 + ~/.session-insight setup.
 configure_checkout_runtime() {
-  local requested saved
+  local requested saved requested_indexer_enabled
   if [[ -f "$ROOT_DIR/.git" ]]; then
     RUNTIME_DIR="$ROOT_DIR/.runtime"
     mkdir -p "$RUNTIME_DIR"
@@ -93,10 +93,22 @@ configure_checkout_runtime() {
     fi
     PORT="$(select_worktree_listen_port "$requested" "$saved")"
     SI_DATA_DIR="${SI_DATA_DIR:-$RUNTIME_DIR/session-insight}"
+    SI_INDEXER_ENABLED="${SI_INDEXER_ENABLED:-1}"
   else
     RUNTIME_DIR="$ROOT_DIR"
     PORT="${PORT:-$PRIMARY_PORT}"
     SI_DATA_DIR="${SI_DATA_DIR:-}"
+    requested_indexer_enabled="${SI_INDEXER_ENABLED:-}"
+    # Bash 3 (the default macOS shell) has no lowercase parameter expansion.
+    # Normalize through POSIX tools before matching the accepted disabled values.
+    local normalized_indexer_enabled
+    normalized_indexer_enabled="$(printf '%s' "$requested_indexer_enabled" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$normalized_indexer_enabled" in
+      0|false|no|off)
+        echo "WARNING: ignoring SI_INDEXER_ENABLED=$requested_indexer_enabled in primary checkout (indexer is always enabled)" >&2
+        ;;
+    esac
+    SI_INDEXER_ENABLED=1
   fi
 }
 configure_checkout_runtime
@@ -129,12 +141,14 @@ pid_is_owned() {
 
   # Windows: compare process image path via PowerShell (no /proc).
   if [[ "$IS_WINDOWS" -eq 1 ]] && command -v powershell.exe >/dev/null 2>&1; then
-    local proc_path want
+    local proc_path want normalized_proc_path normalized_binary_path
     proc_path=$(powershell.exe -NoProfile -Command \
       "(Get-Process -Id $pid -ErrorAction SilentlyContinue).Path" 2>/dev/null | tr -d '\r')
     want=$(win_path "$BIN_PATH")
     # Case-insensitive path compare (Windows).
-    [[ -n "$proc_path" && "${proc_path,,}" == "${want,,}" ]]
+    normalized_proc_path=$(printf '%s' "$proc_path" | tr '[:upper:]' '[:lower:]')
+    normalized_binary_path=$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')
+    [[ -n "$proc_path" && "$normalized_proc_path" == "$normalized_binary_path" ]]
     return
   fi
 
@@ -168,6 +182,9 @@ first run and reuse the same port on subsequent restarts (persisted to
 primary checkout continues to use port 8080 and ~/.session-insight. PORT and
 SI_DATA_DIR may be set to override these defaults; PORT=8080 is ignored in a
 linked worktree because that port is reserved for the primary checkout.
+SI_INDEXER_ENABLED defaults to 1 and may be set to 0 in a linked worktree to
+disable background indexing and source watchers. The primary checkout always
+forces it to 1.
 Instance numbers in status/kill are rebuilt each run and may change; always run
 status immediately before kill. Only related checkouts (this repo's worktrees)
 are killable; same-named binaries elsewhere are listed as non-killable. stopall
@@ -245,6 +262,7 @@ start_detached() {
       -LogPath "$win_log"
       -ErrLogPath "$win_err"
       -Port "$PORT"
+      -IndexerEnabled "$SI_INDEXER_ENABLED"
     )
     # PowerShell rejects -DataDir "" (missing argument); only pass when set.
     if [[ -n "$win_data" ]]; then
@@ -254,10 +272,10 @@ start_detached() {
       powershell.exe "${ps_args[@]}" 2>/dev/null | tr -d '\r' | tail -1
     )
   elif command -v setsid >/dev/null 2>&1; then
-    nohup setsid env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
+    nohup setsid env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" SI_INDEXER_ENABLED="$SI_INDEXER_ENABLED" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
     pid=$!
   else
-    nohup env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
+    nohup env PORT="$PORT" SI_DATA_DIR="$SI_DATA_DIR" SI_INDEXER_ENABLED="$SI_INDEXER_ENABLED" "$BIN_PATH" >"$LOG_FILE" 2>&1 < /dev/null &
     pid=$!
   fi
 
@@ -302,6 +320,7 @@ do_start() {
   else
     echo "    Data directory: ~/.session-insight"
   fi
+  echo "    Indexer enabled: $SI_INDEXER_ENABLED"
   echo "    PID file: $PID_FILE"
   echo "    Log file: $LOG_FILE"
   start_detached || return 1

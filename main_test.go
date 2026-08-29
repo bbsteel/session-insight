@@ -3,11 +3,98 @@ package main
 import (
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"syscall"
 	"testing"
 )
+
+func TestIsPrimaryCheckout(t *testing.T) {
+	checkoutRoot := t.TempDir()
+	if isPrimaryCheckout(checkoutRoot) {
+		t.Fatal("directory without .git must not be treated as the primary checkout")
+	}
+
+	if err := os.Mkdir(filepath.Join(checkoutRoot, ".git"), 0o755); err != nil {
+		t.Fatalf("create primary .git directory: %v", err)
+	}
+	if !isPrimaryCheckout(checkoutRoot) {
+		t.Fatal(".git directory must identify the primary checkout")
+	}
+
+	linkedCheckoutRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(linkedCheckoutRoot, ".git"), []byte("gitdir: /tmp/worktree"), 0o600); err != nil {
+		t.Fatalf("create linked-worktree .git file: %v", err)
+	}
+	if isPrimaryCheckout(linkedCheckoutRoot) {
+		t.Fatal(".git file must not be treated as the primary checkout")
+	}
+}
+
+func TestResolveIndexerEnabled(t *testing.T) {
+	tests := []struct {
+		name            string
+		configuredValue string
+		primaryCheckout bool
+		wantEnabled     bool
+		wantReason      string
+	}{
+		{
+			name:            "primary default",
+			primaryCheckout: true,
+			wantEnabled:     true,
+			wantReason:      "primary checkout",
+		},
+		{
+			name:            "primary ignores disabled value",
+			configuredValue: "0",
+			primaryCheckout: true,
+			wantEnabled:     true,
+			wantReason:      "primary checkout forces enabled",
+		},
+		{
+			name:        "linked default",
+			wantEnabled: true,
+			wantReason:  "default enabled",
+		},
+		{
+			name:            "linked disabled",
+			configuredValue: " off ",
+			wantEnabled:     false,
+			wantReason:      "SI_INDEXER_ENABLED disabled",
+		},
+		{
+			name:            "linked enabled",
+			configuredValue: "true",
+			wantEnabled:     true,
+			wantReason:      "SI_INDEXER_ENABLED enabled",
+		},
+		{
+			name:            "invalid value defaults enabled",
+			configuredValue: "sometimes",
+			wantEnabled:     true,
+			wantReason:      `invalid SI_INDEXER_ENABLED="sometimes"; default enabled`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			gotEnabled, gotReason := resolveIndexerEnabled(testCase.configuredValue, testCase.primaryCheckout)
+			if gotEnabled != testCase.wantEnabled || gotReason != testCase.wantReason {
+				t.Fatalf("resolveIndexerEnabled(%q, %t) = (%t, %q), want (%t, %q)",
+					testCase.configuredValue,
+					testCase.primaryCheckout,
+					gotEnabled,
+					gotReason,
+					testCase.wantEnabled,
+					testCase.wantReason,
+				)
+			}
+		})
+	}
+}
 
 func TestIsAddrInUse(t *testing.T) {
 	// EADDRINUSE from a real listen conflict.

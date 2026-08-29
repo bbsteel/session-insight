@@ -133,6 +133,17 @@ When the working tree already has uncommitted or local-only work on `main` that 
 - Keep runtime artifacts owned by a worktree inside that worktree. `PORT` and `SI_DATA_DIR` are escape hatches for explicit validation needs, not required per-instance setup.
 - Worktrees outside the sanctioned locations (`.worktrees/`, `.claude/worktrees/`) are legacy: when a task touches one, retire it per the rules below and recreate under `.worktrees/` if still needed. `git worktree prune` removes stale administrative records for already-deleted directories.
 
+### Agent-controlled indexer startup
+
+- `SI_INDEXER_ENABLED` is a transient startup switch. Accepted enabled values are `1`, `true`, `yes`, and `on`; accepted disabled values are `0`, `false`, `no`, and `off`. An unset or invalid value defaults to enabled.
+- The primary checkout is the production instance. Its indexer is always enabled: `run.sh` forces `SI_INDEXER_ENABLED=1`, and the binary ignores a disabled value when it detects the primary checkout. Never disable the indexer for the primary checkout.
+- Before starting or restarting a linked worktree with `./run.sh all` or `./run.sh restart`, inspect the complete current change set against the latest `origin/main`, including committed branch changes, staged changes, unstaged changes, and untracked files. Do not infer the decision from the branch name alone.
+- Set `SI_INDEXER_ENABLED=1` for a linked worktree when the change can alter indexed data or its computation, or when live index freshness is required. Set `SI_INDEXER_ENABLED=0` only when the agent has verified that the change does not affect index computation and the worktree's existing index may remain stale.
+- The three broad areas that usually indicate indexer impact are `internal/indexer/`, `internal/reader/`, and `internal/db/`. Changes to startup wiring, shared models, or configuration can also affect indexing even when they are outside these directories.
+- When the change is spread across more than these broad areas, or its impact is not obvious, do not rely on a fixed path list. Judge the current dependency and runtime impact directly and keep indexing enabled unless disabled operation is demonstrably safe.
+- Disabling the indexer also disables source watchers, initial indexing, and periodic reconciliation for that process. It does not populate or refresh the worktree's `index.db`; lists and search therefore use whatever data is already present. The agent must account for that before choosing `SI_INDEXER_ENABLED=0`.
+- Do not add persistent mode metadata for this decision. The agent selects the switch on the startup command, for example `SI_INDEXER_ENABLED=0 ./run.sh all` for an ordinary linked worktree or `SI_INDEXER_ENABLED=1 ./run.sh all` for indexer-related development.
+
 ### Retiring merged PR worktrees
 
 - A linked worktree used for a PR must not leave a long-running SessionInsight instance behind after that PR is merged or abandoned. Before retiring it, first check the orchestration environment's active-agent record and confirm that no agent is still working in that checkout.

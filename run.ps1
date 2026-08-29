@@ -21,6 +21,17 @@ $PidFile = Join-Path $Root "session-insight.pid"
 $UrlFile = Join-Path $Root "session-insight.url"
 $Port = if ($env:PORT) { $env:PORT } else { "8080" }
 $DataDir = if ($env:SI_DATA_DIR) { $env:SI_DATA_DIR } else { "" }
+$PrimaryCheckout = Test-Path -LiteralPath (Join-Path $Root ".git") -PathType Container
+if ($PrimaryCheckout) {
+  if ($env:SI_INDEXER_ENABLED -match '^(?i:0|false|no|off)$') {
+    Write-Warning "Ignoring SI_INDEXER_ENABLED=$($env:SI_INDEXER_ENABLED) in primary checkout (indexer is always enabled)"
+  }
+  $IndexerEnabled = "1"
+} elseif ($env:SI_INDEXER_ENABLED) {
+  $IndexerEnabled = $env:SI_INDEXER_ENABLED
+} else {
+  $IndexerEnabled = "1"
+}
 $StartScript = Join-Path $Root "scripts\windows-start.ps1"
 
 function Get-OwnedProcess {
@@ -59,6 +70,7 @@ function Start-App {
   Write-Host "==> Starting SessionInsight (background)"
   Write-Host "    URL: http://127.0.0.1:$Port/"
   Write-Host "    Binary: $Bin"
+  Write-Host "    Indexer enabled: $IndexerEnabled"
   Write-Host "    Log: $Log"
 
   $args = @{
@@ -67,6 +79,7 @@ function Start-App {
     LogPath    = $Log
     ErrLogPath = $ErrLog
     Port       = $Port
+    IndexerEnabled = $IndexerEnabled
   }
   if ($DataDir) { $args.DataDir = $DataDir }
 

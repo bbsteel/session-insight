@@ -89,9 +89,16 @@ You can configure it via environment variables:
 
 ```powershell
 $env:PORT = "9090"
+$env:SI_INDEXER_ENABLED = "0" # linked worktrees only; the primary checkout always enables it
 $env:AGENT_DIRS = "C:\Users\YourName\.chrys\sessions;C:\Users\YourName\.claude\projects"
 .\session-insight.exe
 ```
+
+`SI_INDEXER_ENABLED` accepts `1`, `true`, `yes`, or `on` to enable indexing, and
+`0`, `false`, `no`, or `off` to disable it. An unset or invalid value falls
+back to enabled. In a linked worktree, disabled mode leaves the local index
+stale and disables source watchers, initial indexing, and periodic
+reconciliation. The primary checkout always forces indexing enabled.
 
 On start the binary opens the actual bound URL (`http://127.0.0.1:<port>/`), including when `PORT` was busy and an OS-assigned port was used instead.
 
