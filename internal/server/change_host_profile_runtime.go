@@ -146,7 +146,11 @@ func (s *Server) handleActivateChangeHostProfile(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusInternalServerError, "internal")
 		return
 	}
-	updated, _, _ := s.DB.ChangeHostProfile(record.ProfileID)
+	updated, exists, err := s.DB.ChangeHostProfile(record.ProfileID)
+	if err != nil || !exists {
+		writeAPIError(w, http.StatusInternalServerError, "internal")
+		return
+	}
 	writeJSONStatus(w, http.StatusOK, profileDTOFromRecord(updated))
 }
 

@@ -353,12 +353,15 @@ func (s *Server) changeHostStatus(hostKey string) (changehost.HostStatus, error)
 }
 
 func (s *Server) changeHostCapabilities(record db.ChangeHostRecord) changehost.ProviderCapabilities {
-	if record.Provider == model.ChangeProviderOpenAPI && s.DB != nil {
-		if profile, exists, err := s.DB.ActiveChangeHostProfile(record.HostID); err == nil && exists {
-			if decoded, err := openapi.DecodeProfile([]byte(profile.ProfileJSON)); err == nil {
-				return changehost.OpenAPIProfileCapabilities(decoded)
+	if record.Provider == model.ChangeProviderOpenAPI {
+		if s.DB != nil {
+			if profile, exists, err := s.DB.ActiveChangeHostProfile(record.HostID); err == nil && exists {
+				if decoded, err := openapi.DecodeProfile([]byte(profile.ProfileJSON)); err == nil {
+					return changehost.OpenAPIProfileCapabilities(decoded)
+				}
 			}
 		}
+		return changehost.OpenAPIUnsupportedCapabilities()
 	}
 	capabilities, _ := changehost.BuiltInProviderCapabilities(record.Provider)
 	return capabilities

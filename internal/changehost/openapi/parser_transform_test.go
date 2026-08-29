@@ -154,3 +154,59 @@ func TestEvalItems(t *testing.T) {
 		t.Fatal("non-array items must error")
 	}
 }
+
+func TestMatchReferenceTemplateRejectsDecodedControlCharacters(t *testing.T) {
+	reference := parserTestReference()
+	for _, raw := range []string{
+		"https://review.internal/projects/team/repo/reviews/12%0Aabc",
+		"https://review.internal/projects/te%0Dam/repo/reviews/12",
+		"https://review.internal/projects/team/repo/reviews/%00",
+	} {
+		if _, ok := MatchReferenceTemplate(reference, "h", raw); ok {
+			t.Fatalf("control character accepted: %q", raw)
+		}
+	}
+}
+
+func TestExpandOperationPathUsesDeclaredParameterNames(t *testing.T) {
+	// Profiles may declare non-default parameter names; expansion must follow
+	// the operation's bindings, not fixed names.
+	expanded, ok := ExpandOperationPath(
+		"/api/repos/{repo}/changes/{id}",
+		map[string]string{"repo": "reference.repository", "id": "reference.number"},
+		"team/repo", "42",
+	)
+	if !ok || expanded != "/api/repos/team/repo/changes/42" {
+		t.Fatalf("declared-name expansion: %q ok=%v", expanded, ok)
+	}
+	// Reference templates with custom declared names match and normalize.
+	reference := ReferenceTemplate{
+		Origin:              "https://review.internal",
+		PathTemplate:        "/r/{repo}/c/{id}",
+		RepositoryParameter: "repo",
+		NumberParameter:     "id",
+	}
+	parsed, ok := MatchReferenceTemplate(reference, "h", "https://review.internal/r/team/repo/c/42")
+	if !ok || parsed.TargetRepositorySlug != "team/repo" || parsed.DisplayNumber != "42" {
+		t.Fatalf("custom parameter names rejected: %+v ok=%v", parsed, ok)
+	}
+	if parsed.NormalizedURL != "https://review.internal/r/team/repo/c/42" {
+		t.Fatalf("normalized URL: %q", parsed.NormalizedURL)
+	}
+}
+
+func TestNormalizeOriginDropsDefaultPorts(t *testing.T) {
+	cases := map[string]string{
+		"https://REVIEW.internal:443":  "https://review.internal",
+		"http://review.internal:80":    "http://review.internal",
+		"http://127.0.0.1:46371":       "http://127.0.0.1:46371",
+		"https://review.internal:8443": "https://review.internal:8443",
+		"https://[2001:db8::1]:443":    "https://[2001:db8::1]",
+	}
+	for raw, want := range cases {
+		got, ok := NormalizeOrigin(raw)
+		if !ok || got != want {
+			t.Fatalf("NormalizeOrigin(%q) = %q ok=%v, want %q", raw, got, ok, want)
+		}
+	}
+}

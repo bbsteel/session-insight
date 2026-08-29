@@ -103,6 +103,20 @@ func OpenAPIProfileCapabilities(profile openapi.Profile) ProviderCapabilities {
 	}
 }
 
+// OpenAPIUnsupportedCapabilities is the explicit all-unsupported projection
+// for an openapi host with no usable active profile — never an empty map.
+func OpenAPIUnsupportedCapabilities() ProviderCapabilities {
+	operations := map[CapabilityID]CapabilityDeclaration{}
+	for _, id := range CapabilityIDs() {
+		operations[id] = CapabilityDeclaration{State: CapabilityUnsupported, ReasonCode: CapabilityReasonEndpointUnsupported}
+	}
+	return ProviderCapabilities{
+		Operations:          operations,
+		HostModes:           []HostMode{HostModeSelfHosted},
+		AuthenticationModes: []AuthenticationMode{AuthTokenEnvironment, AuthOSKeyring},
+	}
+}
+
 func capabilityFor(state openapi.CapabilityState, unsupported CapabilityDeclaration) CapabilityDeclaration {
 	if state == openapi.CapabilitySupported {
 		return CapabilityDeclaration{State: CapabilitySupported}
@@ -192,8 +206,14 @@ func (p *OpenAPIProvider) GetSnapshot(
 	reference := model.ChangeRequestReference{
 		Provider: p.Kind(), HostID: p.host.Key, DisplayOrigin: p.host.DisplayOrigin,
 		TargetRepositorySlug: repositorySlug, DisplayNumber: number,
-		NormalizedURL: p.profile.Reference.Origin + mustExpandPath(p.profile.Reference.PathTemplate, repositorySlug, number),
 	}
+	normalizedPath, ok := openapi.ExpandReferenceParameters(
+		p.profile.Reference.PathTemplate, p.profile.Reference.RepositoryParameter,
+		p.profile.Reference.NumberParameter, repositorySlug, number)
+	if !ok {
+		return SnapshotResult{}, providerError(OperationGetSnapshot, ErrorInvalidResponse, nil)
+	}
+	reference.NormalizedURL = p.profile.Reference.Origin + normalizedPath
 	summary, err := p.summaryFromDetail(initial, reference)
 	if err != nil {
 		p.reportDrift()
@@ -253,10 +273,6 @@ func (p *OpenAPIProvider) GetSnapshot(
 		FileSet:  fileSet, Patches: patches, Modes: modes, Commits: commitCompleteness,
 	}
 	now := time.Now().UTC()
-	snapshotIdentity := identity
-	if summary.SourceRepository != nil {
-		snapshotIdentity.TargetRepository = summary.SourceRepository
-	}
 	snapshot := model.ChangeRequestSnapshot{
 		SnapshotID: providerOpaqueKey("openapi-snapshot", string(content.Key)),
 		Identity:   identity, Content: content,
@@ -300,14 +316,6 @@ func openAPIDisplayNumber(providerObjectID string) (string, bool) {
 	return providerObjectID, true
 }
 
-func mustExpandPath(template, repository, number string) string {
-	expanded, ok := openapi.ExpandReferenceParameters(template, repository, number)
-	if !ok {
-		return template
-	}
-	return expanded
-}
-
 // fetchChangeDetail executes resolve_change and applies its item pointer.
 func (p *OpenAPIProvider) fetchChangeDetail(ctx context.Context, operation Operation, repository, number string) (any, ResultMetadata, error) {
 	document, metadata, err := p.executeObjectOperation(ctx, operation, p.profile.Operations.ResolveChange, repository, number)
@@ -345,7 +353,7 @@ func (p *OpenAPIProvider) executeObjectOperation(ctx context.Context, operation 
 // parameters come only from literal bindings and the paginator; no caller
 // input reaches the URL raw.
 func (p *OpenAPIProvider) operationURL(operation *openapi.Operation, repository, number string, query url.Values) (string, error) {
-	expanded, ok := openapi.ExpandReferenceParameters(operation.PathTemplate, repository, number)
+	expanded, ok := openapi.ExpandOperationPath(operation.PathTemplate, operation.Parameters, repository, number)
 	if !ok {
 		return "", errors.New("operation path template could not be expanded")
 	}
@@ -408,9 +416,14 @@ func (p *OpenAPIProvider) contentAnchor(document any) (openAPIContentAnchor, err
 		if anchor.nativeVersion == "" {
 			return anchor, errors.New("content anchor native_version missing from detail response")
 		}
+		if len(anchor.nativeVersion) > 128 {
+			anchor.nativeVersion = "sha256:" + sha256Hex(anchor.nativeVersion)
+		}
 	case "diff_version":
-		anchor.nativeVersion = read("diff_text")
-		if anchor.nativeVersion == "" {
+		// The diff payload is unbounded; persist its digest as the native
+		// version so storage and capture-race comparison stay constant-size.
+		anchor.nativeVersion = "sha256:" + sha256Hex(read("diff_text"))
+		if anchor.nativeVersion == "sha256:"+sha256Hex("") {
 			return anchor, errors.New("content anchor diff_version missing from detail response")
 		}
 	default:

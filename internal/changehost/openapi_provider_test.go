@@ -252,3 +252,78 @@ func TestOpenAPIProviderContractAndCapabilities(t *testing.T) {
 		t.Fatal("unsupported discovery must fail")
 	}
 }
+
+func TestOpenAPIProviderCursorHeaderPagination(t *testing.T) {
+	headSHA := "0123456789abcdef0123456789abcdef01234567"
+	profile := diffOnlyProfile()
+	profile.Operations.ListFiles = &openapi.Operation{
+		Method: "GET", Origin: "https://review.internal",
+		PathTemplate: "/api/projects/{repository}/reviews/{number}/files",
+		Parameters: map[string]string{
+			"repository": "reference.repository", "number": "reference.number",
+		},
+		Pagination: openapi.Pagination{
+			Mode:             openapi.PaginationCursorHeader,
+			CursorParameter:  "cursor",
+			NextCursorHeader: "X-Next-Cursor",
+		},
+		Response: openapi.OperationResponse{
+			ItemsPointer: "/values",
+			Fields: map[string]openapi.FieldSelector{
+				"path":   {Pointer: "/path"},
+				"status": {Pointer: "/status"},
+			},
+		},
+	}
+	profile.Operations.GetDiff = nil
+	profile.Capabilities.Patches = openapi.CapabilityUnsupported
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/api/projects/team/repo/reviews/42":
+			return response(request, http.StatusOK, fmt.Sprintf(
+				`{"id": 42, "title": "Paged", "state": "open", "head": "%s"}`, headSHA), nil), nil
+		case "/api/projects/team/repo/reviews/42/files":
+			if request.URL.Query().Get("cursor") == "next-2" {
+				return response(request, http.StatusOK, `{"values": [{"path": "b.go", "status": "added"}]}`, nil), nil
+			}
+			header := http.Header{"X-Next-Cursor": {"next-2"}}
+			return response(request, http.StatusOK, `{"values": [{"path": "a.go", "status": "modified"}]}`, header), nil
+		default:
+			return response(request, http.StatusNotFound, `{}`, nil), nil
+		}
+	})
+	provider := openapiProviderFixture(t, profile, transport)
+	reference, ok := provider.ParseReference("https://review.internal/projects/team/repo/reviews/42")
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	resolved, err := provider.Resolve(context.Background(), reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := provider.GetSnapshot(context.Background(), resolved.Change.Identity, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Snapshot.Files) != 2 {
+		t.Fatalf("cursor-header pagination: files=%d", len(snapshot.Snapshot.Files))
+	}
+}
+
+func TestFilesFromUnifiedDiffIgnoresMarkerInPatchBody(t *testing.T) {
+	raw := []byte("diff --git a/fixture.txt b/fixture.txt\nindex 1111111..2222222 100644\n--- a/fixture.txt\n+++ b/fixture.txt\n@@ -1 +1 @@\n-diff --git a/old.txt b/old.txt\n+diff --git a/new.txt b/new.txt\n")
+	files, _, err := filesFromUnifiedDiff(model.ChangeProviderOpenAPI, "team/repo", "1", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].DisplayPath != "fixture.txt" {
+		t.Fatalf("patch-body marker produced phantom files: %+v", files)
+	}
+}
+
+func TestFilesFromUnifiedDiffRejectsTraversalPaths(t *testing.T) {
+	raw := []byte("diff --git a/ok.go b/../../evil.go\nindex 1..2 100644\n--- a/ok.go\n+++ b/../../evil.go\n@@ -1 +1 @@\n-a\n+b\n")
+	if _, _, err := filesFromUnifiedDiff(model.ChangeProviderOpenAPI, "team/repo", "1", raw); err == nil {
+		t.Fatal("traversal path in diff accepted")
+	}
+}

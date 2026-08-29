@@ -3,6 +3,7 @@ package openapi
 import (
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/bbsteel/session-insight/internal/model"
 )
@@ -69,7 +70,7 @@ func MatchReferenceTemplate(reference ReferenceTemplate, hostID, raw string) (mo
 				return false
 			}
 			decoded, err := url.PathUnescape(urlSegment)
-			if err != nil || decoded == "" || strings.ContainsRune(decoded, '\x00') || strings.Contains(decoded, "/") {
+			if err != nil || !isSafeParameterValue(decoded) {
 				return false
 			}
 			number = decoded
@@ -93,8 +94,7 @@ func MatchReferenceTemplate(reference ReferenceTemplate, hostID, raw string) (mo
 	decodedRepository := make([]string, 0, len(repositorySegments))
 	for _, segment := range repositorySegments {
 		decoded, err := url.PathUnescape(segment)
-		if err != nil || decoded == "" || decoded == "." || decoded == ".." ||
-			strings.ContainsRune(decoded, '\x00') || strings.Contains(decoded, "/") {
+		if err != nil || !isSafeParameterValue(decoded) || decoded == "." || decoded == ".." {
 			return model.ChangeRequestReference{}, false
 		}
 		decodedRepository = append(decodedRepository, decoded)
@@ -105,7 +105,7 @@ func MatchReferenceTemplate(reference ReferenceTemplate, hostID, raw string) (mo
 	}
 	// The normalized URL carries the actual values, canonicalized through the
 	// template — never query, fragment, or unrelated path data.
-	expanded, ok := ExpandReferenceParameters(reference.PathTemplate, repository, number)
+	expanded, ok := ExpandReferenceParameters(reference.PathTemplate, reference.RepositoryParameter, reference.NumberParameter, repository, number)
 	if !ok {
 		return model.ChangeRequestReference{}, false
 	}
@@ -120,17 +120,56 @@ func MatchReferenceTemplate(reference ReferenceTemplate, hostID, raw string) (mo
 	}, true
 }
 
-// ExpandReferenceParameters substitutes reference values into an operation
-// path template. Repository slugs keep their hierarchy: each segment is
-// escaped individually. Every declared parameter must resolve; unbound
-// placeholders fail closed.
-func ExpandReferenceParameters(pathTemplate string, repository, number string) (string, bool) {
+// isSafeParameterValue rejects empty values, slashes, and any control
+// character — decoded percent escapes must not smuggle newlines or NULs into
+// persisted references.
+func isSafeParameterValue(value string) bool {
+	if value == "" || strings.Contains(value, "/") {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// ExpandReferenceParameters substitutes reference values into a path
+// template, using the profile's declared parameter names. Repository slugs
+// keep their hierarchy: each segment is escaped individually. Every declared
+// placeholder must resolve; unbound placeholders fail closed.
+func ExpandReferenceParameters(pathTemplate, repositoryParameter, numberParameter, repository, number string) (string, bool) {
 	result := pathTemplate
 	replacements := map[string]string{
-		"repository": escapePathSegments(repository),
-		"number":     url.PathEscape(number),
+		repositoryParameter: escapePathSegments(repository),
+		numberParameter:     url.PathEscape(number),
 	}
 	for name, value := range replacements {
+		result = strings.ReplaceAll(result, "{"+name+"}", value)
+	}
+	if strings.ContainsAny(result, "{}") {
+		return "", false
+	}
+	return result, true
+}
+
+// ExpandOperationPath substitutes values into an operation path template via
+// the operation's parameter bindings: each {placeholder} name resolves
+// through its binding (reference.repository / reference.number). operation.*
+// bindings need a prior operation's output and are not resolvable here.
+func ExpandOperationPath(pathTemplate string, parameters map[string]string, repository, number string) (string, bool) {
+	result := pathTemplate
+	for name, binding := range parameters {
+		var value string
+		switch binding {
+		case "reference.repository":
+			value = escapePathSegments(repository)
+		case "reference.number":
+			value = url.PathEscape(number)
+		default:
+			continue
+		}
 		result = strings.ReplaceAll(result, "{"+name+"}", value)
 	}
 	if strings.ContainsAny(result, "{}") {

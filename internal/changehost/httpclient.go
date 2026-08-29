@@ -69,7 +69,10 @@ type HTTPResult struct {
 	LastModified string
 	// Link carries the raw RFC 8288 Link header value so pagination inference
 	// can detect a "next" relation without exposing other response headers.
-	Link     string
+	Link string
+	// Headers holds a clone of the response headers so profile-declared cursor
+	// headers can drive pagination. Response headers are not credentials.
+	Headers  http.Header
 	Metadata ResultMetadata
 }
 
@@ -303,6 +306,7 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 	result := HTTPResult{
 		StatusCode: response.StatusCode, Body: body, ETag: response.Header.Get("ETag"),
 		LastModified: response.Header.Get("Last-Modified"), Link: response.Header.Get("Link"),
+		Headers:  response.Header.Clone(),
 		Metadata: metadata,
 	}
 	if code, failed := responseErrorCode(response.StatusCode, metadata); failed {

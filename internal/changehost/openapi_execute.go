@@ -63,6 +63,12 @@ func (p *OpenAPIProvider) summaryFromDetail(document any, reference model.Change
 	}
 	repositorySlug := reference.TargetRepositorySlug
 	if value := readOptional("target_repository_slug"); value != "" {
+		// The response-supplied slug feeds later requests; it must be a plain
+		// safe path, never a traversal payload.
+		if !safeProviderPath(value) {
+			return model.ChangeRequestSummary{}, providerError(OperationResolveChange, ErrorInvalidResponse,
+				fmt.Errorf("response repository slug is unsafe"))
+		}
 		repositorySlug = value
 	}
 	repository := p.repositoryIdentity(repositorySlug, readOptional("target_repository_id"))
@@ -185,6 +191,9 @@ func (p *OpenAPIProvider) collectFiles(
 			if patches.State == model.GitEvidenceExact {
 				patches = fileSet
 			}
+			if modes.State == model.GitEvidenceExact {
+				modes = fileSet
+			}
 		} else {
 			fileSet = model.ExactGitEvidence()
 		}
@@ -259,6 +268,9 @@ func (p *OpenAPIProvider) filesFromItems(items []any) ([]model.GitFileChange, []
 			return nil, nil, patches, modes, fmt.Errorf("file %d carries an unmappable status", i)
 		}
 		oldPath := readItem(item, "old_path")
+		if oldPath != "" && !safeProviderPath(oldPath) {
+			return nil, nil, patches, modes, fmt.Errorf("file %d carries an invalid old path", i)
+		}
 		file := model.GitFileChange{
 			Ordinal: i, Key: providerFileKey(p.Kind(), p.profile.ProfileID, oldPath, path),
 			Layer: model.GitFileLayerHosted, DisplayPath: path, OldDisplayPath: oldPath,
@@ -456,7 +468,11 @@ func (p *OpenAPIProvider) fetchPages(
 			}
 			query.Set(pagination.CursorParameter, next)
 		case openapi.PaginationCursorHeader:
-			return items, metadata, false, nil
+			next := result.Headers.Get(pagination.NextCursorHeader)
+			if next == "" {
+				return items, metadata, false, nil
+			}
+			query.Set(pagination.CursorParameter, next)
 		default:
 			return items, metadata, false, nil
 		}
@@ -500,21 +516,30 @@ func (p *OpenAPIProvider) fetchDiffText(ctx context.Context, repository, number 
 // authoritative for the file set and patches.
 func filesFromUnifiedDiff(provider model.ChangeProviderKind, repository, number string, raw []byte) ([]model.GitFileChange, []SnapshotContent, error) {
 	text := string(raw)
-	if !strings.Contains(text, "diff --git") {
+	// Split only on lines that START with the marker: a patch body line can
+	// legitimately contain "diff --git " as content (e.g. a stored fixture).
+	lines := strings.Split(text, "\n")
+	sectionStarts := []int{}
+	for i, line := range lines {
+		if strings.HasPrefix(line, "diff --git ") {
+			sectionStarts = append(sectionStarts, i)
+		}
+	}
+	if len(sectionStarts) == 0 {
 		return nil, nil, fmt.Errorf("diff response is not a unified diff")
 	}
 	files := []model.GitFileChange{}
 	contents := []SnapshotContent{}
-	sections := strings.Split(text, "diff --git ")
-	for i, section := range sections {
-		if i == 0 && !strings.HasPrefix(section, "diff --git") {
-			continue
+	for sectionIndex, start := range sectionStarts {
+		end := len(lines)
+		if sectionIndex+1 < len(sectionStarts) {
+			end = sectionStarts[sectionIndex+1]
 		}
-		body := "diff --git " + section
-		header := strings.SplitN(body, "\n", 2)
-		oldPath, newPath, ok := parseDiffGitHeader(header[0])
-		if !ok || !safeProviderPath(newPath) && newPath != "/dev/null" {
-			return nil, nil, fmt.Errorf("diff section %d carries an invalid path", i)
+		body := strings.Join(lines[start:end], "\n")
+		header := lines[start]
+		oldPath, newPath, ok := parseDiffGitHeader(header)
+		if !ok || !safeProviderPath(newPath) || !safeProviderPath(oldPath) {
+			return nil, nil, fmt.Errorf("diff section %d carries an invalid path", sectionIndex)
 		}
 		status := model.GitFileModified
 		switch {

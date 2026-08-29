@@ -154,6 +154,12 @@ func (s *Server) handleImportChangeHostProfile(w http.ResponseWriter, r *http.Re
 		writeAPIError(w, http.StatusBadRequest, string(openapi.IssueDocumentInvalid))
 		return
 	}
+	// Canonicalize the display origin once: profile, host record, and the
+	// approved host identity must all share one representation (an explicit
+	// default port must not split them).
+	if canonical, ok := openapi.NormalizeOrigin(sample.Origin); ok {
+		sample.Origin = canonical
+	}
 
 	var credentialReference model.CredentialReference
 	switch credentialMode {
@@ -310,9 +316,11 @@ func resolveImportOrigins(document *openapi.Document, apiBaseURL, sampleOrigin s
 		if idx := strings.Index(raw, "://"); idx >= 0 {
 			rest := raw[idx+3:]
 			if slash := strings.Index(rest, "/"); slash >= 0 {
-				return raw[:idx+3+slash]
+				raw = raw[:idx+3+slash]
 			}
-			return raw
+			if canonical, ok := openapi.NormalizeOrigin(raw); ok {
+				return canonical
+			}
 		}
 		return ""
 	}
@@ -592,7 +600,11 @@ func (s *Server) runChangeHostProfileProbe(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-	updated, _, _ := s.DB.ChangeHostProfile(record.ProfileID)
+	updated, exists, err := s.DB.ChangeHostProfile(record.ProfileID)
+	if err != nil || !exists {
+		writeAPIError(w, http.StatusInternalServerError, "internal")
+		return
+	}
 	dto := profileDTOFromRecord(updated)
 	writeJSONStatus(w, http.StatusOK, map[string]any{
 		"profile":                dto,
@@ -689,7 +701,11 @@ func (s *Server) handlePatchChangeHostProfileMapping(w http.ResponseWriter, r *h
 		writeAPIError(w, http.StatusConflict, "change_profile_conflict")
 		return
 	}
-	updated, _, _ := s.DB.ChangeHostProfile(record.ProfileID)
+	updated, exists, err := s.DB.ChangeHostProfile(record.ProfileID)
+	if err != nil || !exists {
+		writeAPIError(w, http.StatusInternalServerError, "internal")
+		return
+	}
 	writeJSONStatus(w, http.StatusOK, profileDTOFromRecord(updated))
 }
 
