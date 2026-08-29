@@ -298,11 +298,20 @@ func changeHostStatusFromRecord(record db.ChangeHostRecord) changehost.HostStatu
 		state = changehost.HostRevoked
 	}
 	capabilities, _ := changehost.BuiltInProviderCapabilities(record.Provider)
-	return changehost.HostStatus{
+	status := changehost.HostStatus{
 		Host: hostIdentityFromRecord(record), ApprovalState: state,
-		AuthenticationConfigured: false, Capabilities: capabilities,
-		Assessment: record.Assessment, LastCheckedAt: record.LastCheckedAt,
+		Capabilities: capabilities,
+		Assessment:   record.Assessment, LastCheckedAt: record.LastCheckedAt,
 	}
+	// The credential reference itself never leaves storage; the DTO carries
+	// only whether a credential is configured and which store mode serves it.
+	if reference, ok := model.ParseCredentialReference(record.CredentialReference); ok {
+		status.AuthenticationConfigured = true
+		if mode, known := changehost.AuthenticationModeForReference(reference); known {
+			status.AuthenticationMode = &mode
+		}
+	}
+	return status
 }
 
 func hostIdentityFromRecord(record db.ChangeHostRecord) changehost.HostIdentity {

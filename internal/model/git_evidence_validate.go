@@ -304,6 +304,8 @@ func ValidateChangeRequestIdentity(identity ChangeRequestIdentity) GitValidation
 
 // ValidateChangeRequestReference validates a locally parsed, sanitized
 // reference. It does not claim that provider object or repository IDs exist.
+// OpenAPI-profile references must name the exact approved host that produced
+// them; host selection may never rely on the provider kind alone.
 func ValidateChangeRequestReference(ref ChangeRequestReference) GitValidation {
 	var v GitValidation
 	if !IsKnownChangeProviderKind(ref.Provider) {
@@ -314,6 +316,11 @@ func ValidateChangeRequestReference(ref ChangeRequestReference) GitValidation {
 	if ref.Provider != ChangeProviderGeneric {
 		validateRequired(&v, "target_repository_slug", ref.TargetRepositorySlug)
 		validateRequired(&v, "display_number", ref.DisplayNumber)
+	}
+	if ref.Provider == ChangeProviderOpenAPI {
+		validateOpaque(&v, "host_id", ref.HostID)
+	} else if ref.HostID != "" {
+		validateOpaque(&v, "host_id", ref.HostID)
 	}
 	return v.finish()
 }

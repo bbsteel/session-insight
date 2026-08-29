@@ -658,6 +658,13 @@ func schemaObjectMatchesCompatibleSuccessor(actual string, object v34SchemaObjec
 		compactDDL(actual) == compactDDL(v40CreationEvidenceObject.ddl) {
 		return true
 	}
+	// v43 rebuilds the provider-CHECK tables with 'openapi' widened in. Their
+	// physical shape stays authoritative for every later open.
+	if object.kind == "table" {
+		if widened := v43ObjectDDL(object.name); widened != "" && compactDDL(actual) == compactDDL(widened) {
+			return true
+		}
+	}
 	if object.kind != "trigger" {
 		return false
 	}

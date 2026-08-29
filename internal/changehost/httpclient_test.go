@@ -99,7 +99,8 @@ func TestHTTPClientAllowsOnlyApprovedRedirectAndDropsAuthorization(t *testing.T)
 		}
 		return response(request, http.StatusOK, `{}`, nil), nil
 	})
-	client, err := newHTTPClient(approvedGitHubHost(t), HTTPClientConfig{}, staticAuthorization("Bearer super-secret"), transport)
+	approved := approvedGitHubHost(t)
+	client, err := newHTTPClient(approved, HTTPClientConfig{}, authorizationSourceAuthentication(approved, staticAuthorization("Bearer super-secret")), transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestHTTPClientAllowsOnlyApprovedRedirectAndDropsAuthorization(t *testing.T)
 		header := http.Header{"Location": {"https://evil.example/steal"}}
 		return response(request, http.StatusFound, "", header), nil
 	})
-	client, err = newHTTPClient(approvedGitHubHost(t), HTTPClientConfig{}, staticAuthorization("Bearer super-secret"), transport)
+	client, err = newHTTPClient(approved, HTTPClientConfig{}, authorizationSourceAuthentication(approved, staticAuthorization("Bearer super-secret")), transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,8 @@ func TestHTTPClientTotalDeadlineCoversQueueAndAuthorization(t *testing.T) {
 		t.Fatalf("queued request exceeded total deadline: %s", elapsed)
 	}
 
-	client, err = newHTTPClient(approvedGitHubHost(t), HTTPClientConfig{RequestTimeout: 25 * time.Millisecond, ConnectTimeout: 10 * time.Millisecond}, blockingAuthorization{}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	approved := approvedGitHubHost(t)
+	client, err = newHTTPClient(approved, HTTPClientConfig{RequestTimeout: 25 * time.Millisecond, ConnectTimeout: 10 * time.Millisecond}, authorizationSourceAuthentication(approved, blockingAuthorization{}), roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		transportCalls++
 		return response(request, http.StatusOK, `{}`, nil), nil
 	}))

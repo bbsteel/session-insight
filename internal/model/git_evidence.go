@@ -314,7 +314,12 @@ const (
 	ChangeProviderBitbucketDataCenter ChangeProviderKind = "bitbucket_data_center"
 	ChangeProviderAzureDevOps         ChangeProviderKind = "azure_devops"
 	ChangeProviderGerrit              ChangeProviderKind = "gerrit"
-	ChangeProviderGeneric             ChangeProviderKind = "generic"
+	// ChangeProviderOpenAPI is the single execution-engine kind for previously
+	// unknown change hosts adapted through a verified declarative Provider
+	// Profile. Individual platforms are distinguished by host_id/profile_id,
+	// never by adding another provider kind.
+	ChangeProviderOpenAPI ChangeProviderKind = "openapi"
+	ChangeProviderGeneric ChangeProviderKind = "generic"
 )
 
 func IsKnownChangeProviderKind(kind ChangeProviderKind) bool {
@@ -322,7 +327,7 @@ func IsKnownChangeProviderKind(kind ChangeProviderKind) bool {
 	case ChangeProviderGitHub, ChangeProviderGitLab, ChangeProviderGitea,
 		ChangeProviderForgejo, ChangeProviderBitbucketCloud,
 		ChangeProviderBitbucketDataCenter, ChangeProviderAzureDevOps,
-		ChangeProviderGerrit, ChangeProviderGeneric:
+		ChangeProviderGerrit, ChangeProviderOpenAPI, ChangeProviderGeneric:
 		return true
 	default:
 		return false
@@ -336,18 +341,24 @@ type HostedRepositoryIdentity struct {
 }
 
 type HostedRepositoryReference struct {
-	Provider        ChangeProviderKind `json:"provider"`
-	DisplayOrigin   string             `json:"display_origin"`
-	Slug            string             `json:"slug"`
-	SanitizedRemote string             `json:"sanitized_remote"`
+	Provider ChangeProviderKind `json:"provider"`
+	// HostID binds an OpenAPI-profile reference to exactly one approved host.
+	// Built-in providers fill their fixed public host key; Generic stays empty.
+	HostID          string `json:"host_id,omitempty"`
+	DisplayOrigin   string `json:"display_origin"`
+	Slug            string `json:"slug"`
+	SanitizedRemote string `json:"sanitized_remote"`
 }
 
 type ChangeRequestReference struct {
-	Provider             ChangeProviderKind `json:"provider"`
-	DisplayOrigin        string             `json:"display_origin"`
-	TargetRepositorySlug string             `json:"target_repository_slug,omitempty"`
-	DisplayNumber        string             `json:"display_number,omitempty"`
-	NormalizedURL        string             `json:"normalized_url"`
+	Provider ChangeProviderKind `json:"provider"`
+	// HostID binds an OpenAPI-profile reference to exactly one approved host.
+	// Built-in providers fill their fixed public host key; Generic stays empty.
+	HostID               string `json:"host_id,omitempty"`
+	DisplayOrigin        string `json:"display_origin"`
+	TargetRepositorySlug string `json:"target_repository_slug,omitempty"`
+	DisplayNumber        string `json:"display_number,omitempty"`
+	NormalizedURL        string `json:"normalized_url"`
 }
 
 // ChangeRequestIdentity is canonical only after provider resolution. Generic

@@ -13,11 +13,19 @@ const (
 	publicGitLabOrigin = "https://gitlab.com"
 )
 
+// Fixed host keys for the built-in public SaaS providers. Parsed references
+// carry these IDs so downstream host selection never relies on provider kind
+// alone, matching the OpenAPI profile contract.
+const (
+	PublicGitHubHostKey = "host-github-public"
+	PublicGitLabHostKey = "host-gitlab-public"
+)
+
 // PublicGitHubHost returns the fixed public SaaS origin set. The separate API
 // origin is explicit so approval cannot silently expand when requests begin.
 func PublicGitHubHost() HostIdentity {
 	return HostIdentity{
-		Key: "host-github-public", Provider: model.ChangeProviderGitHub,
+		Key: PublicGitHubHostKey, Provider: model.ChangeProviderGitHub,
 		DisplayOrigin:   publicGitHubOrigin,
 		EndpointOrigins: []string{publicGitHubOrigin, "https://api.github.com"},
 	}
@@ -26,7 +34,7 @@ func PublicGitHubHost() HostIdentity {
 // PublicGitLabHost uses one origin for both web and /api/v4 endpoints.
 func PublicGitLabHost() HostIdentity {
 	return HostIdentity{
-		Key: "host-gitlab-public", Provider: model.ChangeProviderGitLab,
+		Key: PublicGitLabHostKey, Provider: model.ChangeProviderGitLab,
 		DisplayOrigin:   publicGitLabOrigin,
 		EndpointOrigins: []string{publicGitLabOrigin},
 	}
@@ -60,7 +68,8 @@ func (GitHubParser) ParseReference(raw string) (model.ChangeRequestReference, bo
 	}
 	slug := strings.Join(segments[:2], "/")
 	return model.ChangeRequestReference{
-		Provider: model.ChangeProviderGitHub, DisplayOrigin: publicGitHubOrigin,
+		Provider: model.ChangeProviderGitHub, HostID: PublicGitHubHostKey,
+		DisplayOrigin:        publicGitHubOrigin,
 		TargetRepositorySlug: slug, DisplayNumber: number,
 		NormalizedURL: publicGitHubOrigin + "/" + slug + "/pull/" + number,
 	}, true
@@ -72,8 +81,9 @@ func (GitHubParser) ParseRemote(raw string) (model.HostedRepositoryReference, bo
 		return model.HostedRepositoryReference{}, false
 	}
 	return model.HostedRepositoryReference{
-		Provider: model.ChangeProviderGitHub, DisplayOrigin: publicGitHubOrigin,
-		Slug: slug, SanitizedRemote: publicGitHubOrigin + "/" + slug,
+		Provider: model.ChangeProviderGitHub, HostID: PublicGitHubHostKey,
+		DisplayOrigin: publicGitHubOrigin,
+		Slug:          slug, SanitizedRemote: publicGitHubOrigin + "/" + slug,
 	}, true
 }
 
@@ -96,7 +106,8 @@ func (GitLabParser) ParseReference(raw string) (model.ChangeRequestReference, bo
 	}
 	slug := strings.Join(segments[:marker], "/")
 	return model.ChangeRequestReference{
-		Provider: model.ChangeProviderGitLab, DisplayOrigin: publicGitLabOrigin,
+		Provider: model.ChangeProviderGitLab, HostID: PublicGitLabHostKey,
+		DisplayOrigin:        publicGitLabOrigin,
 		TargetRepositorySlug: slug, DisplayNumber: number,
 		NormalizedURL: publicGitLabOrigin + "/" + slug + "/-/merge_requests/" + number,
 	}, true
@@ -108,8 +119,9 @@ func (GitLabParser) ParseRemote(raw string) (model.HostedRepositoryReference, bo
 		return model.HostedRepositoryReference{}, false
 	}
 	return model.HostedRepositoryReference{
-		Provider: model.ChangeProviderGitLab, DisplayOrigin: publicGitLabOrigin,
-		Slug: slug, SanitizedRemote: publicGitLabOrigin + "/" + slug,
+		Provider: model.ChangeProviderGitLab, HostID: PublicGitLabHostKey,
+		DisplayOrigin: publicGitLabOrigin,
+		Slug:          slug, SanitizedRemote: publicGitLabOrigin + "/" + slug,
 	}, true
 }
 

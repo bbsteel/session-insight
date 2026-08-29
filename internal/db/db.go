@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 42
+const currentSchemaVersion = 43
 
 type DB struct {
 	conn *sql.DB
@@ -963,6 +963,12 @@ func migrate(conn *sql.DB) error {
 	// Version 40 stores recognized PR/MR URLs from any session text, not only
 	// GitHub/GitLab CLI create commands.
 	if err := migrateGitAssociationV40(conn); err != nil {
+		return err
+	}
+	// Version 43 widens the change-host provider constraints with 'openapi'
+	// and adds change_host_profiles for immutable, revisioned OpenAPI adapter
+	// configurations.
+	if err := migrateGitAssociationV43(conn); err != nil {
 		return err
 	}
 	// Version 41: persistent local excerpts. The CREATE TABLE above safely

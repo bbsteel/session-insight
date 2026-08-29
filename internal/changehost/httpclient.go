@@ -45,8 +45,21 @@ type HTTPClientConfig struct {
 // approved origin. Implementations may consult env, keyring, or an allowlisted
 // provider CLI, but the resulting value must never be persisted or logged.
 // Implementations must honor the supplied bounded context.
+//
+// Deprecated shape: new code should resolve secrets through CredentialSource
+// and let the verified profile choose the header via ResolvedAuthentication.
+// This interface is kept as the built-in providers' adapter.
 type AuthorizationSource interface {
 	Authorization(context.Context, HostIdentity, string) (string, bool, error)
+}
+
+// clientAuthentication is the request-time view of credential injection: a
+// secret lookup plus the exact header the verified configuration declared.
+// The lookup returns only secret material; the header name and prefix come
+// exclusively from the reviewed scheme.
+type clientAuthentication struct {
+	secretFor func(ctx context.Context, origin string) (string, bool, error)
+	scheme    AuthenticationScheme
 }
 
 type HTTPResult struct {
@@ -54,7 +67,10 @@ type HTTPResult struct {
 	Body         []byte
 	ETag         string
 	LastModified string
-	Metadata     ResultMetadata
+	// Link carries the raw RFC 8288 Link header value so pagination inference
+	// can detect a "next" relation without exposing other response headers.
+	Link     string
+	Metadata ResultMetadata
 }
 
 // HTTPClient is a GET/HEAD-only client scoped to one immutable ApprovedHost.
@@ -63,7 +79,7 @@ type HTTPResult struct {
 type HTTPClient struct {
 	approved       *ApprovedHost
 	client         *http.Client
-	authorization  AuthorizationSource
+	authentication *clientAuthentication
 	maxBytes       int64
 	requestTimeout time.Duration
 	userAgent      string
@@ -71,10 +87,46 @@ type HTTPClient struct {
 }
 
 func NewHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authorization AuthorizationSource) (*HTTPClient, error) {
+	return newPinnedTransportClient(approved, config, authorizationSourceAuthentication(approved, authorization))
+}
+
+// authorizationSourceAuthentication adapts the legacy AuthorizationSource
+// (which returns a complete Authorization header value) to the credential
+// injection path: header Authorization, no profile-controlled prefix.
+func authorizationSourceAuthentication(approved *ApprovedHost, authorization AuthorizationSource) *clientAuthentication {
+	if authorization == nil {
+		return nil
+	}
+	return &clientAuthentication{
+		secretFor: func(ctx context.Context, origin string) (string, bool, error) {
+			return authorization.Authorization(ctx, approved.Identity(), origin)
+		},
+		scheme: AuthenticationScheme{HeaderName: "Authorization"},
+	}
+}
+
+// NewAuthenticatedHTTPClient builds a client whose credential placement comes
+// from a verified profile: the source resolves the raw secret, and the
+// reviewed scheme decides the header name and value prefix.
+func NewAuthenticatedHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authentication ResolvedAuthentication) (*HTTPClient, error) {
+	if err := validateResolvedAuthentication(authentication); err != nil {
+		return nil, err
+	}
+	resolved := &clientAuthentication{
+		secretFor: func(ctx context.Context, _ string) (string, bool, error) {
+			return authentication.Source.Secret(ctx, authentication.Reference)
+		},
+		scheme: authentication.Scheme,
+	}
+	return newPinnedTransportClient(approved, config, resolved)
+}
+
+// newPinnedTransportClient validates the approval and config before wiring
+// the DNS-pinned transport, then defers to the injectable constructor.
+func newPinnedTransportClient(approved *ApprovedHost, config HTTPClientConfig, authentication *clientAuthentication) (*HTTPClient, error) {
 	if err := validateApprovedHost(approved); err != nil {
 		return nil, err
 	}
-	approved = cloneApprovedHost(approved)
 	config, err := normalizeHTTPClientConfig(config)
 	if err != nil {
 		return nil, err
@@ -87,10 +139,10 @@ func NewHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authorizatio
 		ResponseHeaderTimeout: config.RequestTimeout,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 	}
-	return newHTTPClient(approved, config, authorization, transport)
+	return newHTTPClient(approved, config, authentication, transport)
 }
 
-func newHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authorization AuthorizationSource, transport http.RoundTripper) (*HTTPClient, error) {
+func newHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authentication *clientAuthentication, transport http.RoundTripper) (*HTTPClient, error) {
 	if err := validateApprovedHost(approved); err != nil {
 		return nil, err
 	}
@@ -100,7 +152,7 @@ func newHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authorizatio
 		return nil, err
 	}
 	result := &HTTPClient{
-		approved: approved, authorization: authorization, maxBytes: config.MaxResponseBytes,
+		approved: approved, authentication: authentication, maxBytes: config.MaxResponseBytes,
 		requestTimeout: config.RequestTimeout, userAgent: config.UserAgent,
 		semaphore: make(chan struct{}, config.MaxConcurrent),
 	}
@@ -116,6 +168,9 @@ func newHTTPClient(approved *ApprovedHost, config HTTPClientConfig, authorizatio
 			}
 			// Credentials never transit a redirect, even between approved
 			// origins. Providers should request the canonical API URL directly.
+			if result.authentication != nil {
+				request.Header.Del(result.authentication.scheme.HeaderName)
+			}
 			request.Header.Del("Authorization")
 			request.Header.Del("Cookie")
 			return nil
@@ -200,8 +255,8 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 		request.Header.Set("Accept", "application/json")
 	}
 	request.Header.Set("User-Agent", c.userAgent)
-	if c.authorization != nil {
-		value, configured, authErr := c.authorization.Authorization(requestContext, c.approved.Identity(), origin)
+	if c.authentication != nil {
+		secret, configured, authErr := c.authentication.secretFor(requestContext, origin)
 		if authErr != nil {
 			if !c.approved.active() {
 				return HTTPResult{}, &Error{Code: ErrorHostRevoked, Operation: operation, Cause: authErr}
@@ -209,10 +264,11 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 			return HTTPResult{}, &Error{Code: ErrorAuthRequired, Operation: operation, Cause: authErr}
 		}
 		if configured {
-			if value == "" || strings.ContainsAny(value, "\r\n") {
+			value := c.authentication.scheme.ValuePrefix + secret
+			if secret == "" || strings.ContainsAny(value, "\r\n") {
 				return HTTPResult{}, &Error{Code: ErrorAuthRequired, Operation: operation}
 			}
-			request.Header.Set("Authorization", value)
+			request.Header.Set(c.authentication.scheme.HeaderName, value)
 		}
 	}
 	response, err := c.client.Do(request)
@@ -246,7 +302,8 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 	}
 	result := HTTPResult{
 		StatusCode: response.StatusCode, Body: body, ETag: response.Header.Get("ETag"),
-		LastModified: response.Header.Get("Last-Modified"), Metadata: metadata,
+		LastModified: response.Header.Get("Last-Modified"), Link: response.Header.Get("Link"),
+		Metadata: metadata,
 	}
 	if code, failed := responseErrorCode(response.StatusCode, metadata); failed {
 		result.Body = nil
