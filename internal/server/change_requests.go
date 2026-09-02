@@ -314,8 +314,17 @@ func (s *Server) handleResolveChangeRequest(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if len(changeKeys) == 0 && reference.Provider != model.ChangeProviderGeneric && request.IncludeHostedDetails {
-		if host, ok := changehost.PublicHost(reference.Provider); ok {
-			record, exists, readErr := s.DB.ChangeHost(host.Key)
+		// Host selection is host-bound, never kind-only: built-ins use their
+		// fixed public host; OpenAPI references route by their stamped host_id
+		// so the normal resolve flow covers profile-adapted platforms.
+		hostKey := ""
+		if reference.Provider == model.ChangeProviderOpenAPI {
+			hostKey = reference.HostID
+		} else if host, ok := changehost.PublicHost(reference.Provider); ok {
+			hostKey = host.Key
+		}
+		if hostKey != "" {
+			record, exists, readErr := s.DB.ChangeHost(hostKey)
 			switch {
 			case readErr != nil:
 				writeAPIError(w, http.StatusInternalServerError, "internal")
@@ -325,7 +334,13 @@ func (s *Server) handleResolveChangeRequest(w http.ResponseWriter, r *http.Reque
 			case record.Lifecycle == "revoked":
 				response.Assessment = model.NonExactGitEvidence(model.GitEvidenceUnavailable, model.ReasonChangeHostRevoked)
 			case record.Lifecycle == "approved":
-				lookup, refreshErr := s.refreshChangeRequest(r.Context(), host.Key, reference)
+				var lookup changeRequestLookup
+				var refreshErr error
+				if reference.Provider == model.ChangeProviderOpenAPI {
+					lookup, refreshErr = s.refreshOpenAPIChangeRequest(r.Context(), hostKey, reference)
+				} else {
+					lookup, refreshErr = s.refreshChangeRequest(r.Context(), hostKey, reference)
+				}
 				if refreshErr == nil {
 					response.Matches = append(response.Matches, lookup)
 					response.Assessment = model.ExactGitEvidence()

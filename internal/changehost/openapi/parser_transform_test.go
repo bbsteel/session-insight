@@ -174,10 +174,33 @@ func TestExpandOperationPathUsesDeclaredParameterNames(t *testing.T) {
 	expanded, ok := ExpandOperationPath(
 		"/api/repos/{repo}/changes/{id}",
 		map[string]string{"repo": "reference.repository", "id": "reference.number"},
-		"team/repo", "42",
+		"team/repo", "42", nil,
 	)
 	if !ok || expanded != "/api/repos/team/repo/changes/42" {
 		t.Fatalf("declared-name expansion: %q ok=%v", expanded, ok)
+	}
+	// operation.* bindings resolve through the prior-operation resolver.
+	expanded, ok = ExpandOperationPath(
+		"/api/changes/{oid}/files",
+		map[string]string{"oid": "operation.resolve_change.provider_object_id"},
+		"team/repo", "42",
+		func(operationID, field string) (string, bool) {
+			if operationID == "resolve_change" && field == "provider_object_id" {
+				return "8842", true
+			}
+			return "", false
+		},
+	)
+	if !ok || expanded != "/api/changes/8842/files" {
+		t.Fatalf("operation output expansion: %q ok=%v", expanded, ok)
+	}
+	// An unresolvable operation.* binding fails closed.
+	if _, ok := ExpandOperationPath(
+		"/api/changes/{oid}/files",
+		map[string]string{"oid": "operation.resolve_change.provider_object_id"},
+		"team/repo", "42", nil,
+	); ok {
+		t.Fatal("unresolvable operation binding must fail closed")
 	}
 	// Reference templates with custom declared names match and normalize.
 	reference := ReferenceTemplate{
@@ -192,6 +215,10 @@ func TestExpandOperationPathUsesDeclaredParameterNames(t *testing.T) {
 	}
 	if parsed.NormalizedURL != "https://review.internal/r/team/repo/c/42" {
 		t.Fatalf("normalized URL: %q", parsed.NormalizedURL)
+	}
+	// Traversal disguised as a change number is rejected.
+	if _, ok := MatchReferenceTemplate(parserTestReference(), "h", "https://review.internal/projects/team/repo/reviews/.."); ok {
+		t.Fatal("traversal change number accepted")
 	}
 }
 

@@ -70,7 +70,7 @@ func MatchReferenceTemplate(reference ReferenceTemplate, hostID, raw string) (mo
 				return false
 			}
 			decoded, err := url.PathUnescape(urlSegment)
-			if err != nil || !isSafeParameterValue(decoded) {
+			if err != nil || !isSafeParameterValue(decoded) || decoded == "." || decoded == ".." {
 				return false
 			}
 			number = decoded
@@ -156,9 +156,10 @@ func ExpandReferenceParameters(pathTemplate, repositoryParameter, numberParamete
 
 // ExpandOperationPath substitutes values into an operation path template via
 // the operation's parameter bindings: each {placeholder} name resolves
-// through its binding (reference.repository / reference.number). operation.*
-// bindings need a prior operation's output and are not resolvable here.
-func ExpandOperationPath(pathTemplate string, parameters map[string]string, repository, number string) (string, bool) {
+// through its binding (reference.repository / reference.number), or through
+// resolveOutput for operation.<operation-id>.<field> bindings. Unresolvable
+// bindings fail closed.
+func ExpandOperationPath(pathTemplate string, parameters map[string]string, repository, number string, resolveOutput func(operationID, field string) (string, bool)) (string, bool) {
 	result := pathTemplate
 	for name, binding := range parameters {
 		var value string
@@ -168,7 +169,19 @@ func ExpandOperationPath(pathTemplate string, parameters map[string]string, repo
 		case "reference.number":
 			value = url.PathEscape(number)
 		default:
-			continue
+			if rest, ok := strings.CutPrefix(binding, "operation."); ok {
+				operationID, field, found := strings.Cut(rest, ".")
+				if !found || resolveOutput == nil {
+					return "", false
+				}
+				resolved, ok := resolveOutput(operationID, field)
+				if !ok {
+					return "", false
+				}
+				value = escapePathSegments(resolved)
+			} else {
+				continue
+			}
 		}
 		result = strings.ReplaceAll(result, "{"+name+"}", value)
 	}

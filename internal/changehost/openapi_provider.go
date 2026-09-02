@@ -29,6 +29,10 @@ type OpenAPIProvider struct {
 	client  *HTTPClient
 	profile openapi.Profile
 	drift   DriftReporter
+	// operationOutputs holds documents fetched earlier in the current
+	// top-level provider call so operation.* parameter bindings can resolve.
+	// It is reset at the start of every call and never shared across calls.
+	operationOutputs map[openapi.OperationID]any
 }
 
 // NewOpenAPIProvider binds one validated profile to its approved host and
@@ -139,10 +143,12 @@ func (p *OpenAPIProvider) Resolve(ctx context.Context, ref model.ChangeRequestRe
 	if ref.Provider != p.Kind() || ref.HostID != p.host.Key || ref.DisplayOrigin != p.host.DisplayOrigin {
 		return ResolveResult{}, providerError(OperationResolveChange, ErrorInvalidResponse, nil)
 	}
+	p.operationOutputs = map[openapi.OperationID]any{}
 	detail, metadata, err := p.fetchChangeDetail(ctx, OperationResolveChange, ref.TargetRepositorySlug, ref.DisplayNumber)
 	if err != nil {
 		return ResolveResult{}, err
 	}
+	p.operationOutputs[openapi.OperationResolveChange] = detail
 	summary, err := p.summaryFromDetail(detail, ref)
 	if err != nil {
 		p.reportDrift()
@@ -198,10 +204,12 @@ func (p *OpenAPIProvider) GetSnapshot(
 	repositorySlug := identity.TargetRepository.Slug
 	metadataItems := []ResultMetadata{}
 
+	p.operationOutputs = map[openapi.OperationID]any{}
 	initial, initialMetadata, err := p.fetchChangeDetail(ctx, OperationGetSnapshot, repositorySlug, number)
 	if err != nil {
 		return SnapshotResult{}, err
 	}
+	p.operationOutputs[openapi.OperationResolveChange] = initial
 	metadataItems = append(metadataItems, initialMetadata)
 	reference := model.ChangeRequestReference{
 		Provider: p.Kind(), HostID: p.host.Key, DisplayOrigin: p.host.DisplayOrigin,
@@ -227,13 +235,13 @@ func (p *OpenAPIProvider) GetSnapshot(
 
 	files, contents, fileManifest, fileSet, patches, modes, filesMetadata, err := p.collectFiles(ctx, repositorySlug, number)
 	if err != nil {
-		p.reportDrift()
+		p.reportDriftFor(err)
 		return SnapshotResult{}, err
 	}
 	metadataItems = append(metadataItems, filesMetadata)
 	commits, commitCompleteness, commitsMetadata, err := p.collectCommits(ctx, repositorySlug, number)
 	if err != nil {
-		p.reportDrift()
+		p.reportDriftFor(err)
 		return SnapshotResult{}, err
 	}
 	metadataItems = append(metadataItems, commitsMetadata)
@@ -299,6 +307,29 @@ func (p *OpenAPIProvider) reportDrift() {
 	}
 }
 
+// reportDriftFor degrades the profile only when the failure proves a
+// response-shape problem (missing field, type change, malformed body,
+// unmappable value). Transport, authentication, rate-limit, and not-found
+// failures are transient or environmental — they fail the current operation
+// but must never degrade the profile mapping.
+func (p *OpenAPIProvider) reportDriftFor(err error) {
+	var selectorErr *openapi.SelectorError
+	if errors.As(err, &selectorErr) {
+		p.reportDrift()
+		return
+	}
+	var providerErr *Error
+	if errors.As(err, &providerErr) {
+		if providerErr.Code == ErrorInvalidResponse {
+			p.reportDrift()
+		}
+		return
+	}
+	// Non-structured failures here are shape/assembly errors (invalid path,
+	// unmappable status, anchor loss) — drift class by construction.
+	p.reportDrift()
+}
+
 // openAPIDisplayNumber recovers the display locator embedded in the provider
 // object ID by Resolve (plain numeric, or the composite form when the
 // platform's object id differs from the display number).
@@ -331,7 +362,7 @@ func (p *OpenAPIProvider) executeObjectOperation(ctx context.Context, operation 
 	if err != nil {
 		return nil, ResultMetadata{}, providerError(operation, ErrorInvalidResponse, err)
 	}
-	result, err := p.client.Do(ctx, operation, "GET", requestURL, nil)
+	result, err := p.client.DoWithProfileHeaders(ctx, operation, profileOperation.Method, requestURL, nil, profileOperation.Headers)
 	if err != nil {
 		return nil, result.Metadata, err
 	}
@@ -351,9 +382,29 @@ func (p *OpenAPIProvider) executeObjectOperation(ctx context.Context, operation 
 
 // operationURL builds a bounded URL from the operation template. Query
 // parameters come only from literal bindings and the paginator; no caller
-// input reaches the URL raw.
+// input reaches the URL raw. operation.* bindings resolve from documents
+// fetched earlier in the same provider call.
 func (p *OpenAPIProvider) operationURL(operation *openapi.Operation, repository, number string, query url.Values) (string, error) {
-	expanded, ok := openapi.ExpandOperationPath(operation.PathTemplate, operation.Parameters, repository, number)
+	resolveOutput := func(operationID, field string) (string, bool) {
+		document, ok := p.operationOutputs[openapi.OperationID(operationID)]
+		if !ok {
+			return "", false
+		}
+		sourceOperation := p.profile.Operations.ForID(openapi.OperationID(operationID))
+		if sourceOperation == nil {
+			return "", false
+		}
+		selector, ok := sourceOperation.Response.Fields[field]
+		if !ok {
+			return "", false
+		}
+		value, err := openapi.EvalSelector(document, selector)
+		if err != nil {
+			return "", false
+		}
+		return value, true
+	}
+	expanded, ok := openapi.ExpandOperationPath(operation.PathTemplate, operation.Parameters, repository, number, resolveOutput)
 	if !ok {
 		return "", errors.New("operation path template could not be expanded")
 	}

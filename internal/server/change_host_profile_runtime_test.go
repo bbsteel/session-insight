@@ -494,3 +494,37 @@ func TestOpenAPIProfileMetadataOnlyDegradation(t *testing.T) {
 		t.Fatalf("degraded dimensions must be unavailable, not fabricated: %s", completeness)
 	}
 }
+
+// TestOpenAPIResolveEndpointCoversProfileHosts proves the normal resolve flow
+// (/api/change-requests/resolve) handles OpenAPI-profile references through their
+// host_id, not only built-in public hosts — the frontend never calls the host-refresh
+// endpoint directly.
+func TestOpenAPIResolveEndpointCoversProfileHosts(t *testing.T) {
+	t.Setenv("SI_TEST_REVIEW_TOKEN", "si-test-secret-token")
+	var detailCalls atomic.Int32
+	fixture := runtimeReviewPlatform(t, &detailCalls)
+	defer fixture.Close()
+
+	database := openCollabAPIDB(t)
+	server := New(database, nil)
+	activateFixtureProfile(t, server, fixture, fmt.Sprintf(runtimeOpenAPIDoc, fixture.URL))
+
+	// The frontend-facing resolve endpoint must resolve profile-hosted URLs via host_id. must resolve profile-hosted URLs via host_id.
+	response := serveChangeRequestAPI(server, "POST", "/api/change-requests/resolve",
+		fmt.Sprintf(`{"reference": "%s/projects/team/repo/pulls/5678", "include_hosted_details": true}`, fixture.URL))
+	if response.Code != http.StatusOK {
+		t.Fatalf("resolve: status=%d body=%s", response.Code, response.Body.String())
+	}
+	var resolved struct {
+		Assessment struct {
+			State string `json:"state"`
+		} `json:"assessment"`
+		Matches []map[string]any `json:"matches"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.Matches) != 1 || resolved.Assessment.State != "exact" {
+		t.Fatalf("resolve must return the hosted match: %s", response.Body.String())
+	}
+}

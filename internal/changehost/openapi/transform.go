@@ -24,6 +24,13 @@ func (e *SelectorError) Error() string {
 	return fmt.Sprintf("field selector %s failed: %s", e.Pointer, e.Detail)
 }
 
+// NotFound reports whether the failure is a missing path — a normal
+// pagination terminator — as opposed to a shape drift (type change,
+// non-object traversal).
+func (e *SelectorError) NotFound() bool {
+	return e != nil && e.Detail == "path not present"
+}
+
 // EvalPointer resolves a restricted JSON Pointer against a decoded response
 // value. "" selects the root. Missing paths and non-scalar targets error.
 func EvalPointer(document any, pointer string) (any, error) {

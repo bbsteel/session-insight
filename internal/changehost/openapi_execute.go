@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -203,11 +204,17 @@ func (p *OpenAPIProvider) collectFiles(
 		if err != nil {
 			return nil, nil, "", fileSet, patches, modes, metadata, err
 		}
-		files, contents, err = filesFromUnifiedDiff(p.Kind(), repository, number, raw)
+		var diffOverflow bool
+		files, contents, diffOverflow, err = filesFromUnifiedDiff(p.Kind(), repository, number, raw, p.fileLimit())
 		if err != nil {
 			return nil, nil, "", fileSet, patches, modes, metadata, err
 		}
-		fileSet = model.ExactGitEvidence()
+		if diffOverflow {
+			fileSet = model.NonExactGitEvidence(model.GitEvidenceEstimated, model.ReasonChangeRequestOverflow)
+			patches = fileSet
+		} else {
+			fileSet = model.ExactGitEvidence()
+		}
 		patches = model.ExactGitEvidence()
 	}
 	manifest = fileManifestDigest(files)
@@ -402,12 +409,20 @@ func (p *OpenAPIProvider) fetchPages(
 		query.Set(pagination.PerPageParameter, "100")
 	}
 
+	nextURL := ""
 	for pageCount := int64(1); ; pageCount++ {
-		requestURL, err := p.operationURL(profileOperation, repository, number, query)
-		if err != nil {
-			return nil, metadata, overflow, providerError(operation, ErrorInvalidResponse, err)
+		// The continuation URL from a Link header is used verbatim for the next
+		// request (its path may differ from the operation template); the HTTP
+		// client still enforces the approved-origin allowlist on it.
+		requestURL := nextURL
+		if requestURL == "" {
+			var err error
+			requestURL, err = p.operationURL(profileOperation, repository, number, query)
+			if err != nil {
+				return nil, metadata, overflow, providerError(operation, ErrorInvalidResponse, err)
+			}
 		}
-		result, err := p.client.Do(ctx, operation, "GET", requestURL, nil)
+		result, err := p.client.DoWithProfileHeaders(ctx, operation, profileOperation.Method, requestURL, nil, profileOperation.Headers)
 		metadata.PageCount += result.Metadata.PageCount
 		metadata.BytesRead += result.Metadata.BytesRead
 		if err != nil {
@@ -450,19 +465,24 @@ func (p *OpenAPIProvider) fetchPages(
 			if next == "" {
 				return items, metadata, false, nil
 			}
-			// The next URL must stay on approved origins; the HTTP client
-			// enforces that on the request itself.
-			parsed, err := url.Parse(next)
-			if err != nil {
-				return items, metadata, overflow, nil
-			}
-			query = parsed.Query()
+			nextURL = next
 		case openapi.PaginationCursorBody:
 			nextValue, err := openapi.EvalPointer(document, pagination.NextCursorPointer)
 			if err != nil {
-				return items, metadata, false, nil
+				// A missing cursor key is the normal end of a cursor-paginated
+				// list; any other pointer failure is schema drift, not an
+				// excuse to truncate silently.
+				var selectorErr *openapi.SelectorError
+				if errors.As(err, &selectorErr) && selectorErr.NotFound() {
+					return items, metadata, false, nil
+				}
+				return nil, metadata, overflow, providerError(operation, ErrorInvalidResponse, err)
 			}
-			next, _ := nextValue.(string)
+			next, ok := nextValue.(string)
+			if !ok {
+				return nil, metadata, overflow, providerError(operation, ErrorInvalidResponse,
+					&openapi.SelectorError{Pointer: pagination.NextCursorPointer, Detail: "next cursor is not a string"})
+			}
 			if next == "" {
 				return items, metadata, false, nil
 			}
@@ -503,7 +523,7 @@ func (p *OpenAPIProvider) fetchDiffText(ctx context.Context, repository, number 
 	if err != nil {
 		return nil, ResultMetadata{}, providerError(OperationGetSnapshot, ErrorInvalidResponse, err)
 	}
-	result, err := p.client.Do(ctx, OperationGetSnapshot, "GET", requestURL, nil)
+	result, err := p.client.DoWithProfileHeaders(ctx, OperationGetSnapshot, operation.Method, requestURL, nil, operation.Headers)
 	if err != nil {
 		return nil, result.Metadata, err
 	}
@@ -513,8 +533,10 @@ func (p *OpenAPIProvider) fetchDiffText(ctx context.Context, repository, number 
 // filesFromUnifiedDiff parses a bounded unified diff into file rows with
 // per-file patch contents. Mode changes surface from git headers when
 // present; otherwise modes stay unavailable per-file but the diff itself is
-// authoritative for the file set and patches.
-func filesFromUnifiedDiff(provider model.ChangeProviderKind, repository, number string, raw []byte) ([]model.GitFileChange, []SnapshotContent, error) {
+// authoritative for the file set and patches. More than maximumFiles sections
+// truncates the set and reports overflow — a large diff must not smuggle an
+// unbounded file count past the list-response limits.
+func filesFromUnifiedDiff(provider model.ChangeProviderKind, repository, number string, raw []byte, maximumFiles int64) ([]model.GitFileChange, []SnapshotContent, bool, error) {
 	text := string(raw)
 	// Split only on lines that START with the marker: a patch body line can
 	// legitimately contain "diff --git " as content (e.g. a stored fixture).
@@ -526,7 +548,12 @@ func filesFromUnifiedDiff(provider model.ChangeProviderKind, repository, number 
 		}
 	}
 	if len(sectionStarts) == 0 {
-		return nil, nil, fmt.Errorf("diff response is not a unified diff")
+		return nil, nil, false, fmt.Errorf("diff response is not a unified diff")
+	}
+	overflow := false
+	if int64(len(sectionStarts)) > maximumFiles {
+		sectionStarts = sectionStarts[:maximumFiles]
+		overflow = true
 	}
 	files := []model.GitFileChange{}
 	contents := []SnapshotContent{}
@@ -539,7 +566,7 @@ func filesFromUnifiedDiff(provider model.ChangeProviderKind, repository, number 
 		header := lines[start]
 		oldPath, newPath, ok := parseDiffGitHeader(header)
 		if !ok || !safeProviderPath(newPath) || !safeProviderPath(oldPath) {
-			return nil, nil, fmt.Errorf("diff section %d carries an invalid path", sectionIndex)
+			return nil, nil, overflow, fmt.Errorf("diff section %d carries an invalid path", sectionIndex)
 		}
 		status := model.GitFileModified
 		switch {
@@ -565,9 +592,9 @@ func filesFromUnifiedDiff(provider model.ChangeProviderKind, repository, number 
 		contents = append(contents, SnapshotContent{FileKey: fileKey, Purpose: SnapshotContentPatch, Content: []byte(body)})
 	}
 	if len(files) == 0 {
-		return nil, nil, fmt.Errorf("diff response contains no file sections")
+		return nil, nil, false, fmt.Errorf("diff response contains no file sections")
 	}
-	return files, contents, nil
+	return files, contents, overflow, nil
 }
 
 // parseDiffGitHeader extracts the a/ and b/ paths from a "diff --git" line.

@@ -220,6 +220,18 @@ func normalizeHTTPClientConfig(config HTTPClientConfig) (HTTPClientConfig, error
 }
 
 func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL string, headers http.Header) (HTTPResult, error) {
+	return c.doProfiled(ctx, operation, method, rawURL, headers, nil)
+}
+
+// DoWithProfileHeaders additionally applies headers a verified profile
+// declares for one operation. The profile contract already validated them
+// (no credential headers, bounded, CRLF-free); a defense-in-depth denylist
+// still applies here so a malformed profile can never inject credentials.
+func (c *HTTPClient) DoWithProfileHeaders(ctx context.Context, operation Operation, method, rawURL string, headers http.Header, profileHeaders map[string]string) (HTTPResult, error) {
+	return c.doProfiled(ctx, operation, method, rawURL, headers, profileHeaders)
+}
+
+func (c *HTTPClient) doProfiled(ctx context.Context, operation Operation, method, rawURL string, headers http.Header, profileHeaders map[string]string) (HTTPResult, error) {
 	if !IsKnownOperation(operation) {
 		return HTTPResult{}, &Error{Code: ErrorUnsupported, Operation: operation}
 	}
@@ -254,6 +266,7 @@ func (c *HTTPClient) Do(ctx context.Context, operation Operation, method, rawURL
 		return HTTPResult{}, &Error{Code: ErrorInvalidResponse, Operation: operation, Cause: err}
 	}
 	copySafeRequestHeaders(request.Header, headers)
+	applyProfileDeclaredHeaders(request.Header, profileHeaders)
 	if request.Header.Get("Accept") == "" {
 		request.Header.Set("Accept", "application/json")
 	}
@@ -339,6 +352,27 @@ func (c *HTTPClient) validateURL(u *url.URL) (string, error) {
 		return "", errURLOriginNotApproved
 	}
 	return origin, nil
+}
+
+// applyProfileDeclaredHeaders applies profile-declared headers verbatim,
+// minus the credential/transport denylist. Profile validation already rejects
+// these; the check here is defense in depth.
+func applyProfileDeclaredHeaders(destination http.Header, profileHeaders map[string]string) {
+	for name, value := range profileHeaders {
+		if value == "" || strings.ContainsAny(value, "\r\n") || strings.ContainsAny(name, "\r\n") {
+			continue
+		}
+		switch {
+		case strings.EqualFold(name, "Authorization"),
+			strings.EqualFold(name, "Cookie"),
+			strings.EqualFold(name, "Host"),
+			strings.EqualFold(name, "Content-Length"),
+			strings.EqualFold(name, "Proxy-Authorization"),
+			strings.EqualFold(name, "Proxy-Authenticate"):
+			continue
+		}
+		destination.Set(name, value)
+	}
 }
 
 func copySafeRequestHeaders(destination, source http.Header) {

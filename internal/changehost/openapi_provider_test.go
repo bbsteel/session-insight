@@ -312,7 +312,7 @@ func TestOpenAPIProviderCursorHeaderPagination(t *testing.T) {
 
 func TestFilesFromUnifiedDiffIgnoresMarkerInPatchBody(t *testing.T) {
 	raw := []byte("diff --git a/fixture.txt b/fixture.txt\nindex 1111111..2222222 100644\n--- a/fixture.txt\n+++ b/fixture.txt\n@@ -1 +1 @@\n-diff --git a/old.txt b/old.txt\n+diff --git a/new.txt b/new.txt\n")
-	files, _, err := filesFromUnifiedDiff(model.ChangeProviderOpenAPI, "team/repo", "1", raw)
+	files, _, _, err := filesFromUnifiedDiff(model.ChangeProviderOpenAPI, "team/repo", "1", raw, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,238 @@ func TestFilesFromUnifiedDiffIgnoresMarkerInPatchBody(t *testing.T) {
 
 func TestFilesFromUnifiedDiffRejectsTraversalPaths(t *testing.T) {
 	raw := []byte("diff --git a/ok.go b/../../evil.go\nindex 1..2 100644\n--- a/ok.go\n+++ b/../../evil.go\n@@ -1 +1 @@\n-a\n+b\n")
-	if _, _, err := filesFromUnifiedDiff(model.ChangeProviderOpenAPI, "team/repo", "1", raw); err == nil {
+	if _, _, _, err := filesFromUnifiedDiff(model.ChangeProviderOpenAPI, "team/repo", "1", raw, 100); err == nil {
 		t.Fatal("traversal path in diff accepted")
+	}
+}
+
+// driftTrackingProvider builds a provider whose drift reporter counts calls.
+func driftTrackingProvider(t *testing.T, profile openapi.Profile, transport http.RoundTripper) (*OpenAPIProvider, *int) {
+	t.Helper()
+	driftCalls := 0
+	resolver := &policyResolver{addresses: map[string][]netip.Addr{
+		"review.internal": {netip.MustParseAddr("192.0.2.10")},
+	}}
+	host := HostIdentity{
+		Key: "review-host", Provider: model.ChangeProviderOpenAPI,
+		DisplayOrigin:   "https://review.internal",
+		EndpointOrigins: []string{"https://review.internal"},
+	}
+	approved, err := NewHostPolicy(resolver).Approve(context.Background(), host, HostApprovalOptions{AllowPrivateNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := newHTTPClient(approved, HTTPClientConfig{}, nil, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := NewOpenAPIProvider(host, client, profile, func(string) { driftCalls++ })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return provider, &driftCalls
+}
+
+func TestOpenAPIProviderTransientFailuresNeverDegrade(t *testing.T) {
+	headSHA := "0123456789abcdef0123456789abcdef01234567"
+	profile := diffOnlyProfile()
+	profile.Operations.ListFiles = &openapi.Operation{
+		Method: "GET", Origin: "https://review.internal",
+		PathTemplate: "/api/projects/{repository}/reviews/{number}/files",
+		Parameters: map[string]string{
+			"repository": "reference.repository", "number": "reference.number",
+		},
+		Pagination: openapi.Pagination{Mode: openapi.PaginationNone},
+		Response: openapi.OperationResponse{
+			ItemsPointer: "/values",
+			Fields: map[string]openapi.FieldSelector{
+				"path":   {Pointer: "/path"},
+				"status": {Pointer: "/status"},
+			},
+		},
+	}
+	for _, status := range []int{http.StatusNotFound, http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(fmt.Sprintf("status_%d", status), func(t *testing.T) {
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(request.URL.Path, "/files") {
+					return response(request, status, `{}`, nil), nil
+				}
+				return response(request, http.StatusOK, fmt.Sprintf(
+					`{"id": 42, "title": "x", "state": "open", "head": "%s"}`, headSHA), nil), nil
+			})
+			provider, driftCalls := driftTrackingProvider(t, profile, transport)
+			reference, ok := provider.ParseReference("https://review.internal/projects/team/repo/reviews/42")
+			if !ok {
+				t.Fatal("parse failed")
+			}
+			resolved, err := provider.Resolve(context.Background(), reference)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := provider.GetSnapshot(context.Background(), resolved.Change.Identity, ""); err == nil {
+				t.Fatal("failing files endpoint must fail the snapshot")
+			}
+			if *driftCalls != 0 {
+				t.Fatalf("transient failure degraded the profile: %d drift reports", *driftCalls)
+			}
+		})
+	}
+
+	// A shape change (files items pointer vanishes) IS drift.
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/files") {
+			return response(request, http.StatusOK, `{"items": []}`, nil), nil
+		}
+		return response(request, http.StatusOK, fmt.Sprintf(
+			`{"id": 42, "title": "x", "state": "open", "head": "%s"}`, headSHA), nil), nil
+	})
+	provider, driftCalls := driftTrackingProvider(t, profile, transport)
+	reference, _ := provider.ParseReference("https://review.internal/projects/team/repo/reviews/42")
+	resolved, err := provider.Resolve(context.Background(), reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.GetSnapshot(context.Background(), resolved.Change.Identity, ""); err == nil {
+		t.Fatal("shape change must fail the snapshot")
+	}
+	if *driftCalls == 0 {
+		t.Fatal("shape change must degrade the profile")
+	}
+}
+
+func TestOpenAPIProviderHonorsDeclaredMethodAndHeaders(t *testing.T) {
+	headSHA := "0123456789abcdef0123456789abcdef01234567"
+	profile := diffOnlyProfile()
+	profile.Operations.GetDiff.Method = "GET"
+	profile.Operations.GetDiff.Headers = map[string]string{"Accept": "text/x-diff", "X-Api-Track": "v2"}
+	seen := http.Header{}
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/diff") {
+			seen = request.Header.Clone()
+			return response(request, http.StatusOK, fixtureDiffText, nil), nil
+		}
+		return response(request, http.StatusOK, fmt.Sprintf(
+			`{"id": 42, "title": "x", "state": "open", "head": "%s"}`, headSHA), nil), nil
+	})
+	provider := openapiProviderFixture(t, profile, transport)
+	reference, _ := provider.ParseReference("https://review.internal/projects/team/repo/reviews/42")
+	resolved, err := provider.Resolve(context.Background(), reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.GetSnapshot(context.Background(), resolved.Change.Identity, ""); err != nil {
+		t.Fatal(err)
+	}
+	if seen.Get("X-Api-Track") != "v2" || seen.Get("Accept") != "text/x-diff" {
+		t.Fatalf("declared headers not applied: present_track=%v accept=%q", seen.Get("X-Api-Track") != "", seen.Get("Accept"))
+	}
+	// Note: credential-bearing headers are rejected at profile validation, so
+	// the client denylist never sees them through a validated profile.
+}
+
+func TestFilesFromUnifiedDiffRespectsFileLimit(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 5; i++ {
+		fmt.Fprintf(&b, "diff --git a/f%d.go b/f%d.go\nindex 1..2 100644\n--- a/f%d.go\n+++ b/f%d.go\n@@ -1 +1 @@\n-a\n+b\n", i, i, i, i)
+	}
+	files, _, overflow, err := filesFromUnifiedDiff(model.ChangeProviderOpenAPI, "team/repo", "1", []byte(b.String()), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !overflow || len(files) != 2 {
+		t.Fatalf("diff file limit: files=%d overflow=%v", len(files), overflow)
+	}
+}
+
+func TestFetchPagesRejectsMalformedCursor(t *testing.T) {
+	headSHA := "0123456789abcdef0123456789abcdef01234567"
+	profile := diffOnlyProfile()
+	profile.Operations.ListFiles = &openapi.Operation{
+		Method: "GET", Origin: "https://review.internal",
+		PathTemplate: "/api/projects/{repository}/reviews/{number}/files",
+		Parameters: map[string]string{
+			"repository": "reference.repository", "number": "reference.number",
+		},
+		Pagination: openapi.Pagination{
+			Mode:              openapi.PaginationCursorBody,
+			CursorParameter:   "cursor",
+			NextCursorPointer: "/next_cursor",
+		},
+		Response: openapi.OperationResponse{
+			ItemsPointer: "/values",
+			Fields: map[string]openapi.FieldSelector{
+				"path":   {Pointer: "/path"},
+				"status": {Pointer: "/status"},
+			},
+		},
+	}
+	profile.Operations.GetDiff = nil
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/files") {
+			// Cursor is a NUMBER, not a string: drift, not a clean end of list.
+			return response(request, http.StatusOK, `{"values": [{"path": "a.go", "status": "added"}], "next_cursor": 7}`, nil), nil
+		}
+		return response(request, http.StatusOK, fmt.Sprintf(
+			`{"id": 42, "title": "x", "state": "open", "head": "%s"}`, headSHA), nil), nil
+	})
+	provider := openapiProviderFixture(t, profile, transport)
+	reference, _ := provider.ParseReference("https://review.internal/projects/team/repo/reviews/42")
+	resolved, err := provider.Resolve(context.Background(), reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.GetSnapshot(context.Background(), resolved.Change.Identity, ""); err == nil {
+		t.Fatal("malformed cursor must fail the snapshot instead of truncating silently")
+	}
+}
+
+func TestFetchPagesFollowsLinkNextURLVerbatim(t *testing.T) {
+	headSHA := "0123456789abcdef0123456789abcdef01234567"
+	profile := diffOnlyProfile()
+	profile.Operations.ListFiles = &openapi.Operation{
+		Method: "GET", Origin: "https://review.internal",
+		PathTemplate: "/api/projects/{repository}/reviews/{number}/files",
+		Parameters: map[string]string{
+			"repository": "reference.repository", "number": "reference.number",
+		},
+		Pagination: openapi.Pagination{Mode: openapi.PaginationLinkHeader},
+		Response: openapi.OperationResponse{
+			ItemsPointer: "/values",
+			Fields: map[string]openapi.FieldSelector{
+				"path":   {Pointer: "/path"},
+				"status": {Pointer: "/status"},
+			},
+		},
+	}
+	profile.Operations.GetDiff = nil
+	continuationHit := false
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/api/projects/team/repo/reviews/42/files":
+			header := http.Header{"Link": {`<https://review.internal/api/continuations/abc-9?opaque=1>; rel="next"`}}
+			return response(request, http.StatusOK, `{"values": [{"path": "a.go", "status": "modified"}]}`, header), nil
+		case "/api/continuations/abc-9":
+			continuationHit = true
+			if request.URL.Query().Get("opaque") != "1" {
+				t.Error("continuation query lost")
+			}
+			return response(request, http.StatusOK, `{"values": [{"path": "b.go", "status": "added"}]}`, nil), nil
+		default:
+			return response(request, http.StatusOK, fmt.Sprintf(
+				`{"id": 42, "title": "x", "state": "open", "head": "%s"}`, headSHA), nil), nil
+		}
+	})
+	provider := openapiProviderFixture(t, profile, transport)
+	reference, _ := provider.ParseReference("https://review.internal/projects/team/repo/reviews/42")
+	resolved, err := provider.Resolve(context.Background(), reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := provider.GetSnapshot(context.Background(), resolved.Change.Identity, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !continuationHit || len(snapshot.Snapshot.Files) != 2 {
+		t.Fatalf("link continuation: hit=%v files=%d", continuationHit, len(snapshot.Snapshot.Files))
 	}
 }
