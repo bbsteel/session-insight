@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -195,14 +196,34 @@ func (v *profileValidator) add(code ProfileIssueCode, field, detail string) {
 }
 
 // normalizeOriginValue canonicalizes an absolute http(s) origin: scheme and
-// host are lowercased so equivalent spellings compare equal everywhere the
-// allowlist is consulted.
+// host are lowercased and default ports are dropped, matching the approved
+// host identity normalization in the changehost package so a profile and its
+// approved host always compare equal.
 func normalizeOriginValue(raw string) (string, bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return "", false
 	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), true
+	scheme := strings.ToLower(u.Scheme)
+	hostname := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	hostPort := hostname
+	if port != "" {
+		hostPort = net.JoinHostPort(hostname, port)
+	} else if strings.Contains(hostname, ":") {
+		hostPort = "[" + hostname + "]"
+	}
+	return scheme + "://" + hostPort, true
+}
+
+// NormalizeOrigin canonicalizes one origin for storage in a profile or host
+// record. Import and matching paths both go through it, so a URL written with
+// an explicit default port cannot split identities.
+func NormalizeOrigin(raw string) (string, bool) {
+	return normalizeOriginValue(raw)
 }
 
 // validateOriginValue requires an absolute http(s) origin: scheme, host, and
@@ -548,9 +569,9 @@ func validateOperationResponse(v *profileValidator, field string, id OperationID
 			v.add(IssueProfileContractInvalid, selectorField, "unknown standard field")
 			continue
 		}
-		if selector.Pointer == "" {
+		if selector.Pointer == "" && name != "diff_text" {
 			v.add(IssueMappingIncomplete, selectorField+".pointer", "a field selector requires a JSON pointer")
-		} else {
+		} else if selector.Pointer != "" {
 			validateJSONPointer(v, selectorField+".pointer", selector.Pointer)
 		}
 		if selector.Transform != nil {

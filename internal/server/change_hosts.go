@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/changehost"
+	"github.com/bbsteel/session-insight/internal/changehost/openapi"
 	"github.com/bbsteel/session-insight/internal/db"
 	"github.com/bbsteel/session-insight/internal/model"
 )
@@ -135,6 +136,10 @@ func (s *Server) handleRevokeChangeHost(w http.ResponseWriter, r *http.Request) 
 	if approved != nil {
 		approved.Revoke()
 	}
+	if err := s.refreshOpenAPIHostParsers(); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -150,7 +155,7 @@ func (s *Server) handleListChangeHosts(w http.ResponseWriter, _ *http.Request) {
 	}
 	statuses := make([]changehost.HostStatus, 0, len(records))
 	for _, record := range records {
-		statuses = append(statuses, changeHostStatusFromRecord(record))
+		statuses = append(statuses, s.changeHostStatusFromRecord(record))
 	}
 	writeJSONStatus(w, http.StatusOK, changehost.HostListResponse{Hosts: statuses})
 }
@@ -182,8 +187,23 @@ func (s *Server) handleRefreshChangeHost(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, "change_alias_ambiguous")
 		return
 	}
+	// OpenAPI references route by host_id; built-ins keep their fixed host.
+	hostKey := r.PathValue("hostKey")
+	if reference.Provider == model.ChangeProviderOpenAPI {
+		if reference.HostID == "" || reference.HostID != hostKey {
+			writeAPIError(w, http.StatusBadRequest, "change_host_mismatch")
+			return
+		}
+		lookup, err := s.refreshOpenAPIChangeRequest(r.Context(), hostKey, reference)
+		if err != nil {
+			writeChangeHostError(w, err)
+			return
+		}
+		writeJSONStatus(w, http.StatusOK, lookup)
+		return
+	}
 	host, ok := changehost.PublicHost(reference.Provider)
-	if !ok || host.Key != r.PathValue("hostKey") {
+	if !ok || host.Key != hostKey {
 		writeAPIError(w, http.StatusBadRequest, "change_host_mismatch")
 		return
 	}
@@ -193,6 +213,49 @@ func (s *Server) handleRefreshChangeHost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSONStatus(w, http.StatusOK, lookup)
+}
+
+// refreshOpenAPIChangeRequest resolves and syncs one change through the
+// host's active OpenAPI profile revision.
+func (s *Server) refreshOpenAPIChangeRequest(ctx context.Context, hostKey string, reference model.ChangeRequestReference) (changeRequestLookup, error) {
+	hostRecord, exists, err := s.DB.ChangeHost(hostKey)
+	if err != nil {
+		return changeRequestLookup{}, err
+	}
+	if !exists || hostRecord.Lifecycle != "approved" || hostRecord.Provider != model.ChangeProviderOpenAPI {
+		return changeRequestLookup{}, &changehost.Error{
+			Code: changehost.ErrorHostNotApproved, Operation: changehost.OperationResolveChange,
+		}
+	}
+	profileRecord, exists, err := s.DB.ActiveChangeHostProfile(hostKey)
+	if err != nil {
+		return changeRequestLookup{}, err
+	}
+	if !exists {
+		return changeRequestLookup{}, &changehost.Error{
+			Code: changehost.ErrorHostNotApproved, Operation: changehost.OperationResolveChange,
+		}
+	}
+	provider, _, err := s.openapiProviderForHost(ctx, hostRecord, profileRecord)
+	if err != nil {
+		return changeRequestLookup{}, err
+	}
+	resolved, err := provider.Resolve(ctx, reference)
+	if err != nil {
+		s.recordChangeHostFailure(hostKey, err)
+		return changeRequestLookup{}, err
+	}
+	synced, err := changehost.SyncSnapshot(
+		ctx, provider, s.DB, resolved.Change.Identity, "",
+		changehost.SnapshotSyncOptions{Quota: db.DefaultSourceContentQuota},
+	)
+	if err != nil {
+		s.recordChangeHostFailure(hostKey, err)
+		return changeRequestLookup{}, err
+	}
+	_ = s.DB.TouchChangeHost(hostKey, time.Now().UTC(), model.ExactGitEvidence())
+	_ = s.DB.TouchChangeHostProfileSuccess(profileRecord.ProfileID, time.Now().UTC())
+	return s.changeRequestLookup(synced.ChangeKey)
 }
 
 func (s *Server) refreshChangeRequest(ctx context.Context, hostKey string, reference model.ChangeRequestReference) (changeRequestLookup, error) {
@@ -286,10 +349,25 @@ func (s *Server) changeHostStatus(hostKey string) (changehost.HostStatus, error)
 	if !exists {
 		return changehost.HostStatus{}, db.ErrChangeRequestNotFound
 	}
-	return changeHostStatusFromRecord(record), nil
+	return s.changeHostStatusFromRecord(record), nil
 }
 
-func changeHostStatusFromRecord(record db.ChangeHostRecord) changehost.HostStatus {
+func (s *Server) changeHostCapabilities(record db.ChangeHostRecord) changehost.ProviderCapabilities {
+	if record.Provider == model.ChangeProviderOpenAPI {
+		if s.DB != nil {
+			if profile, exists, err := s.DB.ActiveChangeHostProfile(record.HostID); err == nil && exists {
+				if decoded, err := openapi.DecodeProfile([]byte(profile.ProfileJSON)); err == nil {
+					return changehost.OpenAPIProfileCapabilities(decoded)
+				}
+			}
+		}
+		return changehost.OpenAPIUnsupportedCapabilities()
+	}
+	capabilities, _ := changehost.BuiltInProviderCapabilities(record.Provider)
+	return capabilities
+}
+
+func (s *Server) changeHostStatusFromRecord(record db.ChangeHostRecord) changehost.HostStatus {
 	state := changehost.HostPendingApproval
 	switch record.Lifecycle {
 	case "approved":
@@ -297,10 +375,9 @@ func changeHostStatusFromRecord(record db.ChangeHostRecord) changehost.HostStatu
 	case "revoked":
 		state = changehost.HostRevoked
 	}
-	capabilities, _ := changehost.BuiltInProviderCapabilities(record.Provider)
 	status := changehost.HostStatus{
 		Host: hostIdentityFromRecord(record), ApprovalState: state,
-		Capabilities: capabilities,
+		Capabilities: s.changeHostCapabilities(record),
 		Assessment:   record.Assessment, LastCheckedAt: record.LastCheckedAt,
 	}
 	// The credential reference itself never leaves storage; the DTO carries

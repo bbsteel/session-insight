@@ -44,6 +44,10 @@ type ChangeRequestContentWrite struct {
 type ChangeRequestSnapshotWrite struct {
 	Snapshot      model.ChangeRequestSnapshot
 	SyncStartedAt time.Time
+	// ProfileID/ProfileRevision record which OpenAPI adapter revision produced
+	// this snapshot (design §10 diagnostic provenance; empty for built-ins).
+	ProfileID       string
+	ProfileRevision int
 	// UpdateCacheHead is true only when Snapshot came from resolving the
 	// provider's current Change Request version. Historical version fetches
 	// remain queryable but must not replace or invalidate the current head.
@@ -301,8 +305,8 @@ func (db *DB) StoreChangeRequestSnapshot(write ChangeRequestSnapshotWrite) (stri
 			file_manifest_digest, kind, display_number, lifecycle_state, draft,
 			title, web_url, source_repository_id, source_ref, target_ref,
 			merge_commit_sha, squash_commit_sha, completeness_json, etag,
-			fetched_at, cache_state
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			fetched_at, cache_state, profile_id, profile_revision
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			snapshot.SnapshotID, changeKey, snapshot.Content.Key,
 			snapshot.Content.NativeVersion, snapshot.MetadataRevision,
 			snapshot.Content.BaseRefSHA, snapshot.Content.DiffBaseSHA,
@@ -312,6 +316,7 @@ func (db *DB) StoreChangeRequestSnapshot(write ChangeRequestSnapshotWrite) (stri
 			sourceRepositoryID, snapshot.SourceRef, snapshot.TargetRef,
 			snapshot.MergeCommitSHA, snapshot.SquashCommitSHA,
 			string(completenessJSON), snapshot.ETag, model.FormatTime(snapshot.FetchedAt), desiredCacheState,
+			write.ProfileID, write.ProfileRevision,
 		); err != nil {
 			return "", fmt.Errorf("insert Change Request snapshot: %w", err)
 		}
