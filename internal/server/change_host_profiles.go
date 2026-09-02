@@ -226,6 +226,12 @@ func (s *Server) handleImportChangeHostProfile(w http.ResponseWriter, r *http.Re
 		return plan.Candidates[i].Score > plan.Candidates[j].Score
 	})
 
+	// Re-imports onto an existing host create the next revision (design §8:
+	// edits never mutate an existing revision in place).
+	revision := 1
+	if existing, err := s.DB.ListChangeHostProfiles(hostID); err == nil && len(existing) > 0 {
+		revision = existing[0].ProfileRevision + 1 // ListChangeHostProfiles orders by revision DESC
+	}
 	profileID := newProfileID()
 	reference := openapi.ReferenceTemplate{
 		Origin:              sample.Origin,
@@ -236,7 +242,7 @@ func (s *Server) handleImportChangeHostProfile(w http.ResponseWriter, r *http.Re
 	draft := openapi.Profile{
 		SchemaVersion:   openapi.SchemaVersion,
 		ProfileID:       profileID,
-		ProfileRevision: 1,
+		ProfileRevision: revision,
 		DisplayName:     displayName,
 		Adapter:         openapi.AdapterKind,
 		HostID:          hostID,
@@ -267,7 +273,7 @@ func (s *Server) handleImportChangeHostProfile(w http.ResponseWriter, r *http.Re
 		return
 	}
 	record := db.ChangeHostProfileRecord{
-		ProfileID: profileID, HostID: hostID, ProfileRevision: 1,
+		ProfileID: profileID, HostID: hostID, ProfileRevision: revision,
 		SchemaVersion: openapi.SchemaVersion, DisplayName: displayName,
 		Lifecycle: openapi.ProfileDraft, ProfileJSON: string(profileJSON),
 		InferenceReportJSON: string(reportJSON), SpecDigest: document.Digest,
