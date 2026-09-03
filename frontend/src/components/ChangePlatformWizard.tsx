@@ -42,6 +42,8 @@ export default function ChangePlatformWizard({ onClose, onDone }: { onClose: () 
   const [state, setState] = useState<WizardState>(initialWizardState)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const fileReadSequenceRef = useRef(0)
+  const activeFileReaderRef = useRef<FileReader | null>(null)
 
   const patch = (partial: Partial<WizardState>) => setState(s => ({ ...s, ...partial, error: partial.error ?? '' }))
   const patchBasics = (partial: Partial<WizardState['basics']>) => setState(s => ({ ...s, basics: { ...s.basics, ...partial } }))
@@ -60,9 +62,24 @@ export default function ChangePlatformWizard({ onClose, onDone }: { onClose: () 
 
   const readFile = (file: File | undefined) => {
     if (!file) return
+    const fileReadSequence = fileReadSequenceRef.current + 1
+    fileReadSequenceRef.current = fileReadSequence
+    activeFileReaderRef.current?.abort()
     const reader = new FileReader()
-    reader.onload = () => patchBasics({ document: String(reader.result ?? '') })
-    reader.onerror = () => patch({ error: t('changeHosts.wizard.fileReadError') })
+    activeFileReaderRef.current = reader
+    reader.onload = () => {
+      if (fileReadSequenceRef.current !== fileReadSequence) return
+      activeFileReaderRef.current = null
+      patchBasics({ document: String(reader.result ?? '') })
+    }
+    reader.onerror = () => {
+      if (fileReadSequenceRef.current !== fileReadSequence) return
+      activeFileReaderRef.current = null
+      patch({ error: t('changeHosts.wizard.fileReadError') })
+    }
+    reader.onabort = () => {
+      if (fileReadSequenceRef.current === fileReadSequence) activeFileReaderRef.current = null
+    }
     reader.readAsText(file)
   }
 
@@ -155,11 +172,11 @@ export default function ChangePlatformWizard({ onClose, onDone }: { onClose: () 
               </div>
               <label className="block space-y-1">
                 <span className="text-helper text-[var(--text-secondary)]">{t('changeHosts.wizard.apiBaseUrl')}</span>
-                <input className={inputCls} value={state.basics.apiBaseUrl} onChange={e => patchBasics({ apiBaseUrl: e.target.value })} placeholder="https://review.internal/api" />
+                <input className={inputCls} value={state.basics.apiBaseUrl} onChange={e => patchBasics({ apiBaseUrl: e.target.value })} placeholder={t('changeHosts.wizard.apiBaseUrlPlaceholder')} />
               </label>
               <label className="block space-y-1">
                 <span className="text-helper text-[var(--text-secondary)]">{t('changeHosts.wizard.sampleChangeUrl')}</span>
-                <input className={inputCls} value={state.basics.sampleChangeUrl} onChange={e => patchBasics({ sampleChangeUrl: e.target.value })} placeholder="https://review.internal/projects/team/repo/pulls/1234" />
+                <input className={inputCls} value={state.basics.sampleChangeUrl} onChange={e => patchBasics({ sampleChangeUrl: e.target.value })} placeholder={t('changeHosts.wizard.sampleChangeUrlPlaceholder')} />
                 <span className="block text-meta text-[var(--text-muted)]">{t('changeHosts.wizard.sampleChangeUrlHelp')}</span>
               </label>
             </>
@@ -169,7 +186,7 @@ export default function ChangePlatformWizard({ onClose, onDone }: { onClose: () 
             <>
               <label className="block space-y-1">
                 <span className="text-helper text-[var(--text-secondary)]">{t('changeHosts.wizard.credentialEnvName')}</span>
-                <input className={inputCls} value={state.network.credentialEnvName} onChange={e => patchNetwork({ credentialEnvName: e.target.value })} placeholder="INTERNAL_REVIEW_TOKEN" />
+                <input className={inputCls} value={state.network.credentialEnvName} onChange={e => patchNetwork({ credentialEnvName: e.target.value })} placeholder={t('changeHosts.wizard.credentialEnvNamePlaceholder')} />
                 <span className="block text-meta text-[var(--text-muted)]">{t('changeHosts.wizard.credentialEnvHelp')}</span>
               </label>
               <label className="flex items-start gap-2 text-helper text-[var(--text-secondary)]">

@@ -1164,6 +1164,7 @@ import type {
 
 export async function listChangeHostProfiles(): Promise<ChangeHostProfileDTO[]> {
   const res = await fetch('/api/change-host-profiles')
+  if (!res.ok) throw await responseError(res, 'request_failed')
   const data = await readJson<{ profiles: ChangeHostProfileDTO[] }>(res, 'change host profiles')
   return data.profiles
 }

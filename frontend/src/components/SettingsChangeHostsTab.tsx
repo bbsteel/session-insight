@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import {
   activateChangeHostProfile,
@@ -44,13 +44,20 @@ export default function SettingsChangeHostsTab() {
   const [profiles, setProfiles] = useState<ChangeHostProfileDTO[] | null>(null)
   const [error, setError] = useState('')
   const [wizardOpen, setWizardOpen] = useState(false)
-  const [busy, setBusy] = useState<string>('')
+  const [lifecycleMutationBusy, setLifecycleMutationBusy] = useState(false)
+  const lifecycleMutationInFlightRef = useRef(false)
+  const profileReloadSequenceRef = useRef(0)
 
   const reload = useCallback(async () => {
+    const profileReloadSequence = profileReloadSequenceRef.current + 1
+    profileReloadSequenceRef.current = profileReloadSequence
     try {
-      setProfiles(await listChangeHostProfiles())
+      const loadedProfiles = await listChangeHostProfiles()
+      if (profileReloadSequenceRef.current !== profileReloadSequence) return
+      setProfiles(loadedProfiles)
       setError('')
     } catch (err) {
+      if (profileReloadSequenceRef.current !== profileReloadSequence) return
       setError(err instanceof Error ? err.message : String(err))
     }
   }, [])
@@ -59,15 +66,18 @@ export default function SettingsChangeHostsTab() {
     reload()
   }, [reload])
 
-  const run = async (profileId: string, action: () => Promise<unknown>) => {
-    setBusy(profileId)
+  const run = async (action: () => Promise<unknown>) => {
+    if (lifecycleMutationInFlightRef.current) return
+    lifecycleMutationInFlightRef.current = true
+    setLifecycleMutationBusy(true)
     try {
       await action()
       await reload()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setBusy('')
+      lifecycleMutationInFlightRef.current = false
+      setLifecycleMutationBusy(false)
     }
   }
 
@@ -136,17 +146,17 @@ export default function SettingsChangeHostsTab() {
             </div>
             <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
               {profile.lifecycle === 'verified' && (
-                <button className={actionBtn} disabled={busy === profile.profile_id} onClick={() => run(profile.profile_id, () => activateChangeHostProfile(profile.profile_id))}>
+                <button className={actionBtn} disabled={lifecycleMutationBusy} onClick={() => run(() => activateChangeHostProfile(profile.profile_id))}>
                   {t('changeHosts.action.activate')}
                 </button>
               )}
               {(profile.lifecycle === 'draft' || profile.lifecycle === 'invalid' || profile.lifecycle === 'degraded') && (
-                <button className={actionBtn} disabled={busy === profile.profile_id} onClick={() => run(profile.profile_id, () => probeChangeHostProfile(profile.profile_id))}>
+                <button className={actionBtn} disabled={lifecycleMutationBusy} onClick={() => run(() => probeChangeHostProfile(profile.profile_id))}>
                   {t('changeHosts.action.reprobe')}
                 </button>
               )}
               {profile.lifecycle !== 'revoked' && (
-                <button className={actionBtn} disabled={busy === profile.profile_id} onClick={() => run(profile.profile_id, () => revokeChangeHostProfile(profile.profile_id))}>
+                <button className={actionBtn} disabled={lifecycleMutationBusy} onClick={() => run(() => revokeChangeHostProfile(profile.profile_id))}>
                   {t('changeHosts.action.revoke')}
                 </button>
               )}
