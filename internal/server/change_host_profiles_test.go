@@ -19,7 +19,11 @@ import (
 func fictionalReviewPlatform(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("PRIVATE-TOKEN") != "si-test-secret-token" {
+		// This fixture uses plain HTTP, so the production client must omit the
+		// credential. Reject malformed credentials while allowing the expected
+		// no-credential request; HTTPS credential placement is covered by the
+		// changehost transport tests.
+		if token := r.Header.Get("PRIVATE-TOKEN"); token != "" && token != "si-test-secret-token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

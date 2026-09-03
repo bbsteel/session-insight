@@ -226,6 +226,9 @@ func (s *Server) handleImportChangeHostProfile(w http.ResponseWriter, r *http.Re
 		return plan.Candidates[i].Score > plan.Candidates[j].Score
 	})
 
+	// Re-imports onto an existing host create the next revision (design §8:
+	// edits never mutate an existing revision in place). The store allocates
+	// it atomically — a pre-read here would race a concurrent import.
 	profileID := newProfileID()
 	reference := openapi.ReferenceTemplate{
 		Origin:              sample.Origin,
@@ -236,7 +239,7 @@ func (s *Server) handleImportChangeHostProfile(w http.ResponseWriter, r *http.Re
 	draft := openapi.Profile{
 		SchemaVersion:   openapi.SchemaVersion,
 		ProfileID:       profileID,
-		ProfileRevision: 1,
+		ProfileRevision: 0, // allocated atomically by the store
 		DisplayName:     displayName,
 		Adapter:         openapi.AdapterKind,
 		HostID:          hostID,
@@ -267,7 +270,7 @@ func (s *Server) handleImportChangeHostProfile(w http.ResponseWriter, r *http.Re
 		return
 	}
 	record := db.ChangeHostProfileRecord{
-		ProfileID: profileID, HostID: hostID, ProfileRevision: 1,
+		ProfileID: profileID, HostID: hostID, ProfileRevision: 0,
 		SchemaVersion: openapi.SchemaVersion, DisplayName: displayName,
 		Lifecycle: openapi.ProfileDraft, ProfileJSON: string(profileJSON),
 		InferenceReportJSON: string(reportJSON), SpecDigest: document.Digest,
@@ -526,6 +529,15 @@ func (s *Server) runChangeHostProfileProbe(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, http.StatusConflict, string(openapi.IssueCredentialUnavailable), "keyring credential resolution is not available in this build")
 		return
 	}
+	// The probe allowlist covers exactly the origins the probe plan calls.
+	probeOrigins := []string{}
+	seenOrigin := map[string]bool{}
+	for _, stored := range report.Plan.Candidates {
+		if origin, ok := probeCandidateOrigin(stored.BaseURL); ok && !seenOrigin[origin] {
+			seenOrigin[origin] = true
+			probeOrigins = append(probeOrigins, origin)
+		}
+	}
 	client, err := changehost.NewAuthenticatedHTTPClient(approved, changehost.HTTPClientConfig{}, changehost.ResolvedAuthentication{
 		Source:    source,
 		Reference: reference,
@@ -533,6 +545,7 @@ func (s *Server) runChangeHostProfileProbe(w http.ResponseWriter, r *http.Reques
 			HeaderName:  profile.Authentication.HeaderName,
 			ValuePrefix: profile.Authentication.ValuePrefix,
 		},
+		AllowedOrigins: probeOrigins,
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusConflict, string(openapi.IssueCredentialUnavailable))

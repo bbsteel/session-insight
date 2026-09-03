@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -95,12 +96,21 @@ func validateProfileRecord(record ChangeHostProfileRecord) error {
 
 // CreateChangeHostProfileDraft inserts a new draft profile revision. Verified
 // and active profiles are created through the lifecycle transitions instead.
+// A zero ProfileRevision allocates the next revision for the host atomically —
+// concurrent imports can never mint the same revision twice. The profile
+// document is re-encoded with the allocated revision before validation.
 func (db *DB) CreateChangeHostProfileDraft(record ChangeHostProfileRecord) error {
 	if record.Lifecycle != openapi.ProfileDraft {
 		return fmt.Errorf("new change host profiles start as draft")
 	}
+	if record.ProfileRevision < 0 {
+		return fmt.Errorf("change host profile revision must not be negative")
+	}
 	if record.InferenceReportJSON == "" {
 		record.InferenceReportJSON = "{}"
+	}
+	if record.ProfileRevision == 0 {
+		return db.createNextChangeHostProfileDraft(record)
 	}
 	if err := validateProfileRecord(record); err != nil {
 		return err
@@ -108,12 +118,7 @@ func (db *DB) CreateChangeHostProfileDraft(record ChangeHostProfileRecord) error
 	now := time.Now().UTC()
 	record.CreatedAt = now
 	record.UpdatedAt = now
-	_, err := db.conn.Exec(`
-		INSERT INTO change_host_profiles(
-			profile_id, host_id, profile_revision, schema_version, display_name,
-			lifecycle, profile_json, inference_report_json, spec_digest, spec_version,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := db.conn.Exec(changeHostProfileInsert,
 		record.ProfileID, record.HostID, record.ProfileRevision, record.SchemaVersion,
 		record.DisplayName, string(record.Lifecycle), record.ProfileJSON,
 		record.InferenceReportJSON, record.SpecDigest, record.SpecVersion,
@@ -124,6 +129,73 @@ func (db *DB) CreateChangeHostProfileDraft(record ChangeHostProfileRecord) error
 	}
 	return nil
 }
+
+// createNextChangeHostProfileDraft allocates and inserts a revision while
+// holding SQLite's immediate writer lock. A deferred transaction would let
+// concurrent imports read the same maximum revision before either insert, so
+// the lock must be acquired before the allocation query.
+func (db *DB) createNextChangeHostProfileDraft(record ChangeHostProfileRecord) error {
+	transactionContext := context.Background()
+	pinnedConnection, err := db.conn.Conn(transactionContext)
+	if err != nil {
+		return fmt.Errorf("allocate change host profile revision: %w", err)
+	}
+	defer pinnedConnection.Close()
+	if _, err := pinnedConnection.ExecContext(transactionContext, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("allocate change host profile revision: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = pinnedConnection.ExecContext(transactionContext, `ROLLBACK`)
+		}
+	}()
+
+	var maximumRevision int
+	if err := pinnedConnection.QueryRowContext(
+		transactionContext,
+		`SELECT COALESCE(MAX(profile_revision), 0) FROM change_host_profiles WHERE host_id = ?`,
+		record.HostID,
+	).Scan(&maximumRevision); err != nil {
+		return fmt.Errorf("allocate change host profile revision: %w", err)
+	}
+	profile, err := openapi.DecodeProfile([]byte(record.ProfileJSON))
+	if err != nil {
+		return err
+	}
+	profile.ProfileRevision = maximumRevision + 1
+	record.ProfileRevision = profile.ProfileRevision
+	encoded, err := openapi.EncodeProfile(profile)
+	if err != nil {
+		return err
+	}
+	record.ProfileJSON = string(encoded)
+	if err := validateProfileRecord(record); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	record.CreatedAt = now
+	record.UpdatedAt = now
+	if _, err := pinnedConnection.ExecContext(transactionContext, changeHostProfileInsert,
+		record.ProfileID, record.HostID, record.ProfileRevision, record.SchemaVersion,
+		record.DisplayName, string(record.Lifecycle), record.ProfileJSON,
+		record.InferenceReportJSON, record.SpecDigest, record.SpecVersion,
+		model.FormatTime(record.CreatedAt), model.FormatTime(record.UpdatedAt)); err != nil {
+		return fmt.Errorf("create change host profile: %w", err)
+	}
+	if _, err := pinnedConnection.ExecContext(transactionContext, `COMMIT`); err != nil {
+		return fmt.Errorf("commit change host profile: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+const changeHostProfileInsert = `
+	INSERT INTO change_host_profiles(
+		profile_id, host_id, profile_revision, schema_version, display_name,
+		lifecycle, profile_json, inference_report_json, spec_digest, spec_version,
+		created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // UpdateChangeHostProfileDraft replaces the document and inference report of
 // a draft/invalid profile (a probe or mapping edit). Identity fields are
