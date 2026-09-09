@@ -303,8 +303,6 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       setSnippetSaving(false)
     }
   }, [session, snippetSaving])
-  const saveSnippetRef = useRef(saveSnippet)
-  saveSnippetRef.current = saveSnippet
   const handleToggleFollow = useCallback(() => {
     setFollowOutput(currentlyFollowing => {
       const shouldFollow = !currentlyFollowing
@@ -335,23 +333,6 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   // once (on cols-ready) but must see the latest positions and fold mapping.
   const positionsRef = useRef<PositionsResponse | null>(null)
   useEffect(() => { positionsRef.current = positionsData }, [positionsData])
-  const assistantPositionByOriginalRowRef = useRef(new Map<number, PositionsResponse['positions'][number]>())
-  useEffect(() => {
-    const orderedPositions = [...(positionsData?.positions ?? [])]
-      .sort((firstPosition, secondPosition) => firstPosition.line_start - secondPosition.line_start)
-    const positionsByOriginalRow = new Map<number, PositionsResponse['positions'][number]>()
-
-    for (const [positionIndex, position] of orderedPositions.entries()) {
-      if (position.kind !== 'assistant') continue
-      const nextPositionStart = orderedPositions[positionIndex + 1]?.line_start ?? positionsData?.total_lines ?? position.line_start + 1
-      const positionEndLine = position.line_end ?? Math.max(position.line_start, nextPositionStart - 1)
-      for (let originalRow = position.line_start; originalRow <= positionEndLine; originalRow += 1) {
-        positionsByOriginalRow.set(originalRow, position)
-      }
-    }
-
-    assistantPositionByOriginalRowRef.current = positionsByOriginalRow
-  }, [positionsData])
   const sessionRef = useRef(session)
   sessionRef.current = session
   const sessionCwdRef = useRef('')
@@ -500,34 +481,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           openFilePopover(bufLine, meta, null, data as PathMatch)
         },
       },
-      {
-        // Every assistant row gets an xterm-owned floating action at the
-        // right edge. The matcher is last so links and file paths within a
-        // reply retain their more specific interactions.
-        match: (_text: string, bufferLine?: number) => {
-          if (bufferLine === undefined) return []
-          const terminalControl = termControlRef.current
-          const originalRow = terminalControl ? terminalControl.toOriginalLine(bufferLine) : bufferLine
-          const assistantPosition = assistantPositionByOriginalRowRef.current.get(originalRow)
-          return assistantPosition ? [{ data: assistantPosition }] : []
-        },
-        tooltip: t('snippets.saveCurrentAssistant'),
-        hoverAction: {
-          label: t('snippets.quickSave'),
-          cellWidth: 8,
-        },
-        onActivate: (_bufLine: number, data: unknown) => {
-          const assistantPosition = data as PositionsResponse['positions'][number]
-          const assistantContent = sessionRef.current?.turns.find(turn => turn.turn_index === assistantPosition.turn_index)?.assistant_message
-            || assistantPosition.label
-          void saveSnippetRef.current(assistantContent, 'assistant', assistantPosition.turn_index)
-        },
-      },
     ])
   }, [openFilePopover, resolveFileCandidate, t])
 
-  // Assistant-row actions depend on the asynchronously loaded positions map;
-  // rescan when it arrives so the hover button is available without a resize.
+  // Position-dependent matchers (e.g. truncation rows) read positions through
+  // a ref; rescan when positions arrive so they work without a resize.
   useEffect(() => {
     registerMatchers()
   }, [positionsData, registerMatchers])
@@ -1093,15 +1051,30 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     const selectedText = ctxMenu?.selectionText ?? termControlRef.current?.getSelectionText() ?? ''
     const transcriptPositions = [...(positionsData?.positions ?? [])]
       .sort((firstPosition, secondPosition) => firstPosition.line_start - secondPosition.line_start)
-    const currentAssistantPosition = ctxMenu?.originalRow === null || ctxMenu?.originalRow === undefined
-      ? undefined
-      : transcriptPositions.find((position, positionIndex) => {
-          if (position.kind !== 'assistant') return false
+    // Locate the assistant reply containing the right-clicked row, plus its
+    // rendered row span, so the menu label can state exactly what a save
+    // captures ("the entire reply, ~N rows").
+    let currentAssistantPosition: PositionsResponse['positions'][number] | undefined
+    let currentAssistantRowCount = 0
+    const ctxMenuRow = ctxMenu?.originalRow
+    if (ctxMenuRow !== null && ctxMenuRow !== undefined) {
+      const assistantPositionIndex = transcriptPositions.findIndex((position, positionIndex) => {
+        if (position.kind !== 'assistant') return false
 
-          const positionEndLine = position.line_end
-            ?? (transcriptPositions[positionIndex + 1]?.line_start ?? Infinity) - 1
-          return position.line_start <= ctxMenu.originalRow! && positionEndLine >= ctxMenu.originalRow!
-        })
+        const positionEndLine = position.line_end
+          ?? (transcriptPositions[positionIndex + 1]?.line_start ?? Infinity) - 1
+        return position.line_start <= ctxMenuRow && positionEndLine >= ctxMenuRow
+      })
+      if (assistantPositionIndex >= 0) {
+        currentAssistantPosition = transcriptPositions[assistantPositionIndex]
+        const nextPositionStart = transcriptPositions[assistantPositionIndex + 1]?.line_start
+          ?? positionsData?.total_lines
+          ?? currentAssistantPosition.line_start + 1
+        const assistantEndLine = currentAssistantPosition.line_end
+          ?? Math.max(currentAssistantPosition.line_start, nextPositionStart - 1)
+        currentAssistantRowCount = Math.max(1, assistantEndLine - currentAssistantPosition.line_start + 1)
+      }
+    }
     const currentAssistantContent = currentAssistantPosition
       ? session?.turns.find(turn => turn.turn_index === currentAssistantPosition.turn_index)?.assistant_message || currentAssistantPosition.label
       : ''
@@ -1214,7 +1187,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           },
           ...(currentAssistantPosition && currentAssistantContent.trim()
             ? [{
-                label: t('snippets.saveCurrentAssistant'),
+                label: t('snippets.saveCurrentAssistant', { lines: currentAssistantRowCount }),
                 disabled: snippetSaving,
                 onClick: () => {
                   void saveSnippet(currentAssistantContent, 'assistant', currentAssistantPosition.turn_index)
