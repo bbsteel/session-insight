@@ -1,0 +1,178 @@
+{
+  "schema": "worktree-review.cli.result/v1",
+  "gate_state": "Blocked",
+  "attempt_id": "attempt_01JWRTEST00000000BLCK",
+  "request_key": {
+    "source_repository": "demo/blocked-local",
+    "target_ref": "main",
+    "target_head_oid": "dc6494bc307b316614766df98d51efef3f3db2d7",
+    "proposed_head_oid": "304ab69d5951025d13b5e8685a3185ac2548e7f7",
+    "review_policy_version": {
+      "semver": "0.1.0",
+      "sha256": "c457d93bb5dd864c3112f8ff15449c64a6cc3b6a7512852c486cf575e1ec224f"
+    }
+  },
+  "review_identity": {
+    "merge_tree_oid": "2734cc428cc50100acec9104a7b87ae6354b011f",
+    "review_policy_version": {
+      "semver": "0.1.0",
+      "sha256": "c457d93bb5dd864c3112f8ff15449c64a6cc3b6a7512852c486cf575e1ec224f"
+    }
+  },
+  "source_repository": "demo/blocked-local",
+  "target_ref": "main",
+  "target_head_oid": "dc6494bc307b316614766df98d51efef3f3db2d7",
+  "proposed_ref": "feature/unsigned",
+  "proposed_source": "committed-ref",
+  "proposed_head_oid": "304ab69d5951025d13b5e8685a3185ac2548e7f7",
+  "merge_tree_oid": "2734cc428cc50100acec9104a7b87ae6354b011f",
+  "review_policy_version": {
+    "semver": "0.1.0",
+    "sha256": "c457d93bb5dd864c3112f8ff15449c64a6cc3b6a7512852c486cf575e1ec224f"
+  },
+  "compute_policy_version": {
+    "semver": "0.1.0",
+    "sha256": "86aaac8920d1c80b111f85057ad938cb23d2cefb324eaa8dccda8228f4389ac5"
+  },
+  "compute_policy_disclosure": {
+    "provider": "local-cli",
+    "model": "python",
+    "data_destination": "local command stdin/stdout",
+    "known_retention": "none \u2014 demo local-cli provider",
+    "provider_configuration_fingerprint": "4ba262241bb77632487e2e89adfed0bbcddbd8ce6774173347d0792e7b1c6cf7"
+  },
+  "stage_outcomes": [
+    {
+      "stage": "derive-identity",
+      "status": "completed",
+      "detail": "attempt c85aba4d-8d0b-4385-a4fd-a69a0178edfd"
+    },
+    {
+      "stage": "construct-merge",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "prepare-review-worktree",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "gather-context",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "run-dimensions",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "verify-dedup",
+      "status": "completed",
+      "detail": "validated and deduplicated 1 findings"
+    },
+    {
+      "stage": "check-completeness",
+      "status": "completed",
+      "detail": "required coverage and dimensions completed"
+    },
+    {
+      "stage": "evaluate-gate",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "publish",
+      "status": "completed",
+      "detail": null
+    }
+  ],
+  "dimension_outcomes": [
+    {
+      "dimension_id": "correctness",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "dimension_id": "security",
+      "status": "completed",
+      "detail": null
+    }
+  ],
+  "findings": [
+    {
+      "fingerprint": "db29e100df74a503c47d68359d0309f6ff84228b8fee4680b4e1902c52b09fa6",
+      "severity": "major",
+      "evidence_band": "supported",
+      "problem_statement": "The unsigned fallback branch accepts the request.",
+      "expected_impact": "Callers can skip signature checks on the merge candidate.",
+      "evidence_spans": [
+        {
+          "path": "src/auth.py",
+          "start_line": 2,
+          "end_line": 2,
+          "quoted_text": "    return True  # unsigned fallback",
+          "context_class": "workspace",
+          "source": "review-worktree",
+          "snapshot_identity": "2734cc428cc50100acec9104a7b87ae6354b011f",
+          "change_kind": null
+        }
+      ],
+      "repair_guidance": "Reject requests that fail signature verification.",
+      "bypass_applied": false,
+      "dimension_id": "security"
+    }
+  ],
+  "draft_findings": [],
+  "coverage": {
+    "required_coverage_complete": true,
+    "mandatory_missing": [],
+    "optional_missing": [
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "excluded": [],
+    "unreviewable": [],
+    "reviewed": [
+      "merge-candidate.diff",
+      "src/auth.py"
+    ]
+  },
+  "usage": [
+    {
+      "kind": "estimated",
+      "input_tokens": 1180,
+      "output_tokens": 8192,
+      "cost_usd": null,
+      "provider": "local-cli",
+      "model": "python",
+      "note": "sum of per-dimension structured-call estimates"
+    },
+    {
+      "kind": "declared",
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "provider": "local-cli",
+      "model": "python",
+      "note": "local CLI adapter worktree-json did not report token usage"
+    },
+    {
+      "kind": "declared",
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "provider": "local-cli",
+      "model": "python",
+      "note": "local CLI adapter worktree-json did not report token usage"
+    }
+  ],
+  "call_plan": {
+    "call_count": 2,
+    "estimated_input_tokens": 1180,
+    "max_output_tokens_per_call": 4096
+  },
+  "summary": "Review completed.",
+  "error_detail": null
+}

@@ -1,0 +1,5 @@
+{"schema": "worktree-review.event/v1", "sequence": 1, "occurred_at": "2026-09-09T12:00:00.000Z", "attempt_id": "attempt_01JWRTEST00000000CRPT", "surface": "web", "event_type": "attempt.created", "payload": {"source": "local-worktree", "repository_id": "repo_x", "repository_display": "acme/corrupt-demo"}, "reconstructed": false}
+
+{"schema": "worktree-review.event/v2", "sequence": 2, "occurred_at": "2026-09-09T12:00:01.000Z", "attempt_id": "attempt_01JWRTEST00000000CRPT", "surface": "web", "event_type": "stage.started", "payload": {"stage": "derive-identity"}}
+{"schema": "worktree-review.event/v1", "sequence": 3, "occurred_at": "2026-09-09T12:00:02.000Z", "attempt_id": "attempt_01JWRTEST00000000CRPT", "surface": "web", "event_type": "stage.completed", "payload": {"stage": "derive-identity", "elapsed_seconds": 1.0}, "reconstructed": false}
+{"schema":"worktree-review.event/v1","sequence":4,"occurred_at":"2026-09-09T12:00:
