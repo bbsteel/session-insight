@@ -121,9 +121,15 @@ func AttemptDir(root, attemptID string) string {
 }
 
 // MetadataPath, EventsPath and ResultPath name the three journal documents.
-func MetadataPath(root, attemptID string) string { return filepath.Join(AttemptDir(root, attemptID), metadataFile) }
-func EventsPath(root, attemptID string) string   { return filepath.Join(AttemptDir(root, attemptID), eventsFile) }
-func ResultPath(root, attemptID string) string   { return filepath.Join(AttemptDir(root, attemptID), resultFile) }
+func MetadataPath(root, attemptID string) string {
+	return filepath.Join(AttemptDir(root, attemptID), metadataFile)
+}
+func EventsPath(root, attemptID string) string {
+	return filepath.Join(AttemptDir(root, attemptID), eventsFile)
+}
+func ResultPath(root, attemptID string) string {
+	return filepath.Join(AttemptDir(root, attemptID), resultFile)
+}
 
 // ParseSessionMetadata validates and parses metadata.json. Unknown schema
 // versions are rejected with UnsupportedSchemaError.

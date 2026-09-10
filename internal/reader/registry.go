@@ -17,6 +17,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
+	"github.com/bbsteel/session-insight/internal/reader/worktreereview"
 )
 
 // RegisteredAgentDefinition aggregates adapter-owned capability and
@@ -40,6 +41,7 @@ func RegisteredAgentDefinitions() []RegisteredAgentDefinition {
 		{Capabilities: hermes.Capabilities(), Presentation: hermes.Presentation(), MigrationState: hermes.PresentationMigrationState()},
 		{Capabilities: imported.Capabilities(), Presentation: imported.Presentation(), MigrationState: imported.PresentationMigrationState()},
 		{Capabilities: opencode.Capabilities(), Presentation: opencode.Presentation(), MigrationState: opencode.PresentationMigrationState()},
+		{Capabilities: worktreereview.Capabilities(), Presentation: worktreereview.Presentation(), MigrationState: worktreereview.PresentationMigrationState()},
 	}
 	sort.Slice(defs, func(i, j int) bool {
 		return defs[i].Capabilities.AgentType < defs[j].Capabilities.AgentType
@@ -158,6 +160,12 @@ func Discover() []BaseSessionReader {
 	grokDir := filepath.Join(homeDir, ".grok", "sessions")
 	if info, err := os.Stat(grokDir); err == nil && info.IsDir() {
 		readers = append(readers, grok.New(grokDir))
+	}
+
+	if journalRoot := worktreereview.DefaultJournalRoot(); journalRoot != "" {
+		if info, err := os.Stat(journalRoot); err == nil && info.IsDir() {
+			readers = append(readers, worktreereview.New(journalRoot))
+		}
 	}
 
 	return readers

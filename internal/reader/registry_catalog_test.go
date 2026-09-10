@@ -20,19 +20,20 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
+	"github.com/bbsteel/session-insight/internal/reader/worktreereview"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // expectedAgentTypes is the closed set of supported Agents for phase 1.
 var expectedAgentTypes = []string{
-	"chrys", "claude", "codex", "copilot", "grok", "hermes", "imported", "opencode",
+	"chrys", "claude", "codex", "copilot", "grok", "hermes", "imported", "opencode", "worktree-review",
 }
 
 func TestAgentDefinitionsHasSevenAgents(t *testing.T) {
 	defs := reader.AgentDefinitions()
-	if len(defs) != 8 {
-		t.Fatalf("catalog length = %d, want 8: %v", len(defs), agentTypes(defs))
+	if len(defs) != 9 {
+		t.Fatalf("catalog length = %d, want 9: %v", len(defs), agentTypes(defs))
 	}
 
 	got := agentTypes(defs)
@@ -193,6 +194,7 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 		{hermes.Capabilities(), hermesReader},
 		{imported.Capabilities(), imported.New(tmp)},
 		{opencode.Capabilities(), ocReader},
+		{worktreereview.Capabilities(), worktreereview.New(tmp)},
 	}
 	for _, p := range pairs {
 		if p.decl.AgentType != p.reader.AgentType() {
@@ -221,13 +223,14 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 	}
 
 	readers := map[string]reader.BaseSessionReader{
-		"claude":   claude.New(tmp),
-		"codex":    codex.New(tmp),
-		"copilot":  copilot.New(tmp),
-		"chrys":    chrys.New(tmp),
-		"grok":     grok.New(tmp),
-		"imported": imported.New(tmp),
-		"opencode": ocReader,
+		"claude":          claude.New(tmp),
+		"codex":           codex.New(tmp),
+		"copilot":         copilot.New(tmp),
+		"chrys":           chrys.New(tmp),
+		"grok":            grok.New(tmp),
+		"imported":        imported.New(tmp),
+		"opencode":        ocReader,
+		"worktree-review": worktreereview.New(tmp),
 	}
 	hermesDB := filepath.Join(tmp, "hermes-operation.db")
 	if err := writeMinimalHermesDB(hermesDB); err != nil {
@@ -272,7 +275,7 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 	}
 }
 
-// TestCatalogMatrixDump prints the seven×ten matrix for evidence capture.
+// TestCatalogMatrixDump prints the nine×ten matrix for evidence capture.
 // Always asserts; also writes a human-readable dump when CAPABILITY_MATRIX_OUT is set.
 func TestCatalogMatrixDump(t *testing.T) {
 	var b strings.Builder
@@ -286,9 +289,9 @@ func TestCatalogMatrixDump(t *testing.T) {
 	matrix := b.String()
 	// Structural proof of catalog content.
 	lines := strings.Split(strings.TrimSpace(matrix), "\n")
-	// header + 8*10
-	if len(lines) != 1+80 {
-		t.Fatalf("matrix lines = %d, want 81", len(lines))
+	// header + 9*10
+	if len(lines) != 1+90 {
+		t.Fatalf("matrix lines = %d, want 91", len(lines))
 	}
 	if out := os.Getenv("CAPABILITY_MATRIX_OUT"); out != "" {
 		if err := os.WriteFile(out, []byte(matrix), 0o644); err != nil {
@@ -301,8 +304,8 @@ func TestCatalogMatrixDump(t *testing.T) {
 
 func TestRegisteredAgentDefinitionsPresentationsConform(t *testing.T) {
 	defs := reader.RegisteredAgentDefinitions()
-	if len(defs) != 8 {
-		t.Fatalf("registered catalog length=%d want 8", len(defs))
+	if len(defs) != 9 {
+		t.Fatalf("registered catalog length=%d want 9", len(defs))
 	}
 	legacy := map[string]bool{"claude": true, "chrys": true, "grok": true}
 	for _, def := range defs {
