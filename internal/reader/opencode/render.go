@@ -17,7 +17,7 @@ func (r *OpenCodeReader) GetRenderEvents(id string) ([]model.RenderEvent, error)
 }
 
 func (r *OpenCodeReader) RenderANSI(id string, cols int) (string, error) {
-	events, err := r.toRenderEvents(id)
+	events, err := r.GetRenderEvents(id)
 	if err != nil {
 		return "", err
 	}
@@ -92,6 +92,7 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 		eventCtr int
 		turnIdx  int
 	)
+	childInvocationID := r.childInvocationID(sessionID)
 
 	emit := func(e model.RenderEvent) string {
 		if e.EventID == "" {
@@ -100,6 +101,9 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 		}
 		if e.AgentType == "" {
 			e.AgentType = "opencode"
+		}
+		if childInvocationID != "" && e.InvocationID == "" {
+			e.InvocationID = childInvocationID
 		}
 		events = append(events, e)
 		return e.EventID
@@ -171,17 +175,20 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 					}
 				}
 				invID := emit(model.RenderEvent{
-					Type:      "ToolInvocation",
-					Timestamp: aTs,
-					TurnIndex: turnIdx,
-					ToolName:  t.name,
-					ToolInput: toolInput,
+					Type:       "ToolInvocation",
+					Timestamp:  aTs,
+					TurnIndex:  turnIdx,
+					ToolName:   t.name,
+					ToolCallID: t.callID,
+					ToolInput:  toolInput,
+					Metadata:   t.metadata,
 				})
 				emit(model.RenderEvent{
 					Type:          "ToolResult",
 					Timestamp:     aTs,
 					TurnIndex:     turnIdx,
 					ParentEventID: invID,
+					ToolCallID:    t.callID,
 					Stdout:        t.output,
 					Stderr:        t.errText,
 					ExitCode:      t.exitCode,
@@ -208,11 +215,13 @@ func (r *OpenCodeReader) toRenderEvents(sessionID string) ([]model.RenderEvent, 
 
 type renderPartTool struct {
 	name     string
+	callID   string
 	title    string
 	output   string
 	errText  string
 	exitCode int
 	input    map[string]any
+	metadata map[string]any
 }
 
 type renderParts struct {
@@ -253,12 +262,15 @@ func (r *OpenCodeReader) readRenderParts(messageID string) renderParts {
 				out.reasoning = append(out.reasoning, p.Text)
 			}
 		case "tool":
-			t := renderPartTool{name: p.Tool}
+			t := renderPartTool{name: p.Tool, callID: p.CallID, metadata: p.Metadata}
 			if p.State != nil {
 				t.title = p.State.Title
 				t.output = p.State.Output
 				t.errText = p.State.Error
 				t.input = p.State.Input
+				if p.State.Metadata != nil {
+					t.metadata = p.State.Metadata
+				}
 				if p.State.Status == "error" {
 					t.exitCode = 1
 				}

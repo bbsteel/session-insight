@@ -85,7 +85,11 @@ func openCodeEvidenceCases() []adaptertest.EvidenceCase {
 				adaptertest.AssertDiff(t, r, adaptertest.DiffExpect{
 					SessionID: id, FilePathSub: "a.go", OldSub: "old", NewSub: "new",
 				})
-				adaptertest.AssertSubtasks(t, r, adaptertest.SubtaskExpect{SessionID: id, MinSubagents: 1})
+				adaptertest.AssertSubtasks(t, r, adaptertest.SubtaskExpect{
+					SessionID:       id,
+					MinSubagents:    1,
+					RequireChildIDs: true,
+				})
 				adaptertest.AssertResume(t, r, adaptertest.ResumeExpect{SessionID: id, ExactID: id})
 			},
 		},
