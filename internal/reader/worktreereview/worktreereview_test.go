@@ -29,7 +29,7 @@ func TestListSessions(t *testing.T) {
 	for _, session := range sessions {
 		ids[session.ID] = session
 	}
-	for _, want := range []string{fixturePassed, fixtureBlocked, fixtureError, fixtureRunning, fixtureInterrupted, fixtureCorrupt} {
+	for _, want := range []string{fixturePassed, fixtureBlocked, fixtureError, fixtureRunning, fixtureInterrupted, fixtureCorrupt, fixtureChild} {
 		if _, ok := ids[want]; !ok {
 			t.Errorf("session %q not listed", want)
 		}

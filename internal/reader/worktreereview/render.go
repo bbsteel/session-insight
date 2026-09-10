@@ -163,6 +163,16 @@ func eventsToRenderEvents(events []ReviewEvent) []model.RenderEvent {
 			result.Stdout = strings.Join(parts, " ")
 			out = append(out, result)
 
+			// Child agent session linkage is emitted only when the writer
+			// recorded both identifiers; never inferred from timing or the
+			// model name (design 5.4).
+			childType := payloadString(event, "child_agent_type")
+			childID := payloadString(event, "child_session_id")
+			if childType != "" && childID != "" {
+				out = append(out, withSubtype(base, turns.current(), "child_session",
+					fmt.Sprintf("Child agent session: %s %s", childType, childID)))
+			}
+
 		case "provider_call.failed":
 			result := withTurn(base, turns.current(), "ToolResult", "")
 			result.ToolCallID = providerCallID(event)

@@ -17,8 +17,8 @@ func TestConformance(t *testing.T) {
 			return New("testdata")
 		},
 		Expect: adaptertest.Expectations{
-			// 6 readable fixtures (the v99 one is skipped, inventory incomplete).
-			SessionCount: 6,
+			// 7 readable fixtures (the v99 one is skipped, inventory incomplete).
+			SessionCount: 7,
 			SessionIDs: []string{
 				fixturePassed,
 				fixtureBlocked,
@@ -26,6 +26,7 @@ func TestConformance(t *testing.T) {
 				fixtureRunning,
 				fixtureInterrupted,
 				fixtureCorrupt,
+				fixtureChild,
 			},
 		},
 	})

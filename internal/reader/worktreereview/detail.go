@@ -126,6 +126,13 @@ func buildTurns(events []ReviewEvent) []model.TurnVM {
 				turns[currentTurn].TokenUsage.CompletionTokens += output
 				turns[currentTurn].TokenUsage.Present.Output = model.PresenceExact
 			}
+			// Child agent linkage only from recorded identifiers (design 5.4).
+			childType := payloadString(event, "child_agent_type")
+			childID := payloadString(event, "child_session_id")
+			if childType != "" && childID != "" {
+				turns[currentTurn].Subagents = append(
+					turns[currentTurn].Subagents, childType+":"+childID)
+			}
 
 		case "provider_call.failed":
 			turns[currentTurn].ToolDetails = append(turns[currentTurn].ToolDetails, model.ToolCallVM{

@@ -14,6 +14,7 @@ const (
 	fixtureRunning     = "attempt_01JWRTEST00000000RUNN"
 	fixtureInterrupted = "attempt_01JWRTEST00000000INTR"
 	fixtureCorrupt     = "attempt_01JWRTEST00000000CRPT"
+	fixtureChild       = "attempt_01JWRTEST00000000CHLD"
 	fixtureV99         = "attempt_01JWRTEST00000000V99X"
 )
 
