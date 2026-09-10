@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"testing"
+
+	"github.com/bbsteel/session-insight/internal/model"
 )
 
 func TestEnvironmentCredentialSourceResolvesOnlyEnvReferences(t *testing.T) {
@@ -92,8 +95,9 @@ func TestHTTPClientAppliesProfileDeclaredCredentialHeader(t *testing.T) {
 		Source: EnvironmentCredentialSource{Lookup: func(name string) (string, bool) {
 			return "token-value", name == "REVIEW_TOKEN"
 		}},
-		Reference: "env:REVIEW_TOKEN",
-		Scheme:    AuthenticationScheme{HeaderName: "PRIVATE-TOKEN"},
+		Reference:      "env:REVIEW_TOKEN",
+		Scheme:         AuthenticationScheme{HeaderName: "PRIVATE-TOKEN"},
+		AllowedOrigins: []string{"https://api.github.com"},
 	}
 	client, err := NewAuthenticatedHTTPClient(approved, HTTPClientConfig{}, authentication)
 	if err != nil {
@@ -143,9 +147,10 @@ func TestHTTPClientStripsCustomCredentialHeaderOnRedirect(t *testing.T) {
 	})
 	approved := approvedGitHubHost(t)
 	client, err := NewAuthenticatedHTTPClient(approved, HTTPClientConfig{}, ResolvedAuthentication{
-		Source:    EnvironmentCredentialSource{Lookup: func(string) (string, bool) { return "s3cret", true }},
-		Reference: "env:REVIEW_TOKEN",
-		Scheme:    AuthenticationScheme{HeaderName: "PRIVATE-TOKEN"},
+		Source:         EnvironmentCredentialSource{Lookup: func(string) (string, bool) { return "s3cret", true }},
+		Reference:      "env:REVIEW_TOKEN",
+		Scheme:         AuthenticationScheme{HeaderName: "PRIVATE-TOKEN"},
+		AllowedOrigins: []string{"https://github.com"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -156,5 +161,95 @@ func TestHTTPClientStripsCustomCredentialHeaderOnRedirect(t *testing.T) {
 	}
 	if len(seen) != 2 || !seen[0] || seen[1] {
 		t.Fatalf("redirect credential policy violated: credential header presence per hop = %v", seen)
+	}
+}
+
+func TestHTTPClientCredentialOriginPolicy(t *testing.T) {
+	seen := []http.Header{}
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		seen = append(seen, request.Header.Clone())
+		return response(request, http.StatusOK, `{}`, nil), nil
+	})
+	resolver := &policyResolver{addresses: map[string][]netip.Addr{
+		"review.internal":     {netip.MustParseAddr("192.0.2.10")},
+		"api.review.internal": {netip.MustParseAddr("192.0.2.11")},
+	}}
+	host := HostIdentity{
+		Key: "review-host", Provider: model.ChangeProviderOpenAPI,
+		DisplayOrigin:   "https://review.internal",
+		EndpointOrigins: []string{"https://review.internal", "https://api.review.internal", "http://review.internal"},
+	}
+	approved, err := NewHostPolicy(resolver).Approve(context.Background(), host,
+		HostApprovalOptions{AllowHTTP: true, AllowPrivateNetwork: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authentication := ResolvedAuthentication{
+		Source:         EnvironmentCredentialSource{Lookup: func(string) (string, bool) { return "tok", true }},
+		Reference:      "env:REVIEW_TOKEN",
+		Scheme:         AuthenticationScheme{HeaderName: "Authorization", ValuePrefix: "Bearer "},
+		AllowedOrigins: []string{"https://api.review.internal", "http://review.internal"},
+	}
+	client, err := NewAuthenticatedHTTPClient(approved, HTTPClientConfig{}, authentication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.client.Transport = transport
+
+	// Allowed HTTPS origin: credential injected.
+	if _, err := client.Do(context.Background(), OperationGetSnapshot, http.MethodGet, "https://api.review.internal/api/x", nil); err != nil {
+		t.Fatal(err)
+	}
+	// Undeclared (but approved) origin: no credential.
+	if _, err := client.Do(context.Background(), OperationGetSnapshot, http.MethodGet, "https://review.internal/api/x", nil); err != nil {
+		t.Fatal(err)
+	}
+	// Plain HTTP never carries credentials, even on an allowed origin.
+	if _, err := client.Do(context.Background(), OperationGetSnapshot, http.MethodGet, "http://review.internal/api/x", nil); err != nil {
+		t.Fatal(err)
+	}
+	if seen[0].Get("Authorization") == "" {
+		t.Fatal("allowed origin lost its credential")
+	}
+	if seen[1].Get("Authorization") != "" {
+		t.Fatal("undeclared origin received the credential")
+	}
+	if seen[2].Get("Authorization") != "" {
+		t.Fatal("credential leaked over plain HTTP")
+	}
+}
+
+func TestHTTPClientProfileCredentialScopeFailsClosedWhenEmpty(t *testing.T) {
+	var credentialHeaderSeen bool
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		credentialHeaderSeen = request.Header.Get("PRIVATE-TOKEN") != ""
+		return response(request, http.StatusOK, `{}`, nil), nil
+	})
+	client, err := NewAuthenticatedHTTPClient(approvedGitHubHost(t), HTTPClientConfig{}, ResolvedAuthentication{
+		Source:    EnvironmentCredentialSource{Lookup: func(string) (string, bool) { return "tok", true }},
+		Reference: "env:REVIEW_TOKEN",
+		Scheme:    AuthenticationScheme{HeaderName: "PRIVATE-TOKEN"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.client.Transport = transport
+	if _, err := client.Do(context.Background(), OperationGetSnapshot, http.MethodGet, "https://api.github.com/repos/acme/widgets/pulls/42", nil); err != nil {
+		t.Fatal(err)
+	}
+	if credentialHeaderSeen {
+		t.Fatal("profile authentication without an explicit origin scope must not inject credentials")
+	}
+}
+
+func TestNewAuthenticatedHTTPClientRejectsInvalidAllowedOrigin(t *testing.T) {
+	_, err := NewAuthenticatedHTTPClient(approvedGitHubHost(t), HTTPClientConfig{}, ResolvedAuthentication{
+		Source:         EnvironmentCredentialSource{},
+		Reference:      "env:REVIEW_TOKEN",
+		Scheme:         AuthenticationScheme{HeaderName: "PRIVATE-TOKEN"},
+		AllowedOrigins: []string{"not-an-origin"},
+	})
+	if !errors.Is(err, ErrInvalidAuthenticationScheme) {
+		t.Fatalf("invalid allowlist origin accepted: %v", err)
 	}
 }

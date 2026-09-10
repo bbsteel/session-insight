@@ -25,12 +25,12 @@ const (
 
 // FieldCandidate is one scored pointer-to-standard-field mapping.
 type FieldCandidate struct {
-	Field      string
-	Pointer    string
-	Confidence float64
-	Shape      string
-	Transform  *FieldTransform
-	Evidence   []string
+	Field      string          `json:"field"`
+	Pointer    string          `json:"pointer"`
+	Confidence float64         `json:"confidence"`
+	Shape      string          `json:"shape"`
+	Transform  *FieldTransform `json:"transform,omitempty"`
+	Evidence   []string        `json:"evidence"`
 }
 
 // InferenceContext carries the known answers from the example change for
