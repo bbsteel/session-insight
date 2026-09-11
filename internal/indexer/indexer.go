@@ -531,9 +531,13 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 						// The file's size+mtime are identical to the capture whose
 						// hash already matched the stored revision, so the bytes —
 						// and therefore the SourceRevision — cannot have changed.
+						// The age cap forces a bounded full revalidation so a
+						// rewrite preserving both size and mtime cannot hide
+						// indefinitely.
 						verifiedStillCurrent = verified.sizeBytes == probe.sizeBytes &&
 							verified.modTime.Equal(probe.modTime) &&
-							verified.sourceRevision == storedSourceRevision
+							verified.sourceRevision == storedSourceRevision &&
+							time.Since(verified.verifiedAt) < maxVerifiedStatAge
 					}
 				}
 				if !verifiedStillCurrent {
@@ -553,6 +557,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 							sizeBytes:      probe.sizeBytes,
 							modTime:        probe.modTime,
 							sourceRevision: authoritativeEnvelope.SourceRevision,
+							verifiedAt:     time.Now(),
 						})
 					}
 				}
@@ -672,6 +677,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 			sizeBytes:      preReadProbe.sizeBytes,
 			modTime:        preReadProbe.modTime,
 			sourceRevision: authoritativeEnvelope.SourceRevision,
+			verifiedAt:     time.Now(),
 		})
 	}
 	if authoritativeEnvelope != nil && ix.git != nil {
@@ -704,7 +710,15 @@ type verifiedSourceStat struct {
 	sizeBytes      int64
 	modTime        time.Time
 	sourceRevision string
+	verifiedAt     time.Time
 }
+
+// maxVerifiedStatAge bounds how long a stat match may substitute for a full
+// read. Append-only rollouts bump mtime on every write, so a stat match is
+// normally exact; the age cap bounds the one hole — a byte-level rewrite that
+// preserves both size and mtime — to a fixed window instead of the process
+// lifetime.
+const maxVerifiedStatAge = 6 * time.Hour
 
 // sourceStatProbe is a cheap stat of the session's primary source file taken
 // immediately before a full authoritative read. ok=false means the reader
