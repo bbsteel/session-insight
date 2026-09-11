@@ -1190,4 +1190,28 @@ func TestIndexerSkipsSnapshotReadWhenSourceStatUnchanged(t *testing.T) {
 	if len(results) != 1 || results[0].SessionID != "s1" {
 		t.Fatalf("rewritten source was not reindexed: %+v", results)
 	}
+
+	// An aged-out cache entry must force a bounded full revalidation even when
+	// size+mtime still match, so a rewrite preserving both cannot hide forever.
+	cached, ok := ix.sourceVerifyStats.Load("test\x00s1")
+	if !ok {
+		t.Fatal("verify cache entry missing after rewrite reindex")
+	}
+	aged := cached.(verifiedSourceStat)
+	aged.verifiedAt = time.Now().Add(-maxVerifiedStatAge - time.Minute)
+	ix.sourceVerifyStats.Store("test\x00s1", aged)
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 4 {
+		t.Fatalf("authoritative calls after cache aging = %d, want 4 (bounded revalidation)", got)
+	}
+
+	// Revalidated once, the refreshed entry is cheap again.
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 4 {
+		t.Fatalf("authoritative calls after revalidation = %d, want 4", got)
+	}
 }
