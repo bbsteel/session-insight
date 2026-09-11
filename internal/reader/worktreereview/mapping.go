@@ -15,6 +15,9 @@ type attemptView struct {
 	sources          []model.SessionSourceFile
 	skippedMalformed int
 	skippedVersion   int
+	// mismatchedDocs lists journal documents whose embedded attempt_id did
+	// not match the directory name; they were discarded.
+	mismatchedDocs []string
 }
 
 // firstEvent returns the earliest event by file order, if any.

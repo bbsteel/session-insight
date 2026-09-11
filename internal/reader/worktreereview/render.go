@@ -151,8 +151,15 @@ func eventsToRenderEvents(events []ReviewEvent) []model.RenderEvent {
 				}
 			}
 			parts := []string{}
-			if inputOK || outputOK {
+			// Only recorded token counts appear in the summary text; an
+			// unrecorded side is absent, never rendered as zero.
+			switch {
+			case inputOK && outputOK:
 				parts = append(parts, fmt.Sprintf("tokens in=%d out=%d", input, output))
+			case inputOK:
+				parts = append(parts, fmt.Sprintf("tokens in=%d", input))
+			case outputOK:
+				parts = append(parts, fmt.Sprintf("tokens out=%d", output))
 			}
 			if cost, ok := payloadFloat(event, "cost_usd"); ok {
 				parts = append(parts, fmt.Sprintf("cost=$%.4f", cost))

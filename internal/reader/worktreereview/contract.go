@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,14 +122,29 @@ func AttemptDir(root, attemptID string) string {
 }
 
 // MetadataPath, EventsPath and ResultPath name the three journal documents.
+// An invalid attempt id yields "", matching the repo's invalid-path
+// convention (findSessionFile and friends return empty strings); callers must
+// never join a filename into the process working directory.
 func MetadataPath(root, attemptID string) string {
-	return filepath.Join(AttemptDir(root, attemptID), metadataFile)
+	dir := AttemptDir(root, attemptID)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, metadataFile)
 }
 func EventsPath(root, attemptID string) string {
-	return filepath.Join(AttemptDir(root, attemptID), eventsFile)
+	dir := AttemptDir(root, attemptID)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, eventsFile)
 }
 func ResultPath(root, attemptID string) string {
-	return filepath.Join(AttemptDir(root, attemptID), resultFile)
+	dir := AttemptDir(root, attemptID)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, resultFile)
 }
 
 // ParseSessionMetadata validates and parses metadata.json. Unknown schema
@@ -167,9 +183,14 @@ func ParseEventLine(line []byte) (*ReviewEvent, error) {
 	return &event, nil
 }
 
-// ReadEventsFile tolerantly parses an append-only events.jsonl. Malformed
-// and unknown-version lines are skipped and counted; valid events keep file
-// order. Sequence uniqueness and strict increase are the writer's
+// maxEventLineBytes bounds one events.jsonl line. An oversized line is
+// malformed input: it is skipped and counted, and reading continues with the
+// next line instead of failing the whole journal.
+const maxEventLineBytes = 4 * 1024 * 1024
+
+// ReadEventsFile tolerantly parses an append-only events.jsonl. Malformed,
+// oversized and unknown-version lines are skipped and counted; valid events
+// keep file order. Sequence uniqueness and strict increase are the writer's
 // responsibility; the reader trusts persisted order.
 func ReadEventsFile(path string) (*EventsReadResult, error) {
 	file, err := os.Open(path)
@@ -179,26 +200,51 @@ func ReadEventsFile(path string) (*EventsReadResult, error) {
 	defer file.Close()
 
 	result := &EventsReadResult{}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
-			continue
-		}
-		event, err := ParseEventLine(line)
-		if err != nil {
-			if IsUnsupportedSchema(err) {
-				result.SkippedVersion++
-			} else {
-				result.SkippedMalformed++
+	reader := bufio.NewReader(file)
+	var line []byte
+	for {
+		fragment, readErr := reader.ReadSlice('\n')
+		if len(line)+len(fragment) > maxEventLineBytes {
+			// Discard the whole oversized line: drain fragments until the
+			// newline, then count it once as malformed.
+			line = nil
+			for readErr == bufio.ErrBufferFull {
+				_, readErr = reader.ReadSlice('\n')
+			}
+			result.SkippedMalformed++
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				return result, fmt.Errorf("events.jsonl read: %w", readErr)
 			}
 			continue
 		}
-		result.Events = append(result.Events, *event)
-	}
-	if err := scanner.Err(); err != nil {
-		return result, fmt.Errorf("events.jsonl read: %w", err)
+		line = append(line, fragment...)
+		if readErr == bufio.ErrBufferFull {
+			continue
+		}
+
+		if len(strings.TrimSpace(string(line))) != 0 {
+			event, parseErr := ParseEventLine(line)
+			if parseErr != nil {
+				if IsUnsupportedSchema(parseErr) {
+					result.SkippedVersion++
+				} else {
+					result.SkippedMalformed++
+				}
+			} else {
+				result.Events = append(result.Events, *event)
+			}
+		}
+		line = nil
+
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return result, fmt.Errorf("events.jsonl read: %w", readErr)
+		}
 	}
 	return result, nil
 }

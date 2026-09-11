@@ -52,6 +52,16 @@ func buildTurns(events []ReviewEvent) []model.TurnVM {
 	}
 
 	currentTurn := 0
+	// ensureTurn tolerates a journal whose first valid event is not
+	// attempt.created or stage.started (corrupt/unsupported leading lines):
+	// non-stage events attach to a fallback turn instead of panicking on an
+	// empty turns slice.
+	ensureTurn := func() int {
+		if len(turns) == 0 {
+			return newTurn("", "")
+		}
+		return currentTurn
+	}
 
 	for i := range events {
 		event := &events[i]
@@ -94,6 +104,7 @@ func buildTurns(events []ReviewEvent) []model.TurnVM {
 			// dimensions open on the current (run-dimensions) turn
 
 		case "dimension.completed", "dimension.failed":
+			turn := ensureTurn()
 			dimension := payloadString(event, "dimension_id")
 			detail := model.ToolCallVM{
 				Name:     "dimension:" + dimension,
@@ -103,79 +114,86 @@ func buildTurns(events []ReviewEvent) []model.TurnVM {
 				detail.ExitCode = 1
 				detail.ErrorKind = payloadString(event, "error_category")
 				detail.ErrorMessage = payloadString(event, "safe_detail")
-				turns[currentTurn].ErrorCount++
+				turns[turn].ErrorCount++
 			}
-			turns[currentTurn].ToolDetails = append(turns[currentTurn].ToolDetails, detail)
-			turns[currentTurn].ToolCallCount++
+			turns[turn].ToolDetails = append(turns[turn].ToolDetails, detail)
+			turns[turn].ToolCallCount++
 
 		case "provider_call.completed":
+			turn := ensureTurn()
 			call := model.ToolCallVM{
 				Name: "provider:" + payloadString(event, "provider"),
 			}
 			if latency, ok := payloadFloat(event, "latency_seconds"); ok {
 				call.Duration = int64(latency * 1000)
 			}
-			turns[currentTurn].ToolDetails = append(turns[currentTurn].ToolDetails, call)
-			turns[currentTurn].ToolCallCount++
-			turns[currentTurn].RequestCount++
+			turns[turn].ToolDetails = append(turns[turn].ToolDetails, call)
+			turns[turn].ToolCallCount++
+			turns[turn].RequestCount++
 			if input, ok := payloadInt(event, "input_tokens"); ok {
-				turns[currentTurn].TokenUsage.PromptTokens += input
-				turns[currentTurn].TokenUsage.Present.Input = model.PresenceExact
+				turns[turn].TokenUsage.PromptTokens += input
+				turns[turn].TokenUsage.Present.Input = model.PresenceExact
 			}
 			if output, ok := payloadInt(event, "output_tokens"); ok {
-				turns[currentTurn].TokenUsage.CompletionTokens += output
-				turns[currentTurn].TokenUsage.Present.Output = model.PresenceExact
+				turns[turn].TokenUsage.CompletionTokens += output
+				turns[turn].TokenUsage.Present.Output = model.PresenceExact
 			}
 			// Child agent linkage only from recorded identifiers (design 5.4).
 			childType := payloadString(event, "child_agent_type")
 			childID := payloadString(event, "child_session_id")
 			if childType != "" && childID != "" {
-				turns[currentTurn].Subagents = append(
-					turns[currentTurn].Subagents, childType+":"+childID)
+				turns[turn].Subagents = append(
+					turns[turn].Subagents, childType+":"+childID)
 			}
 
 		case "provider_call.failed":
-			turns[currentTurn].ToolDetails = append(turns[currentTurn].ToolDetails, model.ToolCallVM{
+			turn := ensureTurn()
+			turns[turn].ToolDetails = append(turns[turn].ToolDetails, model.ToolCallVM{
 				Name:         "provider:" + payloadString(event, "provider"),
 				ExitCode:     1,
 				ErrorKind:    payloadString(event, "error_category"),
 				ErrorMessage: payloadString(event, "safe_detail"),
 			})
-			turns[currentTurn].ErrorCount++
+			turns[turn].ErrorCount++
 
 		case "finding.verified":
-			turns[currentTurn].ToolDetails = append(turns[currentTurn].ToolDetails, model.ToolCallVM{
+			turn := ensureTurn()
+			turns[turn].ToolDetails = append(turns[turn].ToolDetails, model.ToolCallVM{
 				Name: fmt.Sprintf("finding:%s", payloadString(event, "severity")),
 			})
 
 		case "gate.evaluated":
+			turn := ensureTurn()
 			gate := payloadString(event, "gate_state")
 			blocking := payloadStringSlice(event, "blocking_fingerprints")
 			text := fmt.Sprintf("Gate: %s", gate)
 			if len(blocking) > 0 {
 				text += fmt.Sprintf(" — %d blocking finding(s): %s", len(blocking), strings.Join(blocking, ", "))
 			}
-			turns[currentTurn].AssistantMessage = text
+			turns[turn].AssistantMessage = text
 
 		case "attempt.completed":
-			turns[currentTurn].AssistantMessage = strings.TrimSpace(
-				turns[currentTurn].AssistantMessage + "\nReview completed.")
+			turn := ensureTurn()
+			turns[turn].AssistantMessage = strings.TrimSpace(
+				turns[turn].AssistantMessage + "\nReview completed.")
 			if gate := payloadString(event, "gate_state"); gate != "" &&
-				!strings.Contains(turns[currentTurn].AssistantMessage, gate) {
-				turns[currentTurn].AssistantMessage += fmt.Sprintf(" Gate: %s.", gate)
+				!strings.Contains(turns[turn].AssistantMessage, gate) {
+				turns[turn].AssistantMessage += fmt.Sprintf(" Gate: %s.", gate)
 			}
 
 		case "attempt.failed":
-			turns[currentTurn].AssistantMessage = strings.TrimSpace(
-				turns[currentTurn].AssistantMessage + "\nReview failed: " + payloadString(event, "safe_detail"))
-			turns[currentTurn].ErrorCount++
+			turn := ensureTurn()
+			turns[turn].AssistantMessage = strings.TrimSpace(
+				turns[turn].AssistantMessage + "\nReview failed: " + payloadString(event, "safe_detail"))
+			turns[turn].ErrorCount++
 		}
 	}
 	return turns
 }
 
 // modelEvidence reports provider/model only from recorded provider_call
-// events — never inferred from names or timing.
+// events — never inferred from names or timing. A partially recorded pair
+// (only model or only provider) is preserved, not discarded.
 func modelEvidence(events []ReviewEvent) (modelName, provider string) {
 	for i := range events {
 		if events[i].EventType != "provider_call.completed" && events[i].EventType != "provider_call.started" {
@@ -191,7 +209,7 @@ func modelEvidence(events []ReviewEvent) (modelName, provider string) {
 			return modelName, provider
 		}
 	}
-	return "", ""
+	return modelName, provider
 }
 
 // buildBilling aggregates recorded provider-call usage. Precision is exact
@@ -261,6 +279,15 @@ func buildProvenance(view *attemptView) *model.SessionProvenance {
 			Count:               view.skippedVersion,
 			SourceRole:          model.SourceRoleEvents,
 			Impacts:             []string{"replay"},
+		})
+	}
+	for _, doc := range view.mismatchedDocs {
+		warnings = append(warnings, model.ParseWarning{
+			Code:                "attempt_id_mismatch",
+			Severity:            "warning",
+			AffectsCompleteness: true,
+			Count:               1,
+			Impacts:             []string{doc},
 		})
 	}
 	built := provenance.Build(provenance.Input{

@@ -110,6 +110,15 @@ func Discover() []BaseSessionReader {
 		}
 	}
 
+	// Worktree Review discovery may not need a home directory at all: a
+	// WORKTREE_REVIEW_JOURNAL_ROOT override must win even when
+	// os.UserHomeDir() fails (e.g. service accounts).
+	if journalRoot := worktreereview.DefaultJournalRoot(); journalRoot != "" {
+		if info, err := os.Stat(journalRoot); err == nil && info.IsDir() {
+			readers = append(readers, worktreereview.New(journalRoot))
+		}
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return readers
@@ -160,12 +169,6 @@ func Discover() []BaseSessionReader {
 	grokDir := filepath.Join(homeDir, ".grok", "sessions")
 	if info, err := os.Stat(grokDir); err == nil && info.IsDir() {
 		readers = append(readers, grok.New(grokDir))
-	}
-
-	if journalRoot := worktreereview.DefaultJournalRoot(); journalRoot != "" {
-		if info, err := os.Stat(journalRoot); err == nil && info.IsDir() {
-			readers = append(readers, worktreereview.New(journalRoot))
-		}
 	}
 
 	return readers

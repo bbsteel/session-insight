@@ -62,8 +62,14 @@ func (r *Reader) loadAttempt(attemptID string) (*attemptView, error) {
 	if data, err := os.ReadFile(MetadataPath(r.root, attemptID)); err == nil {
 		// Unknown metadata versions degrade to "no metadata" rather than
 		// failing the whole session; the version is surfaced via warnings.
+		// A document whose attempt_id does not match the directory is
+		// discarded: it was written for a different attempt.
 		if meta, parseErr := ParseSessionMetadata(data); parseErr == nil {
-			view.meta = meta
+			if meta.AttemptID == attemptID {
+				view.meta = meta
+			} else {
+				view.mismatchedDocs = append(view.mismatchedDocs, "metadata.json")
+			}
 		}
 	}
 
@@ -81,7 +87,11 @@ func (r *Reader) loadAttempt(attemptID string) (*attemptView, error) {
 
 	if data, err := os.ReadFile(ResultPath(r.root, attemptID)); err == nil {
 		if doc, parseErr := ParseResultDocument(data); parseErr == nil {
-			view.result = doc
+			if doc.AttemptID == attemptID {
+				view.result = doc
+			} else {
+				view.mismatchedDocs = append(view.mismatchedDocs, "result.json")
+			}
 		}
 	}
 
