@@ -44,6 +44,11 @@ func TestPathHelpersRejectInvalidIDs(t *testing.T) {
 	if got := EventsPath("/root", fixturePassed); !strings.HasSuffix(got, "events.jsonl") {
 		t.Fatalf("valid id path=%q", got)
 	}
+	// Containment: a hostile id can never escape the journal root, even via
+	// a root that itself carries traversal segments.
+	if got := AttemptDir("/root/../root", "attempt_ok"); got != "/root/attempt_ok" {
+		t.Fatalf("containment-normalized dir=%q", got)
+	}
 }
 
 func TestModelEvidencePreservesPartialPair(t *testing.T) {
