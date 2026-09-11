@@ -48,6 +48,12 @@ type Indexer struct {
 
 	gitAttempted sync.Map // agent_type\x00session_id -> successful bounded attempt
 
+	// sourceVerifyStats remembers the stat-level identity (size+mtime) of the
+	// source bytes whose authoritative snapshot last matched the stored
+	// SourceRevision, so unchanged sessions skip the full byte copy + hash on
+	// later cycles. Process-local: a restart simply re-verifies once.
+	sourceVerifyStats sync.Map // agent_type\x00session_id -> verifiedSourceStat
+
 	requestMu      sync.Mutex
 	fullRequested  bool
 	agentRequested map[string]struct{}
@@ -483,6 +489,10 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		authoritativeReader   reader.AuthoritativeIndexSnapshotReader
 		detailElapsed         time.Duration
 		renderElapsed         time.Duration
+		// preReadProbe is the stat taken immediately before whichever full
+		// authoritative read produced authoritativeEnvelope; it backfills the
+		// verify cache once the new evidence revision is persisted.
+		preReadProbe sourceStatProbe
 	)
 	authoritativeReader, _ = r.(reader.AuthoritativeIndexSnapshotReader)
 	collabCurrentKnown := false
@@ -512,16 +522,40 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 				}
 			}
 			if creationCurrent {
-				snapshotStarted := time.Now()
-				authoritativeEnvelope, readErr = authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
-				detailElapsed = time.Since(snapshotStarted)
-				if readErr != nil {
-					return ix.handleReadFailure(r, agentType, sess, readErr)
+				probe := ix.probeSourceStat(r, sess)
+				cacheKey := agentType + "\x00" + sess.ID
+				verifiedStillCurrent := false
+				if probe.ok {
+					if cached, ok := ix.sourceVerifyStats.Load(cacheKey); ok {
+						verified := cached.(verifiedSourceStat)
+						// The file's size+mtime are identical to the capture whose
+						// hash already matched the stored revision, so the bytes —
+						// and therefore the SourceRevision — cannot have changed.
+						verifiedStillCurrent = verified.sizeBytes == probe.sizeBytes &&
+							verified.modTime.Equal(probe.modTime) &&
+							verified.sourceRevision == storedSourceRevision
+					}
 				}
-				if validation := model.ValidateIndexSnapshotEnvelope(authoritativeEnvelope); !validation.OK() {
-					return false, fmt.Errorf("validate authoritative index snapshot: %+v", validation.Issues)
+				if !verifiedStillCurrent {
+					preReadProbe = probe
+					snapshotStarted := time.Now()
+					authoritativeEnvelope, readErr = authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
+					detailElapsed = time.Since(snapshotStarted)
+					if readErr != nil {
+						return ix.handleReadFailure(r, agentType, sess, readErr)
+					}
+					if validation := model.ValidateIndexSnapshotEnvelope(authoritativeEnvelope); !validation.OK() {
+						return false, fmt.Errorf("validate authoritative index snapshot: %+v", validation.Issues)
+					}
+					creationCurrent = storedSourceRevision == authoritativeEnvelope.SourceRevision
+					if creationCurrent && probe.ok {
+						ix.sourceVerifyStats.Store(cacheKey, verifiedSourceStat{
+							sizeBytes:      probe.sizeBytes,
+							modTime:        probe.modTime,
+							sourceRevision: authoritativeEnvelope.SourceRevision,
+						})
+					}
 				}
-				creationCurrent = storedSourceRevision == authoritativeEnvelope.SourceRevision
 			}
 			if ix.git != nil {
 				if !gitEvidenceCurrent {
@@ -547,6 +581,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 
 	if authoritativeReader != nil {
 		if authoritativeEnvelope == nil {
+			preReadProbe = ix.probeSourceStat(r, sess)
 			snapshotStarted := time.Now()
 			envelope, readErr := authoritativeReader.ReadIndexSnapshotEnvelope(ctx, sess)
 			detailElapsed = time.Since(snapshotStarted)
@@ -632,6 +667,13 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		})
 		return false, fmt.Errorf("index Change Request creation evidence: %w", err)
 	}
+	if preReadProbe.ok && authoritativeEnvelope != nil {
+		ix.sourceVerifyStats.Store(agentType+"\x00"+sess.ID, verifiedSourceStat{
+			sizeBytes:      preReadProbe.sizeBytes,
+			modTime:        preReadProbe.modTime,
+			sourceRevision: authoritativeEnvelope.SourceRevision,
+		})
+	}
 	if authoritativeEnvelope != nil && ix.git != nil {
 		if err := ix.indexGitEvidence(ctx, authoritativeReader, persisted, authoritativeEnvelope); err != nil {
 			_ = ix.withIndexWrite(func() error {
@@ -654,6 +696,36 @@ func creationEvidenceSourceRevision(envelope *model.IndexSnapshotEnvelope, agent
 		return envelope.SourceRevision
 	}
 	return fmt.Sprintf("index:%s:%s:%d", agentType, sessionID, revision)
+}
+
+// verifiedSourceStat ties a stored SourceRevision to the exact size+mtime of
+// the source file whose bytes produced it.
+type verifiedSourceStat struct {
+	sizeBytes      int64
+	modTime        time.Time
+	sourceRevision string
+}
+
+// sourceStatProbe is a cheap stat of the session's primary source file taken
+// immediately before a full authoritative read. ok=false means the reader
+// cannot stat (unsupported or file gone); the full read then owns error
+// reporting.
+type sourceStatProbe struct {
+	sizeBytes int64
+	modTime   time.Time
+	ok        bool
+}
+
+func (ix *Indexer) probeSourceStat(r reader.BaseSessionReader, sess model.Session) sourceStatProbe {
+	statReader, ok := r.(reader.SourceStatReader)
+	if !ok {
+		return sourceStatProbe{}
+	}
+	sizeBytes, modTime, err := statReader.SourceStat(sess)
+	if err != nil {
+		return sourceStatProbe{}
+	}
+	return sourceStatProbe{sizeBytes: sizeBytes, modTime: modTime, ok: true}
 }
 
 // handleReadFailure maps typed SessionReadError into persisted provenance

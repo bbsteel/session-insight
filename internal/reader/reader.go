@@ -2,6 +2,7 @@ package reader
 
 import (
 	"context"
+	"time"
 
 	"github.com/bbsteel/session-insight/internal/model"
 )
@@ -55,6 +56,16 @@ type IndexSnapshotReader interface {
 // every adapter; it is not gated on this interface.
 type AuthoritativeIndexSnapshotReader interface {
 	ReadIndexSnapshotEnvelope(ctx context.Context, session model.Session) (*model.IndexSnapshotEnvelope, error)
+}
+
+// SourceStatReader is an optional companion to AuthoritativeIndexSnapshotReader:
+// a stat-level (no content read) size+mtime pair for the session's primary
+// source file. The indexer uses it to skip the full byte copy + hash of the
+// authoritative snapshot when the source is byte-identical to the one already
+// verified, so unchanged sessions cost one stat per cycle instead of a full
+// transcript copy. Readers without it always get the full snapshot read.
+type SourceStatReader interface {
+	SourceStat(session model.Session) (sizeBytes int64, modTime time.Time, err error)
 }
 
 // WatchRootProvider is an optional reader capability: the on-disk paths whose
