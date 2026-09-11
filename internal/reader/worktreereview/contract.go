@@ -113,17 +113,17 @@ func validAttemptID(id string) bool {
 }
 
 // AttemptDir resolves the attempt directory under root, or "" for an
-// invalid id. Beyond the single-segment id guard, the joined path is
-// verified to stay directly inside the cleaned root, so a caller-controlled
-// id can never escape the journal root (CodeQL go/path-injection sanitizer
-// contract).
+// invalid id. Beyond the single-segment id guard, the joined path itself is
+// verified with a HasPrefix guard against the cleaned root — the pattern
+// CodeQL models as a path-traversal sanitizer — so a caller-controlled id
+// can never escape the journal root.
 func AttemptDir(root, attemptID string) string {
 	if !validAttemptID(attemptID) {
 		return ""
 	}
 	cleanRoot := filepath.Clean(root)
 	dir := filepath.Join(cleanRoot, attemptID)
-	if filepath.Dir(dir) != cleanRoot {
+	if !strings.HasPrefix(dir, cleanRoot+string(os.PathSeparator)) {
 		return ""
 	}
 	return dir
