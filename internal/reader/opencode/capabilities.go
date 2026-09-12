@@ -10,13 +10,10 @@ import "github.com/bbsteel/session-insight/internal/reader/capability"
 //   - tokens: assistant message tokens + cost → SessionBilling (exact tests)
 //   - tool_results: tool parts paired with results in render path
 //   - diff: edit tool old_string/new_string (opencode_test)
-//   - subtasks: turn.Subagents from structured agent parts; parent_id cascade on delete.
-//     Phase 0 evidence (2026-07-27, collaboration contract input): the pre-contract
-//     exact declaration overclaimed. The shared assertion passed on a name string
-//     while session.parent_id lineage is written but read by no list/detail/render
-//     path and child sessions appear as root rows. Downgraded to estimated until
-//     parent_id reads provide stable child identities under the collaboration
-//     contract.
+//   - subtasks: exact — session.parent_id provides native standalone-child
+//     lineage; task-part metadata provides optional delegation anchors,
+//     summaries, and execution mode; child sessions are full backing records
+//     (collaboration.go + sanitized fixtures + shared conformance suite)
 //   - resume: session id is the opencode -s argument
 //   - delete: SessionDeleter with parent_id child cascade
 //   - terminate: unsupported — only SessionRunning (in-memory busy state not on disk PID)
@@ -24,7 +21,7 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "opencode",
 		DisplayName:     "OpenCode",
-		AdapterRevision: 4,
+		AdapterRevision: 5,
 		ResumeCommand: &capability.ResumeCommandDeclaration{
 			Executable:   "opencode",
 			StandardArgs: []string{"-s", "{id}"},
@@ -37,7 +34,7 @@ func Capabilities() capability.AgentCapabilities {
 			capability.CapabilityTokens:      capability.Exact(),
 			capability.CapabilityToolResults: capability.Exact(),
 			capability.CapabilityDiff:        capability.Exact(),
-			capability.CapabilitySubtasks:    capability.Estimated("name_heuristic"),
+			capability.CapabilitySubtasks:    capability.Exact(),
 			capability.CapabilityResume:      capability.Exact(),
 			capability.CapabilityDelete:      capability.Exact(),
 			capability.CapabilityTerminate:   capability.Unsupported("exact_pid_unavailable"),

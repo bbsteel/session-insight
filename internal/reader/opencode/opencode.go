@@ -24,7 +24,9 @@ type OpenCodeReader struct {
 	// in-progress guard): OpenCode streams every part update into this
 	// SQLite store, so the db/WAL mtime is the cheapest "something is
 	// being written" signal.
-	dbPath string
+	dbPath       string
+	hasParentID  bool
+	hasAgentName bool
 }
 
 func New(dbPath string) (*OpenCodeReader, error) {
@@ -46,7 +48,22 @@ func newReader(dbPath, extraParams string) (*OpenCodeReader, error) {
 		db.Close()
 		return nil, err
 	}
-	return &OpenCodeReader{db: db, dbPath: dbPath}, nil
+	hasParentID, err := columnExists(db, "session", "parent_id")
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("inspect opencode session lineage schema: %w", err)
+	}
+	hasAgentName, err := columnExists(db, "session", "agent")
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("inspect opencode session agent schema: %w", err)
+	}
+	return &OpenCodeReader{
+		db:           db,
+		dbPath:       dbPath,
+		hasParentID:  hasParentID,
+		hasAgentName: hasAgentName,
+	}, nil
 }
 
 // lastStoreWrite returns the freshest mtime across the SQLite db and its
@@ -101,6 +118,7 @@ type assistantMsgData struct {
 	ModelID    string  `json:"modelID"`
 	ProviderID string  `json:"providerID"`
 	Agent      string  `json:"agent"`
+	Finish     string  `json:"finish,omitempty"`
 	Cost       float64 `json:"cost"`
 	Tokens     *struct {
 		Input     int64 `json:"input"`
@@ -118,25 +136,31 @@ type assistantMsgData struct {
 	Error *json.RawMessage `json:"error,omitempty"`
 }
 
+type openCodePartTime struct {
+	Start int64  `json:"start"`
+	End   *int64 `json:"end,omitempty"`
+}
+
+type openCodePartState struct {
+	Status   string            `json:"status"`
+	Output   string            `json:"output,omitempty"`
+	Error    string            `json:"error,omitempty"`
+	Title    string            `json:"title,omitempty"`
+	Input    map[string]any    `json:"input,omitempty"`
+	Metadata map[string]any    `json:"metadata,omitempty"`
+	Time     *openCodePartTime `json:"time,omitempty"`
+}
+
 type partData struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	Synthetic bool   `json:"synthetic,omitempty"`
-	CallID    string `json:"callID,omitempty"`
-	Tool      string `json:"tool,omitempty"`
-	State     *struct {
-		Status string         `json:"status"`
-		Output string         `json:"output,omitempty"`
-		Error  string         `json:"error,omitempty"`
-		Title  string         `json:"title,omitempty"`
-		Input  map[string]any `json:"input,omitempty"`
-		Time   *struct {
-			Start int64  `json:"start"`
-			End   *int64 `json:"end,omitempty"`
-		} `json:"time,omitempty"`
-	} `json:"state,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
+	Type        string             `json:"type"`
+	Text        string             `json:"text,omitempty"`
+	Synthetic   bool               `json:"synthetic,omitempty"`
+	CallID      string             `json:"callID,omitempty"`
+	Tool        string             `json:"tool,omitempty"`
+	Metadata    map[string]any     `json:"metadata,omitempty"`
+	State       *openCodePartState `json:"state,omitempty"`
+	Name        string             `json:"name,omitempty"`
+	Description string             `json:"description,omitempty"`
 }
 
 // ---- resolved parts for a message ----
@@ -150,11 +174,13 @@ type resolvedParts struct {
 
 type toolInfo struct {
 	Name     string
+	CallID   string
 	Title    string
 	Status   string
 	Duration int64
 	ExitCode int
 	Input    map[string]any
+	Metadata map[string]any
 }
 
 // ---- ListSessions ----
@@ -174,10 +200,15 @@ func (r *OpenCodeReader) ListSessionsDetailed() (sessions []model.Session, compl
 }
 
 func (r *OpenCodeReader) listSessions() ([]model.Session, error) {
+	parentIDExpression := "''"
+	if r.hasParentID {
+		parentIDExpression = "COALESCE(s.parent_id, '')"
+	}
 	rows, err := r.db.Query(`
 		SELECT s.id, s.directory, s.title,
 		       s.time_created, s.time_updated, s.time_archived,
 		       s.model,
+		       ` + parentIDExpression + ` AS parent_id,
 		       (SELECT json_extract(p.data, '$.text')
 		        FROM message m
 		        JOIN part p ON p.message_id = m.id
@@ -200,17 +231,17 @@ func (r *OpenCodeReader) listSessions() ([]model.Session, error) {
 	var sessions []model.Session
 	for rows.Next() {
 		var (
-			id, directory, title     string
-			timeCreated, timeUpdated int64
-			timeArchived             sql.NullInt64
-			modelJSON                sql.NullString
-			previewText              sql.NullString
-			messageCount             int
-			turnCount                int
+			id, directory, title, parentSessionID string
+			timeCreated, timeUpdated              int64
+			timeArchived                          sql.NullInt64
+			modelJSON                             sql.NullString
+			previewText                           sql.NullString
+			messageCount                          int
+			turnCount                             int
 		)
 		if err := rows.Scan(&id, &directory, &title,
 			&timeCreated, &timeUpdated, &timeArchived,
-			&modelJSON, &previewText, &messageCount, &turnCount); err != nil {
+			&modelJSON, &parentSessionID, &previewText, &messageCount, &turnCount); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 
@@ -224,18 +255,21 @@ func (r *OpenCodeReader) listSessions() ([]model.Session, error) {
 		updatedAt := time.UnixMilli(timeUpdated)
 
 		sessions = append(sessions, model.Session{
-			ID:            id,
-			AgentType:     "opencode",
-			CWD:           directory,
-			Project:       shared.ResolveProject(directory, ""),
-			Name:          resolveName(title, previewText.String, createdAt),
-			ModelName:     modelName,
-			ModelProvider: modelProvider,
-			PreviewText:   strings.TrimSpace(previewText.String),
-			TurnCount:     turnCount,
-			MessageCount:  messageCount,
-			CreatedAt:     createdAt,
-			UpdatedAt:     updatedAt,
+			ID:              id,
+			AgentType:       "opencode",
+			CWD:             directory,
+			Project:         shared.ResolveProject(directory, ""),
+			Name:            resolveName(title, previewText.String, createdAt),
+			ModelName:       modelName,
+			ModelProvider:   modelProvider,
+			ResumeID:        id,
+			PreviewText:     strings.TrimSpace(previewText.String),
+			TurnCount:       turnCount,
+			MessageCount:    messageCount,
+			ParentSessionID: parentSessionID,
+			IsSubagent:      parentSessionID != "",
+			CreatedAt:       createdAt,
+			UpdatedAt:       updatedAt,
 		})
 	}
 
@@ -291,16 +325,21 @@ func (r *OpenCodeReader) GetSession(id string) (*model.SessionDetail, error) {
 }
 
 func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
+	parentIDExpression := "''"
+	if r.hasParentID {
+		parentIDExpression = "COALESCE(parent_id, '')"
+	}
 	var (
-		directory, title         string
-		timeCreated, timeUpdated int64
-		timeArchived             sql.NullInt64
-		modelJSON                sql.NullString
+		directory, title, parentSessionID string
+		timeCreated, timeUpdated          int64
+		timeArchived                      sql.NullInt64
+		modelJSON                         sql.NullString
 	)
 	err := r.db.QueryRow(`
-		SELECT directory, title, time_created, time_updated, time_archived, model
+		SELECT directory, title, time_created, time_updated, time_archived, model,
+		       `+parentIDExpression+`
 		FROM session WHERE id = ?
-	`, id).Scan(&directory, &title, &timeCreated, &timeUpdated, &timeArchived, &modelJSON)
+	`, id).Scan(&directory, &title, &timeCreated, &timeUpdated, &timeArchived, &modelJSON, &parentSessionID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.Session{}, fmt.Errorf("openCode session not found: %s: %w", id, sql.ErrNoRows)
@@ -321,17 +360,20 @@ func (r *OpenCodeReader) readSessionMeta(id string) (model.Session, error) {
 	r.db.QueryRow("SELECT COUNT(*) FROM message WHERE session_id = ?", id).Scan(&msgCount)
 
 	return model.Session{
-		ID:            id,
-		AgentType:     "opencode",
-		CWD:           directory,
-		Project:       shared.ResolveProject(directory, ""),
-		Name:          title,
-		ModelName:     modelName,
-		ModelProvider: modelProvider,
-		TurnCount:     0,
-		MessageCount:  msgCount,
-		CreatedAt:     createdAt,
-		UpdatedAt:     updatedAt,
+		ID:              id,
+		AgentType:       "opencode",
+		CWD:             directory,
+		Project:         shared.ResolveProject(directory, ""),
+		Name:            title,
+		ModelName:       modelName,
+		ModelProvider:   modelProvider,
+		ResumeID:        id,
+		ParentSessionID: parentSessionID,
+		IsSubagent:      parentSessionID != "",
+		TurnCount:       0,
+		MessageCount:    msgCount,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
 	}, nil
 }
 
@@ -579,11 +621,14 @@ func (r *OpenCodeReader) readParts(messageID string) (resolvedParts, int) {
 				out.Reasoning = append(out.Reasoning, p.Text)
 			}
 		case "tool":
-			ti := toolInfo{Name: p.Tool, Status: "unknown"}
+			ti := toolInfo{Name: p.Tool, CallID: p.CallID, Status: "unknown", Metadata: p.Metadata}
 			if p.State != nil {
 				ti.Status = p.State.Status
 				ti.Title = p.State.Title
 				ti.Input = p.State.Input
+				if p.State.Metadata != nil {
+					ti.Metadata = p.State.Metadata
+				}
 				if p.State.Status == "error" {
 					ti.ExitCode = 1
 				}

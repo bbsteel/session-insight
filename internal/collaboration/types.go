@@ -147,6 +147,7 @@ type BackingSessionRef struct {
 //   - Grok: subagent_id from subagents/<id>/meta.json and matching
 //     subagent_spawned / subagent_finished lifecycle updates (never a
 //     tool-call or provider-call ID; those would mislabel the native kind)
+//   - OpenCode: session.id for a standalone child Session
 const (
 	IdentityRootSession    = "root_session"
 	IdentityPayloadID      = "payload_id"
@@ -157,6 +158,9 @@ const (
 	// Contract extension: the frozen vocabulary had no truthful kind for
 	// this source field; do not reuse tool_call_id or provider_call_id.
 	IdentitySubagentID = "subagent_id"
+	// IdentitySessionID is OpenCode's native standalone child identity. The
+	// session ID is both stable source identity and the native resume ID.
+	IdentitySessionID = "session_id"
 )
 
 // SourceIdentity is the raw native identity material behind an invocation
