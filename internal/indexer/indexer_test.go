@@ -1091,3 +1091,127 @@ func TestIndexer_GetSessionFailurePreservesOrphan(t *testing.T) {
 		t.Fatal("s2 data was deleted despite GetSession failure — orphan cleanup should not remove sessions that are still in ListSessions")
 	}
 }
+
+// statCountingAuthoritativeReader adds SourceStat to the authoritative mock so
+// the verify cache can be exercised.
+type statCountingAuthoritativeReader struct {
+	*authoritativeMockReader
+	statCalls int32
+	sizeBytes int64
+	modTime   time.Time
+}
+
+func (m *statCountingAuthoritativeReader) SourceStat(model.Session) (int64, time.Time, error) {
+	atomic.AddInt32(&m.statCalls, 1)
+	return m.sizeBytes, m.modTime, nil
+}
+
+func TestIndexerSkipsSnapshotReadWhenSourceStatUnchanged(t *testing.T) {
+	database, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer database.Close()
+
+	session := model.Session{ID: "s1", AgentType: "test", UpdatedAt: time.Unix(0, 100)}
+	r := &statCountingAuthoritativeReader{
+		authoritativeMockReader: &authoritativeMockReader{
+			mockReader: &mockReader{
+				agentType: "test",
+				sessions:  []model.Session{session},
+				details: map[string]*model.SessionDetail{
+					"s1": {Session: session, Turns: []model.TurnVM{{TurnIndex: 0, UserMessage: "legacy path"}}},
+				},
+			},
+			envelope: testAuthoritativeEnvelope(session, "authoritative path"),
+		},
+		sizeBytes: 42,
+		modTime:   time.Unix(1000, 0),
+	}
+
+	ix := New(database, []reader.BaseSessionReader{r})
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 1 {
+		t.Fatalf("authoritative calls after first cycle = %d, want 1", got)
+	}
+
+	// Unchanged source: the verify path must reuse the cached stat verdict
+	// instead of copying and hashing the transcript again.
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 1 {
+		t.Fatalf("authoritative calls after unchanged cycle = %d, want 1 (verify read must be skipped)", got)
+	}
+
+	// A size/mtime change forces a fresh read even when the lister's UpdatedAt
+	// is unchanged (coarse lister + append case).
+	r.modTime = time.Unix(2000, 0)
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
+		t.Fatalf("authoritative calls after stat change = %d, want 2", got)
+	}
+
+	// Stat stable again after the rewrite: verify is cheap once more.
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 2 {
+		t.Fatalf("authoritative calls after re-converged cycle = %d, want 2", got)
+	}
+
+	// A same-stat content rewrite still re-reads whenever the cached revision
+	// no longer matches what the DB stored (defense against stale caches).
+	r.envelope = testAuthoritativeEnvelope(session, "rewritten authoritative path")
+	r.envelope.SourceFingerprint.Digest = strings.Repeat("b", 64)
+	r.envelope.SourceRevision = "sha256:" + strings.Repeat("b", 64)
+	for _, fact := range []*model.GitFact[string]{
+		&r.envelope.OriginGit.RepositoryURL, &r.envelope.OriginGit.WorktreePath,
+		&r.envelope.OriginGit.Branch, &r.envelope.OriginGit.HeadSHA,
+	} {
+		fact.SourceRevision = r.envelope.SourceRevision
+	}
+	r.envelope.OriginGit.DirtyState.SourceRevision = r.envelope.SourceRevision
+	r.modTime = time.Unix(3000, 0)
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 3 {
+		t.Fatalf("authoritative calls after content rewrite = %d, want 3", got)
+	}
+	results, err := database.SearchTurns("rewritten authoritative", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].SessionID != "s1" {
+		t.Fatalf("rewritten source was not reindexed: %+v", results)
+	}
+
+	// An aged-out cache entry must force a bounded full revalidation even when
+	// size+mtime still match, so a rewrite preserving both cannot hide forever.
+	cached, ok := ix.sourceVerifyStats.Load("test\x00s1")
+	if !ok {
+		t.Fatal("verify cache entry missing after rewrite reindex")
+	}
+	aged := cached.(verifiedSourceStat)
+	aged.verifiedAt = time.Now().Add(-maxVerifiedStatAge - time.Minute)
+	ix.sourceVerifyStats.Store("test\x00s1", aged)
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 4 {
+		t.Fatalf("authoritative calls after cache aging = %d, want 4 (bounded revalidation)", got)
+	}
+
+	// Revalidated once, the refreshed entry is cheap again.
+	if err := ix.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&r.authoritativeCalls); got != 4 {
+		t.Fatalf("authoritative calls after revalidation = %d, want 4", got)
+	}
+}
