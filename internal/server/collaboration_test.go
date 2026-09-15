@@ -277,6 +277,7 @@ func TestGetCollaborationStates(t *testing.T) {
 	started := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
 	ended := time.Date(2026, 7, 1, 10, 5, 0, 0, time.UTC)
 	child := apiChild("codex", "root", "c1", collaboration.StatusCompleted)
+	child.ModelName = "gpt-5.6-luna"
 	child.StartedAt = &started
 	child.EndedAt = &ended
 	if err := database.ReplaceCollaborationGraph(apiCollabGraph("codex", "root", 123, child)); err != nil {
@@ -296,6 +297,10 @@ func TestGetCollaborationStates(t *testing.T) {
 	}
 	if len(body["invocations"].([]any)) != 2 || len(body["delegations"].([]any)) != 1 {
 		t.Fatalf("graph payload = %v", body)
+	}
+	childPayload := body["invocations"].([]any)[1].(map[string]any)
+	if childPayload["model_name"] != "gpt-5.6-luna" {
+		t.Fatalf("child model_name = %v, want gpt-5.6-luna", childPayload["model_name"])
 	}
 	tr := body["time_range"].(map[string]any)
 	if tr["start"] != "2026-07-01T10:00:00Z" || tr["end"] != "2026-07-01T10:05:00Z" {

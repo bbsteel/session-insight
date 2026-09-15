@@ -22,7 +22,7 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "claude",
 		DisplayName:     "Claude Code",
-		AdapterRevision: 4,
+		AdapterRevision: 5,
 		ResumeCommand: &capability.ResumeCommandDeclaration{
 			Executable:   "claude",
 			StandardArgs: []string{"--resume", "{id}"},

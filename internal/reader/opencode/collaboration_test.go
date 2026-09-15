@@ -79,9 +79,15 @@ func TestOpenCodeReadCollaborationStandaloneSessionTree(t *testing.T) {
 	if !ok || rootInvocation.BackingSession != nil {
 		t.Fatalf("root invocation = %+v", rootInvocation)
 	}
+	if rootInvocation.ModelName != "test-model" {
+		t.Errorf("root model = %q, want test-model", rootInvocation.ModelName)
+	}
 	childInvocation := invocationsByID[childInvocationID]
 	if childInvocation.DisplayName != "Inspect files" || childInvocation.RoleLabel != "explore" {
 		t.Errorf("child display/role = %q/%q", childInvocation.DisplayName, childInvocation.RoleLabel)
+	}
+	if childInvocation.ModelName != "test-model" {
+		t.Errorf("child model = %q, want source-recorded test-model", childInvocation.ModelName)
 	}
 	if childInvocation.Status != collaboration.StatusCompleted || childInvocation.ContentPrecision != collaboration.ExactFact() {
 		t.Errorf("child state = status:%q content:%+v", childInvocation.Status, childInvocation.ContentPrecision)

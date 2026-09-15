@@ -200,6 +200,10 @@ type AgentInvocation struct {
 	DisplayName string `json:"display_name"`
 	// AgentType is the registered adapter ID of the invocation's Agent.
 	AgentType string `json:"agent_type"`
+	// ModelName is the source-recorded model used by this invocation. It is
+	// empty when the Agent did not persist a model for the invocation; readers
+	// must not infer it from the parent invocation or adapter defaults.
+	ModelName string `json:"model_name,omitempty"`
 	// RoleLabel is source-provided display data with an open vocabulary.
 	// It is never a vendor-specific enum.
 	RoleLabel string `json:"role_label,omitempty"`

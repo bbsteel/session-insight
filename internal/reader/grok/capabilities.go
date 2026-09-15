@@ -21,7 +21,7 @@ func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       "grok",
 		DisplayName:     "Grok",
-		AdapterRevision: 4,
+		AdapterRevision: 5,
 		ResumeCommand: &capability.ResumeCommandDeclaration{
 			Executable:   "grok",
 			StandardArgs: []string{"--resume", "{id}"},
