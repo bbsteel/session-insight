@@ -117,17 +117,20 @@ func goldenCases() []goldenCase {
 			graph: func() CollaborationGraph {
 				root := codexRootID()
 				child := codexChildID()
+				rootInvocationRecord := rootInvocation("codex", codexRootSession, "codex main agent")
+				rootInvocationRecord.ModelName = "gpt-5.6-sol"
 				return CollaborationGraph{
 					RootAgentType: "codex",
 					RootSessionID: codexRootSession,
 					Revision:      7,
 					Completeness:  FactEvidence{State: EvidenceEstimated, ReasonCode: ReasonSourceNotRecorded},
 					Invocations: []AgentInvocation{
-						rootInvocation("codex", codexRootSession, "codex main agent"),
+						rootInvocationRecord,
 						{
 							ID:               child,
 							DisplayName:      "audit",
 							AgentType:        "codex",
+							ModelName:        "gpt-5.6-luna",
 							RoleLabel:        "audit",
 							Status:           StatusUnknown,
 							StartedAt:        tp("2026-01-02T00:00:01Z"),
@@ -164,6 +167,9 @@ func goldenCases() []goldenCase {
 				}
 				if child.Status != StatusUnknown {
 					t.Errorf("codex child status = %q, want unknown (no completion evidence)", child.Status)
+				}
+				if child.ModelName != "gpt-5.6-luna" {
+					t.Errorf("codex child model = %q, want source-recorded model", child.ModelName)
 				}
 				if g.Delegations[0].Trigger != nil || g.Delegations[0].Result != nil {
 					t.Error("codex launch/result anchors must be absent, not synthesized")

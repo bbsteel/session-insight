@@ -128,6 +128,7 @@ func claudeRootInvocation(root model.Session) collaboration.AgentInvocation {
 		ID:               collaboration.RootInvocationID("claude", root.ID),
 		DisplayName:      "claude main agent",
 		AgentType:        "claude",
+		ModelName:        strings.TrimSpace(root.ModelName),
 		Status:           status,
 		TimePrecision:    collaboration.ExactFact(),
 		ContentPrecision: collaboration.ExactFact(),
@@ -183,6 +184,7 @@ type claudeParentScan struct {
 type claudeEmbeddedChild struct {
 	agentID            string
 	agentType          string
+	modelName          string
 	description        string
 	toolUseID          string
 	triggerFIFO        bool
@@ -369,6 +371,12 @@ func discoverClaudeChildren(ctx context.Context, mainPath string, scan *claudePa
 					}
 				} else if info.Mode().IsRegular() && info.Size() > 0 {
 					child.hasJSONL = true
+					modelName, err := readClaudeSubagentModelName(ctx, p)
+					if err != nil {
+						truncated = true
+					} else if modelName != "" {
+						child.modelName = modelName
+					}
 				}
 			case "meta":
 				meta, err := readClaudeSubagentMeta(p)
@@ -547,6 +555,7 @@ func mapClaudeChild(rootSessionID, rootInvID string, child claudeEmbeddedChild, 
 		ID:            childInvID,
 		DisplayName:   display,
 		AgentType:     "claude",
+		ModelName:     child.modelName,
 		RoleLabel:     child.agentType,
 		Status:        status,
 		TimePrecision: claudeTimePrecision(!startedAt.IsZero(), hasEnd),
@@ -655,6 +664,39 @@ func mapClaudeChild(rootSessionID, rootInvID string, child claudeEmbeddedChild, 
 		}
 	}
 	return inv, del
+}
+
+// readClaudeSubagentModelName returns the first source-recorded assistant
+// model in an embedded child transcript. Parent models and adapter defaults
+// are deliberately not used as fallbacks because Claude can launch a child
+// with a different model.
+func readClaudeSubagentModelName(ctx context.Context, path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Model string `json:"model"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &event) != nil || event.Type != "assistant" || event.Message == nil {
+			continue
+		}
+		if modelName := strings.TrimSpace(event.Message.Model); modelName != "" {
+			return modelName, nil
+		}
+	}
+	return "", scanner.Err()
 }
 
 func normalizeClaudeChildStatus(raw string, hasCompletion, hasStart, rootLive bool) collaboration.InvocationStatus {

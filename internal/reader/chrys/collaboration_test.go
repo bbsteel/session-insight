@@ -55,6 +55,9 @@ func TestChrysReadCollaborationEmbeddedChild(t *testing.T) {
 	if rootInv.ID != collaboration.RootInvocationID("chrys", collabChrysRoot) {
 		t.Errorf("root invocation ID = %q", rootInv.ID)
 	}
+	if rootInv.ModelName != "example-model" {
+		t.Errorf("root model = %q, want example-model", rootInv.ModelName)
+	}
 	if rootInv.BackingSession != nil {
 		t.Error("root invocation must not carry a BackingSessionRef")
 	}
@@ -69,6 +72,9 @@ func TestChrysReadCollaborationEmbeddedChild(t *testing.T) {
 	}
 	if child.RoleLabel != "explore_agent" {
 		t.Errorf("role label = %q, want source-recorded tool_name", child.RoleLabel)
+	}
+	if child.ModelName != "chrys-fast-model" {
+		t.Errorf("child model = %q, want source-recorded chrys-fast-model", child.ModelName)
 	}
 	// Recorded status and timing are normalized, not left unused.
 	if child.Status != collaboration.StatusCompleted {

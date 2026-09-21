@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 43
+const currentSchemaVersion = 44
 
 type DB struct {
 	conn *sql.DB
@@ -747,6 +747,7 @@ func migrate(conn *sql.DB) error {
 			    is_root                 INTEGER NOT NULL DEFAULT 0,
 			    display_name            TEXT    NOT NULL DEFAULT '',
 			    agent_type              TEXT    NOT NULL DEFAULT '',
+			    model_name              TEXT    NOT NULL DEFAULT '',
 			    role_label              TEXT    NOT NULL DEFAULT '',
 			    status                  TEXT    NOT NULL DEFAULT 'unknown',
 			    started_at              TEXT,
@@ -827,6 +828,39 @@ func migrate(conn *sql.DB) error {
 			if _, err := conn.Exec(`ALTER TABLE collaboration_roots ADD COLUMN ` + col.ddl); err != nil &&
 				!strings.Contains(err.Error(), "duplicate column name") {
 				return fmt.Errorf("v29 add collaboration_roots.%s: %w", col.name, err)
+			}
+		}
+	}
+
+	// Version 44: persist the source-recorded model on each collaboration
+	// invocation. The physical-column check makes this self-healing when a
+	// pre-release process recorded the migration version before completing the
+	// ALTER. Collaboration rows are derived data, so clear existing graphs once
+	// when upgrading; the indexer will rebuild them even when the Session
+	// watermark itself is unchanged.
+	var invocationsTable string
+	err = conn.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'collaboration_invocations'`,
+	).Scan(&invocationsTable)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("v44 inspect collaboration_invocations: %w", err)
+	}
+	if invocationsTable != "" {
+		hasModelName, err := tableHasColumn(ctx, conn, "collaboration_invocations", "model_name")
+		if err != nil {
+			return fmt.Errorf("v44 inspect collaboration_invocations.model_name: %w", err)
+		}
+		modelColumnAdded := false
+		if !hasModelName {
+			if _, err := conn.Exec(`ALTER TABLE collaboration_invocations ADD COLUMN model_name TEXT NOT NULL DEFAULT ''`); err != nil &&
+				!strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("v44 add collaboration_invocations.model_name: %w", err)
+			}
+			modelColumnAdded = true
+		}
+		if maxVersion < 44 || modelColumnAdded {
+			if _, err := conn.Exec(`DELETE FROM collaboration_roots`); err != nil {
+				return fmt.Errorf("v44 clear collaboration graphs: %w", err)
 			}
 		}
 	}

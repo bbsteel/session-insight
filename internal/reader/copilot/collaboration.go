@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/collaboration"
@@ -83,6 +84,7 @@ type copilotLifecycleChild struct {
 	toolCallID  string
 	displayName string // agentDisplayName label from subagent.started
 	roleName    string // task arguments.name
+	modelName   string // task arguments.model
 	description string // task arguments.description (source-recorded summary)
 	mode        string // task arguments.mode (sync/async)
 	hasTask     bool
@@ -151,6 +153,7 @@ func parseCollaborationEvents(ctx context.Context, path string) (*copilotCollabo
 			if args := nestedMap(evt.Data, "arguments"); args != nil {
 				c.description, _ = extractString(args, "description")
 				c.roleName, _ = extractString(args, "name")
+				c.modelName, _ = extractString(args, "model")
 				c.mode, _ = extractString(args, "mode")
 			}
 		case "subagent.started":
@@ -200,6 +203,7 @@ func copilotRootInvocation(root model.Session, shutdown, live bool) collaboratio
 		ID:               collaboration.RootInvocationID("copilot", root.ID),
 		DisplayName:      "copilot main agent",
 		AgentType:        "copilot",
+		ModelName:        strings.TrimSpace(root.ModelName),
 		Status:           status,
 		TimePrecision:    collaboration.ExactFact(),
 		ContentPrecision: collaboration.ExactFact(),
@@ -241,6 +245,7 @@ func copilotChildCollaboration(rootSessionID, rootInvID string, child *copilotLi
 		ID:            childInvID,
 		DisplayName:   displayName,
 		AgentType:     "copilot",
+		ModelName:     strings.TrimSpace(child.modelName),
 		RoleLabel:     child.roleName,
 		Status:        status,
 		TimePrecision: copilotTimingPrecision(child),

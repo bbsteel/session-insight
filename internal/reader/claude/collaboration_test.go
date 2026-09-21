@@ -67,6 +67,9 @@ func TestClaudeReadCollaborationEmbeddedChild(t *testing.T) {
 	if rootInv.ID != collaboration.RootInvocationID("claude", collabClaudeRoot) {
 		t.Errorf("root invocation ID = %q", rootInv.ID)
 	}
+	if rootInv.ModelName != "claude-sonnet-4" {
+		t.Errorf("root model = %q, want claude-sonnet-4", rootInv.ModelName)
+	}
 	if rootInv.BackingSession != nil {
 		t.Error("root invocation must not carry a BackingSessionRef")
 	}
@@ -81,6 +84,9 @@ func TestClaudeReadCollaborationEmbeddedChild(t *testing.T) {
 	}
 	if child.RoleLabel != "Explore" {
 		t.Errorf("role label = %q, want Explore", child.RoleLabel)
+	}
+	if child.ModelName != "claude-haiku-4" {
+		t.Errorf("child model = %q, want source-recorded claude-haiku-4", child.ModelName)
 	}
 	if child.Status != collaboration.StatusCompleted {
 		t.Errorf("status = %q, want completed from TaskOutput.task.status", child.Status)

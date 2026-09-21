@@ -11,6 +11,7 @@
       "id": "codex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:root",
       "display_name": "codex main agent",
       "agent_type": "codex",
+      "model_name": "gpt-5.6-sol",
       "status": "completed",
       "time_precision": {
         "state": "exact"
@@ -27,6 +28,7 @@
       "id": "codex:rollout-2026-01-02T00-00-00-019f0000-0000-7000-8000-0000000000aa:child:019f0000-0000-7000-8000-0000000000bb",
       "display_name": "audit",
       "agent_type": "codex",
+      "model_name": "gpt-5.6-luna",
       "role_label": "audit",
       "status": "unknown",
       "started_at": "2026-01-02T00:00:01Z",

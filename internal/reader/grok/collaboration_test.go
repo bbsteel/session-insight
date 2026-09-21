@@ -76,21 +76,23 @@ func fixtureStandaloneChild(t *testing.T) string {
 	}, "\n") + "\n"
 	writeSession(t, root, gProj, gRootID, summaryFile{
 		GeneratedTitle: "root session",
+		CurrentModelID: "grok-root-model",
 		CreatedAt:      "2026-01-01T00:00:00Z",
 		UpdatedAt:      "2026-01-01T00:10:00Z",
 	}, rootUpdates, sampleEventsClosed())
 
 	parentDir := filepath.Join(root, gProj, gRootID)
 	writeSubagentMeta(t, parentDir, gChildID, map[string]any{
-		"subagent_id":       gChildID,
-		"parent_session_id": gRootID,
-		"child_session_id":  gChildID,
-		"subagent_type":     "general-purpose",
-		"description":       "plan writer",
-		"status":            "completed",
-		"started_at":        "2026-01-01T00:00:10.000000000Z",
-		"completed_at":      "2026-01-01T00:00:20.000000000Z",
-		"duration_ms":       10000,
+		"subagent_id":        gChildID,
+		"parent_session_id":  gRootID,
+		"child_session_id":   gChildID,
+		"subagent_type":      "general-purpose",
+		"description":        "plan writer",
+		"effective_model_id": "grok-child-model",
+		"status":             "completed",
+		"started_at":         "2026-01-01T00:00:10.000000000Z",
+		"completed_at":       "2026-01-01T00:00:20.000000000Z",
+		"duration_ms":        10000,
 	})
 
 	childUpdates := `{"timestamp":1700000011,"method":"session/update","params":{"sessionId":"` + gChildID + `","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"child task brief"}}}}
@@ -99,6 +101,7 @@ func fixtureStandaloneChild(t *testing.T) string {
 `
 	writeSession(t, root, gProj, gChildID, summaryFile{
 		GeneratedTitle: "child session",
+		CurrentModelID: "grok-backing-model",
 		CreatedAt:      "2026-01-01T00:00:10Z",
 		UpdatedAt:      "2026-01-01T00:00:20Z",
 	}, childUpdates, sampleEventsClosed())
@@ -246,6 +249,9 @@ func TestGrokReadCollaborationStandaloneChild(t *testing.T) {
 	if len(g.Invocations) != 2 {
 		t.Fatalf("want 2 invocations, got %d", len(g.Invocations))
 	}
+	if g.Invocations[0].ModelName != "grok-root-model" {
+		t.Errorf("root model = %q, want grok-root-model", g.Invocations[0].ModelName)
+	}
 	child := g.Invocations[1]
 	wantID := collaboration.ChildInvocationID("grok", gRootID, gChildID)
 	if child.ID != wantID {
@@ -271,6 +277,9 @@ func TestGrokReadCollaborationStandaloneChild(t *testing.T) {
 	}
 	if child.DisplayName != "plan writer" || child.RoleLabel != "general-purpose" {
 		t.Errorf("display/role = %q/%q", child.DisplayName, child.RoleLabel)
+	}
+	if child.ModelName != "grok-child-model" {
+		t.Errorf("child model = %q, want sidecar effective model", child.ModelName)
 	}
 	if len(g.Delegations) != 1 {
 		t.Fatalf("delegations = %d", len(g.Delegations))
