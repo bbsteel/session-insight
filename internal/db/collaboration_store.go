@@ -206,14 +206,14 @@ func (db *DB) ReplaceCollaborationGraph(g collaboration.CollaborationGraph) erro
 		if _, err := tx.Exec(
 			`INSERT INTO collaboration_invocations(
 			    root_agent_type, root_session_id, invocation_id, ordinal, is_root,
-			    display_name, agent_type, role_label, status,
+			    display_name, agent_type, model_name, role_label, status,
 			    started_at, ended_at,
 			    time_precision_state, time_precision_reason,
 			    content_precision_state, content_precision_reason,
 			    backing_agent_type, backing_session_id, source_identity_json)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			g.RootAgentType, g.RootSessionID, inv.ID, i, isRoot,
-			inv.DisplayName, inv.AgentType, inv.RoleLabel, string(inv.Status),
+			inv.DisplayName, inv.AgentType, inv.ModelName, inv.RoleLabel, string(inv.Status),
 			collabTimeString(inv.StartedAt), collabTimeString(inv.EndedAt),
 			string(inv.TimePrecision.State), string(inv.TimePrecision.ReasonCode),
 			string(inv.ContentPrecision.State), string(inv.ContentPrecision.ReasonCode),
@@ -370,7 +370,7 @@ func (db *DB) GetCollaboration(agentType, sessionID string) (*StoredCollaboratio
 	}
 
 	invRows, err := db.conn.Query(
-		`SELECT invocation_id, display_name, agent_type, role_label, status,
+		`SELECT invocation_id, display_name, agent_type, model_name, role_label, status,
 		        started_at, ended_at,
 		        time_precision_state, time_precision_reason,
 		        content_precision_state, content_precision_reason,
@@ -392,7 +392,7 @@ func (db *DB) GetCollaboration(agentType, sessionID string) (*StoredCollaboratio
 		var timeState, timeReason, contentState, contentReason string
 		var backingAgent, backingSession, identityJSON string
 		var status string
-		if err := invRows.Scan(&inv.ID, &inv.DisplayName, &inv.AgentType, &inv.RoleLabel, &status,
+		if err := invRows.Scan(&inv.ID, &inv.DisplayName, &inv.AgentType, &inv.ModelName, &inv.RoleLabel, &status,
 			&startedAt, &endedAt,
 			&timeState, &timeReason, &contentState, &contentReason,
 			&backingAgent, &backingSession, &identityJSON); err != nil {

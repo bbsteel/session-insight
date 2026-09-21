@@ -54,6 +54,7 @@ export interface AgentInvocationDTO {
   id: string
   display_name: string
   agent_type: string
+  model_name?: string
   role_label?: string
   status: InvocationStatus
   started_at?: string

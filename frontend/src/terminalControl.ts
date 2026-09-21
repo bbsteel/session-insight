@@ -45,14 +45,6 @@ export interface TerminalLineMatcher<T = unknown> {
   // Each returned match is validated independently and can be removed without
   // affecting other matches on the same buffer row.
   validate?: (lineText: string, data: T) => Promise<boolean>
-  /**
-   * A compact action rendered through an xterm marker decoration while this
-   * matcher is hovered. Clicks are accepted only in its right-edge cells.
-   */
-  hoverAction?: {
-    label: string
-    cellWidth: number
-  }
   onActivate: (bufLine: number, data: T, matchIndex: number, meta?: TerminalActivateMeta) => void
 }
 

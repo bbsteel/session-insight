@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bbsteel/session-insight/internal/collaboration"
@@ -141,6 +142,7 @@ func chrysRootInvocation(root model.Session) collaboration.AgentInvocation {
 		ID:               collaboration.RootInvocationID("chrys", root.ID),
 		DisplayName:      "chrys main agent",
 		AgentType:        "chrys",
+		ModelName:        strings.TrimSpace(root.ModelName),
 		Status:           status,
 		TimePrecision:    collaboration.ExactFact(),
 		ContentPrecision: collaboration.ExactFact(),
@@ -248,6 +250,7 @@ func chrysChildCollaboration(rootSessionID, rootInvID string, child chrysEmbedde
 		ID:               childInvID,
 		DisplayName:      displayName,
 		AgentType:        "chrys",
+		ModelName:        strings.TrimSpace(meta.ModelID),
 		RoleLabel:        meta.ToolName,
 		Status:           status,
 		TimePrecision:    chrysTimePrecision(!startedAt.IsZero(), hasEnd),

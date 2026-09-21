@@ -46,6 +46,7 @@ export interface TimelineInvocation {
   parentId: string | null
   label: string
   agentType: string
+  modelName: string
   roleLabel: string
   status: InvocationStatus
   startedAtMs: number | null
@@ -277,6 +278,7 @@ export function normalizeTimelineModel(graph: CollaborationGraphDTO): TimelineMo
       parentId,
       label: inv.display_name || inv.role_label || inv.id,
       agentType: inv.agent_type,
+      modelName: inv.model_name ?? '',
       roleLabel: inv.role_label ?? '',
       status: inv.status,
       startedAtMs,
@@ -328,6 +330,7 @@ export function normalizeTimelineModel(graph: CollaborationGraphDTO): TimelineMo
       parentId: null,
       label: UNLINKED_GROUP_ID,
       agentType: '',
+      modelName: '',
       roleLabel: '',
       status: 'unknown',
       startedAtMs: null,

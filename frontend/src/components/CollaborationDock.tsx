@@ -433,6 +433,7 @@ function InvocationDetail({
       <dl className="mt-1.5 space-y-0.5 text-meta">
         <Row label={t('collaboration.tooltip.status')} value={t(`collaboration.status.${inv.status}`)} />
         <Row label={t('collaboration.detail.agent')} value={inv.agentType} />
+        <Row label={t('collaboration.detail.model')} value={inv.modelName || '—'} />
         {inv.roleLabel && <Row label={t('collaboration.detail.role')} value={inv.roleLabel} />}
         <Row label={t('collaboration.tooltip.started')} value={timeLabel(locale, inv.startedAtMs, t)} />
         <Row label={t('collaboration.detail.ended')} value={timeLabel(locale, inv.endedAtMs, t)} />

@@ -1,0 +1,155 @@
+{
+  "schema": "worktree-review.cli.result/v1",
+  "gate_state": "Passed",
+  "attempt_id": "attempt_01JWRTEST00000000CHLD",
+  "request_key": {
+    "source_repository": "demo/passed-local",
+    "target_ref": "main",
+    "target_head_oid": "498ad98bf441220a07c948b2b0691a2d7555aaa5",
+    "proposed_head_oid": "37d1b832ee0d45551721f3dc462df58f8db3bc42",
+    "review_policy_version": {
+      "semver": "0.1.0",
+      "sha256": "c457d93bb5dd864c3112f8ff15449c64a6cc3b6a7512852c486cf575e1ec224f"
+    }
+  },
+  "review_identity": {
+    "merge_tree_oid": "5c15d9ee0199ddc19518fa3d059602ce02137b74",
+    "review_policy_version": {
+      "semver": "0.1.0",
+      "sha256": "c457d93bb5dd864c3112f8ff15449c64a6cc3b6a7512852c486cf575e1ec224f"
+    }
+  },
+  "source_repository": "demo/passed-local",
+  "target_ref": "main",
+  "target_head_oid": "498ad98bf441220a07c948b2b0691a2d7555aaa5",
+  "proposed_ref": "feature/safe",
+  "proposed_source": "committed-ref",
+  "proposed_head_oid": "37d1b832ee0d45551721f3dc462df58f8db3bc42",
+  "merge_tree_oid": "5c15d9ee0199ddc19518fa3d059602ce02137b74",
+  "review_policy_version": {
+    "semver": "0.1.0",
+    "sha256": "c457d93bb5dd864c3112f8ff15449c64a6cc3b6a7512852c486cf575e1ec224f"
+  },
+  "compute_policy_version": {
+    "semver": "0.1.0",
+    "sha256": "86aaac8920d1c80b111f85057ad938cb23d2cefb324eaa8dccda8228f4389ac5"
+  },
+  "compute_policy_disclosure": {
+    "provider": "local-cli",
+    "model": "python",
+    "data_destination": "local command stdin/stdout",
+    "known_retention": "none \u2014 demo local-cli provider",
+    "provider_configuration_fingerprint": "4ba262241bb77632487e2e89adfed0bbcddbd8ce6774173347d0792e7b1c6cf7"
+  },
+  "stage_outcomes": [
+    {
+      "stage": "derive-identity",
+      "status": "completed",
+      "detail": "attempt 676c835c-55ba-4554-b729-7158efe8bd06"
+    },
+    {
+      "stage": "construct-merge",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "prepare-review-worktree",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "gather-context",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "run-dimensions",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "verify-dedup",
+      "status": "completed",
+      "detail": "validated and deduplicated 0 findings"
+    },
+    {
+      "stage": "check-completeness",
+      "status": "completed",
+      "detail": "required coverage and dimensions completed"
+    },
+    {
+      "stage": "evaluate-gate",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "stage": "publish",
+      "status": "completed",
+      "detail": null
+    }
+  ],
+  "dimension_outcomes": [
+    {
+      "dimension_id": "correctness",
+      "status": "completed",
+      "detail": null
+    },
+    {
+      "dimension_id": "security",
+      "status": "completed",
+      "detail": null
+    }
+  ],
+  "findings": [],
+  "draft_findings": [],
+  "coverage": {
+    "required_coverage_complete": true,
+    "mandatory_missing": [],
+    "optional_missing": [
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "excluded": [],
+    "unreviewable": [],
+    "reviewed": [
+      "merge-candidate.diff",
+      "src/ok.py"
+    ]
+  },
+  "usage": [
+    {
+      "kind": "estimated",
+      "input_tokens": 1162,
+      "output_tokens": 8192,
+      "cost_usd": null,
+      "provider": "local-cli",
+      "model": "python",
+      "note": "sum of per-dimension structured-call estimates"
+    },
+    {
+      "kind": "declared",
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "provider": "local-cli",
+      "model": "python",
+      "note": "local CLI adapter worktree-json did not report token usage"
+    },
+    {
+      "kind": "declared",
+      "input_tokens": null,
+      "output_tokens": null,
+      "cost_usd": null,
+      "provider": "local-cli",
+      "model": "python",
+      "note": "local CLI adapter worktree-json did not report token usage"
+    }
+  ],
+  "call_plan": {
+    "call_count": 2,
+    "estimated_input_tokens": 1162,
+    "max_output_tokens_per_call": 4096
+  },
+  "summary": "Review completed.",
+  "error_detail": null
+}

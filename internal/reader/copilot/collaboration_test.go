@@ -28,6 +28,7 @@ func collabCopilotRoot(t *testing.T) model.Session {
 	return model.Session{
 		ID:        "collab-copilot-1",
 		AgentType: "copilot",
+		ModelName: "copilot-root-model",
 		UpdatedAt: updated,
 	}
 }
@@ -89,6 +90,9 @@ func TestCopilotReadCollaborationLifecycle(t *testing.T) {
 	if rootInv.Status != collaboration.StatusUnknown {
 		t.Errorf("root status = %q, want unknown (no shutdown evidence, not live)", rootInv.Status)
 	}
+	if rootInv.ModelName != "copilot-root-model" {
+		t.Errorf("root model = %q, want copilot-root-model", rootInv.ModelName)
+	}
 	if rootInv.BackingSession != nil {
 		t.Error("root invocation must not carry a BackingSessionRef")
 	}
@@ -105,6 +109,9 @@ func TestCopilotReadCollaborationLifecycle(t *testing.T) {
 	}
 	if a.RoleLabel != "impl" {
 		t.Errorf("A role label = %q, want task arguments.name", a.RoleLabel)
+	}
+	if a.ModelName != "m1" {
+		t.Errorf("A model = %q, want source-recorded task model m1", a.ModelName)
 	}
 	if a.Status != collaboration.StatusCompleted {
 		t.Errorf("A status = %q, want completed", a.Status)
@@ -169,6 +176,9 @@ func TestCopilotReadCollaborationLifecycle(t *testing.T) {
 
 	// --- Orphaned child (call-task-B): started, never completed, root closed ---
 	b := collabCopilotChild(t, g, "call-task-B")
+	if b.ModelName != "" {
+		t.Errorf("B model = %q, want unknown without a recorded task model", b.ModelName)
+	}
 	if b.Status != collaboration.StatusOrphaned {
 		t.Errorf("B status = %q, want orphaned (started, no completion, root not live)", b.Status)
 	}

@@ -1,0 +1,150 @@
+name: Release Preflight
+run-name: Release preflight ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-preflight.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit SHA to build without publishing
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_REF: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  verify:
+    name: Verify release dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out candidate commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_REF }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Verify Codex ACP adapter version
+        run: bash scripts/verify-codex-acp-version.sh --latest
+
+      - name: Test model discovery contracts
+        run: go test -count=1 ./internal/llm
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            os: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - target: darwin-amd64
+            os: macos-15-intel
+            goos: darwin
+            goarch: amd64
+          - target: darwin-arm64
+            os: macos-15
+            goos: darwin
+            goarch: arm64
+          - target: windows-amd64
+            os: windows-2022
+            goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Check out candidate commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_REF }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Verify Windows C compiler
+        if: runner.os == 'Windows'
+        run: gcc --version
+
+      - name: Install musl toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build Linux candidate
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+          CC: musl-gcc
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p build
+          go build -trimpath \
+            -tags 'sqlite_fts5 netgo osusergo' \
+            -ldflags="-s -w -X main.version=release-preflight -linkmode external -extldflags '-static'" \
+            -o build/session-insight .
+
+      - name: Build macOS candidate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p build
+          go build -trimpath -tags sqlite_fts5 -ldflags='-s -w -X main.version=release-preflight' -o build/session-insight .
+
+      - name: Build Windows candidate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CGO_ENABLED: '1'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          go build -trimpath -tags sqlite_fts5 -ldflags='-s -w -X main.version=release-preflight' -o build/session-insight.exe .

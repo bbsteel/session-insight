@@ -117,6 +117,13 @@ func TestV29BackfillsCollaborationCountColumns(t *testing.T) {
 			t.Errorf("column collaboration_roots.%s missing after v29 migration", col)
 		}
 	}
+	hasModelName, err := tableHasColumn(t.Context(), database.Conn(), "collaboration_invocations", "model_name")
+	if err != nil {
+		t.Fatalf("inspect collaboration_invocations.model_name: %v", err)
+	}
+	if !hasModelName {
+		t.Error("column collaboration_invocations.model_name missing after v44 migration")
+	}
 
 	graph := collabTestGraph("grok", "s1", 7,
 		collabTestChild{nativeID: "c1", status: collaboration.StatusCompleted},
@@ -147,5 +154,42 @@ func TestV29BackfillsCollaborationCountColumns(t *testing.T) {
 	defer reopened.Close()
 	if _, err := reopened.GetCollaboration("grok", "s1"); err != nil {
 		t.Fatalf("read healed graph: %v", err)
+	}
+}
+
+// TestV44DropsModelLessDerivedGraphs proves an upgraded database cannot keep
+// collaboration rows that were indexed before invocation models existed.
+// Clearing only the schema version would leave unchanged Session watermarks
+// eligible to skip the model backfill.
+func TestV44DropsModelLessDerivedGraphs(t *testing.T) {
+	databaseDir := makePreV29CollaborationDB(t)
+	legacyConnection, err := sql.Open("sqlite3", filepath.Join(databaseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, insertStatement := range []string{
+		`INSERT INTO collaboration_roots(root_agent_type, root_session_id, revision) VALUES ('codex', 's1', 1)`,
+		`INSERT INTO collaboration_invocations(root_agent_type, root_session_id, invocation_id, is_root) VALUES ('codex', 's1', 'codex:s1:root', 1)`,
+	} {
+		if _, err := legacyConnection.Exec(insertStatement); err != nil {
+			legacyConnection.Close()
+			t.Fatalf("seed model-less collaboration graph: %v", err)
+		}
+	}
+	if err := legacyConnection.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := Open(databaseDir)
+	if err != nil {
+		t.Fatalf("upgrade model-less collaboration database: %v", err)
+	}
+	defer database.Close()
+	storedGraph, err := database.GetCollaboration("codex", "s1")
+	if err != nil {
+		t.Fatalf("read upgraded collaboration graph: %v", err)
+	}
+	if storedGraph != nil {
+		t.Fatalf("legacy collaboration graph survived v44 backfill: %+v", storedGraph)
 	}
 }

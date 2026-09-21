@@ -100,6 +100,7 @@ func grokRootInvocation(root model.Session) collaboration.AgentInvocation {
 		ID:               collaboration.RootInvocationID("grok", root.ID),
 		DisplayName:      "grok main agent",
 		AgentType:        "grok",
+		ModelName:        strings.TrimSpace(root.ModelName),
 		Status:           status,
 		TimePrecision:    collaboration.ExactFact(),
 		ContentPrecision: collaboration.ExactFact(),
@@ -213,6 +214,7 @@ type grokChildRec struct {
 	childSessionID  string
 	subagentType    string
 	description     string
+	modelName       string
 	statusRaw       string
 	startedAt       time.Time
 	endedAt         time.Time
@@ -279,6 +281,9 @@ func (r *GrokReader) discoverGrokChildren(ctx context.Context, parentDir, parent
 			if d := strings.TrimSpace(meta.Description); d != "" {
 				// Never use prompt; description is the source summary field.
 				rec.description = d
+			}
+			if modelName := strings.TrimSpace(meta.EffectiveModelID); modelName != "" {
+				rec.modelName = modelName
 			}
 			if s := strings.TrimSpace(meta.Status); s != "" && rec.statusRaw == "" {
 				rec.statusRaw = s
@@ -559,6 +564,7 @@ func (r *GrokReader) mapGrokChild(
 		ID:            childInvID,
 		DisplayName:   display,
 		AgentType:     "grok",
+		ModelName:     child.modelName,
 		RoleLabel:     child.subagentType,
 		Status:        status,
 		TimePrecision: grokTimePrecision(hasStart, hasEnd),
@@ -582,13 +588,20 @@ func (r *GrokReader) mapGrokChild(
 	}
 
 	// Backing only when a readable standalone Session exists.
-	if child.childSessionID != "" && r.sessionHasReadableBacking(child.childSessionID) {
-		inv.BackingSession = &collaboration.BackingSessionRef{
-			AgentType: "grok",
-			SessionID: child.childSessionID,
+	if child.childSessionID != "" {
+		backingModelName, readable := r.readableBackingSessionModel(child.childSessionID)
+		if inv.ModelName == "" {
+			inv.ModelName = backingModelName
 		}
-		inv.ContentPrecision = collaboration.ExactFact()
-	} else {
+		if readable {
+			inv.BackingSession = &collaboration.BackingSessionRef{
+				AgentType: "grok",
+				SessionID: child.childSessionID,
+			}
+			inv.ContentPrecision = collaboration.ExactFact()
+		}
+	}
+	if inv.BackingSession == nil {
 		inv.ContentPrecision = collaboration.FactEvidence{
 			State:      collaboration.EvidenceMissing,
 			ReasonCode: collaboration.ReasonSourceNotRecorded,
@@ -692,16 +705,22 @@ func (r *GrokReader) mapGrokChild(
 	return inv, del
 }
 
-func (r *GrokReader) sessionHasReadableBacking(sessionID string) bool {
+// readableBackingSessionModel reports whether the standalone child is
+// readable and returns its own summary model when recorded. The sidecar's
+// effective_model_id remains stronger and wins in mapGrokChild.
+func (r *GrokReader) readableBackingSessionModel(sessionID string) (string, bool) {
 	if !validSessionID(sessionID) {
-		return false
+		return "", false
 	}
 	loc, err := r.findSession(sessionID)
 	if err != nil {
-		return false
+		return "", false
 	}
-	_, err = os.Stat(loc.SummaryPath)
-	return err == nil
+	summary, err := readSummary(loc.SummaryPath)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(summary.CurrentModelID), true
 }
 
 // findSessionDir locates a session directory by UUID even when summary.json is

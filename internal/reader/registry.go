@@ -17,6 +17,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
+	"github.com/bbsteel/session-insight/internal/reader/worktreereview"
 )
 
 // RegisteredAgentDefinition aggregates adapter-owned capability and
@@ -40,6 +41,7 @@ func RegisteredAgentDefinitions() []RegisteredAgentDefinition {
 		{Capabilities: hermes.Capabilities(), Presentation: hermes.Presentation(), MigrationState: hermes.PresentationMigrationState()},
 		{Capabilities: imported.Capabilities(), Presentation: imported.Presentation(), MigrationState: imported.PresentationMigrationState()},
 		{Capabilities: opencode.Capabilities(), Presentation: opencode.Presentation(), MigrationState: opencode.PresentationMigrationState()},
+		{Capabilities: worktreereview.Capabilities(), Presentation: worktreereview.Presentation(), MigrationState: worktreereview.PresentationMigrationState()},
 	}
 	sort.Slice(defs, func(i, j int) bool {
 		return defs[i].Capabilities.AgentType < defs[j].Capabilities.AgentType
@@ -91,6 +93,18 @@ func UsesDeclarationResolver(agentType string) bool {
 	}
 }
 
+// codexSnapshotDir keeps Codex index snapshot captures (each as large as the
+// rollout being read) on a disk-backed directory instead of a RAM-backed
+// os.TempDir. It mirrors the main data dir resolution: SI_DATA_DIR when set,
+// else ~/.session-insight.
+func codexSnapshotDir(homeDir string) string {
+	dataDir := os.Getenv("SI_DATA_DIR")
+	if dataDir == "" {
+		dataDir = filepath.Join(homeDir, ".session-insight")
+	}
+	return filepath.Join(dataDir, "codex-snapshots")
+}
+
 // Discover returns BaseSessionReader instances for Agents whose storage exists
 // on the current machine. It is independent of AgentDefinitions: an Agent may
 // appear in the catalog without a discovered reader, and a discovered reader
@@ -108,6 +122,15 @@ func Discover() []BaseSessionReader {
 		}
 	}
 
+	// Worktree Review discovery may not need a home directory at all: a
+	// WORKTREE_REVIEW_JOURNAL_ROOT override must win even when
+	// os.UserHomeDir() fails (e.g. service accounts).
+	if journalRoot := worktreereview.DefaultJournalRoot(); journalRoot != "" {
+		if info, err := os.Stat(journalRoot); err == nil && info.IsDir() {
+			readers = append(readers, worktreereview.New(journalRoot))
+		}
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return readers
@@ -120,7 +143,7 @@ func Discover() []BaseSessionReader {
 
 	codexDir := filepath.Join(homeDir, ".codex", "sessions")
 	if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
-		readers = append(readers, codex.New(codexDir))
+		readers = append(readers, codex.New(codexDir, codex.WithSnapshotDir(codexSnapshotDir(homeDir))))
 	}
 
 	claudeDir := filepath.Join(homeDir, ".claude", "projects")

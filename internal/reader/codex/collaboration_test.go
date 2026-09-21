@@ -58,6 +58,9 @@ func TestCodexReadCollaborationStandaloneChild(t *testing.T) {
 	if rootInv.ID != collaboration.RootInvocationID("codex", collabRootID) {
 		t.Errorf("root invocation ID = %q, want deterministic root", rootInv.ID)
 	}
+	if rootInv.ModelName != "gpt-5.6-sol" {
+		t.Errorf("root model = %q, want gpt-5.6-sol", rootInv.ModelName)
+	}
 	if rootInv.SourceIdentity.Kind != collaboration.IdentityRootSession ||
 		rootInv.SourceIdentity.NativeID != collabRootID {
 		t.Errorf("root source identity = %+v", rootInv.SourceIdentity)
@@ -74,6 +77,9 @@ func TestCodexReadCollaborationStandaloneChild(t *testing.T) {
 	if child.DisplayName != "audit" || child.RoleLabel != "audit" {
 		t.Errorf("child display/role = %q/%q, want audit/audit (agent_path last segment)",
 			child.DisplayName, child.RoleLabel)
+	}
+	if child.ModelName != "gpt-5.6-luna" {
+		t.Errorf("child model = %q, want source-recorded gpt-5.6-luna", child.ModelName)
 	}
 	if child.Status != collaboration.StatusUnknown {
 		t.Errorf("child status = %q, want unknown (no completion evidence)", child.Status)

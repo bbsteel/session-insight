@@ -13,7 +13,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
-const core = '/tmp/session-insight-collaboration/src/collaboration'
+const collaborationBuildDir = process.env.SI_COLLABORATION_TEST_BUILD_DIR || '/tmp/session-insight-collaboration'
+const core = `${collaborationBuildDir}/src/collaboration`
 const {
   normalizeTimelineModel,
   selectedPathIds,
@@ -187,6 +188,7 @@ assert.equal(rootInvocationID('a%b:c>d', 's:x'), 'a%25b%3Ac%3Ed:s%3Ax:root')
   const model = normalizeTimelineModel(load('standalone-child.json'))
   const child = model.invocations[1]
   assert.equal(child.hasBackingSession, true, 'BackingSessionRef respected')
+  assert.equal(child.modelName, 'gpt-5.6-luna', 'source-recorded child model preserved')
   assert.equal(child.status, 'unknown')
   assert.equal(child.triggerAnchor, null)
   assert.equal(child.resultAnchor, null)

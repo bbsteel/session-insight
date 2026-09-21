@@ -24,13 +24,68 @@ import (
 
 type CodexReader struct {
 	sessionsDir string
+	// snapshotDir holds the temporary byte-level source captures made during
+	// index reads. Empty falls back to os.TempDir(). Index snapshots can be as
+	// large as the rollout itself, so production wiring points this at a
+	// disk-backed directory under SI_DATA_DIR instead of RAM-backed tmpfs.
+	snapshotDir string
 	pathsMu     sync.RWMutex
 	paths       map[string]string
 }
 
-func New(sessionsDir string) *CodexReader {
-	return &CodexReader{sessionsDir: sessionsDir, paths: make(map[string]string)}
+// CodexReaderOption customizes New without breaking existing callers.
+type CodexReaderOption func(*CodexReader)
+
+// WithSnapshotDir pins the directory used for temporary index snapshot
+// captures. The directory is created on demand; entries abandoned by a crashed
+// process are swept once at construction.
+func WithSnapshotDir(dir string) CodexReaderOption {
+	return func(r *CodexReader) {
+		r.snapshotDir = dir
+	}
 }
+
+func New(sessionsDir string, opts ...CodexReaderOption) *CodexReader {
+	r := &CodexReader{sessionsDir: sessionsDir, paths: make(map[string]string)}
+	for _, opt := range opts {
+		opt(r)
+	}
+	if r.snapshotDir != "" {
+		r.sweepStaleIndexSnapshots()
+	}
+	return r
+}
+
+// staleIndexSnapshotMaxAge bounds how long an orphaned snapshot may survive a
+// crash before a later reader construction reclaims it. Captures themselves
+// complete in seconds, so anything older is guaranteed abandoned.
+const staleIndexSnapshotMaxAge = time.Hour
+
+// sweepStaleIndexSnapshots removes leftover captures from earlier processes.
+// Snapshot files are private to one in-flight read, so only age distinguishes
+// orphans from captures currently being written by another instance sharing
+// this directory.
+func (r *CodexReader) sweepStaleIndexSnapshots() {
+	entries, err := os.ReadDir(r.snapshotDir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleIndexSnapshotMaxAge)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), indexSnapshotTempPrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(r.snapshotDir, entry.Name()))
+	}
+}
+
+// indexSnapshotTempPrefix names every temporary capture so the sweeper can
+// recognize orphans without touching unrelated files.
+const indexSnapshotTempPrefix = "session-insight-codex-snapshot-"
 
 func (r *CodexReader) WatchRoots() []string { return []string{r.sessionsDir} }
 
@@ -64,7 +119,7 @@ func (r *CodexReader) ReadIndexSnapshotEnvelope(ctx context.Context, session mod
 		}
 		return nil, readErr
 	}
-	snapshotPath, sourceFingerprint, err := captureCodexSource(ctx, path)
+	snapshotPath, sourceFingerprint, err := captureCodexSource(ctx, path, r.snapshotDir)
 	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, contextErr
@@ -441,14 +496,19 @@ func parseTimestamp(ts string) time.Time {
 	return t
 }
 
-func captureCodexSource(ctx context.Context, path string) (snapshotPath string, fingerprint model.SourceFingerprint, err error) {
+func captureCodexSource(ctx context.Context, path, snapshotDir string) (snapshotPath string, fingerprint model.SourceFingerprint, err error) {
 	source, err := os.Open(path)
 	if err != nil {
 		return "", model.SourceFingerprint{}, err
 	}
 	defer source.Close()
 
-	snapshot, err := os.CreateTemp("", "session-insight-codex-snapshot-*.jsonl")
+	if snapshotDir != "" {
+		if mkdirErr := os.MkdirAll(snapshotDir, 0755); mkdirErr != nil {
+			return "", model.SourceFingerprint{}, fmt.Errorf("prepare snapshot directory: %w", mkdirErr)
+		}
+	}
+	snapshot, err := os.CreateTemp(snapshotDir, indexSnapshotTempPrefix+"*.jsonl")
 	if err != nil {
 		return "", model.SourceFingerprint{}, err
 	}
@@ -460,6 +520,11 @@ func captureCodexSource(ctx context.Context, path string) (snapshotPath string, 
 		}
 		if !keep || err != nil {
 			_ = os.Remove(snapshotPath)
+			// Never hand a removed path to the caller: error returns above use
+			// bare return so this cleanup always sees the real path (an earlier
+			// version returned "" here and silently leaked every capture whose
+			// copy was cancelled or hit an I/O error).
+			snapshotPath = ""
 		}
 	}()
 
@@ -468,16 +533,19 @@ func captureCodexSource(ctx context.Context, path string) (snapshotPath string, 
 	var size int64
 	for {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return "", model.SourceFingerprint{}, contextErr
+			err = contextErr
+			return
 		}
 		n, readErr := source.Read(buffer)
 		if n > 0 {
 			chunk := buffer[:n]
 			if _, writeErr := snapshot.Write(chunk); writeErr != nil {
-				return "", model.SourceFingerprint{}, writeErr
+				err = writeErr
+				return
 			}
 			if _, hashErr := hasher.Write(chunk); hashErr != nil {
-				return "", model.SourceFingerprint{}, hashErr
+				err = hashErr
+				return
 			}
 			size += int64(n)
 		}
@@ -485,7 +553,8 @@ func captureCodexSource(ctx context.Context, path string) (snapshotPath string, 
 			break
 		}
 		if readErr != nil {
-			return "", model.SourceFingerprint{}, readErr
+			err = readErr
+			return
 		}
 	}
 	fingerprint = model.SourceFingerprint{
@@ -1169,6 +1238,22 @@ func (r *CodexReader) GetSessionMeta(id string) (*model.Session, error) {
 			fmt.Errorf("failed to read codex session: %s", id))
 	}
 	return &session, nil
+}
+
+// SourceStat reports the rollout's size and modification time without reading
+// its contents, letting the indexer skip a full byte copy + hash when the file
+// is unchanged since the last verified snapshot. A missing file is not an
+// error here: the authoritative read path owns missing-source reporting.
+func (r *CodexReader) SourceStat(session model.Session) (int64, time.Time, error) {
+	path := r.findSessionFile(session.ID)
+	if path == "" {
+		return 0, time.Time{}, fmt.Errorf("codex session not found: %s", session.ID)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	return info.Size(), info.ModTime(), nil
 }
 
 func (r *CodexReader) findSessionFile(sessionID string) string {
