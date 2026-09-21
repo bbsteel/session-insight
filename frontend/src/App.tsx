@@ -123,6 +123,15 @@ export default function App() {
     if (focusSidebar) persistSidebarHidden(false)
   }
 
+  const openHome = () => {
+    setSelectedId(null)
+    setSelectedAgentType(null)
+    setSidebarFocusTarget(null)
+    setSearchTarget(null)
+    setSearchRootRef(null)
+    if (window.location.hash) window.location.hash = ''
+  }
+
   if (fileRoute) {
     return <FileViewer path={fileRoute.path} cwd={fileRoute.cwd} line={fileRoute.line} />
   }
@@ -135,6 +144,7 @@ export default function App() {
           selectedAgentType={selectedAgentType}
           focusTarget={sidebarFocusTarget}
           onSelect={selectSession}
+          onHome={openHome}
           onHide={() => persistSidebarHidden(true)}
           sessionListShortcut={sessionListShortcut}
           bookmarkChange={bookmarkChange}

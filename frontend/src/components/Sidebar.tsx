@@ -74,6 +74,7 @@ interface SidebarProps {
   selectedAgentType?: string | null
   focusTarget?: { id: string; agentType: string } | null
   onSelect: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
+  onHome?: () => void
   onHide?: () => void
   sessionListShortcut?: string
   bookmarkChange?: BookmarkChange | null
@@ -81,7 +82,7 @@ interface SidebarProps {
   onSessionDeleted?: (session: SessionSummary) => void
 }
 
-export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, onHide, sessionListShortcut, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
+export default function Sidebar({ selectedId, selectedAgentType, focusTarget, onSelect, onHome, onHide, sessionListShortcut, bookmarkChange, onBookmarkChange, onSessionDeleted }: SidebarProps) {
   const { locale, t } = useI18n()
   const [now, setNow] = useState(Date.now())
   const [sessions, setSessions] = useState<SessionSummary[]>([])
@@ -858,6 +859,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
       {/* Header */}
       <div className="p-4 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
+          <button type="button" onClick={onHome} aria-label={t('home.open')} title={t('home.open')} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--accent-blue)]/10 text-helper font-bold text-[var(--accent-blue)] hover:bg-[var(--accent-blue)]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]" data-testid="sidebar-home">SI</button>
           <h2 className="text-nav font-semibold text-[var(--text-primary)] truncate">{t('sidebar.sessions')}</h2>
           {(isMobile || width >= 220) && (
             <span className="text-helper text-[var(--text-muted)] flex-shrink-0">{formatNumber(locale, sessions.length)} {t('sidebar.total')}</span>

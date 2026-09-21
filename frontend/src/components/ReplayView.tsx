@@ -22,6 +22,7 @@ import type { ScrollMetrics } from '../minimapGeometry'
 import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalFileMatch, type UserHighlightRange, type ViewportAnchor } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
+import HomeDashboard from './HomeDashboard'
 import GitEvidencePanel from './GitEvidencePanel'
 import AIPanel from './AIPanel'
 import BookmarkNoteEditor from './BookmarkNoteEditor'
@@ -1645,18 +1646,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     return () => window.cancelAnimationFrame(frame)
   }, [turns.length, positionsData, positionsBuilding, viewMode])
 
-  if (!sessionId) return (
-    <main className="flex-1 flex flex-col min-w-[360px] bg-[var(--bg-surface)]">
-      <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center px-6">
-          <div className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--bg-inset)] text-nav text-[var(--text-muted)]">SI</div>
-          <h3 className="text-body font-medium text-[var(--text-primary)]">{t('replay.noSelection')}</h3>
-          <p className="text-helper text-[var(--text-muted)] mt-1">{t('replay.selectHint')}</p>
-        </div>
-      </div>
-    </main>
-  )
+  if (!sessionId) return <HomeDashboard onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} bookmarkChange={bookmarkChange ?? null} />
 
   if (loading) return (
     <main className="flex-1 min-w-[360px] bg-[var(--bg-surface)]">
