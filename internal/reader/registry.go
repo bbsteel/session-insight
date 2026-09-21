@@ -93,6 +93,18 @@ func UsesDeclarationResolver(agentType string) bool {
 	}
 }
 
+// codexSnapshotDir keeps Codex index snapshot captures (each as large as the
+// rollout being read) on a disk-backed directory instead of a RAM-backed
+// os.TempDir. It mirrors the main data dir resolution: SI_DATA_DIR when set,
+// else ~/.session-insight.
+func codexSnapshotDir(homeDir string) string {
+	dataDir := os.Getenv("SI_DATA_DIR")
+	if dataDir == "" {
+		dataDir = filepath.Join(homeDir, ".session-insight")
+	}
+	return filepath.Join(dataDir, "codex-snapshots")
+}
+
 // Discover returns BaseSessionReader instances for Agents whose storage exists
 // on the current machine. It is independent of AgentDefinitions: an Agent may
 // appear in the catalog without a discovered reader, and a discovered reader
@@ -131,7 +143,7 @@ func Discover() []BaseSessionReader {
 
 	codexDir := filepath.Join(homeDir, ".codex", "sessions")
 	if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
-		readers = append(readers, codex.New(codexDir))
+		readers = append(readers, codex.New(codexDir, codex.WithSnapshotDir(codexSnapshotDir(homeDir))))
 	}
 
 	claudeDir := filepath.Join(homeDir, ".claude", "projects")
