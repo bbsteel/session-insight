@@ -1152,3 +1152,79 @@ async function readJson<T>(res: Response, label: string): Promise<T> {
   }
   return res.json()
 }
+
+// --- OpenAPI change-host profiles ------------------------------------------
+
+import type {
+  ChangeHostProfileDTO,
+  ImportProfileResponse,
+  ProbeProfileResponse,
+  RequiredConfirmationDTO,
+} from './changePlatformTypes'
+
+export async function listChangeHostProfiles(): Promise<ChangeHostProfileDTO[]> {
+  const res = await fetch('/api/change-host-profiles')
+  if (!res.ok) throw await responseError(res, 'request_failed')
+  const data = await readJson<{ profiles: ChangeHostProfileDTO[] }>(res, 'change host profiles')
+  return data.profiles
+}
+
+export async function importChangeHostProfile(input: {
+  displayName: string
+  document: string
+  apiBaseUrl: string
+  sampleChangeUrl: string
+  credentialEnvName: string
+}): Promise<ImportProfileResponse> {
+  const body = new FormData()
+  body.set('document', new Blob([input.document], { type: 'application/json' }), 'openapi.json')
+  body.set('display_name', input.displayName)
+  body.set('api_base_url', input.apiBaseUrl)
+  body.set('sample_change_url', input.sampleChangeUrl)
+  body.set('credential_mode', 'environment')
+  body.set('credential_env_name', input.credentialEnvName)
+  const res = await fetch('/api/change-host-profiles/import', { method: 'POST', body })
+  if (!res.ok) throw await responseError(res, 'change_profile_import_failed')
+  return readJson<ImportProfileResponse>(res, 'change host profile import')
+}
+
+export async function probeChangeHostProfile(profileId: string): Promise<ProbeProfileResponse> {
+  const res = await fetch(`/api/change-host-profiles/${encodeURIComponent(profileId)}/probe`, { method: 'POST' })
+  if (!res.ok) throw await responseError(res, 'change_profile_probe_failed')
+  return readJson<ProbeProfileResponse>(res, 'change host profile probe')
+}
+
+export async function verifyChangeHostProfile(profileId: string): Promise<ProbeProfileResponse> {
+  const res = await fetch(`/api/change-host-profiles/${encodeURIComponent(profileId)}/verify`, { method: 'POST' })
+  if (!res.ok) throw await responseError(res, 'change_profile_verify_failed')
+  return readJson<ProbeProfileResponse>(res, 'change host profile verify')
+}
+
+export async function confirmChangeHostProfileMapping(
+  profileId: string,
+  selections: { role: string; field: string; pointer: string }[],
+): Promise<ChangeHostProfileDTO> {
+  const res = await fetch(`/api/change-host-profiles/${encodeURIComponent(profileId)}/mapping`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selections }),
+  })
+  if (!res.ok) throw await responseError(res, 'change_profile_mapping_failed')
+  return readJson<ChangeHostProfileDTO>(res, 'change host profile mapping')
+}
+
+export async function activateChangeHostProfile(profileId: string): Promise<ChangeHostProfileDTO> {
+  const res = await fetch(`/api/change-host-profiles/${encodeURIComponent(profileId)}/activate`, { method: 'POST' })
+  if (!res.ok) throw await responseError(res, 'change_profile_activate_failed')
+  return readJson<ChangeHostProfileDTO>(res, 'change host profile activation')
+}
+
+export async function revokeChangeHostProfile(profileId: string): Promise<void> {
+  const res = await fetch(`/api/change-host-profiles/${encodeURIComponent(profileId)}/revoke`, { method: 'POST' })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(text || `revoke failed: ${res.status}`)
+  }
+}
+
+export type { ChangeHostProfileDTO, ImportProfileResponse, ProbeProfileResponse, RequiredConfirmationDTO }

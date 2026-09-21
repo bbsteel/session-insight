@@ -3,6 +3,7 @@ package db
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -380,5 +381,50 @@ func TestV43ProfileRowMetadataMustMatchDocument(t *testing.T) {
 	if err := database.CreateChangeHostProfileDraft(record); err == nil ||
 		!strings.Contains(err.Error(), "row metadata") {
 		t.Fatalf("spec digest mismatch accepted: %v", err)
+	}
+}
+
+func TestCreateChangeHostProfileDraftAllocatesConcurrentRevisions(t *testing.T) {
+	database := openV43TestDB(t)
+	storeApprovedOpenAPIHost(t, database, "review-company-internal")
+
+	start := make(chan struct{})
+	errorsByImport := make(chan error, 2)
+	var imports sync.WaitGroup
+	for _, profileID := range []string{"profile-concurrent-a", "profile-concurrent-b"} {
+		record := profileRecord(profileID, "review-company-internal", 0, openapi.ProfileDraft)
+		record.ProfileJSON = validStoreProfile(t, profileID, "review-company-internal", 0)
+		record.InferenceReportJSON = "{}"
+		imports.Add(1)
+		go func(importRecord ChangeHostProfileRecord) {
+			defer imports.Done()
+			<-start
+			errorsByImport <- database.CreateChangeHostProfileDraft(importRecord)
+		}(record)
+	}
+	close(start)
+	imports.Wait()
+	close(errorsByImport)
+	for err := range errorsByImport {
+		if err != nil {
+			t.Fatalf("concurrent profile import failed: %v", err)
+		}
+	}
+
+	profiles, err := database.ListChangeHostProfiles("review-company-internal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 2 || profiles[0].ProfileRevision != 2 || profiles[1].ProfileRevision != 1 {
+		t.Fatalf("concurrent imports allocated unexpected revisions: %+v", profiles)
+	}
+	for _, profile := range profiles {
+		decoded, err := openapi.DecodeProfile([]byte(profile.ProfileJSON))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decoded.ProfileRevision != profile.ProfileRevision {
+			t.Fatalf("stored profile revision disagrees with row: document=%d row=%d", decoded.ProfileRevision, profile.ProfileRevision)
+		}
 	}
 }

@@ -58,8 +58,10 @@ type AuthorizationSource interface {
 // The lookup returns only secret material; the header name and prefix come
 // exclusively from the reviewed scheme.
 type clientAuthentication struct {
-	secretFor func(ctx context.Context, origin string) (string, bool, error)
-	scheme    AuthenticationScheme
+	secretFor              func(ctx context.Context, origin string) (string, bool, error)
+	scheme                 AuthenticationScheme
+	allowedOrigins         []string
+	allowAnyApprovedOrigin bool
 }
 
 type HTTPResult struct {
@@ -104,7 +106,8 @@ func authorizationSourceAuthentication(approved *ApprovedHost, authorization Aut
 		secretFor: func(ctx context.Context, origin string) (string, bool, error) {
 			return authorization.Authorization(ctx, approved.Identity(), origin)
 		},
-		scheme: AuthenticationScheme{HeaderName: "Authorization"},
+		scheme:                 AuthenticationScheme{HeaderName: "Authorization"},
+		allowAnyApprovedOrigin: true,
 	}
 }
 
@@ -115,11 +118,20 @@ func NewAuthenticatedHTTPClient(approved *ApprovedHost, config HTTPClientConfig,
 	if err := validateResolvedAuthentication(authentication); err != nil {
 		return nil, err
 	}
+	allowedOrigins := make([]string, 0, len(authentication.AllowedOrigins))
+	for _, origin := range authentication.AllowedOrigins {
+		canonical, ok := canonicalCredentialOrigin(origin)
+		if !ok {
+			return nil, ErrInvalidAuthenticationScheme
+		}
+		allowedOrigins = append(allowedOrigins, canonical)
+	}
 	resolved := &clientAuthentication{
 		secretFor: func(ctx context.Context, _ string) (string, bool, error) {
 			return authentication.Source.Secret(ctx, authentication.Reference)
 		},
-		scheme: authentication.Scheme,
+		scheme:         authentication.Scheme,
+		allowedOrigins: allowedOrigins,
 	}
 	return newPinnedTransportClient(approved, config, resolved)
 }
@@ -271,7 +283,7 @@ func (c *HTTPClient) doProfiled(ctx context.Context, operation Operation, method
 		request.Header.Set("Accept", "application/json")
 	}
 	request.Header.Set("User-Agent", c.userAgent)
-	if c.authentication != nil {
+	if c.authentication != nil && allowsCredentialOrigin(c.authentication, origin) {
 		secret, configured, authErr := c.authentication.secretFor(requestContext, origin)
 		if authErr != nil {
 			if !c.approved.active() {

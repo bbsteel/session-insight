@@ -114,6 +114,11 @@ type ResolvedAuthentication struct {
 	Source    CredentialSource
 	Reference model.CredentialReference
 	Scheme    AuthenticationScheme
+	// AllowedOrigins is the profile's explicit per-operation credential scope.
+	// NewAuthenticatedHTTPClient injects credentials only for these origins.
+	// An empty list is intentionally fail-closed. Credentials are never injected
+	// on plain-HTTP requests regardless.
+	AllowedOrigins []string
 }
 
 // validateResolvedAuthentication rejects partial or invalid bindings before a
@@ -125,7 +130,42 @@ func validateResolvedAuthentication(authentication ResolvedAuthentication) error
 	if _, ok := model.ParseCredentialReference(string(authentication.Reference)); !ok {
 		return ErrInvalidAuthenticationScheme
 	}
+	for _, origin := range authentication.AllowedOrigins {
+		if _, ok := canonicalCredentialOrigin(origin); !ok {
+			return ErrInvalidAuthenticationScheme
+		}
+	}
 	return ValidateAuthenticationScheme(authentication.Scheme)
+}
+
+// allowsCredentialOrigin reports whether the credential may be injected for
+// one request origin: HTTPS only, and within the declared allowlist.
+func allowsCredentialOrigin(authentication *clientAuthentication, origin string) bool {
+	if authentication == nil {
+		return false
+	}
+	if strings.HasPrefix(origin, "http://") {
+		return false
+	}
+	if authentication.allowAnyApprovedOrigin {
+		return true
+	}
+	for _, allowed := range authentication.allowedOrigins {
+		if allowed == origin {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalCredentialOrigin normalizes an origin for allowlist comparison,
+// matching the HTTP client's origin derivation.
+func canonicalCredentialOrigin(raw string) (string, bool) {
+	origin, err := endpointOrigin(raw)
+	if err != nil {
+		return "", false
+	}
+	return origin, true
 }
 
 // AuthenticationModeForReference projects the credential store kind into the

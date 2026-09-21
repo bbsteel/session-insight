@@ -41,9 +41,11 @@ import {
   SearchIcon,
   SparklesIcon,
   TerminalIcon,
+  LayersIcon,
   UserIcon,
 } from './icons'
 import SettingsAgentsTab from './SettingsAgentsTab'
+import SettingsChangeHostsTab from './SettingsChangeHostsTab'
 
 interface Props {
   open: boolean
@@ -56,7 +58,7 @@ interface Props {
   initialTab?: TabId
 }
 
-type TabId = 'appearance' | 'navigation' | 'search' | 'terminal' | 'fonts' | 'editor' | 'ai' | 'agents' | 'about'
+type TabId = 'appearance' | 'navigation' | 'search' | 'change-hosts' | 'terminal' | 'fonts' | 'editor' | 'ai' | 'agents' | 'about'
 
 interface TabDef {
   id: TabId
@@ -68,6 +70,7 @@ const TABS: TabDef[] = [
   { id: 'appearance', labelKey: 'settings.tab.appearance', icon: AppearanceIcon },
   { id: 'navigation', labelKey: 'settings.tab.navigation', icon: NavigationIcon },
   { id: 'search', labelKey: 'settings.tab.search', icon: SearchIcon },
+  { id: 'change-hosts', labelKey: 'settings.tab.changeHosts', icon: LayersIcon },
   { id: 'terminal', labelKey: 'settings.tab.terminal', icon: TerminalIcon },
   { id: 'fonts', labelKey: 'settings.tab.fonts', icon: FontIcon },
   { id: 'editor', labelKey: 'settings.tab.editor', icon: EditorIcon },
@@ -730,6 +733,10 @@ export default function SettingsDialog({
                   </button>
                 </div>
               </div>
+            )}
+
+            {activeTab === 'change-hosts' && (
+              <SettingsChangeHostsTab />
             )}
 
             {activeTab === 'agents' && (

@@ -85,6 +85,7 @@ func (s *Server) openapiProviderForHost(ctx context.Context, hostRecord db.Chang
 			HeaderName:  profile.Authentication.HeaderName,
 			ValuePrefix: profile.Authentication.ValuePrefix,
 		},
+		AllowedOrigins: profileOperationOrigins(profile),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -100,6 +101,28 @@ func (s *Server) openapiProviderForHost(ctx context.Context, hostRecord db.Chang
 		return nil, nil, err
 	}
 	return provider, approved, nil
+}
+
+// profileOperationOrigins is the credential-injection allowlist: exactly the
+// origins the profile's declared operations call. Credentials never flow to
+// origins the mapping does not use, and never over plain HTTP (enforced by
+// the HTTP client).
+func profileOperationOrigins(profile openapi.Profile) []string {
+	seen := map[string]bool{}
+	origins := []string{}
+	for _, id := range openapi.OperationIDs() {
+		operation := profile.Operations.ForID(id)
+		if operation == nil {
+			continue
+		}
+		origin, ok := openapi.NormalizeOrigin(operation.Origin)
+		if !ok || seen[origin] {
+			continue
+		}
+		seen[origin] = true
+		origins = append(origins, origin)
+	}
+	return origins
 }
 
 func (s *Server) credentialSourceFor(reference model.CredentialReference) (changehost.CredentialSource, error) {
@@ -204,4 +227,10 @@ func (s *Server) handleTestChangeHostProfile(w http.ResponseWriter, r *http.Requ
 		"summary":      resolved.Change,
 		"capabilities": provider.Capabilities(),
 	})
+}
+
+// probeCandidateOrigin derives the request origin of a stored probe candidate
+// base URL for the credential allowlist.
+func probeCandidateOrigin(baseURL string) (string, bool) {
+	return openapi.NormalizeOrigin(baseURL)
 }
