@@ -78,6 +78,8 @@ type Server struct {
 	// codingQuotaManager owns credentialed upstream quota requests. It is kept
 	// separate from the session database so quota failures never affect replay.
 	codingQuotaManager *quota.Manager
+
+	homeFacts *homeFactCache
 }
 
 // SetIndexStatus wires the indexer progress provider (call before Serve).
@@ -138,6 +140,7 @@ func New(database *db.DB, readers []reader.BaseSessionReader) *Server {
 		changeRegistry:   changehost.NewDefaultRegistry(),
 		hostPolicy:       changehost.NewHostPolicy(nil),
 		approvedHosts:    make(map[string]*changehost.ApprovedHost),
+		homeFacts:        newHomeFactCache(),
 		codingQuotaManager: quota.NewManager(
 			quota.NewDefaultProviders(quota.DefaultProviderOptions()),
 			quota.ManagerOptions{},
@@ -160,6 +163,7 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("DELETE /api/snippets/{id}", s.handleDeleteSnippet)
 	s.Mux.HandleFunc("GET /api/events", s.handleEvents)
 	s.Mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	s.Mux.HandleFunc("GET /api/home", s.handleHome)
 	s.Mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/resume", s.handleGetResumePlan)
 	s.Mux.HandleFunc("POST /api/sessions/{id}/resume", s.handleResumeSession)

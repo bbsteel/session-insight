@@ -105,6 +105,7 @@ interface Props {
   // same back-to-parent breadcrumb as dock navigation.
   searchRootRef?: { sessionId: string; childAgentType: string; root: { id: string; agentType: string; name: string } } | null
   onSelect?: (id: string, agentType?: string, focusSidebar?: boolean, searchQuery?: string) => void
+  onHome?: () => void
   onOpenCodingQuotas?: () => void
   bookmarkChange?: BookmarkChange | null
   onBookmarkChange?: (change: BookmarkChange) => void
@@ -128,7 +129,22 @@ function formatDuration(ms: number): string {
   return `${totalSeconds}s`
 }
 
-export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, onOpenCodingQuotas, bookmarkChange, onBookmarkChange }: Props) {
+function OverviewButton({ onHome }: { onHome?: () => void }) {
+  const { t } = useI18n()
+  if (!onHome) return null
+  return (
+    <button
+      type="button"
+      onClick={onHome}
+      data-testid="overview-button"
+      className="h-7 shrink-0 rounded-md border border-[var(--border-default)] px-2 text-nav text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+    >
+      {t('home.overview')}
+    </button>
+  )
+}
+
+export default function ReplayView({ sessionId, searchTarget, searchRootRef, onSelect, onHome, onOpenCodingQuotas, bookmarkChange, onBookmarkChange }: Props) {
   const { locale, t } = useI18n()
   const [session, setSession] = useState<SessionDetail | null>(null)
   const [capPanelOpen, setCapPanelOpen] = useState(false)
@@ -1685,6 +1701,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
         {session && (
           <header className="flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center gap-2 px-3" style={{ height: '40px' }}>
+            <OverviewButton onHome={onHome} />
             <button
               type="button"
               onClick={() => {
@@ -1853,6 +1870,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       <GlobalSearch onSelect={onSelect} onOpenCodingQuotas={onOpenCodingQuotas} />
       <header className="relative flex-shrink-0 border-b border-[var(--border-default)] bg-[var(--bg-surface)] flex items-center px-3" style={{ height: '40px', zIndex: 'var(--z-sticky)' }} data-testid="session-toolbar">
         <div className="flex items-center gap-2">
+          <OverviewButton onHome={onHome} />
           <ResumeTerminalControl session={session} />
           <button
             type="button"
