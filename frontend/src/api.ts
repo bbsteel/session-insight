@@ -114,6 +114,118 @@ export interface CodingQuotaResponse {
   providers: CodingQuotaProvider[]
 }
 
+export interface HomeCost {
+  unit: string
+  amount: number
+  precision: string
+}
+
+export interface HomeDay {
+  date: string
+  messages: number
+  turns: number
+  tokens: number
+}
+
+export interface HomeSessionCard {
+  id: string
+  agent_type: string
+  project?: string
+  name?: string
+  updated_at: string
+  bookmarked?: boolean
+}
+
+export interface HomeUnfinishedCard extends HomeSessionCard {
+  reasons: string[]
+}
+
+export interface HomeCount {
+  name: string
+  count: number
+}
+
+export interface HomeCoverage {
+  untimed_utterances: number
+  untimed_skills: number
+  missing_cache_read_sessions: number
+  missing_cache_write_sessions: number
+  untimed_token_sessions: number
+  cost_omitted_sessions: number
+  spanning_cost_sessions: number
+  untimed_code_changes: number
+  code_sessions: number
+  unattributed_child_sessions: number
+  skill_uncovered_agents: string[] | null
+  detail_missing_sessions: number
+}
+
+export interface HomeReport {
+  generated_at: string
+  timezone: string
+  window_days: number
+  day?: string
+  project?: string
+  agent?: string
+  focus_kind?: string
+  focus_value?: string
+  summary: {
+    sessions: number
+    projects: number
+    agents: number
+    messages: number
+    turns: number
+    tokens: number
+    costs: HomeCost[] | null
+    code_files: number
+    additions: number
+    deletions: number
+  }
+  days: HomeDay[]
+  live: HomeSessionCard[]
+  unfinished: HomeUnfinishedCard[]
+  recent: HomeSessionCard[]
+  starred: HomeSessionCard[]
+  projects: HomeCount[]
+  agents: HomeCount[]
+  health: {
+    tool_failures: number
+    duration_spikes: number
+    continuation_nudges: number
+    missing_shutdowns: number
+  }
+  tools: HomeCount[]
+  skills: HomeCount[]
+  coverage: HomeCoverage
+}
+
+export interface HomeQuery {
+  windowDays: 7 | 30
+  day: string
+  project: string
+  agent: string
+  focusKind: '' | 'health' | 'tool' | 'skill'
+  focusValue: string
+}
+
+export function emptyHomeQuery(): HomeQuery {
+  return { windowDays: 7, day: '', project: '', agent: '', focusKind: '', focusValue: '' }
+}
+
+export async function fetchHome(query: HomeQuery): Promise<HomeReport> {
+  const params = new URLSearchParams({ days: String(query.windowDays) })
+  if (query.day) params.set('day', query.day)
+  if (query.project) params.set('project', query.project)
+  if (query.agent) params.set('agent', query.agent)
+  if (query.focusKind && query.focusValue) {
+    params.set('focus_kind', query.focusKind)
+    params.set('focus_value', query.focusValue)
+  }
+  const res = await fetch(`/api/home?${params.toString()}`)
+  if (!res.ok) throw await responseError(res, 'home_load_failed')
+  return readJson<HomeReport>(res, 'home')
+}
+
 export async function fetchCodingQuotas(forceRefresh = false): Promise<CodingQuotaResponse> {
   const endpoint = forceRefresh ? '/api/coding-quotas/refresh' : '/api/coding-quotas'
   const res = await fetch(endpoint, forceRefresh ? { method: 'POST' } : undefined)
