@@ -334,7 +334,8 @@ type codexPayload struct {
 	Stdout         string          `json:"stdout"`
 	Stderr         string          `json:"stderr"`
 	// token_count
-	Info *codexTokenCountInfo `json:"info"`
+	Info       *codexTokenCountInfo `json:"info"`
+	RateLimits *codexRateLimits     `json:"rate_limits"`
 	// task_complete / turn_aborted
 	DurationMs int64 `json:"duration_ms"`
 	// turn_aborted reason
@@ -395,6 +396,10 @@ func codexItemText(item *codexItem) string {
 type codexTokenCountInfo struct {
 	TotalTokenUsage codexTokenUsage `json:"total_token_usage"`
 	LastTokenUsage  codexTokenUsage `json:"last_token_usage"`
+}
+
+type codexRateLimits struct {
+	ReachedType string `json:"rate_limit_reached_type"`
 }
 
 type codexTokenUsage struct {
@@ -1472,6 +1477,13 @@ func parseCodexEventsReader(source io.Reader) (codexParsedTurns, string, string,
 					// OpenAI prompt caching is automatic and free: the
 					// cache_write concept does not exist for this agent.
 					u.Present.CacheWrite = model.PresenceNA
+					if p.RateLimits != nil && p.RateLimits.ReachedType != "" {
+						current.turn.Events = append(current.turn.Events, model.EventVM{
+							Type:      "quota_exhausted",
+							Timestamp: evt.Timestamp,
+							Data:      map[string]any{"reached_type": p.RateLimits.ReachedType},
+						})
+					}
 				}
 
 			case "patch_apply_end":
@@ -1506,6 +1518,11 @@ func parseCodexEventsReader(source io.Reader) (codexParsedTurns, string, string,
 			case "turn_aborted":
 				if current != nil {
 					current.turn.DurationMs = p.DurationMs
+					current.turn.Events = append(current.turn.Events, model.EventVM{
+						Type:      "turn_aborted",
+						Timestamp: evt.Timestamp,
+						Data:      map[string]any{"reason": p.Reason},
+					})
 				}
 			}
 
