@@ -73,14 +73,14 @@ No Go or Node.js installation is required for the pre-built release.
    | macOS Apple Silicon | `session-insight-*-darwin-arm64.tar.gz` |
    | Windows x86-64 | `session-insight-*-windows-amd64.zip` |
 
-   Prefer a standalone desktop window over a browser tab? Grab an `-app`
-   archive (`session-insight-*-linux-amd64-app.tar.gz`, `-darwin-arm64-app`, …).
-   It runs the same UI in its own window (WebKitGTK on Linux, WebKit on macOS,
-   WebView2 on Windows) and closes from the window's close button. On Linux,
-   WebKitGTK must be installed (`sudo pacman -S webkit2gtk-4.1` or
-   `sudo apt install libwebkit2gtk-4.1-0`).
+   Every binary is the same app: by default it serves the UI and opens your
+   browser. Run it with `--app` to open the UI in a standalone desktop window
+   instead (WebKitGTK on Linux, WebKit on macOS, WebView2 on Windows). On
+   Linux, `--app` needs WebKitGTK installed (`sudo pacman -S webkit2gtk-4.1`
+   or `sudo apt install libwebkit2gtk-4.1-0`); without it the app logs a hint
+   and falls back to the browser.
 
-3. Extract the archive and run `session-insight` (`session-insight.exe` on Windows; `session-insight-app` in the `-app` archives).
+3. Extract the archive and run `session-insight` (`session-insight.exe` on Windows).
 4. Open **http://127.0.0.1:8080** if the browser does not open automatically.
 
 Each archive includes the executable, both READMEs, and the license. To verify the download, get `checksums.txt` from the same Release and compare its matching entry with `sha256sum <archive>` on Linux/macOS or `Get-FileHash <archive> -Algorithm SHA256` in PowerShell.
@@ -102,18 +102,18 @@ bash run.sh all
 
 The app starts at **http://127.0.0.1:8080** and opens automatically in your browser.
 
-### Build the standalone desktop app
+### Desktop window mode (`--app`)
 
-The same codebase also builds a self-contained desktop variant whose UI lives
-in a native webview window instead of a browser tab:
+The same binary can open its UI in a native desktop window instead of a
+browser tab:
 
 ```bash
-npm --prefix frontend run build
-bash scripts/build-app.sh        # outputs dist/session-insight-app
+./session-insight --app
 ```
 
-See [BUILD.md](BUILD.md) for the per-OS toolchain prerequisites (GTK3 +
-WebKitGTK dev files on Linux; MSYS2 mingw-w64 on Windows).
+On Linux the binary does not require WebKitGTK unless `--app` is used: the
+GTK/WebKit symbols are linked weakly and the library is loaded on demand, so
+browser mode runs on machines without WebKitGTK.
 
 Useful runtime commands:
 

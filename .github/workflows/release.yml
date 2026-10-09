@@ -72,31 +72,6 @@ jobs:
             os: windows-2022
             goos: windows
             goarch: amd64
-          - target: linux-amd64-app
-            os: ubuntu-24.04
-            goos: linux
-            goarch: amd64
-            app: "true"
-          - target: linux-arm64-app
-            os: ubuntu-24.04-arm
-            goos: linux
-            goarch: arm64
-            app: "true"
-          - target: darwin-amd64-app
-            os: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            app: "true"
-          - target: darwin-arm64-app
-            os: macos-15
-            goos: darwin
-            goarch: arm64
-            app: "true"
-          - target: windows-amd64-app
-            os: windows-2022
-            goos: windows
-            goarch: amd64
-            app: "true"
 
     steps:
       - name: Check out release tag
@@ -120,22 +95,17 @@ jobs:
 
       - name: Verify Windows C/C++ compilers
         if: runner.os == 'Windows'
-        # webview_go compiles C++ on every platform, so the app variant needs g++ too.
+        # webview_go compiles C++ on every platform, so g++ is required too.
         run: |
           gcc --version
           g++ --version
 
-      - name: Install musl toolchain
-        if: runner.os == 'Linux' && !matrix.app
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes musl-tools
-
-      # The webview app variant links GTK3 + WebKitGTK dynamically (static
-      # musl linking is impossible for them), so it uses the system glibc
-      # toolchain with the distro dev packages instead.
-      - name: Install webview app dependencies
-        if: runner.os == 'Linux' && matrix.app
+      # Every Linux binary now embeds the `--app` desktop-window mode without
+      # hard-depending on WebKitGTK at startup (weak symbols + runtime
+      # dlopen, see scripts/buildtools/). Building still needs the GTK/WebKit
+      # headers; the runtime dependency only exists when `--app` is used.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
@@ -149,11 +119,10 @@ jobs:
         run: npm run build
 
       - name: Build and package Linux archive
-        if: runner.os == 'Linux' && !matrix.app
+        if: runner.os == 'Linux'
         shell: bash
         env:
           CGO_ENABLED: "1"
-          CC: musl-gcc
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           TARGET: ${{ matrix.target }}
@@ -162,38 +131,19 @@ jobs:
           package="session-insight-${version}-${TARGET}"
           package_dir="dist/${package}"
           mkdir -p "${package_dir}"
+          # Wire the pkg-config wrapper (4.0→4.1 alias, stripped webview link
+          # flags) and the weak-symbol header; see scripts/buildtools/.
+          # shellcheck disable=SC1091
+          source "${GITHUB_WORKSPACE}/scripts/buildtools/linux-cgo-env.sh"
           go build -trimpath \
             -tags "sqlite_fts5 netgo osusergo" \
-            -ldflags="-s -w -X main.version=${RELEASE_TAG} -linkmode external -extldflags '-static'" \
+            -ldflags="-s -w -X main.version=${RELEASE_TAG}" \
             -o "${package_dir}/session-insight" .
           cp README.md README_ZH.md LICENSE "${package_dir}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
 
-      - name: Build and package Linux app archive
-        if: runner.os == 'Linux' && matrix.app
-        shell: bash
-        env:
-          CGO_ENABLED: "1"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          version="${RELEASE_TAG#v}"
-          package="session-insight-${version}-${TARGET}"
-          package_dir="dist/${package}"
-          mkdir -p "${package_dir}"
-          # webview_go asks pkg-config for webkit2gtk-4.0; forward it to the
-          # installed 4.1 (same API, libsoup3 port) via the committed alias.
-          export PKG_CONFIG_PATH="${GITHUB_WORKSPACE}/scripts/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
-          go build -trimpath \
-            -tags "webview sqlite_fts5 netgo osusergo" \
-            -ldflags="-s -w -X main.version=${RELEASE_TAG}" \
-            -o "${package_dir}/session-insight-app" .
-          cp README.md README_ZH.md LICENSE "${package_dir}/"
-          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
-
       - name: Build and package macOS archive
-        if: runner.os == 'macOS' && !matrix.app
+        if: runner.os == 'macOS'
         shell: bash
         env:
           CGO_ENABLED: "1"
@@ -209,25 +159,8 @@ jobs:
           cp README.md README_ZH.md LICENSE "${package_dir}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
 
-      - name: Build and package macOS app archive
-        if: runner.os == 'macOS' && matrix.app
-        shell: bash
-        env:
-          CGO_ENABLED: "1"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          version="${RELEASE_TAG#v}"
-          package="session-insight-${version}-${TARGET}"
-          package_dir="dist/${package}"
-          mkdir -p "${package_dir}"
-          go build -trimpath -tags "webview sqlite_fts5" -ldflags="-s -w -X main.version=${RELEASE_TAG}" -o "${package_dir}/session-insight-app" .
-          cp README.md README_ZH.md LICENSE "${package_dir}/"
-          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
-
       - name: Build and package Windows archive
-        if: runner.os == 'Windows' && !matrix.app
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           CGO_ENABLED: "1"
@@ -240,23 +173,6 @@ jobs:
           $packageDir = Join-Path dist $package
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           go build -trimpath -tags sqlite_fts5 -ldflags="-s -w -X main.version=$env:RELEASE_TAG" -o "$packageDir/session-insight.exe" .
-          Copy-Item README.md, README_ZH.md, LICENSE -Destination $packageDir
-          Compress-Archive -Path $packageDir -DestinationPath "dist/$package.zip"
-
-      - name: Build and package Windows app archive
-        if: runner.os == 'Windows' && matrix.app
-        shell: pwsh
-        env:
-          CGO_ENABLED: "1"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          $version = $env:RELEASE_TAG.TrimStart('v')
-          $package = "session-insight-$version-$env:TARGET"
-          $packageDir = Join-Path dist $package
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          go build -trimpath -tags "webview sqlite_fts5" -ldflags="-s -w -X main.version=$env:RELEASE_TAG" -o "$packageDir/session-insight-app.exe" .
           Copy-Item README.md, README_ZH.md, LICENSE -Destination $packageDir
           Compress-Archive -Path $packageDir -DestinationPath "dist/$package.zip"
 

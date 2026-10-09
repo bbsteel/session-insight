@@ -96,6 +96,38 @@ func TestResolveIndexerEnabled(t *testing.T) {
 	}
 }
 
+func TestExtractAppFlag(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantApp bool
+		wantPos []string
+	}{
+		{name: "no args", args: nil, wantApp: false, wantPos: nil},
+		{name: "long flag", args: []string{"--app"}, wantApp: true, wantPos: []string{}},
+		{name: "short flag", args: []string{"-app"}, wantApp: true, wantPos: []string{}},
+		{name: "flag before subcommand", args: []string{"--app", "pack"}, wantApp: true, wantPos: []string{"pack"}},
+		{name: "flag after subcommand", args: []string{"pack", "ls", "--app"}, wantApp: true, wantPos: []string{"pack", "ls"}},
+		{name: "unrelated args kept", args: []string{"--maintain-index"}, wantApp: false, wantPos: []string{"--maintain-index"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotApp, gotPos := extractAppFlag(tc.args)
+			if gotApp != tc.wantApp {
+				t.Errorf("app mode = %v, want %v", gotApp, tc.wantApp)
+			}
+			if len(gotPos) != len(tc.wantPos) {
+				t.Fatalf("positional args = %v, want %v", gotPos, tc.wantPos)
+			}
+			for i := range gotPos {
+				if gotPos[i] != tc.wantPos[i] {
+					t.Errorf("positional args = %v, want %v", gotPos, tc.wantPos)
+				}
+			}
+		})
+	}
+}
+
 func TestIsAddrInUse(t *testing.T) {
 	// EADDRINUSE from a real listen conflict.
 	l, err := net.Listen("tcp", "127.0.0.1:0")

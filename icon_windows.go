@@ -1,4 +1,4 @@
-//go:build webview && windows
+//go:build windows
 
 package main
 

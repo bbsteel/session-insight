@@ -23,6 +23,12 @@ fi
 
 echo "==> Building Go binary"
 export GOCACHE="${GOCACHE:-/tmp/session-insight-go-build}"
+# Linux 统一二进制：webview 的 GTK/WebKit 符号以弱引用链接、运行 --app 时才
+# dlopen 加载（见 scripts/buildtools/）。SI_APP_SYSROOT 供不可变系统免 root 构建。
+if [[ "$(uname -s)" == "Linux" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/buildtools/linux-cgo-env.sh"
+fi
 go build -tags sqlite_fts5 -o "$BIN_PATH" .
 
 echo "==> Starting SessionInsight"

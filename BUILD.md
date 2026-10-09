@@ -120,49 +120,58 @@ Windows Application Control is preventing Go’s `cgo` tool from running. See [A
 
 Try deleting `frontend/node_modules` and running `npm ci` again.
 
-## Standalone Desktop App (webview variant)
+## Desktop Window Mode (`--app`)
 
-Besides the default browser-based binary, the same codebase builds a
-standalone desktop app whose UI runs in a native webview window
-(WebKitGTK on Linux, WebKit on macOS, WebView2 on Windows). The server,
-database, and indexing behavior are identical — only the UI shell differs,
-and closing the window exits the process.
+Every binary is the same app: by default it serves the UI and opens your
+browser. Pass `--app` to open the UI in a standalone desktop window backed by
+the OS webview engine (WebKitGTK on Linux, WebKit on macOS, WebView2 on
+Windows). The server, database, and indexing behavior are identical; closing
+the window exits the process.
+
+### Runtime requirements for `--app`
+
+- **macOS**: none — WebKit is part of the OS.
+- **Windows**: WebView2 runtime, preinstalled on Windows 10 1803+ and
+  Windows 11.
+- **Linux**: WebKitGTK (`sudo pacman -S webkit2gtk-4.1` or
+  `sudo apt install libwebkit2gtk-4.1-0`). The binary does **not** require it
+  otherwise: the GTK/WebKit symbols are linked weakly and the library is
+  dlopen()ed on demand when `--app` runs. Without it, `--app` logs an install
+  hint and falls back to the browser.
+
+### Build-time requirements on Linux
+
+Compiling the webview C++ backend needs the GTK/WebKit **headers**, so any
+Linux build (with or without `--app` support in the final binary) requires:
+
+- Arch: `sudo pacman -S webkit2gtk-4.1`
+- Debian/Ubuntu: `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev`
+
+`run.sh` and `scripts/start.sh` source `scripts/buildtools/linux-cgo-env.sh`
+automatically on Linux. It wires the pkg-config wrapper (forwards the removed
+`webkit2gtk-4.0` lookup to 4.1, and strips webview link flags so the stack is
+not recorded as a startup dependency) and force-includes the generated
+`scripts/buildtools/weak-gtk-symbols.h` that declares the referenced GTK/WebKit
+symbols weak. When the pinned `webview_go` version changes, regenerate that
+header with:
 
 ```bash
-npm --prefix frontend run build
-bash scripts/build-app.sh        # outputs dist/session-insight-app
+bash scripts/buildtools/gen-webview-stubs.sh
 ```
 
-`scripts/build-app.sh` compiles with the `webview` build tag and the same
-`sqlite_fts5` tag as the release binaries. On Linux it also verifies the
-GTK3/WebKitGTK dev files and, when only `webkit2gtk-4.1` is installed
-(current Arch and Ubuntu), forwards webview_go's `webkit2gtk-4.0`
-pkg-config lookup through the committed alias in `scripts/pkgconfig/`.
-
-### Prerequisites by platform
-
-- **macOS**: none beyond Xcode Command Line Tools (`clang`); WebKit is part
-  of the OS.
-- **Windows**: MSYS2 mingw-w64 with `gcc` **and `g++`** on `PATH`
-  (`pacman -S mingw-w64-x86_64-gcc`), plus the CGO notes above. The runtime
-  uses the OS-provided WebView2 (present on Windows 10 1803+ and Windows 11).
-- **Linux**: a C/C++ toolchain, `pkg-config`, and the GTK3 + WebKitGTK dev
-  packages:
-  - Arch: `sudo pacman -S webkit2gtk-4.1`
-  - Debian/Ubuntu: `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev`
-  - End users of the prebuilt `-app` release archives only need the runtime
-    library (`libwebkit2gtk-4.1-0` on Debian/Ubuntu).
+If you build outside `run.sh`/`start.sh` on Linux, source
+`scripts/buildtools/linux-cgo-env.sh` first (or set the same environment).
 
 ### Immutable-OS hosts (e.g. SteamOS)
 
 Some immutable distributions strip C library/GTK dev files from `/usr` and
-require root to install packages. `scripts/build-app.sh` accepts
-`SI_APP_SYSROOT` pointing at a user-space sysroot that contains the missing
-headers and `.pc` files (for example one assembled from the distribution's
-exact package versions). pkg-config and CGO compiles are redirected into the
-sysroot via `PKG_CONFIG_SYSROOT_DIR` / `--sysroot`, while the produced binary
-still links dynamically against the host runtime libraries:
+require root to install packages. Set `SI_APP_SYSROOT` to a user-space
+sysroot containing the missing headers and `.pc` files (for example one
+assembled from the distribution's exact package versions); `run.sh`,
+`scripts/start.sh`, and the generator script pick it up and redirect
+pkg-config/CGO into it while the produced binary still links dynamically
+against the host runtime libraries:
 
 ```bash
-SI_APP_SYSROOT=~/path/to/sysroot bash scripts/build-app.sh
+SI_APP_SYSROOT=~/path/to/sysroot bash run.sh all
 ```

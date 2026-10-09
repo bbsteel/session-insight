@@ -88,6 +88,10 @@ func (a indexStatusAdapter) SnapshotProgress() server.IndexProgress {
 }
 
 func main() {
+	// `--app` selects the desktop window UI; it is stripped before the
+	// positional subcommands (--maintain-index, pack) below are examined.
+	appMode, positionalArgs := extractAppFlag(os.Args[1:])
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -111,7 +115,7 @@ func main() {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer database.Close()
-	if len(os.Args) == 2 && os.Args[1] == "--maintain-index" {
+	if len(positionalArgs) == 1 && positionalArgs[0] == "--maintain-index" {
 		log.Printf("maintaining SQLite index at %s; this may take a while", dataDir)
 		if err := database.Maintain(); err != nil {
 			log.Fatalf("index maintenance failed: %v", err)
@@ -119,8 +123,8 @@ func main() {
 		log.Printf("index maintenance complete")
 		return
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "pack" {
-		if err := runPackCLI(os.Args[2:], dataDir, database, version); err != nil {
+	if len(positionalArgs) >= 1 && positionalArgs[0] == "pack" {
+		if err := runPackCLI(positionalArgs[1:], dataDir, database, version); err != nil {
 			log.Fatalf("pack: %v", err)
 		}
 		return
@@ -227,7 +231,23 @@ func main() {
 	// embeds the UI in its own desktop window and shuts down when that window
 	// closes. The URL is the real bound one (may differ from PORT when
 	// fallback kicks in).
-	runUI(url, listener, func() error { return http.Serve(listener, srv.Mux) })
+	runUI(url, listener, func() error { return http.Serve(listener, srv.Mux) }, appMode)
+}
+
+// extractAppFlag removes -app/--app from args and reports whether app mode
+// was requested. It tolerates any position so `session-insight --app` and
+// `session-insight pack --app` behave alike.
+func extractAppFlag(args []string) (bool, []string) {
+	appMode := false
+	kept := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "-app" || arg == "--app" {
+			appMode = true
+			continue
+		}
+		kept = append(kept, arg)
+	}
+	return appMode, kept
 }
 
 // listenWithFallback attempts to listen on host:port. If the port is already in

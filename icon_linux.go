@@ -1,4 +1,4 @@
-//go:build webview && linux
+//go:build linux
 
 package main
 
