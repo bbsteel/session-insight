@@ -120,6 +120,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      - name: Debug pkg-config output (Linux, temporary)
+        if: runner.os == 'Linux'
+        run: |
+          echo "--- real pkg-config --cflags:"
+          /usr/bin/pkg-config --cflags gtk+-3.0 webkit2gtk-4.1 || true
+          echo "--- wrapper --cflags:"
+          "${GITHUB_WORKSPACE}/scripts/buildtools/pkg-config" --cflags gtk+-3.0 webkit2gtk-4.1 || true
+          echo "--- wrapper --libs:"
+          "${GITHUB_WORKSPACE}/scripts/buildtools/pkg-config" --libs gtk+-3.0 webkit2gtk-4.1 || true
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci

@@ -48,7 +48,9 @@ jobs:
           sudo apt-get install --yes pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Build Go environment
-        run: echo "PKG_CONFIG=${GITHUB_WORKSPACE}/scripts/buildtools/pkg-config" >> "$GITHUB_ENV"
+        run: |
+          echo "PKG_CONFIG=${GITHUB_WORKSPACE}/scripts/buildtools/pkg-config" >> "$GITHUB_ENV"
+          echo "CGO_CFLAGS_ALLOW=-idirafter.*" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
         working-directory: frontend
