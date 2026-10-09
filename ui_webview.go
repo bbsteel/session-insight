@@ -30,6 +30,9 @@ func runUI(url string, listener net.Listener, serve func() error) {
 	window := webview.New(false)
 	defer window.Destroy()
 	window.SetTitle(webviewWindowTitle)
+	// Icon must be set after New (GTK/WebKit init) and after SetTitle
+	// (Windows locates the window by title).
+	platformSetWindowIcon()
 	window.SetSize(1440, 900, webview.HintNone)
 	window.Navigate(url)
 	// Blocks until the user closes the window.
