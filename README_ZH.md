@@ -73,6 +73,11 @@ Session Insight 自动发现以下 Agent 的会话数据：
    | macOS Apple 芯片 | `session-insight-*-darwin-arm64.tar.gz` |
    | Windows x86-64 | `session-insight-*-windows-amd64.zip` |
 
+   所有二进制都是同一个 App：默认启动服务并打开浏览器；加 `--app` 参数则把界面开在
+   独立桌面窗口里（Linux 用 WebKitGTK，macOS 用 WebKit，Windows 用 WebView2）。
+   Linux 下 `--app` 需要系统装有 WebKitGTK（`sudo pacman -S webkit2gtk-4.1` 或
+   `sudo apt install libwebkit2gtk-4.1-0`）；未安装时会提示并自动退回浏览器模式。
+
 3. 解压后运行 `session-insight`（Windows 为 `session-insight.exe`）。
 4. 如果浏览器没有自动打开，请访问 **http://127.0.0.1:8080**。
 
@@ -94,6 +99,17 @@ bash run.sh all
 ```
 
 启动后访问 **http://127.0.0.1:8080**，浏览器会自动打开。
+
+### 桌面窗口模式（`--app`）
+
+同一个二进制也可以把界面开在原生桌面窗口中，而不是浏览器标签页：
+
+```bash
+./session-insight --app
+```
+
+Linux 下二进制只在 `--app` 时才需要 WebKitGTK：GTK/WebKit 符号以弱引用方式
+链接、按需加载，因此没有 WebKitGTK 的机器上浏览器模式照常运行。
 
 常用运行命令：
 

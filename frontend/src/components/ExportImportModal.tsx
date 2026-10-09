@@ -18,6 +18,7 @@ import {
 } from '../importPresentation'
 import { getAgentLabel } from '../sidebarRows'
 import { formatDate, useI18n } from '../i18n'
+import { useConfirm } from './ConfirmDialog'
 
 /** Warn (and confirm on download) once the selection is this large. */
 const LARGE_SELECTION_WARN = 50
@@ -38,6 +39,7 @@ interface Props {
 // dialog never implies "export every filtered session" (e.g. 680 rows).
 export default function ExportImportModal({ sessions, preferred = null, onClose }: Props) {
   const { locale, t } = useI18n()
+  const { confirm, confirmDialog } = useConfirm()
 
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(initialExportSelection(sessions, preferred)),
@@ -74,9 +76,9 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
     })
   }
 
-  const selectAll = () => {
+  const selectAll = async () => {
     if (sessions.length >= LARGE_SELECTION_WARN) {
-      const ok = window.confirm(t('exportBundle.selectAllConfirm', { count: sessions.length }))
+      const ok = await confirm({ message: t('exportBundle.selectAllConfirm', { count: sessions.length }) })
       if (!ok) return
     }
     setSelected(new Set(sessions.map(sessionSelectionKey)))
@@ -90,7 +92,7 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
     const chosen = sessions.filter(s => selected.has(sessionSelectionKey(s)))
     if (chosen.length === 0) return
     if (chosen.length >= LARGE_SELECTION_WARN) {
-      const ok = window.confirm(t('exportBundle.largeExportConfirm', { count: chosen.length }))
+      const ok = await confirm({ message: t('exportBundle.largeExportConfirm', { count: chosen.length }) })
       if (!ok) return
     }
     setExporting(true)
@@ -136,7 +138,7 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
   }
 
   const removeBundle = async (bundle: ImportBundleSummary) => {
-    if (!window.confirm(t('importBundle.deleteConfirm'))) return
+    if (!(await confirm({ message: t('importBundle.deleteConfirm'), danger: true }))) return
     try {
       await deleteImportBundle(bundle.bundle_id)
       reloadBundles()
@@ -155,10 +157,12 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
   // (mobile drawer translate-x), which makes position:fixed resolve against the
   // sidebar column and clips this dialog. DeleteSessionDialog uses the same portal pattern.
   return createPortal(
-    <div
-      className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
+    <>
+      {confirmDialog}
+      <div
+        className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50 p-4"
+        onClick={onClose}
+      >
       <div
         role="dialog"
         aria-modal="true"
@@ -184,7 +188,7 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-meta text-[var(--text-muted)]">{t('exportBundle.selected', { count: selected.size })}</span>
                   <div className="flex items-center gap-1.5">
-                    <button type="button" className={btnCls} onClick={selectAll} disabled={allSelected}>
+                    <button type="button" className={btnCls} onClick={() => void selectAll()} disabled={allSelected}>
                       {t('exportBundle.selectAll')}
                     </button>
                     <button type="button" className={btnCls} onClick={clearSelection} disabled={selected.size === 0}>
@@ -292,7 +296,8 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
           </section>
         </div>
       </div>
-    </div>,
+      </div>
+    </>,
     document.body,
   )
 }

@@ -12,10 +12,12 @@ import './app.css'
 import { initTheme } from './theme'
 import { initFonts } from './fontPrefs'
 import { I18nProvider } from './i18n'
+import { installAppWindowExternalLinks } from './appMode'
 
 // Apply theme and fonts before first paint (defaults win; stored preferences override).
 initTheme()
 initFonts()
+installAppWindowExternalLinks()
 
 // macOS/iOS: enable grayscale font smoothing (ClearType on Windows must stay default)
 if (typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent)) {

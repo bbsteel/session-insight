@@ -19,6 +19,10 @@ import (
 // maxImportUpload bounds the (still compressed) multipart upload.
 const maxImportUpload = 512 << 20 // 512 MiB
 
+// SetOpenURL injects the external-link opener used by POST /api/open-url.
+// It is set from main to the system browser opener; tests can override it.
+func (s *Server) SetOpenURL(open func(url string)) { s.openURL = open }
+
 // SetImportRoot wires the directory imported bundles are extracted into
 // (call before Serve).
 func (s *Server) SetImportRoot(root string) {

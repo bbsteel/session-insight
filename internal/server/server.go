@@ -46,6 +46,14 @@ type Server struct {
 	Version string
 	Commit  string
 
+	// AppMode 表示进程以 --app 桌面窗口模式启动；GET /api/version 回传该
+	// 标志，前端据此决定新窗口/外链请求是否改走 /api/open-url。
+	AppMode bool
+
+	// openURL 打开外部链接（由 main 注入为系统浏览器打开器）；nil 时
+	// /api/open-url 返回 503。可注入便于测试。
+	openURL func(url string)
+
 	// indexStatus is optional; when set, GET /api/index/status reports progress.
 	indexStatus IndexStatusProvider
 
@@ -201,6 +209,7 @@ func (s *Server) registerRoutes() {
 	s.Mux.HandleFunc("GET /api/search", s.handleSearch)
 	s.Mux.HandleFunc("GET /api/index/status", s.handleIndexStatus)
 	s.Mux.HandleFunc("GET /api/version", s.handleVersion)
+	s.Mux.HandleFunc("POST /api/open-url", s.handleOpenURL)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExportSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/render", s.handleRenderSession)
 	s.Mux.HandleFunc("GET /api/sessions/{id}/edits", s.handleSessionEdits)

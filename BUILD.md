@@ -119,3 +119,59 @@ Windows Application Control is preventing Go’s `cgo` tool from running. See [A
 **`npm run build` fails**
 
 Try deleting `frontend/node_modules` and running `npm ci` again.
+
+## Desktop Window Mode (`--app`)
+
+Every binary is the same app: by default it serves the UI and opens your
+browser. Pass `--app` to open the UI in a standalone desktop window backed by
+the OS webview engine (WebKitGTK on Linux, WebKit on macOS, WebView2 on
+Windows). The server, database, and indexing behavior are identical; closing
+the window exits the process.
+
+### Runtime requirements for `--app`
+
+- **macOS**: none — WebKit is part of the OS.
+- **Windows**: WebView2 runtime, preinstalled on Windows 10 1803+ and
+  Windows 11.
+- **Linux**: WebKitGTK (`sudo pacman -S webkit2gtk-4.1` or
+  `sudo apt install libwebkit2gtk-4.1-0`). The binary does **not** require it
+  otherwise: the GTK/WebKit symbols are linked weakly and the library is
+  dlopen()ed on demand when `--app` runs. Without it, `--app` logs an install
+  hint and falls back to the browser.
+
+### Build-time requirements on Linux
+
+Compiling the webview C++ backend needs the GTK/WebKit **headers**, so any
+Linux build (with or without `--app` support in the final binary) requires:
+
+- Arch: `sudo pacman -S webkit2gtk-4.1`
+- Debian/Ubuntu: `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev`
+
+`run.sh` and `scripts/start.sh` source `scripts/buildtools/linux-cgo-env.sh`
+automatically on Linux. It wires the pkg-config wrapper (forwards the removed
+`webkit2gtk-4.0` lookup to 4.1, and strips webview link flags so the stack is
+not recorded as a startup dependency) and force-includes the generated
+`scripts/buildtools/weak-gtk-symbols.h` that declares the referenced GTK/WebKit
+symbols weak. When the pinned `webview_go` version changes, regenerate that
+header with:
+
+```bash
+bash scripts/buildtools/gen-webview-stubs.sh
+```
+
+If you build outside `run.sh`/`start.sh` on Linux, source
+`scripts/buildtools/linux-cgo-env.sh` first (or set the same environment).
+
+### Immutable-OS hosts (e.g. SteamOS)
+
+Some immutable distributions strip C library/GTK dev files from `/usr` and
+require root to install packages. Set `SI_APP_SYSROOT` to a user-space
+sysroot containing the missing headers and `.pc` files (for example one
+assembled from the distribution's exact package versions); `run.sh`,
+`scripts/start.sh`, and the generator script pick it up and redirect
+pkg-config/CGO into it while the produced binary still links dynamically
+against the host runtime libraries:
+
+```bash
+SI_APP_SYSROOT=~/path/to/sysroot bash run.sh all
+```

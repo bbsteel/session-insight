@@ -5,6 +5,7 @@ import {
   type LLMModel, type LLMProvider, type LLMProviderInput,
 } from '../api'
 import { useI18n } from '../i18n'
+import { useConfirm } from './ConfirmDialog'
 
 interface Props {
   onClose: () => void
@@ -191,6 +192,7 @@ interface FetchState {
 // from 测试连接 or the preset fallbacks.
 export default function AISettingsModal({ onClose }: Props) {
   const { t } = useI18n()
+  const { confirm, confirmDialog } = useConfirm()
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [acpAgents, setAcpAgents] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -360,7 +362,7 @@ export default function AISettingsModal({ onClose }: Props) {
   }
 
   const remove = async (p: LLMProvider) => {
-    if (!window.confirm(t('aiSettings.deleteConfirm', { name: p.name }))) return
+    if (!(await confirm({ message: t('aiSettings.deleteConfirm', { name: p.name }), danger: true }))) return
     try {
       await deleteLLMProvider(p.id)
       reload()
@@ -387,7 +389,9 @@ export default function AISettingsModal({ onClose }: Props) {
   const listedIds = new Set((st?.models ?? []).map(m => m.id))
 
   return (
-    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <>
+      {confirmDialog}
+      <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={onClose}>
       {/* Fixed shell height: internal sections scroll so adding headers / models
           never resizes the dialog or fights nested overflow regions. */}
       <div
@@ -781,5 +785,6 @@ export default function AISettingsModal({ onClose }: Props) {
         </div>
       </div>
     </div>
+    </>
   )
 }

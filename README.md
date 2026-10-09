@@ -73,6 +73,13 @@ No Go or Node.js installation is required for the pre-built release.
    | macOS Apple Silicon | `session-insight-*-darwin-arm64.tar.gz` |
    | Windows x86-64 | `session-insight-*-windows-amd64.zip` |
 
+   Every binary is the same app: by default it serves the UI and opens your
+   browser. Run it with `--app` to open the UI in a standalone desktop window
+   instead (WebKitGTK on Linux, WebKit on macOS, WebView2 on Windows). On
+   Linux, `--app` needs WebKitGTK installed (`sudo pacman -S webkit2gtk-4.1`
+   or `sudo apt install libwebkit2gtk-4.1-0`); without it the app logs a hint
+   and falls back to the browser.
+
 3. Extract the archive and run `session-insight` (`session-insight.exe` on Windows).
 4. Open **http://127.0.0.1:8080** if the browser does not open automatically.
 
@@ -94,6 +101,19 @@ bash run.sh all
 ```
 
 The app starts at **http://127.0.0.1:8080** and opens automatically in your browser.
+
+### Desktop window mode (`--app`)
+
+The same binary can open its UI in a native desktop window instead of a
+browser tab:
+
+```bash
+./session-insight --app
+```
+
+On Linux the binary does not require WebKitGTK unless `--app` is used: the
+GTK/WebKit symbols are linked weakly and the library is loaded on demand, so
+browser mode runs on machines without WebKitGTK.
 
 Useful runtime commands:
 

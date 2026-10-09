@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# pkg-config wrapper for Go builds of this repo on Linux (wired via the
+# PKG_CONFIG env var; see scripts/buildtools/linux-cgo-env.sh).
+#
+# Two jobs, both serving the unified binary that supports `--app` without
+# hard-depending on WebKitGTK at process startup:
+#   1. webview_go asks for webkit2gtk-4.0, which current distros removed in
+#      favor of 4.1; forward the lookup via the alias in scripts/pkgconfig/.
+#   2. For --libs queries over the webview stack, strip -l/-L flags so those
+#      libraries are NOT recorded as DT_NEEDED. The GTK/WebKit symbols stay
+#      unresolved in the binary and are resolved at runtime by dlopen when
+#      `--app` is used (see appwindow_linux.go).
+set -euo pipefail
+
+real_pkg_config="${REAL_PKG_CONFIG:-/usr/bin/pkg-config}"
+if ! command -v "$real_pkg_config" >/dev/null 2>&1; then
+	real_pkg_config="pkg-config"
+fi
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+libs_query=0
+has_webview_query=0
+packages=()
+
+for arg in "$@"; do
+	case "$arg" in
+		--libs*) libs_query=1 ;;
+		--cflags* | --exists | --version | --variable* | --print* | --static) ;;
+		-*) ;;
+		*) packages+=("$arg") ;;
+	esac
+done
+
+for pkg in "${packages[@]:-}"; do
+	[ -z "$pkg" ] && continue
+	case "$pkg" in
+	webkit2gtk-4.0 | webkit2gtk-4.1 | webkit2gtk-6.0 | javascriptcoregtk-* | gtk+-3.0 | gdk-3.0 | gdk-x11-3.0 | gdk-wayland-3.0)
+		has_webview_query=1
+		if [ "$pkg" = "webkit2gtk-4.0" ]; then
+			if ! "$real_pkg_config" --exists webkit2gtk-4.0 2>/dev/null && "$real_pkg_config" --exists webkit2gtk-4.1 2>/dev/null; then
+				export PKG_CONFIG_PATH="${repo_root}/scripts/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+			fi
+		fi
+		;;
+	esac
+done
+
+if [ "$libs_query" = "1" ] && [ "$has_webview_query" = "1" ]; then
+	# Emit the --libs output without library/link-directory flags: headers
+	# still come from --cflags queries, but the binary does not link the
+	# webview stack. Tokens are linker flags and contain no spaces.
+	# shellcheck disable=SC2046
+	set -- $("$real_pkg_config" "$@")
+	filtered=()
+	for token in "$@"; do
+		case "$token" in
+		-l | -L | -l* | -L*) continue ;;
+		*) filtered+=("$token") ;;
+		esac
+	done
+	printf '%s\n' "${filtered[*]}"
+	exit 0
+fi
+
+if [ "$has_webview_query" = "1" ]; then
+	# --cflags output: demote default system include roots to -idirafter so the
+	# C++ toolchain's own libc headers keep priority. An explicit -I ahead of
+	# the standard library shadows libc++'s overrides (<locale.h> et al.) and
+	# — under hermetic toolchains like zig cc with a pinned glibc — host glibc
+	# headers (e.g. multiarch time64 bits) get mixed into the old glibc's
+	# include chains and break the build. The roots stay reachable, just later.
+	# Matches: -I/usr/include, -I/usr/include/<triplet>-linux-gnu (Debian
+	# multiarch), each optionally prefixed by the pkg-config sysroot.
+	set -- $("$real_pkg_config" "$@")
+	filtered=()
+	sysroot_prefix=""
+	if [ -n "${PKG_CONFIG_SYSROOT_DIR:-}" ]; then
+		sysroot_prefix="${PKG_CONFIG_SYSROOT_DIR%/}"
+	fi
+	for token in "$@"; do
+		case "$token" in
+		-I/usr/include | -I"${sysroot_prefix}"/usr/include)
+			# Joined form: cgo validates every whitespace-separated token, and
+			# a bare path would be rejected as an invalid flag.
+			filtered+=("-idirafter${token#-I}")
+			continue
+			;;
+		-I/usr/include/*-linux-gnu | -I"${sysroot_prefix}"/usr/include/*-linux-gnu)
+			filtered+=("-idirafter${token#-I}")
+			continue
+			;;
+		esac
+		filtered+=("$token")
+	done
+	# Multiarch .pc files emit the triplet root but NOT the plain default
+	# root; hermetic toolchains (zig cc) have no host default paths, so X11
+	# and other /usr/include headers would be unreachable. Always provide the
+	# default root via -idirafter (duplicates are harmless; host toolchains
+	# treat it as their default dir anyway).
+	if [ -n "${sysroot_prefix}" ]; then
+		filtered+=("-idirafter${sysroot_prefix}/usr/include")
+	else
+		filtered+=("-idirafter/usr/include")
+	fi
+	printf '%s\n' "${filtered[*]}"
+	exit 0
+fi
+
+exec "$real_pkg_config" "$@"

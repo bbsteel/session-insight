@@ -88,6 +88,10 @@ func (a indexStatusAdapter) SnapshotProgress() server.IndexProgress {
 }
 
 func main() {
+	// `--app` selects the desktop window UI; it is stripped before the
+	// positional subcommands (--maintain-index, pack) below are examined.
+	appMode, positionalArgs := extractAppFlag(os.Args[1:])
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -111,7 +115,7 @@ func main() {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer database.Close()
-	if len(os.Args) == 2 && os.Args[1] == "--maintain-index" {
+	if len(positionalArgs) == 1 && positionalArgs[0] == "--maintain-index" {
 		log.Printf("maintaining SQLite index at %s; this may take a while", dataDir)
 		if err := database.Maintain(); err != nil {
 			log.Fatalf("index maintenance failed: %v", err)
@@ -119,8 +123,8 @@ func main() {
 		log.Printf("index maintenance complete")
 		return
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "pack" {
-		if err := runPackCLI(os.Args[2:], dataDir, database, version); err != nil {
+	if len(positionalArgs) >= 1 && positionalArgs[0] == "pack" {
+		if err := runPackCLI(positionalArgs[1:], dataDir, database, version); err != nil {
 			log.Fatalf("pack: %v", err)
 		}
 		return
@@ -148,7 +152,10 @@ func main() {
 	srv := server.New(database, readers)
 	srv.Version = version
 	srv.Commit = commit
+	srv.AppMode = appMode
 	srv.SetImportRoot(importRoot)
+	// --app 模式下前端把新窗口/外链请求转发给本端点，由系统浏览器打开。
+	srv.SetOpenURL(openBrowser)
 
 	if indexerEnabled {
 		idx := indexer.New(database, readers)
@@ -222,10 +229,28 @@ func main() {
 	}
 	url := "http://" + listener.Addr().String() + "/"
 	log.Printf("SessionInsight listening on %s", url)
-	// Open the real bound URL (may differ from PORT when fallback kicks in).
-	// Start is fire-and-forget so a slow browser never delays Serve.
-	openBrowser(url)
-	log.Fatal(http.Serve(listener, srv.Mux))
+	// runUI is provided per build configuration: the default build opens the
+	// URL in the system browser and serves until killed; the `webview` build
+	// embeds the UI in its own desktop window and shuts down when that window
+	// closes. The URL is the real bound one (may differ from PORT when
+	// fallback kicks in).
+	runUI(url, listener, func() error { return http.Serve(listener, srv.Mux) }, appMode)
+}
+
+// extractAppFlag removes -app/--app from args and reports whether app mode
+// was requested. It tolerates any position so `session-insight --app` and
+// `session-insight pack --app` behave alike.
+func extractAppFlag(args []string) (bool, []string) {
+	appMode := false
+	kept := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "-app" || arg == "--app" {
+			appMode = true
+			continue
+		}
+		kept = append(kept, arg)
+	}
+	return appMode, kept
 }
 
 // listenWithFallback attempts to listen on host:port. If the port is already in

@@ -37,6 +37,21 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      # The unified binary embeds the `--app` desktop-window mode. Compiling
+      # webview_go's C++ backend needs the GTK/WebKit headers on Linux; the
+      # runtime WebKitGTK dependency only exists when `--app` is used (weak
+      # symbols + dlopen). linux-cgo-env.sh wires the pkg-config wrapper and
+      # the weak-symbol header for every Go step below.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build Go environment
+        run: |
+          echo "PKG_CONFIG=${GITHUB_WORKSPACE}/scripts/buildtools/pkg-config" >> "$GITHUB_ENV"
+          echo "CGO_CFLAGS_ALLOW=-idirafter.*" >> "$GITHUB_ENV"
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -67,7 +82,13 @@ jobs:
           args: --timeout=5m
 
       - name: Run Go vet
-        run: go vet -tags sqlite_fts5 ./...
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/buildtools/linux-cgo-env.sh
+          go vet -tags sqlite_fts5 ./...
 
       - name: Run Go tests
-        run: go test -count=1 -tags sqlite_fts5 ./...
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/buildtools/linux-cgo-env.sh
+          go test -count=1 -tags sqlite_fts5 ./...

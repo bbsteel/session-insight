@@ -221,6 +221,13 @@ do_build() {
 
   echo "==> Building Go binary"
   export GOCACHE="${GOCACHE:-/tmp/session-insight-go-build}"
+  # Linux 统一二进制：webview 的 GTK/WebKit 符号以弱引用链接、运行 --app
+  # 时才 dlopen 加载（见 scripts/buildtools/）；需要在构建环境里接好包装
+  # pkg-config 与弱符号头文件。SI_APP_SYSROOT 供不可变系统免 root 构建。
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/scripts/buildtools/linux-cgo-env.sh"
+  fi
   # 开发构建注入 describe 版本与 commit（dirty 时标记），关于页据此展示开发信息；
   # release 构建由 .github/workflows/release.yml 只注入 tag 版本号。
   local version commit dirty=""

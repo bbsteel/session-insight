@@ -1,0 +1,10 @@
+# webview_go asks pkg-config for webkit2gtk-4.0, which current distros have
+# removed in favor of 4.1 (the libsoup3 port; Arch and Ubuntu 24.04+ ship only
+# 4.1). webview's GTK backend is API-compatible with 4.1, so forward the
+# lookup. Build scripts prepend this directory to PKG_CONFIG_PATH only when
+# webkit2gtk-4.0 is absent and 4.1 is present.
+prefix=/usr
+Name: webkit2gtk-4.0
+Description: Alias to webkit2gtk-4.1 for webview_go
+Version: 4.1
+Requires: webkit2gtk-4.1

@@ -63,6 +63,8 @@ export interface VersionInfo {
   version: string
   /** 开发构建的 commit（含 -dirty 标记）；release 构建为空字符串 */
   commit: string
+  /** 进程以 --app 桌面窗口模式启动 */
+  appMode?: boolean
 }
 
 export type CodingQuotaStatus =
