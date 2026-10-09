@@ -64,27 +64,33 @@ if [ "$libs_query" = "1" ] && [ "$has_webview_query" = "1" ]; then
 fi
 
 if [ "$has_webview_query" = "1" ]; then
-	# --cflags output: drop the bare default include root (-I/usr/include or
-	# its sysroot-prefixed form). It is a no-op for the C compiler but breaks
-	# C++ compiles under alternate toolchains (e.g. zig c++/libc++): an
-	# explicit -I ahead of the C++ standard library shadows libc++'s own
-	# overrides (<locale.h> et al.). Default search paths still provide it.
+	# --cflags output: demote default system include roots to -idirafter so the
+	# C++ toolchain's own libc headers keep priority. An explicit -I ahead of
+	# the standard library shadows libc++'s overrides (<locale.h> et al.) and
+	# — under hermetic toolchains like zig cc with a pinned glibc — host glibc
+	# headers (e.g. multiarch time64 bits) get mixed into the old glibc's
+	# include chains and break the build. The roots stay reachable, just later.
+	# Matches: -I/usr/include, -I/usr/include/<triplet>-linux-gnu (Debian
+	# multiarch), each optionally prefixed by the pkg-config sysroot.
 	set -- $("$real_pkg_config" "$@")
 	filtered=()
-	default_root="-I/usr/include"
+	sysroot_prefix=""
 	if [ -n "${PKG_CONFIG_SYSROOT_DIR:-}" ]; then
-		default_root="-I${PKG_CONFIG_SYSROOT_DIR%/}/usr/include"
+		sysroot_prefix="${PKG_CONFIG_SYSROOT_DIR%/}"
 	fi
 	for token in "$@"; do
-		if [ "$token" = "$default_root" ]; then
-			# Keep the default root reachable but AFTER the C++ standard
-			# library headers (libc++ ships its own <locale.h> overrides);
-			# an explicit -I would shadow them under alternate C++ toolchains.
+		case "$token" in
+		-I/usr/include | -I"${sysroot_prefix}"/usr/include)
 			# Joined form: cgo validates every whitespace-separated token, and
 			# a bare path would be rejected as an invalid flag.
 			filtered+=("-idirafter${token#-I}")
 			continue
-		fi
+			;;
+		-I/usr/include/*-linux-gnu | -I"${sysroot_prefix}"/usr/include/*-linux-gnu)
+			filtered+=("-idirafter${token#-I}")
+			continue
+			;;
+		esac
 		filtered+=("$token")
 	done
 	printf '%s\n' "${filtered[*]}"
