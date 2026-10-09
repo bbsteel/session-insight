@@ -222,10 +222,12 @@ func main() {
 	}
 	url := "http://" + listener.Addr().String() + "/"
 	log.Printf("SessionInsight listening on %s", url)
-	// Open the real bound URL (may differ from PORT when fallback kicks in).
-	// Start is fire-and-forget so a slow browser never delays Serve.
-	openBrowser(url)
-	log.Fatal(http.Serve(listener, srv.Mux))
+	// runUI is provided per build configuration: the default build opens the
+	// URL in the system browser and serves until killed; the `webview` build
+	// embeds the UI in its own desktop window and shuts down when that window
+	// closes. The URL is the real bound one (may differ from PORT when
+	// fallback kicks in).
+	runUI(url, listener, func() error { return http.Serve(listener, srv.Mux) })
 }
 
 // listenWithFallback attempts to listen on host:port. If the port is already in

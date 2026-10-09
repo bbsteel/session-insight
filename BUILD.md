@@ -119,3 +119,50 @@ Windows Application Control is preventing Go’s `cgo` tool from running. See [A
 **`npm run build` fails**
 
 Try deleting `frontend/node_modules` and running `npm ci` again.
+
+## Standalone Desktop App (webview variant)
+
+Besides the default browser-based binary, the same codebase builds a
+standalone desktop app whose UI runs in a native webview window
+(WebKitGTK on Linux, WebKit on macOS, WebView2 on Windows). The server,
+database, and indexing behavior are identical — only the UI shell differs,
+and closing the window exits the process.
+
+```bash
+npm --prefix frontend run build
+bash scripts/build-app.sh        # outputs dist/session-insight-app
+```
+
+`scripts/build-app.sh` compiles with the `webview` build tag and the same
+`sqlite_fts5` tag as the release binaries. On Linux it also verifies the
+GTK3/WebKitGTK dev files and, when only `webkit2gtk-4.1` is installed
+(current Arch and Ubuntu), forwards webview_go's `webkit2gtk-4.0`
+pkg-config lookup through the committed alias in `scripts/pkgconfig/`.
+
+### Prerequisites by platform
+
+- **macOS**: none beyond Xcode Command Line Tools (`clang`); WebKit is part
+  of the OS.
+- **Windows**: MSYS2 mingw-w64 with `gcc` **and `g++`** on `PATH`
+  (`pacman -S mingw-w64-x86_64-gcc`), plus the CGO notes above. The runtime
+  uses the OS-provided WebView2 (present on Windows 10 1803+ and Windows 11).
+- **Linux**: a C/C++ toolchain, `pkg-config`, and the GTK3 + WebKitGTK dev
+  packages:
+  - Arch: `sudo pacman -S webkit2gtk-4.1`
+  - Debian/Ubuntu: `sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev`
+  - End users of the prebuilt `-app` release archives only need the runtime
+    library (`libwebkit2gtk-4.1-0` on Debian/Ubuntu).
+
+### Immutable-OS hosts (e.g. SteamOS)
+
+Some immutable distributions strip C library/GTK dev files from `/usr` and
+require root to install packages. `scripts/build-app.sh` accepts
+`SI_APP_SYSROOT` pointing at a user-space sysroot that contains the missing
+headers and `.pc` files (for example one assembled from the distribution's
+exact package versions). pkg-config and CGO compiles are redirected into the
+sysroot via `PKG_CONFIG_SYSROOT_DIR` / `--sysroot`, while the produced binary
+still links dynamically against the host runtime libraries:
+
+```bash
+SI_APP_SYSROOT=~/path/to/sysroot bash scripts/build-app.sh
+```

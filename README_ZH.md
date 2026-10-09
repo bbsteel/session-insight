@@ -73,7 +73,13 @@ Session Insight 自动发现以下 Agent 的会话数据：
    | macOS Apple 芯片 | `session-insight-*-darwin-arm64.tar.gz` |
    | Windows x86-64 | `session-insight-*-windows-amd64.zip` |
 
-3. 解压后运行 `session-insight`（Windows 为 `session-insight.exe`）。
+   想要独立桌面窗口而不是浏览器标签页？请下载 `-app` 压缩包
+   （如 `session-insight-*-linux-amd64-app.tar.gz`、`-darwin-arm64-app` 等）。
+   它把同一个界面运行在自己的窗口里（Linux 用 WebKitGTK，macOS 用 WebKit，
+   Windows 用 WebView2），点窗口关闭按钮即可退出。Linux 需安装 WebKitGTK
+   （`sudo pacman -S webkit2gtk-4.1` 或 `sudo apt install libwebkit2gtk-4.1-0`）。
+
+3. 解压后运行 `session-insight`（Windows 为 `session-insight.exe`；`-app` 压缩包内为 `session-insight-app`）。
 4. 如果浏览器没有自动打开，请访问 **http://127.0.0.1:8080**。
 
 每个压缩包包含可执行文件、中英文 README 和许可证。需要校验下载时，可从同一个 Release 获取 `checksums.txt`，再将对应记录与 Linux/macOS 上的 `sha256sum <archive>` 或 PowerShell 中的 `Get-FileHash <archive> -Algorithm SHA256` 结果比较。
@@ -94,6 +100,19 @@ bash run.sh all
 ```
 
 启动后访问 **http://127.0.0.1:8080**，浏览器会自动打开。
+
+### 构建独立桌面 App
+
+同一套代码还可以构建独立桌面变体：界面运行在原生 webview 窗口中，
+而不是浏览器标签页：
+
+```bash
+npm --prefix frontend run build
+bash scripts/build-app.sh        # 输出 dist/session-insight-app
+```
+
+各系统工具链要求见 [BUILD.md](BUILD.md)（Linux 需要 GTK3 + WebKitGTK 开发包；
+Windows 需要 MSYS2 mingw-w64）。
 
 常用运行命令：
 
