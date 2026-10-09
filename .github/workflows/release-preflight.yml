@@ -112,7 +112,7 @@ jobs:
           curl -sSfL -o /tmp/zig.tar.xz "https://ziglang.org/download/${zig_version}/zig-x86_64-linux-${zig_version}.tar.xz"
           tar -C /tmp -xf /tmp/zig.tar.xz
           echo "/tmp/zig-x86_64-linux-${zig_version}" >> "${GITHUB_PATH}"
-          zig version
+          "/tmp/zig-x86_64-linux-${zig_version}/zig" version
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
