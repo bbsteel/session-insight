@@ -11,7 +11,13 @@ func TestManualACPListModels(t *testing.T) {
 	if os.Getenv("SI_ACP_MANUAL") == "" {
 		t.Skip("manual test")
 	}
-	client, err := New(Config{Kind: "acp", Agent: "claude"})
+	// SI_ACP_AGENT selects the local agent CLI to exercise (default claude);
+	// e.g. SI_ACP_AGENT=codex verifies the pinned codex ACP adapter end to end.
+	agent := os.Getenv("SI_ACP_AGENT")
+	if agent == "" {
+		agent = "claude"
+	}
+	client, err := New(Config{Kind: "acp", Agent: agent})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -67,7 +67,7 @@ func startAppWindow(url string, listener net.Listener, serve func() error) bool 
 // it is read directly; regenerate/check this if the binding is ever re-pinned.
 func webviewHandleValid(window webview.WebView) bool {
 	rv := reflect.ValueOf(window)
-	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return false
 	}
 	return *(*unsafe.Pointer)(unsafe.Pointer(rv.Pointer())) != nil
