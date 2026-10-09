@@ -93,6 +93,16 @@ if [ "$has_webview_query" = "1" ]; then
 		esac
 		filtered+=("$token")
 	done
+	# Multiarch .pc files emit the triplet root but NOT the plain default
+	# root; hermetic toolchains (zig cc) have no host default paths, so X11
+	# and other /usr/include headers would be unreachable. Always provide the
+	# default root via -idirafter (duplicates are harmless; host toolchains
+	# treat it as their default dir anyway).
+	if [ -n "${sysroot_prefix}" ]; then
+		filtered+=("-idirafter${sysroot_prefix}/usr/include")
+	else
+		filtered+=("-idirafter/usr/include")
+	fi
 	printf '%s\n' "${filtered[*]}"
 	exit 0
 fi
