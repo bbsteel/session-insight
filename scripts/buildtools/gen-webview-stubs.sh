@@ -17,13 +17,15 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-mod_cache="$(go env GOMODCACHE)"
-webview_mod="$(find "${mod_cache}/github.com/webview" -maxdepth 1 -type d -name 'webview_go@*' | sort -V | tail -1)"
-if [[ -z "${webview_mod}" ]]; then
-	echo "error: webview_go not found in module cache; run 'go mod download' first" >&2
+# Resolve the module directory for the version SELECTED by this build (from
+# go.mod), not whatever happens to be newest in the shared module cache.
+webview_mod="$(cd "${repo_root}" && go list -m -f '{{.Dir}}' github.com/webview/webview_go)"
+if [[ -z "${webview_mod}" || ! -d "${webview_mod}" ]]; then
+	echo "error: could not resolve webview_go module directory (run 'go mod download' first)" >&2
 	exit 1
 fi
 
+mkdir -p "${HOME}/tmp"
 work_dir="$(mktemp -d -p "${HOME}/tmp")"
 trap 'rm -rf "${work_dir}"' EXIT
 

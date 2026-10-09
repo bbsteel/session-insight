@@ -7,6 +7,7 @@ import {
 } from '../api'
 import { useI18n } from '../i18n'
 import MarkdownRenderer from './MarkdownRenderer'
+import { useConfirm } from './ConfirmDialog'
 
 interface Props {
   sessionId: string
@@ -62,6 +63,7 @@ function AnimatedDots() {
 // session without confirmation.
 export default function AIPanel({ sessionId, agentType, sessionName, onClose, onTitleApplied }: Props) {
   const { locale, t } = useI18n()
+  const { confirm, confirmDialog } = useConfirm()
   const [tab, setTab] = useState<AIKind>('summary')
   const [states, setStates] = useState<Record<AIKind, TabState>>({
     summary: emptyTab, title: emptyTab, handoff: emptyTab,
@@ -203,7 +205,7 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
     if (id == null) return
     const provider = providers.find(p => p.id === id)
     const label = provider?.name ?? `#${id}`
-    if (!window.confirm(t('ai.deleteUnavailableConfirm', { name: label }))) return
+    if (!(await confirm({ message: t('ai.deleteUnavailableConfirm', { name: label }), danger: true }))) return
     try {
       await deleteLLMProvider(id)
       const next = providers.filter(p => p.id !== id)
@@ -221,7 +223,9 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
   const btnCls = 'h-7 rounded-md border border-[var(--border-default)] px-2.5 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50'
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={onClose}>
+    <>
+      {confirmDialog}
+      <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
         id="session-assistant-panel"
         className="bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl w-[min(900px,94vw)] h-[min(720px,88vh)] flex flex-col"
@@ -430,5 +434,6 @@ export default function AIPanel({ sessionId, agentType, sessionName, onClose, on
         </div>
       </div>
     </div>
+    </>
   )
 }

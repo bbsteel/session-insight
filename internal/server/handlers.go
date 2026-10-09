@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -1002,10 +1003,36 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"version": version,
 		"commit":  s.Commit,
+		"appMode": s.AppMode,
 	})
+}
+
+// handleOpenURL 在 --app 桌面窗口模式下把新窗口/外链请求转发给系统浏览器：
+// 内嵌 webview 不处理 window.open / target=_blank，由前端检测到 appMode 后
+// 改调本端点。只接受 http/https 绝对链接，其余 400；未注入打开器时 503。
+func (s *Server) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+	if s.openURL == nil {
+		http.Error(w, "external opener unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body); err != nil || body.URL == "" {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	parsed, err := url.Parse(body.URL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		http.Error(w, "only absolute http/https URLs are supported", http.StatusBadRequest)
+		return
+	}
+	// 失败只记录日志：UI 已经给出点击反馈，不必让前端感知打开器不可用。
+	s.openURL(body.URL)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {

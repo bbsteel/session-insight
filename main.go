@@ -152,7 +152,10 @@ func main() {
 	srv := server.New(database, readers)
 	srv.Version = version
 	srv.Commit = commit
+	srv.AppMode = appMode
 	srv.SetImportRoot(importRoot)
+	// --app 模式下前端把新窗口/外链请求转发给本端点，由系统浏览器打开。
+	srv.SetOpenURL(openBrowser)
 
 	if indexerEnabled {
 		idx := indexer.New(database, readers)

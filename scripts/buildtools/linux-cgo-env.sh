@@ -17,13 +17,34 @@ if [ "$(uname -s)" = "Linux" ]; then
 	repo_root="$(cd "${buildtools_dir}/../.." && pwd)"
 	export PKG_CONFIG="${buildtools_dir}/pkg-config"
 
+	# The pkg-config wrapper re-emits the default include root as -idirafter
+	# (so libc++ keeps its header priority under alternate C++ toolchains like
+	# zig c++); cgo rejects that flag by default — allow it for this build env.
+	case " ${CGO_CFLAGS_ALLOW:-} " in
+	*"-idirafter"*) ;;
+	*) export CGO_CFLAGS_ALLOW="${CGO_CFLAGS_ALLOW:+$CGO_CFLAGS_ALLOW }-idirafter.*" ;;
+	esac
+
 	# Immutable-OS hosts (e.g. SteamOS) strip C library/GTK dev files from
 	# /usr; a user-space sysroot supplying headers + .pc files can be provided
 	# without root. Linking stays dynamic against host runtime libraries.
+	# Multiarch layouts (Debian/Ubuntu usr/lib/<triplet>/pkgconfig, Arch
+	# usr/lib/pkgconfig) are all included without consulting host metadata.
 	if [ -n "${SI_APP_SYSROOT:-}" ]; then
 		sysroot="$(cd "${SI_APP_SYSROOT}" && pwd)"
 		export PKG_CONFIG_SYSROOT_DIR="${sysroot}"
-		export PKG_CONFIG_PATH="${sysroot}/usr/lib/pkgconfig:${sysroot}/usr/share/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+		sysroot_pc="${sysroot}/usr/lib/pkgconfig:${sysroot}/usr/share/pkgconfig"
+		for arch_pc_dir in "${sysroot}"/usr/lib/*-linux-gnu/pkgconfig; do
+			if [ -d "${arch_pc_dir}" ]; then
+				sysroot_pc="${sysroot_pc}:${arch_pc_dir}"
+			fi
+		done
+		for arch_pc_dir in "${sysroot}"/usr/lib/pkgconfig/*/; do
+			if [ -d "${arch_pc_dir}" ]; then
+				sysroot_pc="${sysroot_pc}:${arch_pc_dir%/}"
+			fi
+		done
+		export PKG_CONFIG_PATH="${sysroot_pc}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
 		export CGO_CFLAGS="--sysroot=${sysroot} ${CGO_CFLAGS:-}"
 		export CGO_CXXFLAGS="--sysroot=${sysroot} ${CGO_CXXFLAGS:-}"
 		export CGO_LDFLAGS="--sysroot=${sysroot} ${CGO_LDFLAGS:-}"
