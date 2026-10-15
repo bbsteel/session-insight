@@ -22,11 +22,11 @@ import {
 } from '../changePlatformTypes'
 
 const inputCls =
-  'w-full h-8 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2.5 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30'
+  'w-full h-8 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2.5 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-1 focus:ring-[var(--accent-blue)]/30'
 const primaryBtn =
-  'rounded-md bg-[var(--accent-blue)] px-3.5 py-1.5 text-helper text-white transition-colors duration-fast hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 disabled:pointer-events-none'
+  'rounded-md bg-[var(--accent-blue)] px-3.5 py-1.5 text-helper text-white transition-colors duration-fast hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 disabled:pointer-events-none'
 const secondaryBtn =
-  'rounded-md border border-[var(--border-default)] px-3.5 py-1.5 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 disabled:pointer-events-none'
+  'rounded-md border border-[var(--border-default)] px-3.5 py-1.5 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 disabled:pointer-events-none'
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -140,7 +140,7 @@ export default function ChangePlatformWizard({ onClose, onDone }: { onClose: () 
       <div className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex flex-shrink-0 items-center justify-between border-b border-[var(--border-muted)] px-5 py-3">
           <h2 className="text-body font-semibold text-[var(--text-primary)]">{t('changeHosts.wizard.title')}</h2>
-          <button onClick={onClose} aria-label={t('common.close')} className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">✕</button>
+          <button onClick={onClose} aria-label={t('common.close')} className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">✕</button>
         </div>
 
         {/* Step indicator */}

@@ -390,7 +390,7 @@ export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
           onKeyDown={handleKeyDown}
           onFocus={openDropdown}
           onClick={openDropdown}
-          className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
+          className="h-[34px] w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-primary)]"
           aria-label={t('common.search')}
           data-testid="global-search-input"
         />
@@ -548,7 +548,7 @@ export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
         <button
           type="button"
           onClick={() => { window.location.hash = '/snippets' }}
-          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           title={t('snippets.open')}
           data-testid="global-snippets"
         >
@@ -557,7 +557,7 @@ export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event('si-open-change-request-lookup'))}
-          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="h-7 rounded-md border border-[var(--border-default)] px-1.5 text-meta font-medium text-[var(--text-secondary)] hover:border-[var(--accent-blue)]/50 hover:bg-[var(--accent-blue)]/10 hover:text-[var(--accent-blue)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           title={t('git.lookup.open')}
           data-testid="global-change-request-lookup"
         >
@@ -568,7 +568,7 @@ export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
           onClick={() => window.dispatchEvent(new Event('si-open-export-import'))}
           aria-label={t('sidebar.exportImport')}
           title={t('sidebar.exportImport')}
-          className="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           data-testid="global-export-import"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -587,7 +587,7 @@ export default function GlobalSearch({ onSelect, onOpenCodingQuotas }: {
         <div className="relative">
           <button
             onClick={() => setShowSettings(true)}
-            className={`inline-flex h-7 w-auto items-center gap-1 rounded-md px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+            className={`inline-flex h-7 w-auto items-center gap-1 rounded-md px-1.5 text-nav focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
               showSettings
                 ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
                 : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'

@@ -89,7 +89,7 @@ export default function SessionCapabilityPanel({
             ref={closeRef}
             type="button"
             onClick={onClose}
-            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             aria-label={t('common.close')}
           >
             <CloseIcon className="h-4 w-4" />
@@ -233,7 +233,7 @@ export default function SessionCapabilityPanel({
             <button
               type="button"
               onClick={onOpenCompare}
-              className="h-8 rounded-md border border-[var(--border-default)] px-3 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              className="h-8 rounded-md border border-[var(--border-default)] px-3 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             >
               {t('capability.compare.open')}
             </button>
@@ -242,7 +242,7 @@ export default function SessionCapabilityPanel({
             <button
               type="button"
               onClick={onOpenSettingsAgents}
-              className="h-8 rounded-md border border-[var(--accent-blue)] px-3 text-helper font-medium text-[var(--accent-blue)] hover:bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              className="h-8 rounded-md border border-[var(--accent-blue)] px-3 text-helper font-medium text-[var(--accent-blue)] hover:bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             >
               {t('capability.agents.openSettings')}
             </button>

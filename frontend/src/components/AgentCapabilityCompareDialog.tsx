@@ -64,7 +64,7 @@ export default function AgentCapabilityCompareDialog({ open, agents, onClose }: 
             ref={closeRef}
             type="button"
             onClick={onClose}
-            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             aria-label={t('common.close')}
           >
             <CloseIcon className="h-4 w-4" />

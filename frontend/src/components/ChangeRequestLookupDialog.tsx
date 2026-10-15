@@ -302,7 +302,7 @@ export default function ChangeRequestLookupDialog({ onClose, onSelectSession, se
             onKeyDown={event => { if (event.key === 'Enter') void runResolve() }}
             placeholder={t('git.lookup.placeholder')}
             aria-label={t('git.lookup.reference')}
-            className="h-9 min-w-0 flex-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20"
+            className="h-9 min-w-0 flex-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-2 focus:ring-[var(--accent-blue)]/20"
           />
           <button
             type="button"

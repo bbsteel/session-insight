@@ -99,7 +99,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
                     <button
                       onClick={() => copyPid(pid)}
                       title={t('delete.copyPid')}
-                      className="font-mono font-semibold text-[var(--error)] hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)] rounded-sm"
+                      className="font-mono font-semibold text-[var(--error)] hover:underline cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--error)] rounded-sm"
                     >
                       {pid}
                     </button>
@@ -130,7 +130,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
           <button
             onClick={onClose}
             disabled={busy}
-            className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-50 transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-50 transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
             {t('common.cancel')}
           </button>
@@ -138,7 +138,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
             <button
               onClick={doStop}
               disabled={busy}
-              className="h-7 px-3 rounded-md bg-[var(--error)] text-nav text-white hover:opacity-90 disabled:opacity-50 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)]"
+              className="h-7 px-3 rounded-md bg-[var(--error)] text-nav text-white hover:opacity-90 disabled:opacity-50 transition-opacity duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--error)]"
             >
               {t(phase === 'stopping' ? 'delete.stopping' : 'delete.forceStop')}
             </button>
@@ -146,7 +146,7 @@ export default function DeleteSessionDialog({ session, onClose, onDeleted }: Del
             <button
               onClick={doDelete}
               disabled={busy}
-              className="h-7 px-3 rounded-md bg-[var(--error)] text-nav text-white hover:opacity-90 disabled:opacity-50 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--error)]"
+              className="h-7 px-3 rounded-md bg-[var(--error)] text-nav text-white hover:opacity-90 disabled:opacity-50 transition-opacity duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--error)]"
             >
               {t(phase === 'deleting' ? 'delete.deleting' : phase === 'running' ? 'delete.retry' : 'delete.permanent')}
             </button>

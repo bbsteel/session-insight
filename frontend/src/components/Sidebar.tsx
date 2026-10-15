@@ -722,7 +722,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
               onAuxClick={(e) => { openOnModifiedClick(e, session.agent_type, session.id) }}
               onContextMenu={(e) => openContextMenu(e, session)}
               title={t('sidebar.openMenu')}
-              className="w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] rounded-sm"
+              className="w-full text-left cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] rounded-sm"
             >
               <div className="text-body text-[var(--text-primary)] truncate flex items-center gap-1.5">
                 {live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--success)] flex-shrink-0 animate-pulse" title={t('sidebar.live')} aria-label={t('sidebar.live')} />}
@@ -737,7 +737,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                 onAuxClick={(e) => { openOnModifiedClick(e, session.agent_type, session.id) }}
                 onContextMenu={(e) => openContextMenu(e, session)}
                 title={t('sidebar.openMenu')}
-                className="min-w-0 flex-1 text-left text-helper text-[var(--text-secondary)] flex items-center gap-1.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] rounded-sm"
+                className="min-w-0 flex-1 text-left text-helper text-[var(--text-secondary)] flex items-center gap-1.5 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)] rounded-sm"
               >
                 <span className="truncate min-w-0">{metadata}</span>
                 {/* min-w-0 + truncate: at ~160px sidebar, time yields space instead of colliding with actions */}
@@ -760,7 +760,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                     <button
                       type="button"
                       onClick={event => { event.stopPropagation(); setNoteEditorSession(session) }}
-                      className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                      className="flex h-5 w-5 items-center justify-center rounded-sm hover:bg-[var(--bg-inset)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                       aria-label={t('replay.editBookmarkNote')}
                     >
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -778,7 +778,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   <button
                     type="button"
                     onClick={event => { void bookmarkFromRow(event, session) }}
-                    className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                    className={`flex h-5 w-5 items-center justify-center rounded-sm transition-opacity duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                       session.bookmarked
                         ? 'text-[var(--accent-blue)] opacity-100 hover:bg-[var(--bg-inset)]'
                         : 'text-[var(--text-muted)] opacity-0 pointer-events-none hover:bg-[var(--bg-inset)] hover:text-[var(--warning)] group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto max-md:opacity-100 max-md:pointer-events-auto'
@@ -884,7 +884,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             aria-controls="session-sidebar"
             aria-expanded={true}
             data-testid="sidebar-hide"
-            className="ml-1 w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
             <PanelLeftCloseIcon />
           </button>
@@ -905,7 +905,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             placeholder={t('sidebar.filter')}
             value={query}
             onChange={e => setQuery(e.target.value)}
-            className="w-full h-[34px] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] pl-8 pr-7 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]"
+            className="w-full h-[34px] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] pl-8 pr-7 text-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-2 focus:ring-[var(--accent-blue)]/20 focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]"
           />
           {query && (
             <button
@@ -927,7 +927,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             aria-checked={bookmarksOnly}
             aria-label={bookmarksOnly ? t('sidebar.showAllSessions') : t('sidebar.bookmarksOnly', { count: bookmarkCount })}
             onClick={() => setBookmarksOnly(value => !value)}
-            className={`inline-flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-md border transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+            className={`inline-flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-md border transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
               bookmarksOnly
                 ? 'border-[var(--accent-blue)]/40 bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-muted)] hover:border-[var(--border-muted)] hover:text-[var(--warning)]'
@@ -980,7 +980,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   setModelFilter('')
                   setBookmarksOnly(false)
                 }}
-                className="mt-3 h-7 px-3 rounded-md border border-[var(--border-default)] text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                className="mt-3 h-7 px-3 rounded-md border border-[var(--border-default)] text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 {t('sidebar.clearFilters')}
               </button>
@@ -1014,7 +1014,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             onClick={() =>
               window.dispatchEvent(new CustomEvent('si-open-settings', { detail: { tab: 'about' } }))
             }
-            className="ml-2 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="ml-2 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
             <InfoIcon className="h-3.5 w-3.5" />
           </button>
@@ -1225,7 +1225,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 onClick={() => setResumeConfirm(null)}
-                className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 {t('common.cancel')}
               </button>
@@ -1235,7 +1235,7 @@ export default function Sidebar({ selectedId, selectedAgentType, focusTarget, on
                   setResumeConfirm(null)
                   void copyResumeCmd(target.session, target.unsafe, target.plan)
                 }}
-                className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white hover:opacity-90 transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white hover:opacity-90 transition-opacity duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 {t('sidebar.copyAnyway')}
               </button>

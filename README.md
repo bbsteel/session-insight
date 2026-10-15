@@ -90,7 +90,7 @@ Each archive includes the executable, both READMEs, and the license. To verify t
 ### Prerequisites
 
 - Go 1.25+
-- Node.js 18+
+- Node.js 20+ (Tailwind CSS v4's `@tailwindcss/oxide` native binding requires Node 20+)
 
 ### Build and run (macOS / Linux)
 

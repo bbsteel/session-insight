@@ -325,7 +325,7 @@ export default function FileViewer({ path, cwd, line }: { path: string; cwd: str
               disabled={!parseEnabled}
               placeholder={t(parseEnabled ? 'reader.filterStructure' : 'reader.structureDisabled')}
               aria-label={t('reader.filterStructureLabel')}
-              className="h-7 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
+              className="h-7 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden"
             />
           </div>
           <div className="min-h-0 flex-1 overflow-auto py-1">

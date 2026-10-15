@@ -290,7 +290,7 @@ export default function ToolCallPanel({
           value={query}
           onChange={ev => setQuery(ev.target.value)}
           placeholder={t('panel.filterTools')}
-          className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
+          className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden"
           aria-label={t('panel.filterToolsLabel')}
         />
       </div>

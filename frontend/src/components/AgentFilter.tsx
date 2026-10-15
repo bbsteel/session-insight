@@ -118,7 +118,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
           onClick={() => selectAgent('')}
           aria-pressed={selected === ''}
           title={`${t('filter.allAgents')} (${totalLive}/${totalSessions})`}
-          className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+          className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
             selected === ''
               ? 'bg-[var(--bg-surface-selected)] text-[var(--text-primary)] ring-1 ring-inset ring-[var(--border-default)]'
               : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -141,7 +141,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
               onClick={() => selectAgent(agent.type)}
               aria-pressed={isSelected}
               title={title}
-              className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] relative ${
+              className={`flex-shrink-0 flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] relative ${
                 isSelected
                   ? 'bg-[var(--bg-surface-selected)] ring-1 ring-inset ring-[var(--border-default)]'
                   : 'hover:bg-[var(--bg-surface-hover)]'
@@ -168,7 +168,7 @@ export default function AgentFilter({ agents, selected, onSelect }: AgentFilterP
               aria-haspopup="listbox"
               aria-label={t('filter.moreAgents')}
               title={t('filter.moreAgents')}
-              className={`flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+              className={`flex items-center justify-center rounded-md transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                 overflowOpen
                   ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
                   : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'

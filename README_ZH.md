@@ -88,7 +88,7 @@ Session Insight 自动发现以下 Agent 的会话数据：
 ### 环境依赖
 
 - Go 1.25+
-- Node.js 18+
+- Node.js 20+（Tailwind CSS v4 的原生绑定 `@tailwindcss/oxide` 要求 Node 20+）
 
 ### 构建并运行（macOS / Linux）
 

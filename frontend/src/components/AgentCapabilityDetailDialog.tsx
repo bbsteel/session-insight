@@ -79,7 +79,7 @@ export default function AgentCapabilityDetailDialog({ open, agent, onClose }: Pr
             ref={closeRef}
             type="button"
             onClick={onClose}
-            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             aria-label={t('common.close')}
           >
             <CloseIcon className="h-4 w-4" />

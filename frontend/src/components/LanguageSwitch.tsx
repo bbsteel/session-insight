@@ -100,7 +100,7 @@ export function LanguageSwitch() {
         aria-haspopup="listbox"
         aria-label={t('settings.language')}
         title={t('settings.language')}
-        className={`inline-flex h-7 w-auto items-center gap-1 rounded-md px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+        className={`inline-flex h-7 w-auto items-center gap-1 rounded-md px-1.5 text-nav focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
           open
             ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
             : 'text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -131,7 +131,7 @@ export function LanguageSwitch() {
                     select(o.value)
                   }
                 }}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-nav transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)] ${
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-nav transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)] ${
                   selected
                     ? 'text-[var(--accent-blue)] bg-[var(--bg-surface-hover)]'
                     : 'text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'

@@ -56,13 +56,13 @@ export function useConfirm(): {
           <div className="mt-4 flex items-center justify-end gap-2">
             <button
               onClick={() => finish(false)}
-              className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             >
               {t('common.cancel')}
             </button>
             <button
               onClick={() => finish(true)}
-              className={`h-7 px-3 rounded-md text-nav text-white transition-opacity duration-fast focus-visible:outline-none focus-visible:ring-2 ${
+              className={`h-7 px-3 rounded-md text-nav text-white transition-opacity duration-fast focus-visible:outline-hidden focus-visible:ring-2 ${
                 pending.options.danger
                   ? 'bg-[var(--error)] focus-visible:ring-[var(--error)]'
                   : 'bg-[var(--accent-blue)] focus-visible:ring-[var(--accent-blue)]'

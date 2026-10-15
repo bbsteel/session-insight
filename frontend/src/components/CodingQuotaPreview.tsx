@@ -124,7 +124,7 @@ export default function CodingQuotaPreview({ icon, onOpen }: CodingQuotaPreviewP
         onMouseEnter={requestPreview}
         onFocus={requestPreview}
         aria-label={t('quota.open')}
-        className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+        className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-nav text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         data-testid="global-coding-quota"
       >
         {icon}

@@ -252,7 +252,7 @@ export default function ResumeTerminalControl({ session }: Props) {
         type="button"
         onClick={primary}
         disabled={busy || !plan}
-        className={`h-7 rounded-l-md border border-r-0 px-2 inline-flex max-w-[13rem] items-center gap-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 ${
+        className={`h-7 rounded-l-md border border-r-0 px-2 inline-flex max-w-[13rem] items-center gap-1.5 text-nav focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 ${
           knownTerminalRunning
             ? 'border-[color-mix(in_srgb,var(--accent-green)_45%,var(--border-default))] bg-[color-mix(in_srgb,var(--accent-green)_12%,transparent)] text-[var(--accent-green)]'
             : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -272,7 +272,7 @@ export default function ResumeTerminalControl({ session }: Props) {
           setConfirmUnsafe(false)
         }}
         disabled={!plan}
-        className="h-7 w-6 rounded-r-md border border-[var(--border-default)] text-meta text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50"
+        className="h-7 w-6 rounded-r-md border border-[var(--border-default)] text-meta text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50"
         aria-label={t('resume.actions')}
         aria-expanded={menuOpen}
         data-testid="resume-menu-button"

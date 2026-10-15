@@ -54,7 +54,7 @@ export default function FontPicker({ label, value, onChange, monospaceOnly }: Fo
         onChange={e => onChange(e.target.value)}
         disabled={loading}
         aria-label={label}
-        className="mt-1 h-7 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
+        className="mt-1 h-7 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-hidden"
       >
         {fonts.map(f => (
           <option key={f.family} value={f.family}>{f.family}</option>

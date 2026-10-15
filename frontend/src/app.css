@@ -1,6 +1,25 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tailwind v4 preflight defaults every border color to currentColor; v3 used
+   gray-200. Bare border-width utilities (border-t, border-b, ...) in the UI
+   rely on that neutral default, so restore it at the base layer. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: #e5e7eb;
+  }
+
+  /* v4 preflight dropped the v3 cursor:pointer on buttons; restore it. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 :root {
   /* Dynamic font preferences (overridden by fontPrefs.ts at startup). */
@@ -74,10 +93,10 @@
   --code-bg: #e6e8ed;
   --code-text: #303847;
 
-  /* Shadow */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.04);
-  --shadow-md: 0 2px 8px rgba(0,0,0,.06);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,.1);
+  /* Elevation */
+  --elev-sm: 0 1px 2px rgba(0,0,0,.04);
+  --elev-md: 0 2px 8px rgba(0,0,0,.06);
+  --elev-lg: 0 8px 24px rgba(0,0,0,.1);
 
   /* z-index */
   --z-base: 0;
@@ -116,10 +135,15 @@
   --code-bg: #1e1e2e;
   --code-text: #e4e6eb;
 
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.2);
-  --shadow-md: 0 2px 8px rgba(0,0,0,.3);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
+  --elev-sm: 0 1px 2px rgba(0,0,0,.2);
+  --elev-md: 0 2px 8px rgba(0,0,0,.3);
+  --elev-lg: 0 8px 24px rgba(0,0,0,.5);
 }
+
+/* Tailwind v4 puts utilities in @layer utilities; custom rules must live in
+   a lower layer (base/components) so utility classes keep winning, matching
+   v3's effective cascade. Keyframes are allowed inside layers. */
+@layer components {
 
 .prose-custom h1,
 .prose-custom h2,
@@ -598,7 +622,7 @@ body {
   font-size: var(--text-helper-size);
   white-space: pre-line;
   pointer-events: none;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--elev-md);
 }
 .ct-tooltip-title {
   font-weight: 600;
@@ -628,3 +652,5 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+} /* @layer components */

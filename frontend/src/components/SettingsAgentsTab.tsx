@@ -90,7 +90,7 @@ export default function SettingsAgentsTab({
                   <button
                     type="button"
                     onClick={() => setDetailType(agent.type)}
-                    className="flex w-full items-center gap-3 rounded-lg border border-[var(--border-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                    className="flex w-full items-center gap-3 rounded-lg border border-[var(--border-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                     data-testid={`settings-agent-${agent.type}`}
                   >
                     <AgentIcon agentType={agent.type} className="h-6 w-6 shrink-0" />
