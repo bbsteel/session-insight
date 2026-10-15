@@ -7,6 +7,7 @@ import openCodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg'
 const chrysIcon = '/icons/chrys-c.png'
 const hermesBlackIcon = '/icons/hermes-logo-black.svg'
 const hermesWhiteIcon = '/icons/hermes-logo-white.svg'
+const piIcon = '/icons/pi.svg'
 import { resolveAgentStyle } from '../agentStyles'
 
 interface AgentIconProps {
@@ -41,6 +42,10 @@ function resolveIcon(agentType?: string): AgentIconPair | null {
   if (normalized.includes('hermes')) return {
     light: { src: hermesBlackIcon },
     dark: { src: hermesWhiteIcon },
+  }
+  if (normalized === 'pi') return {
+    light: { src: piIcon },
+    dark: { src: piIcon },
   }
   if (normalized.includes('copilot')) return {
     light: { src: githubCopilotIcon, color: '#24292f' },

@@ -14,6 +14,7 @@ const STYLES: Record<AgentKey, AgentStyle> = {
   chrys:    { accent: '#c084fc', userPrefix: '❯',  assistantPrefix: '◇' },
   grok:     { accent: '#111111', userPrefix: '›',  assistantPrefix: '✦' },
   hermes:   { accent: '#0f766e', userPrefix: '❯',  assistantPrefix: '✦' },
+  pi:       { accent: '#e48a7a', userPrefix: '›',  assistantPrefix: '●' },
 }
 
 // Deterministic palette for unknown agents (10 colors, wraps via char-code sum mod 10)

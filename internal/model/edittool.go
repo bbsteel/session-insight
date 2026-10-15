@@ -27,16 +27,17 @@ func ExtractEditCalls(evt RenderEvent) []EditCall {
 	if evt.ToolName == "apply_patch" {
 		return parseApplyPatch(evt.TurnIndex, evt.ToolCallID, evt.ToolInput)
 	}
-	// Claude Edit / str_replace_editor / OpenCode edit
-	call := EditCall{TurnIndex: evt.TurnIndex, ToolCallID: evt.ToolCallID}
-	if v, ok := evt.ToolInput["file_path"].(string); ok {
-		call.FilePath = v
+	path := stringField(evt.ToolInput, "file_path", "path")
+	if calls := parseEditsArray(evt.TurnIndex, evt.ToolCallID, path, evt.ToolInput["edits"]); len(calls) > 0 {
+		return calls
 	}
-	if v, ok := evt.ToolInput["old_string"].(string); ok {
-		call.OldString = v
-	}
-	if v, ok := evt.ToolInput["new_string"].(string); ok {
-		call.NewString = v
+	// Claude Edit / str_replace_editor / OpenCode edit; Pi also uses path/oldText/newText.
+	call := EditCall{
+		TurnIndex:  evt.TurnIndex,
+		ToolCallID: evt.ToolCallID,
+		FilePath:   path,
+		OldString:  stringField(evt.ToolInput, "old_string", "oldText", "old_str"),
+		NewString:  stringField(evt.ToolInput, "new_string", "newText", "new_str"),
 	}
 	if v, ok := evt.ToolInput["replace_all"].(bool); ok {
 		call.ReplaceAll = v
@@ -45,6 +46,41 @@ func ExtractEditCalls(evt RenderEvent) []EditCall {
 		return nil
 	}
 	return []EditCall{call}
+}
+
+func stringField(input map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := input[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func parseEditsArray(turnIndex int, toolCallID, filePath string, raw any) []EditCall {
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	var calls []EditCall
+	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		call := EditCall{
+			TurnIndex:  turnIndex,
+			ToolCallID: toolCallID,
+			FilePath:   filePath,
+			OldString:  stringField(fields, "oldText", "old_string", "old_str"),
+			NewString:  stringField(fields, "newText", "new_string", "new_str"),
+		}
+		if call.FilePath == "" && call.OldString == "" && call.NewString == "" {
+			continue
+		}
+		calls = append(calls, call)
+	}
+	return calls
 }
 
 // parseApplyPatch parses a Codex / Copilot apply_patch tool input.

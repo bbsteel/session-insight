@@ -13,6 +13,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/grok"
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
+	"github.com/bbsteel/session-insight/internal/reader/pi"
 )
 
 // Representative per-Agent resolution using each adapter's real static
@@ -61,6 +62,7 @@ func TestResolveSevenAgentsCatalogIntegration(t *testing.T) {
 				capability.CapabilityTerminate: hermes.Capabilities().Capabilities[capability.CapabilityTerminate].ReasonCode,
 			},
 		},
+		{name: "pi", static: pi.Capabilities()},
 	}
 
 	for _, tc := range cases {
@@ -151,6 +153,22 @@ func TestResolveCopilotResumeStaysUnsupportedEvenWithEmptyResumeID(t *testing.T)
 	// Must not become missing/resume_id_missing.
 	if got.Status[capability.CapabilityResume].ReasonCode == capability.ReasonResumeIDMissing {
 		t.Fatal("unsupported must not become resume_id_missing")
+	}
+}
+
+func TestResolvePiSubtasksNotApplicable(t *testing.T) {
+	static := pi.Capabilities()
+	d := detailBase("pi", "p1")
+	d.ResumeID = "p1"
+	d.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
+	src := &capsFakeReader{agentType: "pi", live: boolPtr(false), hasRev: true}
+	got, err := ResolveSessionCapabilities(src, d, static)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := got.Status[capability.CapabilitySubtasks]
+	if st.State != capability.CapabilityNotApplicable || st.ReasonCode != "no_native_subagents" {
+		t.Fatalf("subtasks=%+v", st)
 	}
 }
 

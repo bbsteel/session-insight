@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp/demo"}
+{"type":"model_change","id":"m1","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","provider":"anthropic","modelId":"claude-sonnet-4"}
+{"type":"session_info","id":"n1","parentId":"m1","timestamp":"2026-01-01T00:00:01.500Z","name":"demo session"}
+{"type":"message","id":"u1","parentId":"n1","timestamp":"2026-01-01T00:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"hello conformance"}],"timestamp":1767225602000}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-01-01T00:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"hi there"}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4","usage":{"input":12,"output":3,"cacheRead":0,"cacheWrite":0,"totalTokens":15,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1767225603000,"durationMs":100}}

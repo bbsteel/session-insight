@@ -17,6 +17,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
+	"github.com/bbsteel/session-insight/internal/reader/pi"
 	"github.com/bbsteel/session-insight/internal/reader/worktreereview"
 )
 
@@ -41,6 +42,7 @@ func RegisteredAgentDefinitions() []RegisteredAgentDefinition {
 		{Capabilities: hermes.Capabilities(), Presentation: hermes.Presentation(), MigrationState: hermes.PresentationMigrationState()},
 		{Capabilities: imported.Capabilities(), Presentation: imported.Presentation(), MigrationState: imported.PresentationMigrationState()},
 		{Capabilities: opencode.Capabilities(), Presentation: opencode.Presentation(), MigrationState: opencode.PresentationMigrationState()},
+		{Capabilities: pi.Capabilities(), Presentation: pi.Presentation(), MigrationState: pi.PresentationMigrationState()},
 		{Capabilities: worktreereview.Capabilities(), Presentation: worktreereview.Presentation(), MigrationState: worktreereview.PresentationMigrationState()},
 	}
 	sort.Slice(defs, func(i, j int) bool {
@@ -120,6 +122,10 @@ func Discover() []BaseSessionReader {
 		} else {
 			readers = append(readers, reader)
 		}
+	}
+
+	if piDir, ok := pi.ResolveSessionsDir(); ok {
+		readers = append(readers, pi.New(piDir))
 	}
 
 	// Worktree Review discovery may not need a home directory at all: a
