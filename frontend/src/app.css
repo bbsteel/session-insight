@@ -2,6 +2,19 @@
 @config "../tailwind.config.js";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Tailwind v4 preflight defaults every border color to currentColor; v3 used
+   gray-200. Bare border-width utilities (border-t, border-b, ...) in the UI
+   rely on that neutral default, so restore it at the base layer. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: #e5e7eb;
+  }
+}
+
 :root {
   /* Dynamic font preferences (overridden by fontPrefs.ts at startup). */
   --font-sans-first: 'Inter';
