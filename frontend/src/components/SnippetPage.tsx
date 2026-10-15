@@ -193,7 +193,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
           <button
             type="button"
             onClick={onBack}
-            className="h-8 rounded-md border border-[var(--border-default)] px-3 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="h-8 rounded-md border border-[var(--border-default)] px-3 text-helper text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
             {t('snippets.back')}
           </button>
@@ -205,7 +205,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
             onChange={event => setQuery(event.target.value)}
             placeholder={t('snippets.search')}
             aria-label={t('snippets.searchLabel')}
-            className="h-10 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] shadow-sm focus:border-[var(--accent-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)]/20"
+            className="h-10 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-inset)] px-3 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] shadow-sm focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-2 focus:ring-[var(--accent-blue)]/20"
           />
         </div>
         {error && <p className="mt-3 text-helper text-[var(--error)]" role="status">{t(error)}</p>}
@@ -229,7 +229,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                   setAgentFilter('')
                   setProjectFilter('')
                 }}
-                className={`flex h-8 flex-shrink-0 items-center gap-1.5 rounded-t-md border-x border-t px-3 text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${!agentFilter && !projectFilter ? 'border-[var(--border-default)] bg-[var(--bg-surface)] font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
+                className={`flex h-8 flex-shrink-0 items-center gap-1.5 rounded-t-md border-x border-t px-3 text-helper transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${!agentFilter && !projectFilter ? 'border-[var(--border-default)] bg-[var(--bg-surface)] font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
               >
                 <NotebookIcon size={15} />
                 <span>{t('snippets.allNotes')}</span>
@@ -243,7 +243,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                   role="tab"
                   aria-selected={agentFilter === facet.key}
                   onClick={() => setAgentFilter(current => current === facet.key ? '' : facet.key)}
-                  className={`flex h-8 flex-shrink-0 items-center gap-1.5 rounded-t-md border-x border-t px-3 text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${agentFilter === facet.key ? 'border-[var(--border-default)] bg-[var(--bg-surface)] font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
+                  className={`flex h-8 flex-shrink-0 items-center gap-1.5 rounded-t-md border-x border-t px-3 text-helper transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${agentFilter === facet.key ? 'border-[var(--border-default)] bg-[var(--bg-surface)] font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
                 >
                   <AgentIcon agentType={facet.key} size={15} />
                   <span>{facet.label}</span>
@@ -266,7 +266,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                   data-testid="snippet-filter-all-projects"
                   aria-pressed={!projectFilter}
                   onClick={() => setProjectFilter('')}
-                  className={`flex w-full items-center gap-2 border-l-2 px-2 py-2 text-left text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${!projectFilter ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
+                  className={`flex w-full items-center gap-2 border-l-2 px-2 py-2 text-left text-helper transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${!projectFilter ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
                 >
                   <NotebookIcon size={15} />
                   <span className="min-w-0 flex-1 truncate">{t('snippets.allProjects')}</span>
@@ -279,7 +279,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                       data-testid={`snippet-filter-project-${facet.key}`}
                       aria-pressed={projectFilter === facet.key}
                       onClick={() => setProjectFilter(current => current === facet.key ? '' : facet.key)}
-                      className={`flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${projectFilter === facet.key ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
+                      className={`flex w-full items-center gap-2 border-l-2 px-2 py-1.5 text-left text-helper transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${projectFilter === facet.key ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 font-medium text-[var(--accent-purple)]' : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'}`}
                     >
                       <FolderIcon />
                       <span className="min-w-0 flex-1 truncate">{facet.label}</span>
@@ -297,7 +297,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                     setAgentFilter('')
                     setProjectFilter('')
                   }}
-                  className="m-2 border-t border-[var(--border-default)] px-2 pt-3 text-left text-helper text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                  className="m-2 border-t border-[var(--border-default)] px-2 pt-3 text-left text-helper text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                 >
                   {t('snippets.clearFilters')}
                 </button>
@@ -341,7 +341,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                         disabled={deletingID === selectedSnippet.id}
                         aria-label={t('snippets.deleteLabel')}
                         title={t('snippets.delete')}
-                        className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-base leading-none text-[var(--text-muted)] opacity-70 hover:bg-[var(--bg-surface-hover)] hover:text-[var(--error)] group-hover:opacity-100 disabled:cursor-wait disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                        className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-base leading-none text-[var(--text-muted)] opacity-70 hover:bg-[var(--bg-surface-hover)] hover:text-[var(--error)] group-hover:opacity-100 disabled:cursor-wait disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                       >
                         ×
                       </button>
@@ -375,7 +375,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                               return nextIDs
                             })}
                             aria-expanded={expanded}
-                            className="h-7 rounded-md px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                            className="h-7 rounded-md px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                           >
                             {expanded ? t('snippets.collapse') : t('snippets.expand')}
                           </button>
@@ -383,7 +383,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                         <button
                           type="button"
                           onClick={() => onOpenSource(selectedSnippet)}
-                          className="h-7 rounded-md border border-[var(--border-default)] px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                          className="h-7 rounded-md border border-[var(--border-default)] px-2 text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                         >
                           {t('snippets.openSource')}
                         </button>
@@ -413,7 +413,7 @@ export default function SnippetPage({ onBack, onOpenSource }: Props) {
                       data-testid={`snippet-page-${snippet.id}`}
                       aria-current={selected ? 'page' : undefined}
                       onClick={() => setSelectedSnippetID(snippet.id)}
-                      className={`flex w-full items-start gap-2 border-l-2 px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${selected ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10' : 'border-transparent hover:bg-[var(--bg-surface-hover)]'}`}
+                      className={`flex w-full items-start gap-2 border-l-2 px-2 py-2 text-left transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${selected ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10' : 'border-transparent hover:bg-[var(--bg-surface-hover)]'}`}
                     >
                       <span className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${isAssistantSnippet ? 'bg-[var(--accent-purple)]' : 'bg-[var(--accent-blue)]'}`} aria-hidden="true" />
                       <span className="min-w-0">

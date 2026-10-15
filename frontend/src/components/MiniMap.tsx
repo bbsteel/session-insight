@@ -463,7 +463,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       >
         <button
           type="button"
-          className="flex h-full w-full items-center justify-center border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
+          className="flex h-full w-full items-center justify-center border-b border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
           aria-label={t('minimap.top')}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => {
@@ -554,7 +554,7 @@ export default function MiniMap({ turns, positions, billing, controlRef, scrollT
       >
         <button
           type="button"
-          className="flex h-full w-full items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
+          className="flex h-full w-full items-center justify-center border-t border-[var(--border-muted)] bg-[var(--bg-surface)] text-[12px] font-semibold leading-none text-[var(--text-muted)] hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
           aria-label={t('minimap.bottom')}
           onPointerDown={e => e.stopPropagation()}
           onClick={e => {

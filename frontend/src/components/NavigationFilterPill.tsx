@@ -37,7 +37,7 @@ export function NavigationFilterPill({
       data-testid="navigation-filter-pill"
       {...rest}
       aria-pressed={active}
-      className={`inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-full border px-2 text-helper leading-none transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+      className={`inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-full border px-2 text-helper leading-none transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
         active && !accentColor
           ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
           : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'

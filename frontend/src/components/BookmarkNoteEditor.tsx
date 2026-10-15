@@ -95,7 +95,7 @@ export default function BookmarkNoteEditor({
         maxLength={2000}
         rows={anchor ? 3 : 4}
         autoFocus
-        className="mt-3 w-full resize-none rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1.5 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
+        className="mt-3 w-full resize-none rounded border border-[var(--border-muted)] bg-[var(--bg-inset)] px-2 py-1.5 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-1 focus:ring-[var(--accent-blue)]/30"
         placeholder={t('bookmark.placeholder')}
       />
       <div className="mt-3 flex items-center justify-end gap-2">
@@ -103,7 +103,7 @@ export default function BookmarkNoteEditor({
           type="button"
           onClick={onClose}
           disabled={saving}
-          className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="h-7 px-3 rounded-md border border-[var(--border-default)] text-nav text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-60 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         >
           {anchor ? t('bookmark.skip') : t('common.cancel')}
         </button>
@@ -111,7 +111,7 @@ export default function BookmarkNoteEditor({
           type="button"
           onClick={() => void save()}
           disabled={saving}
-          className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="h-7 px-3 rounded-md bg-[var(--accent-blue)] text-nav text-white disabled:opacity-60 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         >
           {saving ? t('common.saving') : t('common.save')}
         </button>

@@ -192,7 +192,7 @@ export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
               type="button"
               onClick={() => load(true)}
               disabled={loading || refreshing}
-              className="h-7 rounded-md border border-[var(--border-default)] px-2.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              className="h-7 rounded-md border border-[var(--border-default)] px-2.5 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               data-testid="coding-quota-refresh"
             >
               {refreshing ? t('quota.refreshing') : t('quota.refresh')}
@@ -201,7 +201,7 @@ export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
               type="button"
               onClick={onClose}
               aria-label={t('common.close')}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             >
               ×
             </button>
@@ -218,7 +218,7 @@ export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
               <button
                 type="button"
                 onClick={() => load(false)}
-                className="mt-3 h-7 rounded-md bg-[var(--accent-blue)] px-3 text-nav text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                className="mt-3 h-7 rounded-md bg-[var(--accent-blue)] px-3 text-nav text-white hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 {t('common.retry')}
               </button>
@@ -234,7 +234,7 @@ export default function CodingQuotaDialog({ onClose }: CodingQuotaDialogProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllProviders(true)}
-                  className="mt-3 h-7 rounded-md border border-[var(--border-default)] px-3 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                  className="mt-3 h-7 rounded-md border border-[var(--border-default)] px-3 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                 >
                   {t('quota.view.all')}
                 </button>

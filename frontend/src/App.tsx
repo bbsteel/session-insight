@@ -155,7 +155,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => persistSidebarHidden(false)}
-            className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             aria-label={t('app.openSessions')}
             title={t('app.openSessionsTitle', { shortcut: sessionListShortcut })}
             aria-controls="session-sidebar"

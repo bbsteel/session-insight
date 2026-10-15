@@ -43,7 +43,7 @@ export function ThemeSelect() {
       <select
         value={pref}
         onChange={e => setPref(e.target.value as ThemePreference)}
-        className="h-7 max-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-1.5 text-helper text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-none"
+        className="h-7 max-w-[9rem] rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-1.5 text-helper text-[var(--text-primary)] focus:border-[var(--accent-blue)] focus:outline-hidden"
         aria-label={t('theme.label')}
       >
         {OPTIONS.map(o => (
@@ -75,7 +75,7 @@ export function ThemeSwitch() {
       title={pref === 'system'
         ? t('theme.systemTitle', { current: currentLabel, next: nextLabel })
         : t('theme.currentTitle', { current: currentLabel, next: nextLabel })}
-      className="inline-flex h-7 w-14 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-primary)] shadow-sm transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+      className="inline-flex h-7 w-14 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--bg-inset)] text-[var(--text-primary)] shadow-sm transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
     >
       <span className="flex w-full items-center justify-between px-1">
         <span className={dark ? inactiveIcon : activeIconBox}>

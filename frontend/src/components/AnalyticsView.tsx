@@ -476,7 +476,7 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
                 <Tag
                   key={i}
                   onClick={clickable ? () => onJumpToTurn!(f.turn_index!) : undefined}
-                  className={`w-full text-left bg-[var(--bg-inset)] rounded-md p-3 border-l-2 ${clickable ? 'hover:bg-[var(--bg-surface-hover)] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]' : ''}`}
+                  className={`w-full text-left bg-[var(--bg-inset)] rounded-md p-3 border-l-2 ${clickable ? 'hover:bg-[var(--bg-surface-hover)] cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]' : ''}`}
                   style={{ borderLeftColor: color }}
                 >
                   <div className="text-body font-medium" style={{ color }}>{copy.title}</div>
@@ -515,7 +515,7 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
               <button
                 key={turn.turn_index}
                 onClick={() => onJumpToTurn?.(turn.turn_index)}
-                className="bg-[var(--bg-inset)] rounded-md p-3 text-left hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                className="bg-[var(--bg-inset)] rounded-md p-3 text-left hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               >
                 <div className="text-card text-[var(--text-primary)]">
                   {hasCost

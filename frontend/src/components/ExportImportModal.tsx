@@ -147,7 +147,7 @@ export default function ExportImportModal({ sessions, preferred = null, onClose 
     }
   }
 
-  const inputCls = 'h-8 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2.5 text-helper text-[var(--text-primary)] shadow-sm placeholder:text-[var(--text-muted)] hover:border-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]'
+  const inputCls = 'h-8 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-2.5 text-helper text-[var(--text-primary)] shadow-sm placeholder:text-[var(--text-muted)] hover:border-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-1 focus:ring-[var(--accent-blue)]'
   const btnCls = 'h-7 rounded-md border border-[var(--border-default)] px-2.5 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50'
   const primaryCls = 'h-7 rounded-md bg-[var(--accent-blue)] px-3 text-helper font-medium text-[var(--text-inverse)] transition-opacity duration-fast hover:opacity-90 disabled:opacity-50'
   const checkboxCls = 'h-3.5 w-3.5 accent-[var(--accent-blue)]'

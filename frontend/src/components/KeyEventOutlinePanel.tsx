@@ -188,7 +188,7 @@ export default function KeyEventOutlinePanel({
           value={query}
           onChange={ev => setQuery(ev.target.value)}
           placeholder={t('outline.filter')}
-          className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
+          className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden"
           aria-label={t('outline.filterLabel')}
         />
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
@@ -250,7 +250,7 @@ export default function KeyEventOutlinePanel({
           )}
           <button
             onClick={locateCurrent}
-            className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             title={t('outline.locateCurrent')}
             aria-label={t('outline.locateCurrent')}
           >
@@ -286,7 +286,7 @@ export default function KeyEventOutlinePanel({
               style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px', borderLeft: `2px solid ${meta.color}` } as React.CSSProperties}
             >
               <div
-                className="flex cursor-pointer items-stretch hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
+                className="flex cursor-pointer items-stretch hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-blue)]"
                 onClick={() => jump(item)}
                 role="button"
                 tabIndex={0}

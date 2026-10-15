@@ -291,7 +291,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
           onClick={() => setOpen(v => !v)}
           aria-expanded={open}
           aria-haspopup="listbox"
-          className="w-full h-9 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="w-full h-9 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           title={providerLabel ? `${selected ? label : t('filter.allModels')} · ${providerLabel}` : undefined}
         >
           <span className="flex-shrink-0">
@@ -336,7 +336,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                   placeholder={t('filter.searchModels')}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="w-full h-7 rounded border border-[var(--border-default)] bg-[var(--bg-inset)] pl-6 pr-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
+                  className="w-full h-7 rounded border border-[var(--border-default)] bg-[var(--bg-inset)] pl-6 pr-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-1 focus:ring-[var(--accent-blue)]/30"
                 />
               </div>
             </div>
@@ -399,7 +399,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                               }
                             }}
                             title={`${providerLine(model)} / ${model.label}`}
-                            className={`px-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                            className={`px-2 py-1 flex items-center gap-2 text-left rounded cursor-pointer transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                               isSelected
                                 ? 'bg-[var(--bg-surface-selected)]'
                                 : isExpanded
@@ -423,7 +423,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                               aria-label={t('filter.toggleProviders', { model: model.label })}
                               title={t('filter.toggleProviders', { model: model.label })}
                               onClick={() => toggleProviders(model.key)}
-                              className="absolute bottom-1 left-7 inline-flex max-w-[calc(100%-2rem)] items-center gap-0.5 rounded px-1 text-helper font-medium text-[var(--accent-blue)] hover:bg-[var(--bg-inset)] transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                              className="absolute bottom-1 left-7 inline-flex max-w-[calc(100%-2rem)] items-center gap-0.5 rounded px-1 text-helper font-medium text-[var(--accent-blue)] hover:bg-[var(--bg-inset)] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                             >
                               <span className="truncate">{providerLine(model)}</span>
                               <svg
@@ -465,7 +465,7 @@ export default function ModelFilter({ models, selected, onSelect }: ModelFilterP
                               aria-selected={selected === provider.key}
                               onClick={() => pick(provider.key)}
                               title={`${provider.provider} / ${model.label}`}
-                              className={`inline-flex h-7 items-center gap-1.5 rounded-full border pl-1.5 pr-2 text-helper transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                              className={`inline-flex h-7 items-center gap-1.5 rounded-full border pl-1.5 pr-2 text-helper transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                                 selected === provider.key
                                   ? 'border-[var(--accent-blue)] bg-[var(--bg-surface-selected)] text-[var(--text-primary)]'
                                   : 'border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-[var(--accent-blue)]'

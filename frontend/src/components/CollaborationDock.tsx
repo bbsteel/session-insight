@@ -153,7 +153,7 @@ export default function CollaborationDock({
         <button
           type="button"
           onClick={onExpand}
-          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           aria-label={t('collaboration.dock.expand')}
           title={t('collaboration.dock.expand')}
           data-testid="collaboration-dock-expand"
@@ -165,7 +165,7 @@ export default function CollaborationDock({
         <button
           type="button"
           onClick={onClose}
-          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           aria-label={t('collaboration.dock.close')}
           data-testid="collaboration-dock-close"
         >
@@ -227,7 +227,7 @@ export default function CollaborationDock({
         <button
           type="button"
           onClick={onCollapse}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           aria-label={t('collaboration.dock.collapsePanel')}
           title={t('collaboration.dock.collapsePanel')}
           data-testid="collaboration-dock-collapse"
@@ -237,7 +237,7 @@ export default function CollaborationDock({
         <button
           type="button"
           onClick={onClose}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           aria-label={t('collaboration.dock.close')}
           data-testid="collaboration-dock-close"
         >
@@ -332,7 +332,7 @@ function ResizeHandle({
 
   return (
     <div
-      className="collab-dock-handle flex flex-shrink-0 cursor-row-resize items-center justify-center hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+      className="collab-dock-handle flex flex-shrink-0 cursor-row-resize items-center justify-center hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
       style={{ height: HANDLE_PX }}
       role="separator"
       aria-orientation="horizontal"
@@ -452,7 +452,7 @@ function DetailCloseButton({ onClose }: { onClose: () => void }) {
     <button
       type="button"
       onClick={onClose}
-      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-meta text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
       aria-label={t('collaboration.detail.close')}
       data-testid="collaboration-detail-close"
     >

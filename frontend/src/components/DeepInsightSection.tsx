@@ -83,7 +83,7 @@ export default function DeepInsightSection({ sessionId, agentType, isLive, findi
           <select
             value={providerId}
             onChange={e => setProviderId(Number(e.target.value))}
-            className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-blue)]"
+            className="h-7 max-w-[220px] rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-1.5 text-helper text-[var(--text-secondary)] focus:outline-hidden focus:border-[var(--accent-blue)]"
             title={t('insight.providerPicker')}
           >
             <option value={0}>

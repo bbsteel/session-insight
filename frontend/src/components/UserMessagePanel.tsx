@@ -214,7 +214,7 @@ export default function UserMessagePanel({
           value={query}
           onChange={ev => setQuery(ev.target.value)}
           placeholder={t('panel.filterMessages')}
-          className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none"
+          className="h-6 w-full rounded border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-meta text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden"
           aria-label={t('panel.filterMessagesLabel')}
         />
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
@@ -298,7 +298,7 @@ export default function UserMessagePanel({
                       }}
                       aria-label={t('snippets.saveAssistant')}
                       title={t('snippets.saveAssistant')}
-                      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-meta text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] disabled:cursor-wait disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-meta text-[var(--text-muted)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--accent-blue)] disabled:cursor-wait disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                     >
                       ✂
                     </button>

@@ -11,7 +11,7 @@ import ChangePlatformWizard from './ChangePlatformWizard'
 
 const sectionBox = 'rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] p-3.5'
 const actionBtn =
-  'rounded-md border border-[var(--border-default)] px-2.5 py-1 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 disabled:pointer-events-none'
+  'rounded-md border border-[var(--border-default)] px-2.5 py-1 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] disabled:opacity-50 disabled:pointer-events-none'
 
 const LIFECYCLE_ORDER: ChangeHostProfileLifecycle[] = ['active', 'verified', 'degraded', 'draft', 'invalid', 'revoked']
 
@@ -96,7 +96,7 @@ export default function SettingsChangeHostsTab() {
           </div>
           <button
             onClick={() => setWizardOpen(true)}
-            className="rounded-md bg-[var(--accent-blue)] px-3 py-1.5 text-helper text-white transition-colors duration-fast hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="rounded-md bg-[var(--accent-blue)] px-3 py-1.5 text-helper text-white transition-colors duration-fast hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
           >
             {t('changeHosts.addPlatform')}
           </button>

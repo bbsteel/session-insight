@@ -291,9 +291,9 @@ export default function SettingsDialog({
   }
 
   const inputCls =
-    'h-7 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] transition-colors duration-fast hover:border-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]'
+    'h-7 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] transition-colors duration-fast hover:border-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-1 focus:ring-[var(--accent-blue)]'
   const selectCls =
-    'h-7 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] transition-colors duration-fast hover:border-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]'
+    'h-7 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] px-2 text-helper text-[var(--text-primary)] transition-colors duration-fast hover:border-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-1 focus:ring-[var(--accent-blue)]'
   const btnCls =
     'h-7 rounded-md border border-[var(--border-default)] px-2.5 text-helper text-[var(--text-secondary)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-50'
   const primaryBtnCls =
@@ -338,7 +338,7 @@ export default function SettingsDialog({
                   )}
                   <button
                     onClick={() => setActiveTab(tab.id)}
-                    className={`group relative w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-helper transition-all duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                    className={`group relative w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-helper transition-all duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                       selected
                         ? 'bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] font-medium text-[var(--accent-blue)]'
                         : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
@@ -377,7 +377,7 @@ export default function SettingsDialog({
             </h2>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
               aria-label={t('common.close')}
             >
               ✕
@@ -612,7 +612,7 @@ export default function SettingsDialog({
                                 setUIFontSizePref(key)
                               }}
                               aria-pressed={selected}
-                              className={`h-7 px-3 rounded-md border text-helper transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+                              className={`h-7 px-3 rounded-md border text-helper transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                                 selected
                                   ? 'bg-[color-mix(in_srgb,var(--accent-blue)_10%,transparent)] border-[var(--accent-blue)] text-[var(--accent-blue)]'
                                   : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'

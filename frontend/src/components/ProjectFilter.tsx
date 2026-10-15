@@ -107,7 +107,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
           onClick={() => setOpen(v => !v)}
           aria-expanded={open}
           aria-haspopup="listbox"
-          className="w-full h-9 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+          className="w-full h-9 px-2.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-inset)] text-body text-[var(--text-primary)] flex items-center gap-2 transition-colors duration-fast hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
         >
           <span className={`flex-shrink-0 ${selected ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'}`}>
             <FolderIcon size={16} />
@@ -149,7 +149,7 @@ export default function ProjectFilter({ projects, selected, onSelect }: ProjectF
                   placeholder={t('filter.searchProjects')}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="w-full h-7 rounded border border-[var(--border-default)] bg-[var(--bg-inset)] pl-6 pr-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]/30"
+                  className="w-full h-7 rounded border border-[var(--border-default)] bg-[var(--bg-inset)] pl-6 pr-2 text-helper text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent-blue)] focus:outline-hidden focus:ring-1 focus:ring-[var(--accent-blue)]/30"
                 />
               </div>
             </div>

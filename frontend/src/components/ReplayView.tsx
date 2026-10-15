@@ -1862,7 +1862,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 void fetchAgents().then(setAgentsCatalog).catch(() => setAgentsCatalog([]))
               }
             }}
-            className="h-7 max-w-[8rem] rounded-md border border-[var(--border-default)] px-1.5 inline-flex items-center gap-1 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+            className="h-7 max-w-[8rem] rounded-md border border-[var(--border-default)] px-1.5 inline-flex items-center gap-1 text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
             aria-label={t('capability.session.openButton')}
             title={agentDisplayName}
             data-testid="session-agent-capability-button"
@@ -1900,7 +1900,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               <button
                 type="button"
                 onClick={() => setRecordPanelOpen(true)}
-                className={`h-7 rounded-md border px-2 inline-flex items-center gap-1.5 text-nav hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${toneClass(rec.tone)}`}
+                className={`h-7 rounded-md border px-2 inline-flex items-center gap-1.5 text-nav hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${toneClass(rec.tone)}`}
                 aria-label={t('record.pill.open')}
                 title={recordStatusLabel(rec, t)}
                 data-testid="session-record-status-button"
@@ -1916,7 +1916,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               gitPanelOpen
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            } focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             aria-expanded={gitPanelOpen}
             data-testid="session-git-evidence-button"
           >
@@ -1945,7 +1945,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               viewMode === 'terminal' && searchOpen
                 ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10'
                 : 'text-[var(--text-secondary)]'
-            } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            } hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.findTitle', { shortcut: findShortcut })}
             aria-pressed={viewMode === 'terminal' && searchOpen}
             data-testid="session-terminal-find-button"
@@ -1955,12 +1955,12 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           </button>
           <button
             onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
-            className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
             {t('replay.analytics')}
           </button>
           <span className="text-[var(--border-default)]">|</span>
-          <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{t('replay.export')}</a>
+          <a href={`/api/sessions/${session.id}/export`} className="h-7 rounded-md px-2 inline-flex items-center text-nav text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] no-underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]">{t('replay.export')}</a>
           <span className="text-[var(--border-default)]">|</span>
           <button
             onClick={() => setShowAIPanel(true)}
@@ -1968,7 +1968,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               showAIPanel
                 ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'text-[var(--text-secondary)]'
-            } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.aiPanel')}
             aria-expanded={showAIPanel}
             aria-controls="session-assistant-panel"
@@ -1984,7 +1984,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 collabDockOpen
                   ? 'bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                   : 'text-[var(--text-secondary)]'
-              } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+              } hover:bg-[color-mix(in_srgb,var(--accent-blue)_12%,transparent)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
               title={t('collaboration.dock.open')}
               aria-expanded={collabDockOpen}
               aria-controls="collaboration-dock"
@@ -2071,7 +2071,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               showUserPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            } focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.messages')}
           >
             {t('replay.messages')}{interactionCount > 0 ? ` ${formatNumber(locale, interactionCount)}` : ''}
@@ -2092,7 +2092,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               showToolPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            } focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.toolCalls')}
           >
             {t('replay.toolCalls')}{toolCallCount > 0 ? ` ${formatNumber(locale, toolCallCount)}` : ''}
@@ -2113,7 +2113,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               showOutlinePanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
                 : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'
-            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
+            } focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
             title={t('replay.outline')}
           >
             {t('replay.outline')}{outlineItems.length > 0 ? ` ${formatNumber(locale, outlineItems.length)}` : ''}
@@ -2236,7 +2236,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 type="button"
                 onClick={(e) => { if (!openOnModifiedClick(e, childContext.parentAgentType, childContext.parentId)) returnToParentSession() }}
                 onAuxClick={(e) => { openOnModifiedClick(e, childContext.parentAgentType, childContext.parentId) }}
-                className="h-6 flex-shrink-0 rounded-md px-2 text-meta text-[var(--accent-blue)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
+                className="h-6 flex-shrink-0 rounded-md px-2 text-meta text-[var(--accent-blue)] hover:bg-[var(--bg-surface-hover)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]"
                 data-testid="collaboration-return-parent"
               >
                 ← {t('collaboration.backing.back')}
@@ -2311,7 +2311,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               type="button"
               data-testid="follow-fab"
               onClick={handleToggleFollow}
-              className={`absolute bottom-3 z-[var(--z-sticky)] h-9 rounded-full border px-3.5 inline-flex items-center gap-1.5 text-nav shadow-md backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
+              className={`absolute bottom-3 z-[var(--z-sticky)] h-9 rounded-full border px-3.5 inline-flex items-center gap-1.5 text-nav shadow-md backdrop-blur-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)] ${
                 followOutput
                   ? 'border-[var(--accent-green)]/40 bg-[color-mix(in_srgb,var(--accent-green)_18%,var(--bg-surface))] text-[var(--accent-green)]'
                   : 'border-[var(--border-default)] bg-[var(--bg-surface)]/95 text-[var(--text-secondary)] hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)]'

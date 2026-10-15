@@ -28,7 +28,7 @@ interface NavigationPanelHeaderProps {
   expandAll?: ExpandAllAction
 }
 
-const headerButtonClass = 'inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-nav focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]'
+const headerButtonClass = 'inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-nav focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]'
 
 /** Shared title/action row for the three replay navigation panels. */
 export default function NavigationPanelHeader({

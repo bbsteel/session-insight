@@ -172,7 +172,7 @@ export default function TerminalSearchBar({ controlRef, refreshToken, focusToken
           else if (e.key === 'Escape') { e.preventDefault(); onClose() }
         }}
         placeholder={t('terminalSearch.placeholder')}
-        className="h-6 min-w-24 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
+        className="h-6 min-w-24 w-44 border-none bg-transparent text-helper text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-hidden"
       />
       <button onClick={() => toggle('caseSensitive')} title={t('terminalSearch.caseSensitive')} aria-pressed={opts.caseSensitive} className={toggleCls(opts.caseSensitive)}>Aa</button>
       <button onClick={() => toggle('wholeWord')} title={t('terminalSearch.wholeWord')} aria-pressed={opts.wholeWord} className={toggleCls(opts.wholeWord)}><span className="underline underline-offset-2">wd</span></button>
