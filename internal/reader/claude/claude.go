@@ -477,6 +477,7 @@ func (r *ClaudeReader) GetSession(id string) (*model.SessionDetail, error) {
 	detail := &model.SessionDetail{Session: session, Turns: turns}
 
 	detail.AnomalySummary = shared.RunAnomalyDetection(turns)
+	detail.Todos = readClaudeTodos(r.claudeRoot(), id)
 	detail.Provenance = r.attachProvenance(jsonlPath, len(turns) > 0, skipped)
 
 	return detail, nil
@@ -641,9 +642,10 @@ func parseClaudeEvents(path string) (turns []model.TurnVM, modelName string, ski
 			}
 
 			currentTurn.Events = append(currentTurn.Events, newEventVM("assistant.message", evt.Timestamp, map[string]any{
-				"model":  msg.Model,
-				"blocks": len(msg.contentBlocks()),
-				"text":   strings.Join(textParts, ""),
+				"model":       msg.Model,
+				"blocks":      len(msg.contentBlocks()),
+				"text":        strings.Join(textParts, ""),
+				"stop_reason": msg.StopReason,
 			}))
 
 		// Turn boundary marker
