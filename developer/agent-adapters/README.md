@@ -122,6 +122,7 @@ Roles are cross-adapter semantic labels, **not** filenames:
 | chrys | `session.json` / recovery / snapshots / collab / `mutations` |
 | grok | `summary` + `updates` / `chat_history` + `events` + hunk/rewind sidecars |
 | opencode | shared `opencode.db` (+ wal/shm) |
+| pi | single `<timestamp>_<id>.jsonl` per session |
 
 ### 2. Establish the minimum replay path
 

@@ -86,6 +86,51 @@ func TestExtractEditCallsEmptyNormalized(t *testing.T) {
 	}
 }
 
+func TestExtractEditCallsPiEditsArray(t *testing.T) {
+	evt := RenderEvent{
+		Type:       "ToolInvocation",
+		TurnIndex:  2,
+		ToolName:   "edit",
+		ToolCallID: "tool_edit_1",
+		ToolInput: map[string]any{
+			"path": "/tmp/demo/a.go",
+			"edits": []any{
+				map[string]any{"oldText": "foo", "newText": "bar"},
+				map[string]any{"oldText": "alpha", "newText": "beta"},
+			},
+		},
+	}
+	calls := ExtractEditCalls(evt)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(calls))
+	}
+	if calls[0].FilePath != "/tmp/demo/a.go" || calls[0].OldString != "foo" || calls[0].NewString != "bar" {
+		t.Fatalf("first=%+v", calls[0])
+	}
+	if calls[1].OldString != "alpha" || calls[1].NewString != "beta" || calls[1].ToolCallID != "tool_edit_1" {
+		t.Fatalf("second=%+v", calls[1])
+	}
+}
+
+func TestExtractEditCallsPiPathOldText(t *testing.T) {
+	evt := RenderEvent{
+		Type:     "ToolInvocation",
+		ToolName: "edit",
+		ToolInput: map[string]any{
+			"path":    "src/foo.go",
+			"oldText": "old",
+			"newText": "new",
+		},
+	}
+	calls := ExtractEditCalls(evt)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].FilePath != "src/foo.go" || calls[0].OldString != "old" || calls[0].NewString != "new" {
+		t.Fatalf("call=%+v", calls[0])
+	}
+}
+
 // ── parseApplyPatch — Update File ─────────────────────────────────────────────
 
 func TestParseApplyPatchUpdate(t *testing.T) {

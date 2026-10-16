@@ -34,8 +34,8 @@ func TestHandleListAgentsReturnsFullCatalog(t *testing.T) {
 	if len(agents) != len(defs) {
 		t.Fatalf("agents = %d, want %d catalog entries", len(agents), len(defs))
 	}
-	if len(agents) != 9 {
-		t.Fatalf("want 9 agents, got %d", len(agents))
+	if len(agents) != 10 {
+		t.Fatalf("want 10 agents, got %d", len(agents))
 	}
 
 	byType := map[string]AgentInfo{}
@@ -85,6 +85,9 @@ func TestHandleListAgentsReturnsFullCatalog(t *testing.T) {
 	}
 	if got := byType["grok"].Capabilities[capability.CapabilitySubtasks]; got.State != capability.CapabilityExact {
 		t.Errorf("grok.subtasks state = %s, want exact", got.State)
+	}
+	if got := byType["pi"].Capabilities[capability.CapabilitySubtasks]; got.State != capability.CapabilityNotApplicable {
+		t.Errorf("pi.subtasks state = %s, want not_applicable", got.State)
 	}
 	// Imported copies are read-only bundle snapshots: no delete, no terminate.
 	if imp, ok := byType["imported"]; !ok {
@@ -151,8 +154,8 @@ func TestHandleListAgentsMarksDiscoveredAndCountsSessions(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&agents); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(agents) != 9 {
-		t.Fatalf("catalog length = %d, want 9", len(agents))
+	if len(agents) != 10 {
+		t.Fatalf("catalog length = %d, want 10", len(agents))
 	}
 
 	var claude *AgentInfo

@@ -14,7 +14,7 @@ Built-in observability connects Agent capabilities, record provenance, collabora
 
 ## Highlights
 
-- **Multi-agent session library** — auto-discover and index sessions from seven coding agents, with live list refresh, accurate active-state detection, and live tail for running sessions
+- **Multi-agent session library** — auto-discover and index sessions from eight coding agents, with live list refresh, accurate active-state detection, and live tail for running sessions
 - **Agent capability transparency** — inspect each Agent's support for discovery, replay, realtime updates, tokens, tools, diffs, subtasks, resume, deletion, and termination, with session-level exact, estimated, or missing states
 - **Session record completeness** — see whether SI fully read a session (complete, degraded, metadata-only, or source-missing), inspect provenance and source files, and open them in your editor
 - **Sub-agent collaboration** — when an Agent records nested work, open a horizontal collaboration dock with a zoomable timeline and jump from each launch or result back into the terminal evidence (Claude Code, Grok, Codex, Chrys, and Copilot)
@@ -57,6 +57,7 @@ Session Insight auto-discovers sessions from the following agents:
 | [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
 | [Grok](https://grok.com) | `~/.grok/sessions/` |
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `~/.hermes/state.db` (or `HERMES_HOME`) |
+| [Pi](https://pi.dev) | `~/.pi/agent/sessions/` |
 
 ## Download and Run
 
@@ -138,6 +139,8 @@ See [BUILD.md](BUILD.md) for the full Windows build guide (requires MSYS2 + ming
 | `SI_INDEXER_ENABLED` | `1` | Accepts `1`, `true`, `yes`, `on` (enabled) or `0`, `false`, `no`, `off` (disabled); unset or invalid values fall back to enabled. In a linked worktree, disabled mode leaves the local index stale and disables source watchers, initial indexing, and periodic reconciliation; the primary checkout always forces `1` |
 | `CHRYS_SESSION_ROOT_DIR` | — | Override Chrys session root directory |
 | `HERMES_HOME` | `~/.hermes` | Override Hermes state directory; Session Insight reads `state.db` inside it |
+| `PI_CODING_AGENT_SESSION_DIR` | `~/.pi/agent/sessions` | Override Pi session storage directory |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Override Pi config directory; Session Insight reads `sessions/` inside it |
 
 When `run.sh` is executed from a linked Git worktree, it uses an OS-assigned
 random loopback port on the first run and reuses the same port on subsequent

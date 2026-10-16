@@ -20,6 +20,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/imported"
 	"github.com/bbsteel/session-insight/internal/reader/opencode"
+	"github.com/bbsteel/session-insight/internal/reader/pi"
 	"github.com/bbsteel/session-insight/internal/reader/worktreereview"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -27,13 +28,13 @@ import (
 
 // expectedAgentTypes is the closed set of supported Agents for phase 1.
 var expectedAgentTypes = []string{
-	"chrys", "claude", "codex", "copilot", "grok", "hermes", "imported", "opencode", "worktree-review",
+	"chrys", "claude", "codex", "copilot", "grok", "hermes", "imported", "opencode", "pi", "worktree-review",
 }
 
 func TestAgentDefinitionsHasSevenAgents(t *testing.T) {
 	defs := reader.AgentDefinitions()
-	if len(defs) != 9 {
-		t.Fatalf("catalog length = %d, want 9: %v", len(defs), agentTypes(defs))
+	if len(defs) != 10 {
+		t.Fatalf("catalog length = %d, want 10: %v", len(defs), agentTypes(defs))
 	}
 
 	got := agentTypes(defs)
@@ -98,6 +99,7 @@ func TestResumeCommandDeclarationsBuildNativeIdentity(t *testing.T) {
 		{agent: "chrys", executable: "chrys", standard: []string{"-s", "native-id"}},
 		{agent: "grok", executable: "grok", standard: []string{"--resume", "native-id"}, unsafe: []string{"--always-approve", "--resume", "native-id"}},
 		{agent: "hermes", executable: "hermes", standard: []string{"--resume", "native-id"}},
+		{agent: "pi", executable: "pi", standard: []string{"--session", "native-id", "--model", "recorded-model"}, model: "recorded-model"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
@@ -158,6 +160,20 @@ func TestDiscoverUsesHermesOverrideWithoutHome(t *testing.T) {
 	t.Fatal("Discover did not initialize Hermes from HERMES_STATE_DB without HOME")
 }
 
+func TestDiscoverUsesPiOverrideWithoutHome(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", dir)
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("HOME", "")
+
+	for _, source := range reader.Discover() {
+		if source.AgentType() == "pi" {
+			return
+		}
+	}
+	t.Fatal("Discover did not initialize Pi from PI_CODING_AGENT_SESSION_DIR without HOME")
+}
+
 func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 	// Catalog AgentType/DisplayName must match what a constructed reader reports.
 	// Paths need not exist for identity methods.
@@ -194,6 +210,7 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 		{hermes.Capabilities(), hermesReader},
 		{imported.Capabilities(), imported.New(tmp)},
 		{opencode.Capabilities(), ocReader},
+		{pi.Capabilities(), pi.New(tmp)},
 		{worktreereview.Capabilities(), worktreereview.New(tmp)},
 	}
 	for _, p := range pairs {
@@ -230,6 +247,7 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 		"grok":            grok.New(tmp),
 		"imported":        imported.New(tmp),
 		"opencode":        ocReader,
+		"pi":              pi.New(tmp),
 		"worktree-review": worktreereview.New(tmp),
 	}
 	hermesDB := filepath.Join(tmp, "hermes-operation.db")
@@ -275,7 +293,7 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 	}
 }
 
-// TestCatalogMatrixDump prints the nine×ten matrix for evidence capture.
+// TestCatalogMatrixDump prints the ten×ten matrix for evidence capture.
 // Always asserts; also writes a human-readable dump when CAPABILITY_MATRIX_OUT is set.
 func TestCatalogMatrixDump(t *testing.T) {
 	var b strings.Builder
@@ -289,9 +307,9 @@ func TestCatalogMatrixDump(t *testing.T) {
 	matrix := b.String()
 	// Structural proof of catalog content.
 	lines := strings.Split(strings.TrimSpace(matrix), "\n")
-	// header + 9*10
-	if len(lines) != 1+90 {
-		t.Fatalf("matrix lines = %d, want 91", len(lines))
+	// header + 10*10
+	if len(lines) != 1+100 {
+		t.Fatalf("matrix lines = %d, want 101", len(lines))
 	}
 	if out := os.Getenv("CAPABILITY_MATRIX_OUT"); out != "" {
 		if err := os.WriteFile(out, []byte(matrix), 0o644); err != nil {
@@ -304,8 +322,8 @@ func TestCatalogMatrixDump(t *testing.T) {
 
 func TestRegisteredAgentDefinitionsPresentationsConform(t *testing.T) {
 	defs := reader.RegisteredAgentDefinitions()
-	if len(defs) != 9 {
-		t.Fatalf("registered catalog length=%d want 9", len(defs))
+	if len(defs) != 10 {
+		t.Fatalf("registered catalog length=%d want 10", len(defs))
 	}
 	legacy := map[string]bool{"claude": true, "chrys": true, "grok": true}
 	for _, def := range defs {

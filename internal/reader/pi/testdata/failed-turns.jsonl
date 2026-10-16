@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"eeeeeeee-0000-1111-2222-333333333333","timestamp":"2026-01-06T00:00:00.000Z","cwd":"/tmp/demo"}
+{"type":"model_change","id":"m1","parentId":null,"timestamp":"2026-01-06T00:00:00.500Z","provider":"demo-provider","modelId":"demo-model-a"}
+{"type":"message","id":"s1","parentId":null,"timestamp":"2026-01-06T00:00:01.000Z","message":{"role":"system","content":"synthetic system preamble","sections":{"preamble":"synthetic preamble"}}}
+{"type":"message","id":"u1","parentId":"s1","timestamp":"2026-01-06T00:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"first question"}],"timestamp":1767657602000}}
+{"type":"message","id":"a1","parentId":"u1","timestamp":"2026-01-06T00:00:03.000Z","message":{"role":"assistant","content":[],"api":"demo-api","provider":"demo-provider","model":"demo-model-a","stopReason":"error","errorMessage":"404 synthetic failure","durationMs":673,"timestamp":1767657603000}}
+{"type":"message","id":"u2","parentId":"a1","timestamp":"2026-01-06T00:00:04.000Z","message":{"role":"user","content":[{"type":"text","text":"first question"}],"timestamp":1767657604000}}
+{"type":"message","id":"a2","parentId":"u2","timestamp":"2026-01-06T00:00:05.000Z","message":{"role":"assistant","content":[],"api":"demo-api","provider":"demo-provider","model":"demo-model-b","stopReason":"error","errorMessage":"404 synthetic failure","durationMs":537,"timestamp":1767657605000}}
