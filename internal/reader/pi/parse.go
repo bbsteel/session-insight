@@ -270,7 +270,9 @@ func parseSessionFile(path string) (*parsedFile, error) {
 						turn.TokenUsage.AddUsage(tokens)
 						turn.RequestCount++
 					}
-					addUsage(&billingUsage, &billingCost, &hasUsage, byModel, msg.Usage, msg.Model)
+					// Bill under the current model: an assistant message may omit
+					// "model", and model_change/earlier assistant already set modelName.
+					addUsage(&billingUsage, &billingCost, &hasUsage, byModel, msg.Usage, modelName)
 				}
 				for _, block := range contentBlocks(msg.Content) {
 					switch block.Type {
@@ -466,16 +468,43 @@ func scanSessionMeta(path string) (model.Session, error) {
 		UpdatedAt: info.ModTime(),
 	}
 	var (
-		headerSeen    bool
-		skipped       int
-		lastMalformed bool
-		named         string
-		preview       string
-		modelName     string
-		modelProvider string
-		messageCount  int
-		turnCount     int
+		headerSeen     bool
+		skipped        int
+		lastMalformed  bool
+		named          string
+		preview        string
+		modelName      string
+		modelProvider  string
+		messageCount   int
+		turnCount      int
+		turnOpen       bool
+		turnHasContent bool
 	)
+
+	// Turn accounting must match parseSessionFile, which computes the detail
+	// view's TurnCount through shared.FilterEmptyTurns. A turn survives that
+	// filter when it has a user message, an assistant message, or a tool call,
+	// so a turn is counted only once one of those markers is set. User messages
+	// always start a turn (empty ones are dropped again by the filter), while
+	// assistant, toolResult, compaction, custom_message, and usage records
+	// continue the open turn and start one only when none is open.
+	flushTurn := func() {
+		if turnOpen && turnHasContent {
+			turnCount++
+		}
+		turnOpen = false
+	}
+	openTurn := func() {
+		flushTurn()
+		turnOpen = true
+		turnHasContent = false
+	}
+	startTurn := func() {
+		if !turnOpen {
+			openTurn()
+		}
+	}
+	markTurnContent := func() { turnHasContent = true }
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -524,6 +553,16 @@ func scanSessionMeta(path string) (model.Session, error) {
 			if entry.Provider != "" {
 				modelProvider = entry.Provider
 			}
+		case "usage":
+			if entry.Usage != nil {
+				startTurn()
+			}
+		case "compaction":
+			startTurn()
+		case "custom_message":
+			if entry.Display == nil || *entry.Display {
+				startTurn()
+			}
 		case "message":
 			var msg piMessage
 			if json.Unmarshal(entry.Message, &msg) != nil {
@@ -532,13 +571,30 @@ func scanSessionMeta(path string) (model.Session, error) {
 				continue
 			}
 			messageCount++
-			if msg.Role == "user" {
-				turnCount++
-				if preview == "" {
-					if text := strings.TrimSpace(contentText(msg.Content)); text != "" {
+			switch msg.Role {
+			case "user":
+				openTurn()
+				text := strings.TrimSpace(contentText(msg.Content))
+				if text != "" {
+					markTurnContent()
+					if preview == "" {
 						preview = text
 					}
 				}
+			case "assistant":
+				startTurn()
+				for _, block := range contentBlocks(msg.Content) {
+					switch block.Type {
+					case "text":
+						if strings.TrimSpace(block.Text) != "" {
+							markTurnContent()
+						}
+					case "toolCall":
+						markTurnContent()
+					}
+				}
+			case "toolResult":
+				startTurn()
 			}
 			if msg.Model != "" {
 				modelName = msg.Model
@@ -552,6 +608,7 @@ func scanSessionMeta(path string) (model.Session, error) {
 		return model.Session{}, err
 	}
 	_ = retractIncompleteTail(skipped, lastMalformed, path, info.Size())
+	flushTurn()
 	if !headerSeen && session.ID == "" {
 		session.ID = sessionIDFromFilename(filepath.Base(path))
 		session.ResumeID = session.ID

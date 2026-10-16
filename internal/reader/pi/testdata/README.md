@@ -26,10 +26,12 @@ IDs, prompts, provider credentials, or user data.
   has not been verified on a live Windows Pi installation in this change.
 - Terminate uses file-descriptor holders of the open JSONL (Pi keeps the
   file open for append). Linux is the verified platform for that path.
-- Lookup and delete key files by the `_<session-id>.jsonl` filename suffix
-  under the sessions root and one encoded-cwd directory. Listing uses a
-  metadata-only scan; a truncated final line without a newline is an
-  in-progress tail, not a malformed record.
+- Lookup keys files by the `_<session-id>.jsonl` filename suffix under the
+  sessions root and its encoded-cwd directories; delete removes every such
+  file so no duplicate can rebind the id on the next scan. Listing uses a
+  metadata-only scan whose turn count follows the same
+  `shared.FilterEmptyTurns` rules as the replay parser; a truncated final line
+  without a newline is an in-progress tail, not a malformed record.
 
 Reference material:
 
@@ -43,4 +45,7 @@ Reference material:
 - `rich.jsonl`: exact tokens, successful bash, failed bash, and a native edit.
 - `interrupted.jsonl`: trailing user message with no assistant close.
 - `header-only.jsonl`: session header without replayable turns (metadata_only).
+- `failed-turns.jsonl`: model_change, a system message, then two user turns
+  whose assistant replies are empty `stopReason: error` records. Pins the
+  metadata scan to the detail view's turn count for Pi's real failure shape.
 - Tests also create isolated delete/realtime sandboxes in TempDir.
