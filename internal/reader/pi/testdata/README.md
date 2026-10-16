@@ -26,6 +26,10 @@ IDs, prompts, provider credentials, or user data.
   has not been verified on a live Windows Pi installation in this change.
 - Terminate uses file-descriptor holders of the open JSONL (Pi keeps the
   file open for append). Linux is the verified platform for that path.
+- Lookup and delete key files by the `_<session-id>.jsonl` filename suffix
+  under the sessions root and one encoded-cwd directory. Listing uses a
+  metadata-only scan; a truncated final line without a newline is an
+  in-progress tail, not a malformed record.
 
 Reference material:
 

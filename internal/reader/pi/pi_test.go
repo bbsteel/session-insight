@@ -125,3 +125,105 @@ func TestSessionIDFromFilename(t *testing.T) {
 		t.Fatalf("got=%q", got)
 	}
 }
+
+func TestDeleteRemovesDuplicateSessionFiles(t *testing.T) {
+	root := t.TempDir()
+	body, err := os.ReadFile(filepath.Join("testdata", "basic.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := writeSessionFileIn(t, root, "--tmp-a--", basicID, string(body))
+	second := writeSessionFileIn(t, root, "--tmp-b--", basicID, string(body))
+	r := New(root)
+	if err := r.DeleteSession(basicID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Fatalf("first copy still present: %v", err)
+	}
+	if _, err := os.Stat(second); !os.IsNotExist(err) {
+		t.Fatalf("second copy still present: %v", err)
+	}
+	list, err := r.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range list {
+		if session.ID == basicID {
+			t.Fatal("deleted id still listed")
+		}
+	}
+}
+
+func TestIncompleteTailIsNotMalformed(t *testing.T) {
+	root := t.TempDir()
+	body, err := os.ReadFile(filepath.Join("testdata", "basic.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSessionFile(t, root, basicID, string(body)+"{\"type\":\"message\",\"id\":\"tail\"")
+	detail, err := New(root).GetSession(basicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Provenance == nil || detail.Provenance.State != "complete" {
+		t.Fatalf("provenance=%+v", detail.Provenance)
+	}
+}
+
+func TestListUsesMetadataScan(t *testing.T) {
+	root := installTestdata(t, basicID, "basic.jsonl")
+	r := New(root)
+	list, err := r.ListSessions()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list n=%d err=%v", len(list), err)
+	}
+	if list[0].ID != basicID || list[0].Name != "demo session" || list[0].ModelName != "claude-sonnet-4" {
+		t.Fatalf("list=%+v", list[0])
+	}
+	if list[0].TurnCount != 1 || list[0].PreviewText == "" {
+		t.Fatalf("counts=%+v", list[0])
+	}
+	detail, err := r.GetSession(basicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Name != list[0].Name || detail.ResumeID != list[0].ResumeID {
+		t.Fatalf("list/detail disagree: %+v vs %+v", list[0], detail.Session)
+	}
+}
+
+func TestFindSessionFileUsesFilenameNotHeaderWalk(t *testing.T) {
+	root := t.TempDir()
+	body, err := os.ReadFile(filepath.Join("testdata", "basic.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSessionFile(t, root, basicID, string(body))
+	decoyDir := filepath.Join(root, "--tmp-decoy--")
+	if err := os.MkdirAll(decoyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	decoy := filepath.Join(decoyDir, "2026-01-01T00-00-00-000Z_zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz.jsonl")
+	if err := os.WriteFile(decoy, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New(root)
+	path := r.findSessionFile(basicID)
+	if path == "" || filepath.Base(path) != "2026-01-01T00-00-00-000Z_"+basicID+".jsonl" {
+		t.Fatalf("path=%q", path)
+	}
+}
+
+func writeSessionFileIn(t *testing.T, root, cwdEnc, id, body string) string {
+	t.Helper()
+	dir := filepath.Join(root, cwdEnc)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "2026-01-01T00-00-00-000Z_"+id+".jsonl")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

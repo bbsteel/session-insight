@@ -1,11 +1,8 @@
 package pi
 
 import (
-	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,6 +59,81 @@ func (r *PiReader) knownSessionFile(id string) string {
 	return r.paths[id]
 }
 
+func (r *PiReader) forgetPath(id string) {
+	r.pathsMu.Lock()
+	delete(r.paths, id)
+	r.pathsMu.Unlock()
+}
+
+func matchSessionFilename(name, id string) bool {
+	lower := strings.ToLower(name)
+	if !strings.HasSuffix(lower, ".jsonl") {
+		return false
+	}
+	return sessionIDFromFilename(name) == id
+}
+
+// collectSessionFiles lists JSONL files whose filename encodes id. It reads
+// directory entries only (sessions root and one encoded-cwd level) and never
+// opens transcript contents.
+func (r *PiReader) collectSessionFiles(id string) []string {
+	if !validSessionID(id) {
+		return nil
+	}
+	var out []string
+	seen := map[string]struct{}{}
+	addDir := func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if !matchSessionFilename(entry.Name(), id) {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			out = append(out, path)
+		}
+	}
+	addDir(r.sessionsDir)
+	entries, err := os.ReadDir(r.sessionsDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				addDir(filepath.Join(r.sessionsDir, entry.Name()))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func newestSessionFile(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	best := paths[0]
+	var bestTime time.Time
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if bestTime.IsZero() || info.ModTime().After(bestTime) {
+			best = path
+			bestTime = info.ModTime()
+		}
+	}
+	return best
+}
+
 func (r *PiReader) findSessionFile(id string) string {
 	if !validSessionID(id) {
 		return ""
@@ -71,24 +143,7 @@ func (r *PiReader) findSessionFile(id string) string {
 			return known
 		}
 	}
-	found := ""
-	_ = filepath.WalkDir(r.sessionsDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(d.Name(), ".jsonl") {
-			return nil
-		}
-		headerID, _, ok := peekSessionHeader(path)
-		if !ok || headerID == "" {
-			headerID = sessionIDFromFilename(d.Name())
-		}
-		if headerID == id {
-			found = path
-			return fs.SkipAll
-		}
-		return nil
-	})
+	found := newestSessionFile(r.collectSessionFiles(id))
 	if found != "" {
 		r.rememberPath(id, found)
 	}
@@ -103,31 +158,6 @@ func sessionIDFromFilename(name string) string {
 	return name
 }
 
-func peekSessionHeader(path string) (id, cwd string, ok bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", "", false
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var header sessionHeader
-		if json.Unmarshal([]byte(line), &header) != nil {
-			continue
-		}
-		if header.Type != "session" {
-			continue
-		}
-		return header.ID, header.CWD, true
-	}
-	return "", "", false
-}
-
 func (r *PiReader) ListSessions() ([]model.Session, error) {
 	sessions, _, err := r.ListSessionsDetailed()
 	return sessions, err
@@ -135,46 +165,58 @@ func (r *PiReader) ListSessions() ([]model.Session, error) {
 
 // ListSessionsDetailed walks cwd-encoded directories for *.jsonl files and
 // reports incompleteness when a directory or file fails for reasons other
-// than absence.
+// than absence. Listing uses a metadata-only scan; replay parsing stays on
+// GetSession / GetRenderEvents.
 func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	complete = true
 	seen := map[string]struct{}{}
-	walkErr := filepath.WalkDir(r.sessionsDir, func(path string, d fs.DirEntry, err error) error {
+	addDir := func(dir string) {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
+			if !os.IsNotExist(err) {
+				complete = false
 			}
-			complete = false
-			return nil
+			return
 		}
-		if d.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(strings.ToLower(d.Name()), ".jsonl") {
-			return nil
-		}
-		parsed, parseErr := parseSessionFile(path)
-		if parseErr != nil {
-			if os.IsNotExist(parseErr) {
-				return nil
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
 			}
-			complete = false
-			return nil
+			if !strings.HasSuffix(strings.ToLower(entry.Name()), ".jsonl") {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			session, parseErr := scanSessionMeta(path)
+			if parseErr != nil {
+				if !os.IsNotExist(parseErr) {
+					complete = false
+				}
+				continue
+			}
+			if session.ID == "" {
+				complete = false
+				continue
+			}
+			if _, dup := seen[session.ID]; dup {
+				continue
+			}
+			seen[session.ID] = struct{}{}
+			r.rememberPath(session.ID, path)
+			sessions = append(sessions, session)
 		}
-		if parsed == nil || parsed.Session.ID == "" {
-			complete = false
-			return nil
+	}
+	addDir(r.sessionsDir)
+	entries, err := os.ReadDir(r.sessionsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []model.Session{}, true, nil
 		}
-		if _, dup := seen[parsed.Session.ID]; dup {
-			return nil
+		return nil, false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			addDir(filepath.Join(r.sessionsDir, entry.Name()))
 		}
-		seen[parsed.Session.ID] = struct{}{}
-		r.rememberPath(parsed.Session.ID, path)
-		sessions = append(sessions, parsed.Session)
-		return nil
-	})
-	if walkErr != nil && !os.IsNotExist(walkErr) {
-		return nil, false, walkErr
 	}
 	if sessions == nil {
 		sessions = []model.Session{}
@@ -245,11 +287,14 @@ func (r *PiReader) LiveRevision(id string) (int64, error) {
 }
 
 func (r *PiReader) GetSessionMeta(id string) (*model.Session, error) {
-	detail, err := r.GetSession(id)
+	path := r.findSessionFile(id)
+	if path == "" {
+		return nil, fmt.Errorf("%w: %s", errSessionNotFound, id)
+	}
+	session, err := scanSessionMeta(path)
 	if err != nil {
 		return nil, err
 	}
-	session := detail.Session
 	return &session, nil
 }
 

@@ -112,6 +112,7 @@ func parseSessionFile(path string) (*parsedFile, error) {
 		turnIndex     = -1
 		eventCounter  int
 		turnOpen      bool
+		lastMalformed bool
 		events        []model.RenderEvent
 		turns         []model.TurnVM
 		callEventIDs  = map[string]string{}
@@ -154,8 +155,10 @@ func parseSessionFile(path string) (*parsedFile, error) {
 		if line == "" {
 			continue
 		}
+		lastMalformed = false
 		var entry sessionEntry
 		if json.Unmarshal([]byte(line), &entry) != nil {
+			lastMalformed = true
 			skipped++
 			continue
 		}
@@ -356,6 +359,7 @@ func parseSessionFile(path string) (*parsedFile, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	skipped = retractIncompleteTail(skipped, lastMalformed, path, info.Size())
 	if !headerSeen && session.ID == "" {
 		session.ID = sessionIDFromFilename(filepath.Base(path))
 		session.ResumeID = session.ID
@@ -364,15 +368,7 @@ func parseSessionFile(path string) (*parsedFile, error) {
 		return nil, fmt.Errorf("pi session file has no id: %s", path)
 	}
 
-	if named != "" {
-		session.Name = shared.TruncateRunes(strings.ReplaceAll(named, "\n", " "), 50)
-	} else if preview != "" {
-		session.Name = shared.TruncateRunes(strings.ReplaceAll(preview, "\n", " "), 50)
-	}
-	session.PreviewText = shared.TruncateRunes(preview, 200)
-	session.ModelName = modelName
-	session.ModelProvider = modelProvider
-	session.MessageCount = messageCount
+	applySessionIdentity(&session, named, preview, modelName, modelProvider, messageCount)
 
 	filtered := shared.FilterEmptyTurns(turns)
 	session.TurnCount = len(filtered)
@@ -408,6 +404,164 @@ func parseSessionFile(path string) (*parsedFile, error) {
 	detail.AnomalySummary = shared.RunAnomalyDetection(detail.Turns)
 	attachProvenance(detail, path, skipped)
 	return &parsedFile{Session: detail.Session, Detail: detail, Events: events}, nil
+}
+
+func applySessionIdentity(session *model.Session, named, preview, modelName, modelProvider string, messageCount int) {
+	if named != "" {
+		session.Name = shared.TruncateRunes(strings.ReplaceAll(named, "\n", " "), 50)
+	} else if preview != "" {
+		session.Name = shared.TruncateRunes(strings.ReplaceAll(preview, "\n", " "), 50)
+	}
+	session.PreviewText = shared.TruncateRunes(preview, 200)
+	session.ModelName = modelName
+	session.ModelProvider = modelProvider
+	session.MessageCount = messageCount
+	if session.AgentType == "" {
+		session.AgentType = agentType
+	}
+}
+
+func retractIncompleteTail(skipped int, lastMalformed bool, path string, size int64) int {
+	if skipped <= 0 || !lastMalformed {
+		return skipped
+	}
+	if fileEndsWithNewline(path, size) {
+		return skipped
+	}
+	return skipped - 1
+}
+
+func fileEndsWithNewline(path string, size int64) bool {
+	if size <= 0 {
+		return true
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer f.Close()
+	buf := make([]byte, 1)
+	if _, err := f.ReadAt(buf, size-1); err != nil {
+		return true
+	}
+	return buf[0] == '\n'
+}
+
+// scanSessionMeta reads identity, counts, and latest model/time without
+// reconstructing turns, tools, or billing.
+func scanSessionMeta(path string) (model.Session, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return model.Session{}, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return model.Session{}, err
+	}
+	defer f.Close()
+
+	session := model.Session{
+		AgentType: agentType,
+		CreatedAt: info.ModTime(),
+		UpdatedAt: info.ModTime(),
+	}
+	var (
+		headerSeen    bool
+		skipped       int
+		lastMalformed bool
+		named         string
+		preview       string
+		modelName     string
+		modelProvider string
+		messageCount  int
+		turnCount     int
+	)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		lastMalformed = false
+		var entry sessionEntry
+		if json.Unmarshal([]byte(line), &entry) != nil {
+			lastMalformed = true
+			skipped++
+			continue
+		}
+		ts := parseTimestamp(entry.Timestamp)
+		if !ts.IsZero() && ts.After(session.UpdatedAt) {
+			session.UpdatedAt = ts
+		}
+		switch entry.Type {
+		case "session":
+			var header sessionHeader
+			if json.Unmarshal([]byte(line), &header) != nil {
+				lastMalformed = true
+				skipped++
+				continue
+			}
+			headerSeen = true
+			session.ID = header.ID
+			session.ResumeID = header.ID
+			session.CWD = header.CWD
+			session.Project = shared.ResolveProject(header.CWD, "")
+			if created := parseTimestamp(header.Timestamp); !created.IsZero() {
+				session.CreatedAt = created
+				if session.UpdatedAt.Before(created) {
+					session.UpdatedAt = created
+				}
+			}
+		case "session_info":
+			if strings.TrimSpace(entry.Name) != "" {
+				named = strings.TrimSpace(entry.Name)
+			}
+		case "model_change":
+			if entry.ModelID != "" {
+				modelName = entry.ModelID
+			}
+			if entry.Provider != "" {
+				modelProvider = entry.Provider
+			}
+		case "message":
+			var msg piMessage
+			if json.Unmarshal(entry.Message, &msg) != nil {
+				lastMalformed = true
+				skipped++
+				continue
+			}
+			messageCount++
+			if msg.Role == "user" {
+				turnCount++
+				if preview == "" {
+					if text := strings.TrimSpace(contentText(msg.Content)); text != "" {
+						preview = text
+					}
+				}
+			}
+			if msg.Model != "" {
+				modelName = msg.Model
+			}
+			if msg.Provider != "" {
+				modelProvider = msg.Provider
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return model.Session{}, err
+	}
+	_ = retractIncompleteTail(skipped, lastMalformed, path, info.Size())
+	if !headerSeen && session.ID == "" {
+		session.ID = sessionIDFromFilename(filepath.Base(path))
+		session.ResumeID = session.ID
+	}
+	if session.ID == "" {
+		return model.Session{}, fmt.Errorf("pi session file has no id: %s", path)
+	}
+	applySessionIdentity(&session, named, preview, modelName, modelProvider, messageCount)
+	session.TurnCount = turnCount
+	return session, nil
 }
 
 func assistantTurnOpen(stopReason string) bool {

@@ -18,13 +18,13 @@ import (
 //   - subtasks: not applicable — Pi does not persist sub-agents (fork/clone
 //     create independent sessions, not a nested invocation graph)
 //   - resume: header session id is the native `pi --session {id}` identity
-//   - delete: SessionDeleter removes the session JSONL
+//   - delete: SessionDeleter removes every JSONL whose filename encodes the id
 //   - terminate: SessionProcessFinder via fd holders of the open JSONL
 func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       agentType,
 		DisplayName:     displayName,
-		AdapterRevision: 1,
+		AdapterRevision: 2,
 		ResumeCommand: &capability.ResumeCommandDeclaration{
 			Executable:   "pi",
 			StandardArgs: []string{"--session", "{id}"},
