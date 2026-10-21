@@ -71,12 +71,19 @@ func parseEditsArray(turnIndex int, toolCallID, filePath string, raw any) []Edit
 		call := EditCall{
 			TurnIndex:  turnIndex,
 			ToolCallID: toolCallID,
-			FilePath:   filePath,
+			FilePath:   stringField(fields, "path", "file_path"),
 			OldString:  stringField(fields, "oldText", "old_string", "old_str"),
 			NewString:  stringField(fields, "newText", "new_string", "new_str"),
 		}
-		if call.FilePath == "" && call.OldString == "" && call.NewString == "" {
+		// The invocation-level path is only a default, not evidence that this
+		// element carries an edit: an edits[] entry with no text of its own is a
+		// placeholder, and keeping it would render a zero-line diff and suppress
+		// both the top-level oldText/newText fallback and the generic tool box.
+		if call.OldString == "" && call.NewString == "" {
 			continue
+		}
+		if call.FilePath == "" {
+			call.FilePath = filePath
 		}
 		calls = append(calls, call)
 	}

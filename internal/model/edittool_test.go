@@ -112,6 +112,50 @@ func TestExtractEditCallsPiEditsArray(t *testing.T) {
 	}
 }
 
+// TestExtractEditCallsSkipsEmptyEditsEntries pins that an edits[] element with
+// no text of its own is a placeholder, not an edit: keeping it would render a
+// zero-line diff and suppress both the top-level fallback and the generic box.
+func TestExtractEditCallsSkipsEmptyEditsEntries(t *testing.T) {
+	evt := RenderEvent{
+		Type:       "ToolInvocation",
+		TurnIndex:  2,
+		ToolName:   "edit",
+		ToolCallID: "tool_edit_1",
+		ToolInput: map[string]any{
+			"path": "/tmp/demo/a.go",
+			"edits": []any{
+				map[string]any{"oldText": nil, "newText": nil},
+				map[string]any{"oldText": 42},
+				map[string]any{},
+				map[string]any{"oldText": "alpha", "newText": "beta"},
+			},
+		},
+	}
+	calls := ExtractEditCalls(evt)
+	if len(calls) != 1 {
+		t.Fatalf("expected only the real hunk, got %d: %+v", len(calls), calls)
+	}
+	if calls[0].OldString != "alpha" || calls[0].NewString != "beta" || calls[0].FilePath != "/tmp/demo/a.go" {
+		t.Fatalf("call=%+v", calls[0])
+	}
+
+	// With no extractable hunk, the top-level oldText/newText must still work.
+	evt.ToolInput["edits"] = []any{map[string]any{"oldText": nil}}
+	evt.ToolInput["oldText"] = "top-old"
+	evt.ToolInput["newText"] = "top-new"
+	calls = ExtractEditCalls(evt)
+	if len(calls) != 1 || calls[0].OldString != "top-old" || calls[0].NewString != "top-new" {
+		t.Fatalf("top-level fallback lost: %+v", calls)
+	}
+
+	// A per-hunk path still wins when the element carries its own text.
+	evt.ToolInput["edits"] = []any{map[string]any{"path": "/tmp/demo/other.go", "oldText": "x", "newText": "y"}}
+	calls = ExtractEditCalls(evt)
+	if len(calls) != 1 || calls[0].FilePath != "/tmp/demo/other.go" {
+		t.Fatalf("per-hunk path lost: %+v", calls)
+	}
+}
+
 func TestExtractEditCallsPiPathOldText(t *testing.T) {
 	evt := RenderEvent{
 		Type:     "ToolInvocation",
