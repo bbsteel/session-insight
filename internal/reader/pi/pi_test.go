@@ -610,6 +610,50 @@ func readTestdata(t *testing.T, name string) string {
 	return string(body)
 }
 
+// TestFindSessionFileRecoversFromRemovedCanonicalPath pins the rewrite/crash
+// case: when the indexed JSONL disappears but the id's directory still holds a
+// replacement, the lookup must resolve the replacement instead of reporting the
+// session missing (which would persist source_missing and drop it from live
+// tail until a full reconciliation).
+func TestFindSessionFileRecoversFromRemovedCanonicalPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "--tmp-demo--")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := filepath.Join(dir, "2026-01-01T00-00-00-000Z_"+basicID+".jsonl")
+	if err := os.WriteFile(original, []byte(readTestdata(t, "basic.jsonl")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New(root)
+	if _, err := r.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.knownSessionFile(basicID); got != original {
+		t.Fatalf("indexed path=%q, want %q", got, original)
+	}
+
+	// Pi rewrite: the indexed file is replaced by a new timestamped name in the
+	// same directory, so only the directory association survives.
+	if err := os.Remove(original); err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(dir, "2026-01-02T00-00-00-000Z_"+basicID+".jsonl")
+	if err := os.WriteFile(replacement, []byte(readTestdata(t, "basic.jsonl")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := r.findSessionFile(basicID); got != replacement {
+		t.Fatalf("findSessionFile=%q, want the replacement %q", got, replacement)
+	}
+	if _, err := r.GetSession(basicID); err != nil {
+		t.Fatalf("GetSession after rewrite: %v", err)
+	}
+	if _, err := r.LiveRevision(basicID); err != nil {
+		t.Fatalf("LiveRevision after rewrite: %v", err)
+	}
+}
+
 // TestDeleteRefusesLiveSession pins the delete safety signal that replaces an
 // exact PID: Pi holds no transcript descriptor while idle, so a recently
 // written transcript is treated as an owned live session.

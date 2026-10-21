@@ -221,6 +221,15 @@ func (r *PiReader) findSessionFile(id string) string {
 			}
 			return cached
 		}
+		// The indexed copy is gone (Pi rewrite, crash leftover, partial delete).
+		// Before reporting the session missing, look in the directories this id
+		// is already known to occupy: a rewrite leaves the replacement beside
+		// the removed file, and a not-found here would persist source_missing and
+		// drop an in-progress session from live tail and the index.
+		if sibling := r.newestKnownSibling(id, ""); sibling != "" {
+			r.rememberPath(id, sibling)
+			return sibling
+		}
 		r.forgetPath(id)
 	}
 	// The cached path is gone (or was never resolved). Only the first lookup of
@@ -232,17 +241,18 @@ func (r *PiReader) findSessionFile(id string) string {
 	return r.knownSessionFile(id)
 }
 
-// newestKnownSibling returns the newest file encoding id among the cached path
-// and the id's known directories. It never enumerates the sessions root.
-func (r *PiReader) newestKnownSibling(id, cached string) string {
+// newestKnownSibling returns the newest file encoding id among seed and the
+// id's known directories. It never enumerates the sessions root, so it stays
+// usable from the request path even when no current path is known.
+func (r *PiReader) newestKnownSibling(id, seed string) string {
 	dirs := r.knownSessionDirs(id)
 	if len(dirs) == 0 {
-		return cached
+		return seed
 	}
-	best := cached
+	best := seed
 	for _, dir := range dirs {
 		for _, path := range sessionFilesInDir(dir, id) {
-			if newestFileIsLater(path, best) {
+			if best == "" || newestFileIsLater(path, best) {
 				best = path
 			}
 		}
