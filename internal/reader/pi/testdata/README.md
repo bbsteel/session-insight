@@ -24,14 +24,24 @@ IDs, prompts, provider credentials, or user data.
 - Overrides: `PI_CODING_AGENT_SESSION_DIR`, then `PI_CODING_AGENT_DIR/sessions`.
   Native Windows discovery uses `os.UserHomeDir()` + `.pi/agent/sessions` and
   has not been verified on a live Windows Pi installation in this change.
-- Terminate uses file-descriptor holders of the open JSONL (Pi keeps the
-  file open for append). Linux is the verified platform for that path.
+- Terminate is unsupported: Pi closes the transcript descriptor after every
+  write (`appendFileSync`) and keeps no heartbeat or lock registry, so an
+  idle-but-alive Pi process exposes no exact PID. Delete safety comes from
+  `SessionRunning`, which treats a transcript written inside
+  `model.LiveWindow` as a live session.
 - Lookup keys files by the `_<session-id>.jsonl` filename suffix under the
-  sessions root and its encoded-cwd directories; delete removes every such
-  file so no duplicate can rebind the id on the next scan. Listing uses a
-  metadata-only scan whose turn count follows the same
-  `shared.FilterEmptyTurns` rules as the replay parser; a truncated final line
-  without a newline is an in-progress tail, not a malformed record.
+  sessions root and its encoded-cwd directories. Duplicate ids (copy, crash
+  leftover, in-progress rewrite) always resolve to the newest file by mtime,
+  and delete removes every such file so no duplicate can rebind the id on the
+  next scan. Listing uses a metadata-only scan, cached per file by size+mtime;
+  its turn count follows the same `shared.FilterEmptyTurns` rules as the replay
+  parser. A truncated final line without a newline is an in-progress tail, not
+  a malformed record.
+- Direct `!`/`!!` shell commands are persisted as `message.role="bashExecution"`
+  and replay as a `bash` invocation plus result, preserving command, output,
+  exit code, and cancellation.
+- A standalone `usage` entry bills the model recorded on that entry
+  (`UsageEntry.model`), not the session's selected model.
 
 Reference material:
 
@@ -48,4 +58,8 @@ Reference material:
 - `failed-turns.jsonl`: model_change, a system message, then two user turns
   whose assistant replies are empty `stopReason: error` records. Pins the
   metadata scan to the detail view's turn count for Pi's real failure shape.
+- `shell-and-usage.jsonl`: three native `bashExecution` messages (success,
+  non-zero exit, cancelled) plus a standalone `usage` entry that bills a
+  different model than the selected one. Covers direct-shell replay and
+  usage-entry attribution.
 - Tests also create isolated delete/realtime sandboxes in TempDir.

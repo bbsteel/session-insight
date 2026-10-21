@@ -114,19 +114,5 @@ func piEvidenceCases() []adaptertest.EvidenceCase {
 				adaptertest.AssertDeleteSandbox(t, r, "del-aaaaaaaa-bbbb-cccc-dddd-eeeeeeee", "keep-bbbbbbbb-cccc-dddd-eeee-ffffffff")
 			},
 		},
-		{
-			Scenario: "terminate-fd-holder", Synthetic: true, Sanitized: true,
-			Platforms: []string{"linux"},
-			Covers:    []capability.CapabilityID{capability.CapabilityTerminate},
-			NewReader: func(t *testing.T) adaptertest.Reader {
-				return New(installTestdata(t, basicID, "basic.jsonl"))
-			},
-			Assert: func(t *testing.T, r adaptertest.Reader) {
-				pr := r.(*PiReader)
-				path := pr.findSessionFile(basicID)
-				pid := adaptertest.StartFileHolder(t, path)
-				adaptertest.AssertTerminatePID(t, r, basicID, pid, 1)
-			},
-		},
 	}
 }

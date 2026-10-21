@@ -89,6 +89,18 @@ func TestHandleListAgentsReturnsFullCatalog(t *testing.T) {
 	if got := byType["pi"].Capabilities[capability.CapabilitySubtasks]; got.State != capability.CapabilityNotApplicable {
 		t.Errorf("pi.subtasks state = %s, want not_applicable", got.State)
 	}
+	// Pi exposes no exact PID: its transcript descriptor is closed between
+	// writes, so terminate cannot be offered (delete stays exact, guarded by
+	// SessionRunning).
+	if got := byType["pi"].Capabilities[capability.CapabilityTerminate]; got.State != capability.CapabilityUnsupported {
+		t.Errorf("pi.terminate state = %s, want unsupported", got.State)
+	}
+	if byType["pi"].CanTerminate {
+		t.Error("pi.can_terminate = true, want false")
+	}
+	if !byType["pi"].CanDelete {
+		t.Error("pi.can_delete = false, want true")
+	}
 	// Imported copies are read-only bundle snapshots: no delete, no terminate.
 	if imp, ok := byType["imported"]; !ok {
 		t.Error("imported missing from catalog")

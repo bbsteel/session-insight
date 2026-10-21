@@ -324,6 +324,7 @@ func TestListTurnCountMatchesDetailForFixtures(t *testing.T) {
 		{"dddddddd-eeee-ffff-0000-111111111111", "interrupted.jsonl"},
 		{"bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", "header-only.jsonl"},
 		{"eeeeeeee-0000-1111-2222-333333333333", "failed-turns.jsonl"},
+		{"99999999-0000-1111-2222-333333333333", "shell-and-usage.jsonl"},
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.file, func(t *testing.T) {
@@ -405,6 +406,46 @@ func TestFindSessionFileUsesFilenameNotHeaderWalk(t *testing.T) {
 	}
 }
 
+// TestListScanCacheInvalidatesOnChange pins the size+mtime keyed listing cache:
+// reconciliation must not re-decode an unchanged transcript, but a write has to
+// be observed on the next list.
+func TestListScanCacheInvalidatesOnChange(t *testing.T) {
+	root := installTestdata(t, basicID, "basic.jsonl")
+	r := New(root)
+	list, err := r.ListSessions()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list n=%d err=%v", len(list), err)
+	}
+	path := r.knownSessionFile(basicID)
+	if path == "" {
+		t.Fatal("missing cached path")
+	}
+
+	// Prime the cache, then prove a change is picked up.
+	if _, err := r.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"type":"session_info","id":"n2","parentId":"n1","timestamp":"2026-01-01T00:00:09.000Z","name":"renamed session"}` + "\n"); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err = r.ListSessions()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list after append n=%d err=%v", len(list), err)
+	}
+	if list[0].Name != "renamed session" {
+		t.Fatalf("name=%q, want the appended rename", list[0].Name)
+	}
+}
+
 func writeSessionFileIn(t *testing.T, root, cwdEnc, id, body string) string {
 	t.Helper()
 	dir := filepath.Join(root, cwdEnc)
@@ -416,4 +457,199 @@ func writeSessionFileIn(t *testing.T, root, cwdEnc, id, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// TestDuplicateSessionIDBindsNewestCopy covers a crash copy or in-progress
+// rewrite of one session id: listing and every lookup must bind to the newest
+// file, not to whichever directory ReadDir happened to return first.
+func TestDuplicateSessionIDBindsNewestCopy(t *testing.T) {
+	root := t.TempDir()
+	oldBody := `{"type":"session","version":3,"id":"` + basicID + `","timestamp":"2020-01-01T00:00:00.000Z","cwd":"/tmp/demo"}
+{"type":"message","id":"u1","parentId":null,"timestamp":"2020-01-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"old copy"}]}}
+`
+	newBody := `{"type":"session","version":3,"id":"` + basicID + `","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp/demo"}
+{"type":"message","id":"u1","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"new copy"}]}}
+`
+	// "--tmp-a--" sorts before "--tmp-z--", so directory order alone would
+	// pick the stale copy.
+	oldPath := writeSessionFileIn(t, root, "--tmp-a--", basicID, oldBody)
+	newPath := writeSessionFileIn(t, root, "--tmp-z--", basicID, newBody)
+	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(oldPath, base, base); err != nil {
+		t.Fatal(err)
+	}
+	newer := base.Add(24 * time.Hour)
+	if err := os.Chtimes(newPath, newer, newer); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(root)
+	list, err := r.ListSessions()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list n=%d err=%v", len(list), err)
+	}
+	if got := r.knownSessionFile(basicID); got != newPath {
+		t.Fatalf("listed path=%q, want newest %q", got, newPath)
+	}
+	detail, err := r.GetSession(basicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Turns) != 1 || detail.Turns[0].UserMessage != "new copy" {
+		t.Fatalf("detail came from the stale copy: %+v", detail.Turns)
+	}
+
+	// A newer duplicate appearing after the cache was primed must win too;
+	// the cached path may not outlive a newer same-id file.
+	if got := r.findSessionFile(basicID); got != newPath {
+		t.Fatalf("findSessionFile=%q, want %q", got, newPath)
+	}
+	if err := os.Chtimes(oldPath, newer.Add(time.Hour), newer.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.findSessionFile(basicID); got != oldPath {
+		t.Fatalf("findSessionFile=%q after the other copy became newest, want %q", got, oldPath)
+	}
+}
+
+// TestDeleteRefusesLiveSession pins the delete safety signal that replaces an
+// exact PID: Pi holds no transcript descriptor while idle, so a recently
+// written transcript is treated as an owned live session.
+func TestDeleteRefusesLiveSession(t *testing.T) {
+	root := t.TempDir()
+	path := writeSessionFile(t, root, basicID, `{"type":"session","version":3,"id":"`+basicID+`","timestamp":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","cwd":"/tmp/demo"}
+{"type":"message","id":"u1","parentId":null,"timestamp":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","message":{"role":"user","content":[{"type":"text","text":"still working"}]}}
+`)
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err != nil {
+		t.Fatal(err)
+	}
+	r := New(root)
+	running, err := r.SessionRunning(basicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !running {
+		t.Fatal("a transcript written inside LiveWindow must count as running (Pi holds no fd while idle)")
+	}
+
+	// Once the transcript is older than LiveWindow the session is treated as
+	// stopped, so the delete guard releases.
+	stale := now.Add(-(model.LiveWindow + time.Minute))
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	running, err = New(root).SessionRunning(basicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running {
+		t.Fatal("a transcript older than LiveWindow must not count as running")
+	}
+}
+
+// TestBashExecutionMessageReplaysCommandAndOutput covers Pi's direct !/!!
+// shell messages, which are persisted as their own message role rather than as
+// tool results.
+func TestBashExecutionMessageReplaysCommandAndOutput(t *testing.T) {
+	id := "99999999-0000-1111-2222-333333333333"
+	root := installTestdata(t, id, "shell-and-usage.jsonl")
+	r := New(root)
+	events, err := r.GetRenderEvents(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invocations, results int
+	var sawCommand, sawOutput, sawFailure, sawCancelled bool
+	for _, e := range events {
+		switch e.Type {
+		case "ToolInvocation":
+			invocations++
+			if e.ToolName != "bash" {
+				t.Fatalf("invocation tool=%q", e.ToolName)
+			}
+			if cmd, _ := e.ToolInput["command"].(string); cmd == "git status --short" {
+				sawCommand = true
+			}
+		case "ToolResult":
+			results++
+			if e.ParentEventID == "" {
+				t.Fatal("bash result has no parent invocation")
+			}
+			if e.Stdout == " M a.go" {
+				sawOutput = true
+			}
+			if e.ExitCode == 3 && e.ErrorKind != "" {
+				sawFailure = true
+			}
+			if e.Rejected && e.ErrorKind == "cancelled" {
+				sawCancelled = true
+			}
+		}
+	}
+	if invocations != 3 || results != 3 {
+		t.Fatalf("invocations=%d results=%d, want 3/3", invocations, results)
+	}
+	if !sawCommand || !sawOutput {
+		t.Fatalf("command/output lost: command=%v output=%v", sawCommand, sawOutput)
+	}
+	if !sawFailure {
+		t.Fatal("non-zero exit must carry an error outcome")
+	}
+	if !sawCancelled {
+		t.Fatal("a cancelled command must not render as success")
+	}
+
+	detail, err := r.GetSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.TurnCount != 1 || len(detail.Turns) != 1 {
+		t.Fatalf("turns=%d count=%d", len(detail.Turns), detail.TurnCount)
+	}
+	if detail.Turns[0].ToolCallCount != 3 {
+		t.Fatalf("tool calls=%d", detail.Turns[0].ToolCallCount)
+	}
+	if detail.Turns[0].AssistantMessage != "a.go is modified" {
+		t.Fatalf("assistant=%q", detail.Turns[0].AssistantMessage)
+	}
+	list, err := r.ListSessions()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list n=%d err=%v", len(list), err)
+	}
+	if list[0].TurnCount != detail.TurnCount {
+		t.Fatalf("list TurnCount=%d, detail TurnCount=%d", list[0].TurnCount, detail.TurnCount)
+	}
+}
+
+// TestStandaloneUsageEntryBillsItsOwnModel covers Pi's UsageEntry.model, which
+// is distinct from model_change's modelId (cache warming bills another model).
+func TestStandaloneUsageEntryBillsItsOwnModel(t *testing.T) {
+	id := "99999999-0000-1111-2222-333333333333"
+	root := installTestdata(t, id, "shell-and-usage.jsonl")
+	detail, err := New(root).GetSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Billing == nil || len(detail.Billing.ByModel) != 2 {
+		t.Fatalf("billing=%+v", detail.Billing)
+	}
+	buckets := map[string]model.ModelUsage{}
+	for _, usage := range detail.Billing.ByModel {
+		buckets[usage.Model] = usage
+	}
+	secondary, ok := buckets["secondary-review-model"]
+	if !ok {
+		t.Fatalf("by-model=%v, want a secondary-review-model bucket", detail.Billing.ByModel)
+	}
+	if secondary.Usage.PromptTokens != 10 || secondary.Usage.CompletionTokens != 1 {
+		t.Fatalf("secondary bucket=%+v", secondary.Usage)
+	}
+	if secondary.BillingAmount != 0.002 {
+		t.Fatalf("secondary cost=%v", secondary.BillingAmount)
+	}
+	// The selected session model must stay unchanged by an auxiliary record.
+	if detail.ModelName != "claude-sonnet-4" {
+		t.Fatalf("ModelName=%q", detail.ModelName)
+	}
 }

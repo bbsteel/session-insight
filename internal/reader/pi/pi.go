@@ -26,11 +26,67 @@ type PiReader struct {
 	sessionsDir string
 	pathsMu     sync.RWMutex
 	paths       map[string]string
+
+	// metaMu guards metaCache, the size+mtime keyed inventory of scanning
+	// sessions. Listing is the indexer's reconciliation path, so an unchanged
+	// transcript must cost one stat instead of a full decode.
+	metaMu    sync.Mutex
+	metaCache map[string]metaCacheEntry
+}
+
+// metaCacheEntry is one listing scan result plus the stat it was computed
+// from. A size or mtime change invalidates it.
+type metaCacheEntry struct {
+	size    int64
+	modTime time.Time
+	session model.Session
 }
 
 // New constructs a reader rooted at sessionsDir (~/.pi/agent/sessions).
 func New(sessionsDir string) *PiReader {
-	return &PiReader{sessionsDir: sessionsDir, paths: make(map[string]string)}
+	return &PiReader{
+		sessionsDir: sessionsDir,
+		paths:       make(map[string]string),
+		metaCache:   make(map[string]metaCacheEntry),
+	}
+}
+
+// scanSessionMetaCached returns the metadata for path, reusing the previous
+// scan while the file's size and mtime are unchanged.
+func (r *PiReader) scanSessionMetaCached(path string) (model.Session, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return model.Session{}, err
+	}
+	r.metaMu.Lock()
+	cached, ok := r.metaCache[path]
+	r.metaMu.Unlock()
+	if ok && cached.size == info.Size() && cached.modTime.Equal(info.ModTime()) {
+		return cached.session, nil
+	}
+	session, err := scanSessionMeta(path)
+	if err != nil {
+		return model.Session{}, err
+	}
+	r.metaMu.Lock()
+	if r.metaCache == nil {
+		r.metaCache = make(map[string]metaCacheEntry)
+	}
+	r.metaCache[path] = metaCacheEntry{size: info.Size(), modTime: info.ModTime(), session: session}
+	r.metaMu.Unlock()
+	return session, nil
+}
+
+// pruneMetaCache drops cache entries for files that are no longer listed, so a
+// long-lived process does not accumulate deleted sessions.
+func (r *PiReader) pruneMetaCache(seen map[string]struct{}) {
+	r.metaMu.Lock()
+	defer r.metaMu.Unlock()
+	for path := range r.metaCache {
+		if _, ok := seen[path]; !ok {
+			delete(r.metaCache, path)
+		}
+	}
 }
 
 func (r *PiReader) WatchRoots() []string { return []string{r.sessionsDir} }
@@ -115,6 +171,10 @@ func (r *PiReader) collectSessionFiles(id string) []string {
 	return out
 }
 
+// newestSessionFile returns the most recently modified path, preferring the
+// later filename (Pi's filename timestamp) when mtimes tie. Duplicate JSONL
+// files for one id are a copy, crash leftover, or in-progress rewrite, and the
+// newest one is the transcript Pi is actually appending to.
 func newestSessionFile(paths []string) string {
 	if len(paths) == 0 {
 		return ""
@@ -126,7 +186,8 @@ func newestSessionFile(paths []string) string {
 		if err != nil {
 			continue
 		}
-		if bestTime.IsZero() || info.ModTime().After(bestTime) {
+		if bestTime.IsZero() || info.ModTime().After(bestTime) ||
+			(info.ModTime().Equal(bestTime) && path > best) {
 			best = path
 			bestTime = info.ModTime()
 		}
@@ -134,20 +195,39 @@ func newestSessionFile(paths []string) string {
 	return best
 }
 
+// newestFileIsLater reports whether candidatePath is the newer copy of a
+// duplicated session id than currentPath: later mtime wins, and an equal mtime
+// falls back to the lexically greater filename (Pi encodes the creation time
+// in the name). An unreadable candidate is never preferred over a readable one.
+func newestFileIsLater(candidatePath, currentPath string) bool {
+	candidateInfo, candidateErr := os.Stat(candidatePath)
+	currentInfo, currentErr := os.Stat(currentPath)
+	switch {
+	case candidateErr != nil:
+		return false
+	case currentErr != nil:
+		return true
+	}
+	if !candidateInfo.ModTime().Equal(currentInfo.ModTime()) {
+		return candidateInfo.ModTime().After(currentInfo.ModTime())
+	}
+	return candidatePath > currentPath
+}
+
+// findSessionFile resolves the canonical JSONL for a session id. Duplicate
+// copies are re-evaluated on every lookup: a cached path is only kept while no
+// newer same-id file exists, so live tail, replay, and process detection stay
+// bound to the file Pi is writing instead of a stale leftover.
 func (r *PiReader) findSessionFile(id string) string {
 	if !validSessionID(id) {
 		return ""
 	}
-	if known := r.knownSessionFile(id); known != "" {
-		if _, err := os.Stat(known); err == nil {
-			return known
-		}
+	newest := newestSessionFile(r.collectSessionFiles(id))
+	if newest == "" {
+		return ""
 	}
-	found := newestSessionFile(r.collectSessionFiles(id))
-	if found != "" {
-		r.rememberPath(id, found)
-	}
-	return found
+	r.rememberPath(id, newest)
+	return newest
 }
 
 func sessionIDFromFilename(name string) string {
@@ -169,7 +249,16 @@ func (r *PiReader) ListSessions() ([]model.Session, error) {
 // GetSession / GetRenderEvents.
 func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bool, err error) {
 	complete = true
-	seen := map[string]struct{}{}
+	// Duplicate ids are collapsed onto the newest file. The winner is decided
+	// after the whole walk, because directory order says nothing about which
+	// copy Pi is appending to.
+	type candidate struct {
+		session model.Session
+		path    string
+	}
+	winners := map[string]candidate{}
+	var order []string
+	listed := map[string]struct{}{}
 	addDir := func(dir string) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -186,7 +275,8 @@ func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bo
 				continue
 			}
 			path := filepath.Join(dir, entry.Name())
-			session, parseErr := scanSessionMeta(path)
+			listed[path] = struct{}{}
+			session, parseErr := r.scanSessionMetaCached(path)
 			if parseErr != nil {
 				if !os.IsNotExist(parseErr) {
 					complete = false
@@ -197,12 +287,15 @@ func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bo
 				complete = false
 				continue
 			}
-			if _, dup := seen[session.ID]; dup {
+			if previous, dup := winners[session.ID]; dup {
+				if !newestFileIsLater(path, previous.path) {
+					continue
+				}
+				winners[session.ID] = candidate{session: session, path: path}
 				continue
 			}
-			seen[session.ID] = struct{}{}
-			r.rememberPath(session.ID, path)
-			sessions = append(sessions, session)
+			order = append(order, session.ID)
+			winners[session.ID] = candidate{session: session, path: path}
 		}
 	}
 	addDir(r.sessionsDir)
@@ -218,6 +311,11 @@ func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bo
 			addDir(filepath.Join(r.sessionsDir, entry.Name()))
 		}
 	}
+	for _, id := range order {
+		sessions = append(sessions, winners[id].session)
+		r.rememberPath(id, winners[id].path)
+	}
+	r.pruneMetaCache(listed)
 	if sessions == nil {
 		sessions = []model.Session{}
 	}
@@ -291,7 +389,7 @@ func (r *PiReader) GetSessionMeta(id string) (*model.Session, error) {
 	if path == "" {
 		return nil, fmt.Errorf("%w: %s", errSessionNotFound, id)
 	}
-	session, err := scanSessionMeta(path)
+	session, err := r.scanSessionMetaCached(path)
 	if err != nil {
 		return nil, err
 	}

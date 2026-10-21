@@ -36,12 +36,16 @@ type sessionEntry struct {
 	Message   json.RawMessage `json:"message"`
 	Provider  string          `json:"provider"`
 	ModelID   string          `json:"modelId"`
-	Name      string          `json:"name"`
-	Summary   string          `json:"summary"`
-	Kind      string          `json:"kind"`
-	Usage     *piUsage        `json:"usage"`
-	Content   json.RawMessage `json:"content"`
-	Display   *bool           `json:"display"`
+	// Model is the usage entry's own attribution target (UsageEntry.model).
+	// It is distinct from model_change's modelId and must not be confused
+	// with the session's selected model.
+	Model   string          `json:"model"`
+	Name    string          `json:"name"`
+	Summary string          `json:"summary"`
+	Kind    string          `json:"kind"`
+	Usage   *piUsage        `json:"usage"`
+	Content json.RawMessage `json:"content"`
+	Display *bool           `json:"display"`
 }
 
 type piMessage struct {
@@ -56,6 +60,16 @@ type piMessage struct {
 	ToolCallID   string          `json:"toolCallId"`
 	ToolName     string          `json:"toolName"`
 	IsError      bool            `json:"isError"`
+
+	// Direct-shell fields (role "bashExecution"). Pi records a user-issued
+	// !/!! command and its output as a first-class message, not as a tool
+	// result, so replay must render it from these fields.
+	Command        string `json:"command"`
+	Output         string `json:"output"`
+	ExitCode       *int   `json:"exitCode"`
+	Cancelled      bool   `json:"cancelled"`
+	Truncated      bool   `json:"truncated"`
+	FullOutputPath string `json:"fullOutputPath"`
 }
 
 type piUsage struct {
@@ -201,7 +215,11 @@ func parseSessionFile(path string) (*parsedFile, error) {
 
 		case "usage":
 			if entry.Usage != nil {
-				addUsage(&billingUsage, &billingCost, &hasUsage, byModel, entry.Usage, modelName)
+				// A standalone usage entry names its own attribution target
+				// (kind "cache_warm" writes a different model than the
+				// session's selected one). Bill it there; the session's
+				// ModelName is deliberately left untouched.
+				addUsage(&billingUsage, &billingCost, &hasUsage, byModel, entry.Usage, usageEntryModel(entry, modelName))
 			}
 
 		case "compaction":
@@ -353,6 +371,57 @@ func parseSessionFile(path string) (*parsedFile, error) {
 					ParentEventID: parent, ToolCallID: msg.ToolCallID, ToolName: msg.ToolName,
 					Stdout: stdout, Stderr: stderr, ExitCode: exitCode,
 					DurationMs: msg.DurationMs, ErrorKind: errorKind,
+				})
+				turnOpen = true
+			case "bashExecution":
+				// Direct !/!! commands (and RPC bash) are persisted as their own
+				// message role. Replay them as a shell invocation plus result so
+				// the command, output, and outcome survive; the record is native
+				// data, not a malformed or unknown entry.
+				idx := ensureTurn(ts)
+				turn := currentTurn()
+				callID := "bash-" + entry.ID
+				if entry.ID == "" {
+					callID = fmt.Sprintf("bash-evt-%04d", eventCounter)
+				}
+				if turn != nil {
+					turn.ToolCallCount++
+					turn.ToolNames = append(turn.ToolNames, "bash")
+				}
+				invocationEventID := emit(model.RenderEvent{
+					Type: "ToolInvocation", Timestamp: ts, TurnIndex: idx,
+					ToolName: "bash", ToolInput: map[string]any{"command": msg.Command}, ToolCallID: callID,
+				})
+				callEventIDs[callID] = invocationEventID
+
+				exitCode := 0
+				errorKind := ""
+				switch {
+				case msg.Cancelled:
+					// A cancelled command has no exit status; mark it rejected so
+					// the shared renderer shows the cancellation instead of success.
+					errorKind = "cancelled"
+				case msg.ExitCode != nil && *msg.ExitCode != 0:
+					exitCode = *msg.ExitCode
+					errorKind = "tool_error"
+				}
+				if errorKind != "" && turn != nil {
+					turn.ErrorCount++
+				}
+				if turn != nil {
+					turn.ToolDetails = append(turn.ToolDetails, model.ToolCallVM{
+						Name:         "bash",
+						ExitCode:     exitCode,
+						ErrorKind:    errorKind,
+						ErrorMessage: bashExecutionErrorText(msg, errorKind),
+						Rejected:     msg.Cancelled,
+					})
+				}
+				emit(model.RenderEvent{
+					Type: "ToolResult", Timestamp: ts, TurnIndex: idx,
+					ParentEventID: invocationEventID, ToolCallID: callID, ToolName: "bash",
+					Stdout: msg.Output, ExitCode: exitCode, ErrorKind: errorKind,
+					Rejected: msg.Cancelled, Truncated: msg.Truncated,
 				})
 				turnOpen = true
 			}
@@ -595,6 +664,11 @@ func scanSessionMeta(path string) (model.Session, error) {
 				}
 			case "toolResult":
 				startTurn()
+			case "bashExecution":
+				// Direct-shell messages replay as a bash invocation plus result,
+				// so they are turn content exactly like a tool call.
+				startTurn()
+				markTurnContent()
 			}
 			if msg.Model != "" {
 				modelName = msg.Model
@@ -695,6 +769,31 @@ func usageToTokens(u *piUsage) model.TokenUsage {
 		out.Present.Reasoning = model.PresenceExact
 	}
 	return out
+}
+
+// usageEntryModel is the attribution target for a standalone usage entry.
+// Pi records the billed model on the entry itself (UsageEntry.model); fall back
+// to the session's selected model only when the entry omits it.
+func usageEntryModel(entry sessionEntry, sessionModel string) string {
+	if trimmed := strings.TrimSpace(entry.Model); trimmed != "" {
+		return trimmed
+	}
+	return sessionModel
+}
+
+// bashExecutionErrorText renders the recorded outcome of a direct-shell
+// message for turn-level tool details (which carry no output channel).
+func bashExecutionErrorText(msg piMessage, errorKind string) string {
+	switch errorKind {
+	case "cancelled":
+		return "command cancelled"
+	case "tool_error":
+		if msg.ExitCode != nil {
+			return fmt.Sprintf("exit code %d", *msg.ExitCode)
+		}
+		return "command failed"
+	}
+	return ""
 }
 
 func addUsage(totals *model.TokenUsage, cost *float64, has *bool, byModel map[string]*model.ModelUsage, u *piUsage, modelName string) {

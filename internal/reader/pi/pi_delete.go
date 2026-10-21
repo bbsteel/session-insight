@@ -5,31 +5,44 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bbsteel/session-insight/internal/procfind"
+	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
-// SessionProcesses returns PIDs that hold the session JSONL open. Pi appends
-// to the file for the lifetime of the process, including idle input waits.
-func (r *PiReader) SessionProcesses(id string) ([]int, error) {
+// Pi has no OS-visible process↔session mapping to offer. Its native
+// SessionManager closes the transcript descriptor after each write and appends
+// with appendFileSync, so fd holders only exist during a write (verified with
+// the installed Pi 1.3.0 SessionManager) — an idle-but-alive Pi process holds
+// no descriptor on the session file. There is also no heartbeat or lock
+// registry, so an exact PID cannot be recovered from the OS.
+//
+// Therefore this adapter does not implement reader.SessionProcessFinder and
+// declares terminate unsupported. Delete safety comes from SessionRunning,
+// which is conservative: it reports a session as running while its transcript
+// was written inside model.LiveWindow, so a session that a live Pi process may
+// still be appending to is never deleted out from under it.
+func (r *PiReader) SessionRunning(id string) (bool, error) {
 	path := r.findSessionFile(id)
 	if path == "" {
-		return nil, fmt.Errorf("%w: %s", errSessionNotFound, id)
-	}
-	return procfind.HoldersOf(path)
-}
-
-// SessionRunning is the block-only fallback when no PID is available:
-// trailing in_progress already bounded by LiveWindow at emission.
-func (r *PiReader) SessionRunning(id string) (bool, error) {
-	if pids, err := r.SessionProcesses(id); err == nil && len(pids) > 0 {
-		return true, nil
+		return false, fmt.Errorf("%w: %s", errSessionNotFound, id)
 	}
 	events, err := r.GetRenderEvents(id)
 	if err != nil {
 		return false, err
 	}
-	return shared.HasTrailingInProgress(events), nil
+	// Trailing in_progress is already LiveWindow-bounded at emission.
+	if shared.HasTrailingInProgress(events) {
+		return true, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	// A closed turn does not mean the session is over: Pi keeps the session
+	// open and idle at its prompt without touching the file. Recent on-disk
+	// activity is the only remaining signal, and refusing a delete for one
+	// LiveWindow is the safe direction for a destructive action.
+	return model.IsSessionLive(info.ModTime()), nil
 }
 
 // DeleteSession permanently removes every JSONL whose filename encodes this

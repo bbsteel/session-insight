@@ -19,12 +19,14 @@ import (
 //     create independent sessions, not a nested invocation graph)
 //   - resume: header session id is the native `pi --session {id}` identity
 //   - delete: SessionDeleter removes every JSONL whose filename encodes the id
-//   - terminate: SessionProcessFinder via fd holders of the open JSONL
+//   - terminate: unsupported — Pi closes the transcript descriptor after each
+//     write and keeps no heartbeat/lock registry, so no exact PID exists while
+//     a session is idle-but-alive. Delete safety comes from SessionRunning.
 func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       agentType,
 		DisplayName:     displayName,
-		AdapterRevision: 2,
+		AdapterRevision: 3,
 		ResumeCommand: &capability.ResumeCommandDeclaration{
 			Executable:   "pi",
 			StandardArgs: []string{"--session", "{id}"},
@@ -40,7 +42,7 @@ func Capabilities() capability.AgentCapabilities {
 			capability.CapabilitySubtasks:    capability.NotApplicable("no_native_subagents"),
 			capability.CapabilityResume:      capability.Exact(),
 			capability.CapabilityDelete:      capability.Exact(),
-			capability.CapabilityTerminate:   capability.Exact(),
+			capability.CapabilityTerminate:   capability.Unsupported("exact_pid_unavailable"),
 		},
 	}
 }
