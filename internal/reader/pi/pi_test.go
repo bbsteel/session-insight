@@ -197,6 +197,41 @@ func TestDeleteRemovesDuplicateAfterListing(t *testing.T) {
 	}
 }
 
+// TestDeleteOrdersDuplicatesOldestFirst pins the partial-failure guarantee: an
+// unremovable stale duplicate must abort the delete before the canonical
+// transcript is touched, so the id can never end up bound to a leftover.
+func TestDeleteOrdersDuplicatesOldestFirst(t *testing.T) {
+	root := t.TempDir()
+	body, err := os.ReadFile(filepath.Join("testdata", "basic.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := writeSessionFileIn(t, root, "--tmp-a--", basicID, string(body))
+	canonical := writeSessionFileIn(t, root, "--tmp-z--", basicID, string(body))
+	base := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(stale, base, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(canonical, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Make the stale copy unremovable by removing write permission on its
+	// directory, which blocks the unlink.
+	staleDir := filepath.Dir(stale)
+	if err := os.Chmod(staleDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(staleDir, 0o755) })
+
+	r := New(root)
+	if err := r.DeleteSession(basicID); err == nil {
+		t.Fatal("expected delete to fail on the unremovable stale copy")
+	}
+	if _, err := os.Stat(canonical); err != nil {
+		t.Fatalf("canonical transcript removed despite the failed stale copy: %v", err)
+	}
+}
+
 // TestAssistantUsageFallsBackToCurrentModel covers an assistant message that
 // bills usage but omits "model" after a model_change. The request belongs to
 // the current model, not to "unknown".
@@ -500,8 +535,9 @@ func TestDuplicateSessionIDBindsNewestCopy(t *testing.T) {
 		t.Fatalf("detail came from the stale copy: %+v", detail.Turns)
 	}
 
-	// A newer duplicate appearing after the cache was primed must win too;
-	// the cached path may not outlive a newer same-id file.
+	// A newer duplicate appearing after the index was primed must win on the
+	// next lookup: the cached path may not outlive a newer same-id file in a
+	// directory this id is already known to live in.
 	if got := r.findSessionFile(basicID); got != newPath {
 		t.Fatalf("findSessionFile=%q, want %q", got, newPath)
 	}
@@ -510,6 +546,45 @@ func TestDuplicateSessionIDBindsNewestCopy(t *testing.T) {
 	}
 	if got := r.findSessionFile(basicID); got != oldPath {
 		t.Fatalf("findSessionFile=%q after the other copy became newest, want %q", got, oldPath)
+	}
+
+	// A duplicate that appears in a directory this id was never seen in is
+	// reconciled by listing, which is the full-tree reconciliation path.
+	third := writeSessionFileIn(t, root, "--tmp-zz--", basicID, newBody)
+	thirdNewest := newer.Add(2 * time.Hour)
+	if err := os.Chtimes(third, thirdNewest, thirdNewest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.findSessionFile(basicID); got != third {
+		t.Fatalf("findSessionFile=%q after listing, want newest copy %q", got, third)
+	}
+}
+
+// TestFindSessionFileUnknownIDDoesNotWalkRepeatedly pins the lookup cost that
+// matters in practice: the server probes every reader's LiveRevision for every
+// visible session, so a repeated miss for an id Pi does not own must not
+// enumerate the sessions tree each time.
+func TestFindSessionFileUnknownIDDoesNotWalkRepeatedly(t *testing.T) {
+	root := installTestdata(t, basicID, "basic.jsonl")
+	r := New(root)
+	if r.findSessionFile("no-such-session") != "" {
+		t.Fatal("expected no path for an unknown id")
+	}
+	started := r.lastIndexAt
+	for i := 0; i < 50; i++ {
+		if r.findSessionFile("no-such-session") != "" {
+			t.Fatal("expected no path for an unknown id")
+		}
+	}
+	if !r.lastIndexAt.Equal(started) {
+		t.Fatalf("repeated unknown-id lookups re-scanned the tree (%v -> %v)", started, r.lastIndexAt)
+	}
+	// The indexed session is still resolvable from the same index.
+	if r.findSessionFile(basicID) == "" {
+		t.Fatal("indexed session must stay resolvable")
 	}
 }
 

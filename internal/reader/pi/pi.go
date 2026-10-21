@@ -24,8 +24,19 @@ const (
 // PiReader reads Pi coding-agent sessions from a sessions directory tree.
 type PiReader struct {
 	sessionsDir string
-	pathsMu     sync.RWMutex
-	paths       map[string]string
+
+	// pathsMu guards the id → canonical-file index: paths holds the current
+	// transcript for an id, and idDirs holds the encoded-cwd directories known
+	// to contain that id. Lookups resolve from this index only, so LiveRevision
+	// and replay stay stat-level instead of walking the whole tree per call.
+	pathsMu  sync.RWMutex
+	paths    map[string]string
+	lastSeen map[string]string
+	idDirs   map[string]map[string]struct{}
+	// lastIndexAt bounds how often an unknown id may trigger a full directory
+	// scan, so repeated probes for a session Pi does not own stay cheap without
+	// permanently hiding a newly created session.
+	lastIndexAt time.Time
 
 	// metaMu guards metaCache, the size+mtime keyed inventory of scanning
 	// sessions. Listing is the indexer's reconciliation path, so an unchanged
@@ -47,6 +58,8 @@ func New(sessionsDir string) *PiReader {
 	return &PiReader{
 		sessionsDir: sessionsDir,
 		paths:       make(map[string]string),
+		lastSeen:    make(map[string]string),
+		idDirs:      make(map[string]map[string]struct{}),
 		metaCache:   make(map[string]metaCacheEntry),
 	}
 }
@@ -104,8 +117,17 @@ func (r *PiReader) rememberPath(id, path string) {
 	if id == "" || path == "" {
 		return
 	}
+	dir := filepath.Dir(path)
 	r.pathsMu.Lock()
 	r.paths[id] = path
+	r.lastSeen[id] = path
+	if r.idDirs == nil {
+		r.idDirs = make(map[string]map[string]struct{})
+	}
+	if r.idDirs[id] == nil {
+		r.idDirs[id] = make(map[string]struct{})
+	}
+	r.idDirs[id][dir] = struct{}{}
 	r.pathsMu.Unlock()
 }
 
@@ -115,6 +137,47 @@ func (r *PiReader) knownSessionFile(id string) string {
 	return r.paths[id]
 }
 
+// knownSessionDirs returns the encoded-cwd directories already associated with
+// this id, so a rescan never has to touch the whole sessions tree.
+func (r *PiReader) knownSessionDirs(id string) []string {
+	r.pathsMu.RLock()
+	defer r.pathsMu.RUnlock()
+	dirs := make([]string, 0, len(r.idDirs[id]))
+	for dir := range r.idDirs[id] {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+// rememberSession records the canonical path plus every directory known to hold
+// a copy of the id, so later duplicate lookups never rescan the sessions root.
+func (r *PiReader) rememberSession(id, path string, dirs map[string]struct{}) {
+	r.rememberPath(id, path)
+	if len(dirs) == 0 {
+		return
+	}
+	r.pathsMu.Lock()
+	if r.idDirs[id] == nil {
+		r.idDirs[id] = make(map[string]struct{})
+	}
+	for dir := range dirs {
+		r.idDirs[id][dir] = struct{}{}
+	}
+	r.pathsMu.Unlock()
+}
+
+// lastKnownSessionFile is the most recently resolved path for id, retained
+// after the live index forgets it so a not-found error can still report the
+// source it was reading (provenance must not vanish on the failure path).
+func (r *PiReader) lastKnownSessionFile(id string) string {
+	r.pathsMu.RLock()
+	defer r.pathsMu.RUnlock()
+	return r.lastSeen[id]
+}
+
+// forgetPath invalidates the resolved path but keeps lastSeen and the known
+// directories, so a delete or an unreadable rescan does not erase provenance.
 func (r *PiReader) forgetPath(id string) {
 	r.pathsMu.Lock()
 	delete(r.paths, id)
@@ -129,13 +192,120 @@ func matchSessionFilename(name, id string) bool {
 	return sessionIDFromFilename(name) == id
 }
 
-// collectSessionFiles lists JSONL files whose filename encodes id. It reads
-// directory entries only (sessions root and one encoded-cwd level) and never
-// opens transcript contents.
-func (r *PiReader) collectSessionFiles(id string) []string {
+// findSessionFile resolves the canonical JSONL for a session id.
+//
+// The hot path is one stat. The server probes every reader's LiveRevision for
+// every session it displays, and Pi is registered ahead of the home-directory
+// agents, so Pi must never walk its whole tree for an id it does not own.
+//
+// Where duplicate resolution happens:
+//   - Listing is the reconciliation path. It scans the tree, picks the newest
+//     same-id file, and reregisters that path, so a copy, crash leftover, or
+//     in-progress rewrite converges to the transcript Pi is actually writing.
+//   - Per-request lookups stat the indexed path and only compare siblings in
+//     the id's already-known directories, which is a bounded directory read
+//     rather than a whole-tree walk.
+//   - An unknown id triggers at most one full index pass per
+//     unknownIDIndexInterval, so repeated probes stay cheap while a newly
+//     created session is still discovered without waiting for a list.
+func (r *PiReader) findSessionFile(id string) string {
 	if !validSessionID(id) {
+		return ""
+	}
+	cached := r.knownSessionFile(id)
+	if cached != "" {
+		if _, err := os.Stat(cached); err == nil && matchSessionFilename(filepath.Base(cached), id) {
+			if newest := r.newestKnownSibling(id, cached); newest != cached {
+				r.rememberPath(id, newest)
+				return newest
+			}
+			return cached
+		}
+		r.forgetPath(id)
+	}
+	if !r.indexOnce() {
+		return ""
+	}
+	return r.knownSessionFile(id)
+}
+
+// newestKnownSibling returns the newest file encoding id among the cached path
+// and the id's known directories. It never enumerates the sessions root.
+func (r *PiReader) newestKnownSibling(id, cached string) string {
+	dirs := r.knownSessionDirs(id)
+	if len(dirs) == 0 {
+		return cached
+	}
+	best := cached
+	for _, dir := range dirs {
+		for _, path := range sessionFilesInDir(dir, id) {
+			if newestFileIsLater(path, best) {
+				best = path
+			}
+		}
+	}
+	return best
+}
+
+// unknownIDIndexInterval bounds how often a lookup for an id that is not in the
+// path index may trigger a full directory scan. Without it, every reader probe
+// for a session this reader does not own would walk the whole Pi tree; with it,
+// a newly created session is still discovered within one interval.
+const unknownIDIndexInterval = time.Second
+
+// markIndexFresh records that a full listing just reconciled the index, which
+// extends the window before another unknown id triggers a directory scan.
+func (r *PiReader) markIndexFresh() {
+	r.pathsMu.Lock()
+	r.lastIndexAt = time.Now()
+	r.pathsMu.Unlock()
+}
+
+// indexOnce performs at most one full directory scan per interval, so a miss
+// is cheap to repeat but a new session still appears without a list.
+func (r *PiReader) indexOnce() bool {
+	r.pathsMu.Lock()
+	if time.Since(r.lastIndexAt) < unknownIDIndexInterval {
+		r.pathsMu.Unlock()
+		return false
+	}
+	r.lastIndexAt = time.Now()
+	r.pathsMu.Unlock()
+
+	for _, path := range r.listSessionFilenames("") {
+		id := sessionIDFromFilename(filepath.Base(path))
+		if id == "" {
+			continue
+		}
+		if previous := r.knownSessionFile(id); previous == "" || newestFileIsLater(path, previous) {
+			r.rememberPath(id, path)
+		}
+	}
+	return true
+}
+
+// sessionFilesInDir lists JSONL files in one directory whose filename encodes
+// id, without opening transcript contents.
+func sessionFilesInDir(dir, id string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return nil
 	}
+	var out []string
+	for _, entry := range entries {
+		if entry.IsDir() || !matchSessionFilename(entry.Name(), id) {
+			continue
+		}
+		out = append(out, filepath.Join(dir, entry.Name()))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// listSessionFilenames returns every JSONL path under the sessions root and one
+// encoded-cwd level. When onlyID is set, paths whose filename does not encode
+// that id are skipped. It never opens transcript contents.
+func (r *PiReader) listSessionFilenames(onlyID string) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	addDir := func(dir string) {
@@ -147,7 +317,10 @@ func (r *PiReader) collectSessionFiles(id string) []string {
 			if entry.IsDir() {
 				continue
 			}
-			if !matchSessionFilename(entry.Name(), id) {
+			if !strings.HasSuffix(strings.ToLower(entry.Name()), ".jsonl") {
+				continue
+			}
+			if onlyID != "" && !matchSessionFilename(entry.Name(), onlyID) {
 				continue
 			}
 			path := filepath.Join(dir, entry.Name())
@@ -171,28 +344,13 @@ func (r *PiReader) collectSessionFiles(id string) []string {
 	return out
 }
 
-// newestSessionFile returns the most recently modified path, preferring the
-// later filename (Pi's filename timestamp) when mtimes tie. Duplicate JSONL
-// files for one id are a copy, crash leftover, or in-progress rewrite, and the
-// newest one is the transcript Pi is actually appending to.
-func newestSessionFile(paths []string) string {
-	if len(paths) == 0 {
-		return ""
+// collectSessionFiles lists JSONL files whose filename encodes id, used by
+// delete, which must reach every copy.
+func (r *PiReader) collectSessionFiles(id string) []string {
+	if !validSessionID(id) {
+		return nil
 	}
-	best := paths[0]
-	var bestTime time.Time
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		if bestTime.IsZero() || info.ModTime().After(bestTime) ||
-			(info.ModTime().Equal(bestTime) && path > best) {
-			best = path
-			bestTime = info.ModTime()
-		}
-	}
-	return best
+	return r.listSessionFilenames(id)
 }
 
 // newestFileIsLater reports whether candidatePath is the newer copy of a
@@ -212,22 +370,6 @@ func newestFileIsLater(candidatePath, currentPath string) bool {
 		return candidateInfo.ModTime().After(currentInfo.ModTime())
 	}
 	return candidatePath > currentPath
-}
-
-// findSessionFile resolves the canonical JSONL for a session id. Duplicate
-// copies are re-evaluated on every lookup: a cached path is only kept while no
-// newer same-id file exists, so live tail, replay, and process detection stay
-// bound to the file Pi is writing instead of a stale leftover.
-func (r *PiReader) findSessionFile(id string) string {
-	if !validSessionID(id) {
-		return ""
-	}
-	newest := newestSessionFile(r.collectSessionFiles(id))
-	if newest == "" {
-		return ""
-	}
-	r.rememberPath(id, newest)
-	return newest
 }
 
 func sessionIDFromFilename(name string) string {
@@ -255,6 +397,9 @@ func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bo
 	type candidate struct {
 		session model.Session
 		path    string
+		// dirs collects every directory that holds a copy of this id, so later
+		// duplicate lookups stay bounded to known directories.
+		dirs map[string]struct{}
 	}
 	winners := map[string]candidate{}
 	var order []string
@@ -288,14 +433,21 @@ func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bo
 				continue
 			}
 			if previous, dup := winners[session.ID]; dup {
+				previous.dirs[filepath.Dir(path)] = struct{}{}
 				if !newestFileIsLater(path, previous.path) {
 					continue
 				}
-				winners[session.ID] = candidate{session: session, path: path}
+				previous.session = session
+				previous.path = path
+				winners[session.ID] = previous
 				continue
 			}
 			order = append(order, session.ID)
-			winners[session.ID] = candidate{session: session, path: path}
+			winners[session.ID] = candidate{
+				session: session,
+				path:    path,
+				dirs:    map[string]struct{}{filepath.Dir(path): {}},
+			}
 		}
 	}
 	addDir(r.sessionsDir)
@@ -312,9 +464,11 @@ func (r *PiReader) ListSessionsDetailed() (sessions []model.Session, complete bo
 		}
 	}
 	for _, id := range order {
-		sessions = append(sessions, winners[id].session)
-		r.rememberPath(id, winners[id].path)
+		winner := winners[id]
+		sessions = append(sessions, winner.session)
+		r.rememberSession(id, winner.path, winner.dirs)
 	}
+	r.markIndexFresh()
 	r.pruneMetaCache(listed)
 	if sessions == nil {
 		sessions = []model.Session{}
@@ -333,7 +487,7 @@ func (r *PiReader) GetSession(id string) (*model.SessionDetail, error) {
 	if path == "" {
 		readErr := readerr.New(readerr.SourceMissing, "source_missing",
 			fmt.Errorf("%w: %s", errSessionNotFound, id))
-		if known := r.knownSessionFile(id); known != "" {
+		if known := r.lastKnownSessionFile(id); known != "" {
 			readErr.WithSources(sourceInventory(known))
 		}
 		return nil, readErr

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
@@ -48,6 +49,11 @@ func (r *PiReader) SessionRunning(id string) (bool, error) {
 // DeleteSession permanently removes every JSONL whose filename encodes this
 // session id. Duplicate files (copy, crash leftover, in-progress rewrite)
 // must not survive a successful delete, or the next list would rebind the id.
+//
+// Ordering matters for a partial failure: older duplicates go first and the
+// canonical (newest) transcript last, and the loop stops at the first error.
+// Removing the newest file before a stale copy it cannot read or unlink would
+// destroy the current transcript while leaving the leftover to be adopted.
 func (r *PiReader) DeleteSession(id string) error {
 	if !validSessionID(id) {
 		return fmt.Errorf("invalid pi session id: %q", id)
@@ -68,17 +74,15 @@ func (r *PiReader) DeleteSession(id string) error {
 	if len(files) == 0 {
 		return fmt.Errorf("%w: %s", errSessionNotFound, id)
 	}
-	var first error
-	removed := 0
+	files = orderSessionFilesOldestFirst(files)
+
 	dirs := map[string]struct{}{}
 	for _, path := range files {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			if first == nil {
-				first = err
-			}
-			continue
+			// Stop before touching the newer copies: a delete that cannot
+			// complete must not leave the id bound to an older transcript.
+			return err
 		}
-		removed++
 		dir := filepath.Dir(path)
 		if dir != "" && dir != "." && dir != r.sessionsDir {
 			dirs[dir] = struct{}{}
@@ -88,11 +92,33 @@ func (r *PiReader) DeleteSession(id string) error {
 	for dir := range dirs {
 		_ = os.Remove(dir)
 	}
-	if removed == 0 {
-		if first != nil {
-			return first
-		}
-		return fmt.Errorf("%w: %s", errSessionNotFound, id)
+	return nil
+}
+
+// orderSessionFilesOldestFirst sorts duplicates so the canonical transcript is
+// last. Ties fall back to the filename, matching newestFileIsLater.
+func orderSessionFilesOldestFirst(paths []string) []string {
+	type entry struct {
+		path    string
+		modTime int64
 	}
-	return first
+	entries := make([]entry, 0, len(paths))
+	for _, path := range paths {
+		var modTime int64
+		if info, err := os.Stat(path); err == nil {
+			modTime = info.ModTime().UnixNano()
+		}
+		entries = append(entries, entry{path: path, modTime: modTime})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].modTime != entries[j].modTime {
+			return entries[i].modTime < entries[j].modTime
+		}
+		return entries[i].path < entries[j].path
+	})
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.path
+	}
+	return out
 }
