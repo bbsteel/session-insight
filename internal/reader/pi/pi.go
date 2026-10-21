@@ -33,10 +33,10 @@ type PiReader struct {
 	paths    map[string]string
 	lastSeen map[string]string
 	idDirs   map[string]map[string]struct{}
-	// lastIndexAt bounds how often an unknown id may trigger a full directory
-	// scan, so repeated probes for a session Pi does not own stay cheap without
-	// permanently hiding a newly created session.
-	lastIndexAt time.Time
+	// indexBuilt records that a full directory pass has populated the index at
+	// least once. After that, only listing (the reconciliation path) may scan
+	// the tree again, so a lookup for an id Pi does not own never walks it.
+	indexBuilt bool
 
 	// metaMu guards metaCache, the size+mtime keyed inventory of scanning
 	// sessions. Listing is the indexer's reconciliation path, so an unchanged
@@ -195,19 +195,19 @@ func matchSessionFilename(name, id string) bool {
 // findSessionFile resolves the canonical JSONL for a session id.
 //
 // The hot path is one stat. The server probes every reader's LiveRevision for
-// every session it displays, and Pi is registered ahead of the home-directory
-// agents, so Pi must never walk its whole tree for an id it does not own.
+// every session it displays (the replay view polls it every few seconds), and
+// Pi is registered ahead of the home-directory agents, so Pi must never walk
+// its tree for an id it does not own. A miss therefore does NOT scan: an id
+// absent from the index is reported missing until listing refreshes it.
 //
 // Where duplicate resolution happens:
 //   - Listing is the reconciliation path. It scans the tree, picks the newest
 //     same-id file, and reregisters that path, so a copy, crash leftover, or
 //     in-progress rewrite converges to the transcript Pi is actually writing.
+//     It also runs on the first lookup of a fresh reader (before any listing
+//     has populated the index) and on any request whose cached path vanished.
 //   - Per-request lookups stat the indexed path and only compare siblings in
-//     the id's already-known directories, which is a bounded directory read
-//     rather than a whole-tree walk.
-//   - An unknown id triggers at most one full index pass per
-//     unknownIDIndexInterval, so repeated probes stay cheap while a newly
-//     created session is still discovered without waiting for a list.
+//     the id's already-known directories, a bounded directory read.
 func (r *PiReader) findSessionFile(id string) string {
 	if !validSessionID(id) {
 		return ""
@@ -223,7 +223,10 @@ func (r *PiReader) findSessionFile(id string) string {
 		}
 		r.forgetPath(id)
 	}
-	if !r.indexOnce() {
+	// The cached path is gone (or was never resolved). Only the first lookup of
+	// a fresh reader may scan; afterwards listing owns reconciliation, so a
+	// repeated miss cannot walk the tree on the live-tail path.
+	if !r.ensureIndex() {
 		return ""
 	}
 	return r.knownSessionFile(id)
@@ -247,30 +250,25 @@ func (r *PiReader) newestKnownSibling(id, cached string) string {
 	return best
 }
 
-// unknownIDIndexInterval bounds how often a lookup for an id that is not in the
-// path index may trigger a full directory scan. Without it, every reader probe
-// for a session this reader does not own would walk the whole Pi tree; with it,
-// a newly created session is still discovered within one interval.
-const unknownIDIndexInterval = time.Second
-
-// markIndexFresh records that a full listing just reconciled the index, which
-// extends the window before another unknown id triggers a directory scan.
+// markIndexFresh records that a full listing just reconciled the index, so a
+// later miss is answered from the index instead of scanning again.
 func (r *PiReader) markIndexFresh() {
 	r.pathsMu.Lock()
-	r.lastIndexAt = time.Now()
+	r.indexBuilt = true
 	r.pathsMu.Unlock()
 }
 
-// indexOnce performs at most one full directory scan per interval, so a miss
-// is cheap to repeat but a new session still appears without a list.
-func (r *PiReader) indexOnce() bool {
+// ensureIndex performs the initial directory pass for a reader that has not been
+// listed yet, and never scans a second time: after that, listing is the only
+// path allowed to enumerate the sessions tree.
+func (r *PiReader) ensureIndex() bool {
 	r.pathsMu.Lock()
-	if time.Since(r.lastIndexAt) < unknownIDIndexInterval {
-		r.pathsMu.Unlock()
+	alreadyBuilt := r.indexBuilt
+	r.indexBuilt = true
+	r.pathsMu.Unlock()
+	if alreadyBuilt {
 		return false
 	}
-	r.lastIndexAt = time.Now()
-	r.pathsMu.Unlock()
 
 	for _, path := range r.listSessionFilenames("") {
 		id := sessionIDFromFilename(filepath.Base(path))

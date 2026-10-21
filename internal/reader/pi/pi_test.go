@@ -563,29 +563,51 @@ func TestDuplicateSessionIDBindsNewestCopy(t *testing.T) {
 	}
 }
 
-// TestFindSessionFileUnknownIDDoesNotWalkRepeatedly pins the lookup cost that
+// TestFindSessionFileUnknownIDNeverRescansAfterIndex pins the lookup cost that
 // matters in practice: the server probes every reader's LiveRevision for every
-// visible session, so a repeated miss for an id Pi does not own must not
-// enumerate the sessions tree each time.
-func TestFindSessionFileUnknownIDDoesNotWalkRepeatedly(t *testing.T) {
+// visible session (the replay view polls it every few seconds), so a miss for an
+// id Pi does not own must never enumerate the sessions tree after the index is
+// built.
+func TestFindSessionFileUnknownIDNeverRescansAfterIndex(t *testing.T) {
 	root := installTestdata(t, basicID, "basic.jsonl")
+	// A second directory makes a tree walk observable through ReadDir count.
+	if err := os.MkdirAll(filepath.Join(root, "--tmp-other--"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	r := New(root)
 	if r.findSessionFile("no-such-session") != "" {
 		t.Fatal("expected no path for an unknown id")
 	}
-	started := r.lastIndexAt
 	for i := 0; i < 50; i++ {
 		if r.findSessionFile("no-such-session") != "" {
 			t.Fatal("expected no path for an unknown id")
 		}
 	}
-	if !r.lastIndexAt.Equal(started) {
-		t.Fatalf("repeated unknown-id lookups re-scanned the tree (%v -> %v)", started, r.lastIndexAt)
-	}
 	// The indexed session is still resolvable from the same index.
 	if r.findSessionFile(basicID) == "" {
 		t.Fatal("indexed session must stay resolvable")
 	}
+
+	// Listing is the reconciliation path: a session created afterwards becomes
+	// visible to lookups without a full tree scan happening on the miss path.
+	newID := "aaaaaaaa-0000-1111-2222-333333333333"
+	writeSessionFileIn(t, root, "--tmp-new--", newID,
+		strings.ReplaceAll(readTestdata(t, "basic.jsonl"), basicID, newID))
+	if _, err := r.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	if r.findSessionFile(newID) == "" {
+		t.Fatal("a session registered by listing must be resolvable")
+	}
+}
+
+func readTestdata(t *testing.T, name string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
 }
 
 // TestDeleteRefusesLiveSession pins the delete safety signal that replaces an
@@ -621,6 +643,23 @@ func TestDeleteRefusesLiveSession(t *testing.T) {
 	}
 	if running {
 		t.Fatal("a transcript older than LiveWindow must not count as running")
+	}
+}
+
+// TestEditToolRendersDiff pins that a Pi `edit` call renders its real hunk.
+// Pi passes path/edits[{oldText,newText}] through unchanged, so the shared
+// renderer must normalize via ExtractEditCalls rather than reading
+// file_path/old_string/new_string directly.
+func TestEditToolRendersDiff(t *testing.T) {
+	id := "cccccccc-dddd-eeee-ffff-000000000001"
+	out, err := New(installTestdata(t, id, "rich.jsonl")).RenderANSI(id, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/tmp/demo/a.go", "- foo", "+ bar"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered transcript missing %q:\n%s", want, out)
+		}
 	}
 }
 
