@@ -124,6 +124,7 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 	var calls []EditCall
 	var curFile string
 	var prevFile string
+	var operation EditOperation
 	var hunks []hunk
 	var cur *hunk
 	inPatch := false
@@ -142,11 +143,13 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 			FilePath:     curFile,
 			OldString:    strings.Join(oldParts, "\n"),
 			NewString:    strings.Join(newParts, "\n"),
+			Operation:    operation,
 			ToolCallID:   toolCallID,
 			PreviousPath: prevFile,
 		})
 		curFile = ""
 		prevFile = ""
+		operation = ""
 		hunks = nil
 		cur = nil
 	}
@@ -167,6 +170,7 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 		case strings.HasPrefix(line, "*** Add File: "):
 			flush()
 			curFile = strings.TrimPrefix(line, "*** Add File: ")
+			operation = EditOperationCreate
 			// Add File sections emit bare +lines with no @@ header.
 			h := hunk{}
 			hunks = append(hunks, h)
@@ -174,6 +178,7 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 		case strings.HasPrefix(line, "*** Delete File: "):
 			flush()
 			curFile = strings.TrimPrefix(line, "*** Delete File: ")
+			operation = EditOperationDelete
 			// Delete File sections emit bare context/-lines with no @@ header.
 			h := hunk{}
 			hunks = append(hunks, h)

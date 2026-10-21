@@ -296,16 +296,23 @@ func fileChangeCandidates(base outlineCandidate, evt model.RenderEvent) []outlin
 	return out
 }
 
-// classifyFileChange decides create/delete/modify/rename for one path from
-// every hunk recorded for it. A tool call can carry several hunks per file
-// (Pi's edits[] array, Codex patch sections), and judging only the first hunk
-// would label a multi-hunk same-file edit as a whole-file create or delete.
-// A recorded rename origin wins over the text-shape classification.
+// classifyFileChange decides create/delete/modify/rename for one path.
+//
+// Whole-file operations must be declared, never inferred from an empty string
+// on one side of a hunk: Pi's edit tool, Claude's Edit, and Grok's
+// search_replace all record in-file search/replace hunks, where removing a
+// matched range leaves NewString empty without deleting the file. Only
+// EditOperationCreate/Delete (apply_patch Add/Delete File, or a single edit
+// whose resulting content is empty) mean the file itself appeared or vanished.
+// A recorded rename origin wins over both.
+//
+// A path's hunks are evaluated together so a multi-hunk call is classified
+// once, and a single declared delete wins over a create in the same call.
 func classifyFileChange(calls []model.EditCall, path string) string {
 	sawHunk := false
-	allInsert := true
-	allDelete := true
 	renamed := false
+	created := false
+	deleted := false
 	for _, call := range calls {
 		if normalizeOutlinePath(call.FilePath) != path {
 			continue
@@ -314,22 +321,22 @@ func classifyFileChange(calls []model.EditCall, path string) string {
 		if normalizeOutlinePath(call.PreviousPath) != "" {
 			renamed = true
 		}
-		if call.NewString != "" {
-			allDelete = false
-		}
-		if call.OldString != "" {
-			allInsert = false
+		switch call.Operation {
+		case model.EditOperationCreate:
+			created = true
+		case model.EditOperationDelete:
+			deleted = true
 		}
 	}
 	switch {
 	case renamed:
 		return OutlineCodeFileRenamed
+	case deleted:
+		return OutlineCodeFileDeleted
+	case created:
+		return OutlineCodeFileCreated
 	case !sawHunk:
 		return OutlineCodeFileModified
-	case allDelete:
-		return OutlineCodeFileDeleted
-	case allInsert:
-		return OutlineCodeFileCreated
 	default:
 		return OutlineCodeFileModified
 	}

@@ -211,11 +211,16 @@ type RollbackGroupVM struct {
 }
 
 type EditCall struct {
-	TurnIndex  int    `json:"turn_index"`
-	FilePath   string `json:"file_path"`
-	OldString  string `json:"old_string"`
-	NewString  string `json:"new_string"`
-	ReplaceAll bool   `json:"replace_all,omitempty"`
+	TurnIndex int    `json:"turn_index"`
+	FilePath  string `json:"file_path"`
+	OldString string `json:"old_string"`
+	NewString string `json:"new_string"`
+	// Operation records whether the tool declared a whole-file operation.
+	// Search/replace hunks (Pi edits[], Claude Edit, Grok search_replace) leave
+	// it empty even when one side of the hunk happens to be empty, so consumers
+	// must not infer create/delete from empty strings alone.
+	Operation  EditOperation `json:"operation,omitempty"`
+	ReplaceAll bool          `json:"replace_all,omitempty"`
 	// ToolCallID links the edit back to its tool invocation. The render
 	// pipeline emits "edit" positions with the same id, so the frontend can
 	// match modal entries to terminal positions even when the two lists are
@@ -225,6 +230,20 @@ type EditCall struct {
 	// (apply_patch "Move to"); empty for non-rename edits.
 	PreviousPath string `json:"previous_path,omitempty"`
 }
+
+// EditOperation is the whole-file effect an Agent declared for an edit call.
+// It is empty for in-file search/replace hunks, which always leave the file
+// present; only an explicit create/delete declaration means the file itself
+// appeared or disappeared.
+type EditOperation string
+
+const (
+	// EditOperationCreate: the tool created the file (apply_patch Add File).
+	EditOperationCreate EditOperation = "create"
+	// EditOperationDelete: the tool removed the file (apply_patch Delete File,
+	// or a single edit whose entire resulting content is empty).
+	EditOperationDelete EditOperation = "delete"
+)
 
 type AnomalySummary struct {
 	ToolFailures    int  `json:"tool_failures"`

@@ -238,16 +238,32 @@ func TestOutlineFileChanges(t *testing.T) {
 		}
 	})
 
-	t.Run("multi-hunk delete of every line stays a deletion", func(t *testing.T) {
+	t.Run("in-file deletions are modifications, not file deletions", func(t *testing.T) {
+		// Pi's edit tool records search/replace hunks. Removing matched ranges
+		// leaves NewString empty without deleting the file, so an empty side is
+		// never evidence of a whole-file delete.
 		events := []model.RenderEvent{
 			{Type: "TurnBoundary", TurnIndex: 0},
 			inv(0, "c1", "edit", map[string]any{
-				"path": "/tmp/demo/gone.go",
+				"path": "/tmp/demo/trimmed.go",
 				"edits": []any{
 					map[string]any{"oldText": "one"},
 					map[string]any{"oldText": "two"},
 				},
 			}),
+			okResult(0, "c1"),
+		}
+		codes := outlineCodes(buildOutline(t, events, nil))
+		if len(codes) != 1 || codes[0] != OutlineCodeFileModified {
+			t.Fatalf("codes = %v, want [file_modified]", codes)
+		}
+	})
+
+	t.Run("declared whole-file delete stays a deletion", func(t *testing.T) {
+		patch := "*** Begin Patch\n*** Delete File: gone.go\n-the whole file\n*** End Patch"
+		events := []model.RenderEvent{
+			{Type: "TurnBoundary", TurnIndex: 0},
+			inv(0, "c1", "apply_patch", map[string]any{"input": patch}),
 			okResult(0, "c1"),
 		}
 		codes := outlineCodes(buildOutline(t, events, nil))

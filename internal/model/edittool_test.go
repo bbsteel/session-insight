@@ -207,6 +207,48 @@ func TestParseApplyPatchUpdate(t *testing.T) {
 
 // ── parseApplyPatch — Add File ────────────────────────────────────────────────
 
+// TestParseApplyPatchRecordsDeclaredOperation pins that whole-file effects come
+// from the patch directive, not from an empty side of a hunk: a search/replace
+// hunk that only removes text must not look like a file deletion.
+func TestParseApplyPatchRecordsDeclaredOperation(t *testing.T) {
+	// Update File (in-file replacement, one side empty) → no declared operation.
+	update := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "apply_patch",
+		ToolInput: map[string]any{"input": "*** Begin Patch\n*** Update File: a.go\n@@\n-gone\n*** End Patch"},
+	})
+	if len(update) != 1 || update[0].Operation != "" {
+		t.Fatalf("update operation=%q want empty (%+v)", update[0].Operation, update)
+	}
+
+	add := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "apply_patch",
+		ToolInput: map[string]any{"input": "*** Begin Patch\n*** Add File: b.go\n+hello\n*** End Patch"},
+	})
+	if len(add) != 1 || add[0].Operation != EditOperationCreate {
+		t.Fatalf("add operation=%v want create (%+v)", add[0].Operation, add)
+	}
+
+	del := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "apply_patch",
+		ToolInput: map[string]any{"input": "*** Begin Patch\n*** Delete File: c.go\n-gone\n*** End Patch"},
+	})
+	if len(del) != 1 || del[0].Operation != EditOperationDelete {
+		t.Fatalf("delete operation=%v want delete (%+v)", del[0].Operation, del)
+	}
+
+	// A Pi edits[] search/replace call never declares an operation.
+	pi := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "edit",
+		ToolInput: map[string]any{
+			"path":  "d.go",
+			"edits": []any{map[string]any{"oldText": "matched text", "newText": ""}},
+		},
+	})
+	if len(pi) != 1 || pi[0].Operation != "" {
+		t.Fatalf("pi operation=%v want empty (%+v)", pi[0].Operation, pi)
+	}
+}
+
 func TestParseApplyPatchAddFile(t *testing.T) {
 	// Add File sections have no @@ header; lines are + prefixed.
 	patch := "*** Begin Patch\n" +
