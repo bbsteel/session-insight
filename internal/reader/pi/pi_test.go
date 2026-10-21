@@ -3,6 +3,7 @@ package pi
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -545,6 +546,21 @@ func TestDeleteRefusesLiveSession(t *testing.T) {
 	}
 	if running {
 		t.Fatal("a transcript older than LiveWindow must not count as running")
+	}
+}
+
+// TestBashExecutionRenderMatchesOutcomes pins the rendered transcript for the
+// three direct-shell shapes: success, non-zero exit, and cancellation.
+func TestBashExecutionRenderMatchesOutcomes(t *testing.T) {
+	id := "99999999-0000-1111-2222-333333333333"
+	out, err := New(installTestdata(t, id, "shell-and-usage.jsonl")).RenderANSI(id, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"git status --short", " M a.go", "exit 3", "✗ Failed (exit 3)", "sleep 30", "✗ Cancelled"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered transcript missing %q:\n%s", want, out)
+		}
 	}
 }
 

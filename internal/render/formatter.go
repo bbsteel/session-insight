@@ -1575,8 +1575,13 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 // available, with a graceful fallback to the legacy ok/failed binary.
 func toolResultStatus(p *Profile, evt model.RenderEvent, ok bool) (string, Color) {
 	if evt.Rejected {
-		if evt.ErrorKind == "hook_denied" {
+		switch evt.ErrorKind {
+		case "hook_denied":
 			return "✗ Rejected (hook)", p.Palette.Warning
+		case "cancelled":
+			// Agents that persist a user-aborted command (Pi direct shell)
+			// distinguish it from a permission rejection.
+			return "✗ Cancelled", p.Palette.Warning
 		}
 		return "✗ Rejected", p.Palette.Warning
 	}
@@ -1607,9 +1612,12 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 		switch {
 		case evt.Rejected:
 			borderColor = p.Palette.Warning
-			if evt.ErrorKind == "hook_denied" {
+			switch evt.ErrorKind {
+			case "hook_denied":
 				footer = " Rejected (hook) "
-			} else {
+			case "cancelled":
+				footer = " Cancelled "
+			default:
 				footer = " Rejected "
 			}
 		case evt.TimedOut:
