@@ -1257,35 +1257,23 @@ func promoteBoxHeader(input map[string]any) (string, map[string]any) {
 // anything. Edit tools render as diffs and currently skip both.
 func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix string, bWidth int, onEditStart func(filePath string), asFoldHeader bool, durationMs int64, ts string, failed bool) (bodyDisplay, bodyLogical, headerBadgeOffset int) {
 	if model.IsEditTool(evt.ToolName) {
-		if evt.ToolName == "apply_patch" {
-			calls := model.ExtractEditCalls(evt)
-			for _, call := range calls {
-				if onEditStart != nil {
-					onEditStart(call.FilePath)
-				}
-				syn := evt
-				syn.ToolInput = map[string]any{
-					"file_path":  call.FilePath,
-					"old_string": call.OldString,
-					"new_string": call.NewString,
-				}
-				if p.ToolBullet {
-					bullet := p.Bullet
-					if bullet == nil {
-						bullet = defaultBullet{}
-					}
-					bullet.WriteEditHeader(p, sb, prefix, ts, evt.ToolName)
-				}
-				writeEditDiff(p, sb, syn, prefix, bWidth)
-			}
-			if len(calls) > 0 {
-				return 0, 0, 0
-			}
-			// Empty or malformed patch: fall through to generic tool box.
-		} else {
-			filePath, _ := evt.ToolInput["file_path"].(string)
+		// Every edit tool is rendered through ExtractEditCalls, not just
+		// apply_patch: agents disagree on input shape (Claude/OpenCode use
+		// file_path/old_string/new_string, Pi uses path/oldText/newText or
+		// path plus an edits[] array, Codex/Copilot use a raw patch), and
+		// writeEditDiff only understands the normalized shape. Rendering each
+		// extracted call also means a multi-hunk tool call produces one hunk
+		// at a time instead of an empty diff.
+		calls := model.ExtractEditCalls(evt)
+		for _, call := range calls {
 			if onEditStart != nil {
-				onEditStart(filePath)
+				onEditStart(call.FilePath)
+			}
+			syn := evt
+			syn.ToolInput = map[string]any{
+				"file_path":  call.FilePath,
+				"old_string": call.OldString,
+				"new_string": call.NewString,
 			}
 			if p.ToolBullet {
 				bullet := p.Bullet
@@ -1294,9 +1282,13 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 				}
 				bullet.WriteEditHeader(p, sb, prefix, ts, evt.ToolName)
 			}
-			writeEditDiff(p, sb, evt, prefix, bWidth)
+			writeEditDiff(p, sb, syn, prefix, bWidth)
+		}
+		if len(calls) > 0 {
 			return 0, 0, 0
 		}
+		// No extractable edit (empty or malformed input): fall through to the
+		// generic tool box so the call is still visible.
 	}
 
 	toolName := sanitizeControlChars(evt.ToolName)
@@ -1575,8 +1567,13 @@ func writeToolResult(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 // available, with a graceful fallback to the legacy ok/failed binary.
 func toolResultStatus(p *Profile, evt model.RenderEvent, ok bool) (string, Color) {
 	if evt.Rejected {
-		if evt.ErrorKind == "hook_denied" {
+		switch evt.ErrorKind {
+		case "hook_denied":
 			return "✗ Rejected (hook)", p.Palette.Warning
+		case "cancelled":
+			// Agents that persist a user-aborted command (Pi direct shell)
+			// distinguish it from a permission rejection.
+			return "✗ Cancelled", p.Palette.Warning
 		}
 		return "✗ Rejected", p.Palette.Warning
 	}
@@ -1607,9 +1604,12 @@ func writeToolResultBox(p *Profile, sb *trackingBuilder, evt model.RenderEvent, 
 		switch {
 		case evt.Rejected:
 			borderColor = p.Palette.Warning
-			if evt.ErrorKind == "hook_denied" {
+			switch evt.ErrorKind {
+			case "hook_denied":
 				footer = " Rejected (hook) "
-			} else {
+			case "cancelled":
+				footer = " Cancelled "
+			default:
 				footer = " Rejected "
 			}
 		case evt.TimedOut:

@@ -14,7 +14,7 @@
 
 ## 功能亮点
 
-- **多 Agent 会话库** — 自动发现并索引 7 种编程 Agent 的会话，会话列表实时刷新，准确识别活跃状态，并实时追尾运行中的会话
+- **多 Agent 会话库** — 自动发现并索引 8 种编程 Agent 的会话，会话列表实时刷新，准确识别活跃状态，并实时追尾运行中的会话
 - **Agent 能力透明度** — 查看每个 Agent 对发现、回放、实时更新、Token、工具、Diff、子任务、恢复、删除和终止的支持情况，并区分当前会话的准确、估算或缺失状态
 - **会话记录完整度** — 区分 SI 是否完整读到会话（完整、降级、仅元数据、源缺失），查看来源与源文件，并在本机编辑器中打开
 - **子 Agent 协作** — 当 Agent 记录嵌套工作时，可打开横向协作 Dock，缩放时间轴，并从每次启动或结果跳回终端中的原始证据（支持 Claude Code、Grok、Codex、Chrys、Copilot）
@@ -57,6 +57,7 @@ Session Insight 自动发现以下 Agent 的会话数据：
 | [Chrys](https://github.com/chrislatinae/chrys) | `~/.chrys/sessions/` |
 | [Grok](https://grok.com) | `~/.grok/sessions/` |
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `~/.hermes/state.db`（或 `HERMES_HOME`） |
+| [Pi](https://pi.dev) | `~/.pi/agent/sessions/` |
 
 ## 下载并运行
 
@@ -134,6 +135,8 @@ Linux 下二进制只在 `--app` 时才需要 WebKitGTK：GTK/WebKit 符号以�
 | `SI_INDEXER_ENABLED` | `1` | 接受 `1`、`true`、`yes`、`on`（启用）或 `0`、`false`、`no`、`off`（关闭）；未设置或值无效时回退为启用。在 linked worktree 中关闭后本地索引会保持过期，并会停用源文件 watcher、初始索引和定期 reconciliation；主 checkout 始终强制为 `1` |
 | `CHRYS_SESSION_ROOT_DIR` | — | 覆盖 Chrys 会话根目录 |
 | `HERMES_HOME` | `~/.hermes` | 覆盖 Hermes 状态目录；Session Insight 会读取其中的 `state.db` |
+| `PI_CODING_AGENT_SESSION_DIR` | `~/.pi/agent/sessions` | 覆盖 Pi 会话存储目录 |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | 覆盖 Pi 配置目录；Session Insight 会读取其中的 `sessions/` |
 
 从 linked Git worktree 执行 `run.sh` 时，脚本在首次运行使用操作系统分配的随机
 loopback 端口，并在后续重启时复用同一端口（持久化到 `.runtime/session-insight.port`），

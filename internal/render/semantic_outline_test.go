@@ -211,6 +211,67 @@ func TestOutlineFileChanges(t *testing.T) {
 		}
 	})
 
+	t.Run("multi-hunk same-file edit is a modification", func(t *testing.T) {
+		// Pi persists several hunks per call. The first hunk here only removes
+		// text (which looks like a deletion) and the second only adds text
+		// (which looks like a creation); the whole file is modified.
+		events := []model.RenderEvent{
+			{Type: "TurnBoundary", TurnIndex: 0},
+			inv(0, "c1", "edit", map[string]any{
+				"path": "/tmp/demo/a.go",
+				"edits": []any{
+					map[string]any{"oldText": "gone", "newText": ""},
+					map[string]any{"oldText": "", "newText": "added"},
+				},
+			}),
+			okResult(0, "c1"),
+		}
+		outline := buildOutline(t, events, nil)
+		var codes []string
+		for _, p := range outline {
+			if code, _ := p.Payload["code"].(string); code != "" {
+				codes = append(codes, code)
+			}
+		}
+		if len(codes) != 1 || codes[0] != OutlineCodeFileModified {
+			t.Fatalf("codes = %v, want one file_modified entry", codes)
+		}
+	})
+
+	t.Run("in-file deletions are modifications, not file deletions", func(t *testing.T) {
+		// Pi's edit tool records search/replace hunks. Removing matched ranges
+		// leaves NewString empty without deleting the file, so an empty side is
+		// never evidence of a whole-file delete.
+		events := []model.RenderEvent{
+			{Type: "TurnBoundary", TurnIndex: 0},
+			inv(0, "c1", "edit", map[string]any{
+				"path": "/tmp/demo/trimmed.go",
+				"edits": []any{
+					map[string]any{"oldText": "one"},
+					map[string]any{"oldText": "two"},
+				},
+			}),
+			okResult(0, "c1"),
+		}
+		codes := outlineCodes(buildOutline(t, events, nil))
+		if len(codes) != 1 || codes[0] != OutlineCodeFileModified {
+			t.Fatalf("codes = %v, want [file_modified]", codes)
+		}
+	})
+
+	t.Run("declared whole-file delete stays a deletion", func(t *testing.T) {
+		patch := "*** Begin Patch\n*** Delete File: gone.go\n-the whole file\n*** End Patch"
+		events := []model.RenderEvent{
+			{Type: "TurnBoundary", TurnIndex: 0},
+			inv(0, "c1", "apply_patch", map[string]any{"input": patch}),
+			okResult(0, "c1"),
+		}
+		codes := outlineCodes(buildOutline(t, events, nil))
+		if len(codes) != 1 || codes[0] != OutlineCodeFileDeleted {
+			t.Fatalf("codes = %v, want [file_deleted]", codes)
+		}
+	})
+
 	t.Run("claude edit", func(t *testing.T) {
 		events := []model.RenderEvent{
 			{Type: "TurnBoundary", TurnIndex: 0},

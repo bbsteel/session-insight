@@ -280,31 +280,86 @@ func collectOutlineCandidates(in SemanticOutlineInput, stats *OutlineStats) []ou
 // fileChangeCandidates emits one candidate per normalized, deduplicated path
 // of a successful edit call.
 func fileChangeCandidates(base outlineCandidate, evt model.RenderEvent) []outlineCandidate {
-	calls := dedupeEditCalls(model.ExtractEditCalls(evt))
-	out := make([]outlineCandidate, 0, len(calls))
-	for i, call := range calls {
+	calls := model.ExtractEditCalls(evt)
+	paths := editCallPaths(calls)
+	out := make([]outlineCandidate, 0, len(paths))
+	for i, path := range paths {
 		c := base
 		c.category, c.precision = OutlineCatFileChange, "exact"
-		c.filePath, c.previousPath, c.occurrence = call.FilePath, call.PreviousPath, i
-		switch {
-		case call.PreviousPath != "":
-			c.code = OutlineCodeFileRenamed
-			c.summary = call.PreviousPath + " → " + call.FilePath
-		case call.NewString == "" && call.OldString != "":
-			c.code = OutlineCodeFileDeleted
-		case call.OldString == "" && call.NewString != "":
-			c.code = OutlineCodeFileCreated
-		default:
-			c.code = OutlineCodeFileModified
+		c.filePath, c.previousPath, c.occurrence = path, previousPathForPath(calls, path), i
+		c.code = classifyFileChange(calls, path)
+		if c.code == OutlineCodeFileRenamed {
+			c.summary = c.previousPath + " → " + c.filePath
 		}
 		out = append(out, c)
 	}
 	return out
 }
 
-// dedupeEditCalls normalizes paths (trim, forward slashes, strip leading ./)
-// and keeps one entry per path, ordered by normalized path so multi-file
-// occurrence numbers never depend on map iteration or patch section order.
+// classifyFileChange decides create/delete/modify/rename for one path.
+//
+// Whole-file operations must be declared, never inferred from an empty string
+// on one side of a hunk: Pi's edit tool, Claude's Edit, and Grok's
+// search_replace all record in-file search/replace hunks, where removing a
+// matched range leaves NewString empty without deleting the file. Only
+// EditOperationCreate/Delete (apply_patch Add/Delete File, or a single edit
+// whose resulting content is empty) mean the file itself appeared or vanished.
+// A recorded rename origin wins over both.
+//
+// A path's hunks are evaluated together so a multi-hunk call is classified
+// once, and a single declared delete wins over a create in the same call.
+func classifyFileChange(calls []model.EditCall, path string) string {
+	sawHunk := false
+	renamed := false
+	created := false
+	deleted := false
+	for _, call := range calls {
+		if normalizeOutlinePath(call.FilePath) != path {
+			continue
+		}
+		sawHunk = true
+		if normalizeOutlinePath(call.PreviousPath) != "" {
+			renamed = true
+		}
+		switch call.Operation {
+		case model.EditOperationCreate:
+			created = true
+		case model.EditOperationDelete:
+			deleted = true
+		}
+	}
+	switch {
+	case renamed:
+		return OutlineCodeFileRenamed
+	case deleted:
+		return OutlineCodeFileDeleted
+	case created:
+		return OutlineCodeFileCreated
+	case !sawHunk:
+		return OutlineCodeFileModified
+	default:
+		return OutlineCodeFileModified
+	}
+}
+
+// previousPathForPath returns the recorded rename origin for path, if any hunk
+// for that path carried one.
+func previousPathForPath(calls []model.EditCall, path string) string {
+	for _, call := range calls {
+		if normalizeOutlinePath(call.FilePath) != path {
+			continue
+		}
+		if previous := normalizeOutlinePath(call.PreviousPath); previous != "" {
+			return previous
+		}
+	}
+	return ""
+}
+
+// dedupeEditCalls returns one EditCall per normalized path, ordered by path so
+// multi-file occurrence numbers never depend on map iteration or patch section
+// order. The retained call is the first hunk for that path; classification that
+// needs every hunk uses classifyFileChange instead.
 func dedupeEditCalls(calls []model.EditCall) []model.EditCall {
 	seen := make(map[string]model.EditCall, len(calls))
 	for _, c := range calls {
@@ -319,16 +374,34 @@ func dedupeEditCalls(calls []model.EditCall) []model.EditCall {
 		c.PreviousPath = normalizeOutlinePath(c.PreviousPath)
 		seen[p] = c
 	}
-	paths := make([]string, 0, len(seen))
-	for p := range seen {
+	paths := editCallPaths(calls)
+	out := make([]model.EditCall, 0, len(paths))
+	for _, p := range paths {
+		if call, ok := seen[p]; ok {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+
+// editCallPaths returns the deduplicated, path-ordered set of normalized paths
+// across calls.
+func editCallPaths(calls []model.EditCall) []string {
+	seen := make(map[string]struct{}, len(calls))
+	paths := make([]string, 0, len(calls))
+	for _, c := range calls {
+		p := normalizeOutlinePath(c.FilePath)
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
-	out := make([]model.EditCall, 0, len(paths))
-	for _, p := range paths {
-		out = append(out, seen[p])
-	}
-	return out
+	return paths
 }
 
 func normalizeOutlinePath(p string) string {

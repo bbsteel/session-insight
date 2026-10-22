@@ -27,16 +27,17 @@ func ExtractEditCalls(evt RenderEvent) []EditCall {
 	if evt.ToolName == "apply_patch" {
 		return parseApplyPatch(evt.TurnIndex, evt.ToolCallID, evt.ToolInput)
 	}
-	// Claude Edit / str_replace_editor / OpenCode edit
-	call := EditCall{TurnIndex: evt.TurnIndex, ToolCallID: evt.ToolCallID}
-	if v, ok := evt.ToolInput["file_path"].(string); ok {
-		call.FilePath = v
+	path := stringField(evt.ToolInput, "file_path", "path")
+	if calls := parseEditsArray(evt.TurnIndex, evt.ToolCallID, path, evt.ToolInput["edits"]); len(calls) > 0 {
+		return calls
 	}
-	if v, ok := evt.ToolInput["old_string"].(string); ok {
-		call.OldString = v
-	}
-	if v, ok := evt.ToolInput["new_string"].(string); ok {
-		call.NewString = v
+	// Claude Edit / str_replace_editor / OpenCode edit; Pi also uses path/oldText/newText.
+	call := EditCall{
+		TurnIndex:  evt.TurnIndex,
+		ToolCallID: evt.ToolCallID,
+		FilePath:   path,
+		OldString:  stringField(evt.ToolInput, "old_string", "oldText", "old_str"),
+		NewString:  stringField(evt.ToolInput, "new_string", "newText", "new_str"),
 	}
 	if v, ok := evt.ToolInput["replace_all"].(bool); ok {
 		call.ReplaceAll = v
@@ -45,6 +46,48 @@ func ExtractEditCalls(evt RenderEvent) []EditCall {
 		return nil
 	}
 	return []EditCall{call}
+}
+
+func stringField(input map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := input[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func parseEditsArray(turnIndex int, toolCallID, filePath string, raw any) []EditCall {
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	var calls []EditCall
+	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		call := EditCall{
+			TurnIndex:  turnIndex,
+			ToolCallID: toolCallID,
+			FilePath:   stringField(fields, "path", "file_path"),
+			OldString:  stringField(fields, "oldText", "old_string", "old_str"),
+			NewString:  stringField(fields, "newText", "new_string", "new_str"),
+		}
+		// The invocation-level path is only a default, not evidence that this
+		// element carries an edit: an edits[] entry with no text of its own is a
+		// placeholder, and keeping it would render a zero-line diff and suppress
+		// both the top-level oldText/newText fallback and the generic tool box.
+		if call.OldString == "" && call.NewString == "" {
+			continue
+		}
+		if call.FilePath == "" {
+			call.FilePath = filePath
+		}
+		calls = append(calls, call)
+	}
+	return calls
 }
 
 // parseApplyPatch parses a Codex / Copilot apply_patch tool input.
@@ -81,6 +124,7 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 	var calls []EditCall
 	var curFile string
 	var prevFile string
+	var operation EditOperation
 	var hunks []hunk
 	var cur *hunk
 	inPatch := false
@@ -99,11 +143,13 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 			FilePath:     curFile,
 			OldString:    strings.Join(oldParts, "\n"),
 			NewString:    strings.Join(newParts, "\n"),
+			Operation:    operation,
 			ToolCallID:   toolCallID,
 			PreviousPath: prevFile,
 		})
 		curFile = ""
 		prevFile = ""
+		operation = ""
 		hunks = nil
 		cur = nil
 	}
@@ -124,6 +170,7 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 		case strings.HasPrefix(line, "*** Add File: "):
 			flush()
 			curFile = strings.TrimPrefix(line, "*** Add File: ")
+			operation = EditOperationCreate
 			// Add File sections emit bare +lines with no @@ header.
 			h := hunk{}
 			hunks = append(hunks, h)
@@ -131,6 +178,7 @@ func parseApplyPatch(turnIndex int, toolCallID string, input map[string]any) []E
 		case strings.HasPrefix(line, "*** Delete File: "):
 			flush()
 			curFile = strings.TrimPrefix(line, "*** Delete File: ")
+			operation = EditOperationDelete
 			// Delete File sections emit bare context/-lines with no @@ header.
 			h := hunk{}
 			hunks = append(hunks, h)

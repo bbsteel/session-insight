@@ -86,6 +86,95 @@ func TestExtractEditCallsEmptyNormalized(t *testing.T) {
 	}
 }
 
+func TestExtractEditCallsPiEditsArray(t *testing.T) {
+	evt := RenderEvent{
+		Type:       "ToolInvocation",
+		TurnIndex:  2,
+		ToolName:   "edit",
+		ToolCallID: "tool_edit_1",
+		ToolInput: map[string]any{
+			"path": "/tmp/demo/a.go",
+			"edits": []any{
+				map[string]any{"oldText": "foo", "newText": "bar"},
+				map[string]any{"oldText": "alpha", "newText": "beta"},
+			},
+		},
+	}
+	calls := ExtractEditCalls(evt)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(calls))
+	}
+	if calls[0].FilePath != "/tmp/demo/a.go" || calls[0].OldString != "foo" || calls[0].NewString != "bar" {
+		t.Fatalf("first=%+v", calls[0])
+	}
+	if calls[1].OldString != "alpha" || calls[1].NewString != "beta" || calls[1].ToolCallID != "tool_edit_1" {
+		t.Fatalf("second=%+v", calls[1])
+	}
+}
+
+// TestExtractEditCallsSkipsEmptyEditsEntries pins that an edits[] element with
+// no text of its own is a placeholder, not an edit: keeping it would render a
+// zero-line diff and suppress both the top-level fallback and the generic box.
+func TestExtractEditCallsSkipsEmptyEditsEntries(t *testing.T) {
+	evt := RenderEvent{
+		Type:       "ToolInvocation",
+		TurnIndex:  2,
+		ToolName:   "edit",
+		ToolCallID: "tool_edit_1",
+		ToolInput: map[string]any{
+			"path": "/tmp/demo/a.go",
+			"edits": []any{
+				map[string]any{"oldText": nil, "newText": nil},
+				map[string]any{"oldText": 42},
+				map[string]any{},
+				map[string]any{"oldText": "alpha", "newText": "beta"},
+			},
+		},
+	}
+	calls := ExtractEditCalls(evt)
+	if len(calls) != 1 {
+		t.Fatalf("expected only the real hunk, got %d: %+v", len(calls), calls)
+	}
+	if calls[0].OldString != "alpha" || calls[0].NewString != "beta" || calls[0].FilePath != "/tmp/demo/a.go" {
+		t.Fatalf("call=%+v", calls[0])
+	}
+
+	// With no extractable hunk, the top-level oldText/newText must still work.
+	evt.ToolInput["edits"] = []any{map[string]any{"oldText": nil}}
+	evt.ToolInput["oldText"] = "top-old"
+	evt.ToolInput["newText"] = "top-new"
+	calls = ExtractEditCalls(evt)
+	if len(calls) != 1 || calls[0].OldString != "top-old" || calls[0].NewString != "top-new" {
+		t.Fatalf("top-level fallback lost: %+v", calls)
+	}
+
+	// A per-hunk path still wins when the element carries its own text.
+	evt.ToolInput["edits"] = []any{map[string]any{"path": "/tmp/demo/other.go", "oldText": "x", "newText": "y"}}
+	calls = ExtractEditCalls(evt)
+	if len(calls) != 1 || calls[0].FilePath != "/tmp/demo/other.go" {
+		t.Fatalf("per-hunk path lost: %+v", calls)
+	}
+}
+
+func TestExtractEditCallsPiPathOldText(t *testing.T) {
+	evt := RenderEvent{
+		Type:     "ToolInvocation",
+		ToolName: "edit",
+		ToolInput: map[string]any{
+			"path":    "src/foo.go",
+			"oldText": "old",
+			"newText": "new",
+		},
+	}
+	calls := ExtractEditCalls(evt)
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if calls[0].FilePath != "src/foo.go" || calls[0].OldString != "old" || calls[0].NewString != "new" {
+		t.Fatalf("call=%+v", calls[0])
+	}
+}
+
 // ── parseApplyPatch — Update File ─────────────────────────────────────────────
 
 func TestParseApplyPatchUpdate(t *testing.T) {
@@ -117,6 +206,48 @@ func TestParseApplyPatchUpdate(t *testing.T) {
 }
 
 // ── parseApplyPatch — Add File ────────────────────────────────────────────────
+
+// TestParseApplyPatchRecordsDeclaredOperation pins that whole-file effects come
+// from the patch directive, not from an empty side of a hunk: a search/replace
+// hunk that only removes text must not look like a file deletion.
+func TestParseApplyPatchRecordsDeclaredOperation(t *testing.T) {
+	// Update File (in-file replacement, one side empty) → no declared operation.
+	update := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "apply_patch",
+		ToolInput: map[string]any{"input": "*** Begin Patch\n*** Update File: a.go\n@@\n-gone\n*** End Patch"},
+	})
+	if len(update) != 1 || update[0].Operation != "" {
+		t.Fatalf("update operation=%q want empty (%+v)", update[0].Operation, update)
+	}
+
+	add := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "apply_patch",
+		ToolInput: map[string]any{"input": "*** Begin Patch\n*** Add File: b.go\n+hello\n*** End Patch"},
+	})
+	if len(add) != 1 || add[0].Operation != EditOperationCreate {
+		t.Fatalf("add operation=%v want create (%+v)", add[0].Operation, add)
+	}
+
+	del := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "apply_patch",
+		ToolInput: map[string]any{"input": "*** Begin Patch\n*** Delete File: c.go\n-gone\n*** End Patch"},
+	})
+	if len(del) != 1 || del[0].Operation != EditOperationDelete {
+		t.Fatalf("delete operation=%v want delete (%+v)", del[0].Operation, del)
+	}
+
+	// A Pi edits[] search/replace call never declares an operation.
+	pi := ExtractEditCalls(RenderEvent{
+		Type: "ToolInvocation", ToolName: "edit",
+		ToolInput: map[string]any{
+			"path":  "d.go",
+			"edits": []any{map[string]any{"oldText": "matched text", "newText": ""}},
+		},
+	})
+	if len(pi) != 1 || pi[0].Operation != "" {
+		t.Fatalf("pi operation=%v want empty (%+v)", pi[0].Operation, pi)
+	}
+}
 
 func TestParseApplyPatchAddFile(t *testing.T) {
 	// Add File sections have no @@ header; lines are + prefixed.
