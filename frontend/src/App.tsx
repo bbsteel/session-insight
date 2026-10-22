@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from './components/Sidebar'
+import HomeDashboard from './components/HomeDashboard'
 import ReplayView from './components/ReplayView'
 import FileViewer from './components/FileViewer'
 import CodingQuotaDialog from './components/CodingQuotaDialog'
@@ -7,6 +8,7 @@ import SnippetPage from './components/SnippetPage'
 import { PanelLeftOpenIcon } from './components/icons'
 import type { BookmarkChange } from './bookmarkState'
 import { useI18n } from './i18n'
+import { emptyHomeQuery, type HomeQuery } from './api'
 import { parseSessionRoute } from './sessionLink'
 
 const SIDEBAR_HIDDEN_KEY = 'si-sidebar-hidden'
@@ -76,6 +78,7 @@ export default function App() {
   const [selectedAgentType, setSelectedAgentType] = useState<string | null>(sessionRoute?.agentType ?? null)
   const [sidebarHidden, setSidebarHidden] = useState(readSidebarHidden)
   const [showCodingQuotas, setShowCodingQuotas] = useState(false)
+  const [homeQuery, setHomeQuery] = useState<HomeQuery>(emptyHomeQuery)
   const [bookmarkChange, setBookmarkChange] = useState<BookmarkChange | null>(null)
   const [sidebarFocusTarget, setSidebarFocusTarget] = useState<{ id: string; agentType: string } | null>(
     sessionRoute ? { id: sessionRoute.id, agentType: sessionRoute.agentType } : null,
@@ -111,6 +114,17 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey, true)
   }, [toggleSessionList])
 
+  const showHome = () => {
+    setSelectedId(null)
+    setSelectedAgentType(null)
+    setSearchTarget(null)
+    setSearchRootRef(null)
+    if (window.location.hash.startsWith('#/session/')) {
+      window.history.pushState(null, '', window.location.pathname + window.location.search)
+      setHash('')
+    }
+  }
+
   const selectSession = (id: string, agentType?: string, focusSidebar = false, searchQuery?: string, rootRef?: { id: string; agentType: string; name: string }) => {
     setSelectedId(id)
     setSelectedAgentType(agentType ?? null)
@@ -135,6 +149,7 @@ export default function App() {
           selectedAgentType={selectedAgentType}
           focusTarget={sidebarFocusTarget}
           onSelect={selectSession}
+          onHome={showHome}
           onHide={() => persistSidebarHidden(true)}
           sessionListShortcut={sessionListShortcut}
           bookmarkChange={bookmarkChange}
@@ -167,15 +182,25 @@ export default function App() {
         </div>
       )}
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <ReplayView
-          sessionId={selectedId}
-          searchTarget={searchTarget}
-          searchRootRef={searchRootRef}
-          onSelect={selectSession}
-          onOpenCodingQuotas={() => setShowCodingQuotas(true)}
-          bookmarkChange={bookmarkChange}
-          onBookmarkChange={setBookmarkChange}
-        />
+        {selectedId ? (
+          <ReplayView
+            sessionId={selectedId}
+            searchTarget={searchTarget}
+            searchRootRef={searchRootRef}
+            onSelect={selectSession}
+            onHome={showHome}
+            onOpenCodingQuotas={() => setShowCodingQuotas(true)}
+            bookmarkChange={bookmarkChange}
+            onBookmarkChange={setBookmarkChange}
+          />
+        ) : (
+          <HomeDashboard
+            query={homeQuery}
+            onQueryChange={setHomeQuery}
+            onSelect={selectSession}
+            onOpenCodingQuotas={() => setShowCodingQuotas(true)}
+          />
+        )}
         {snippetsRoute && (
           <div className="absolute inset-0 z-[220] overflow-hidden bg-[var(--bg-primary)]" data-testid="snippets-overlay">
             <SnippetPage
