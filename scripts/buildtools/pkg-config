@@ -50,8 +50,11 @@ if [ "$libs_query" = "1" ] && [ "$has_webview_query" = "1" ]; then
 	# Emit the --libs output without library/link-directory flags: headers
 	# still come from --cflags queries, but the binary does not link the
 	# webview stack. Tokens are linker flags and contain no spaces.
-	# shellcheck disable=SC2046
-	set -- $("$real_pkg_config" "$@")
+	# Capture separately so set cannot hide a failed pkg-config exit status.
+	# Go combines stdout/stderr and would otherwise parse diagnostics as flags.
+	pkg_config_output=$("$real_pkg_config" "$@")
+	# shellcheck disable=SC2086
+	set -- $pkg_config_output
 	filtered=()
 	for token in "$@"; do
 		case "$token" in
@@ -72,7 +75,10 @@ if [ "$has_webview_query" = "1" ]; then
 	# include chains and break the build. The roots stay reachable, just later.
 	# Matches: -I/usr/include, -I/usr/include/<triplet>-linux-gnu (Debian
 	# multiarch), each optionally prefixed by the pkg-config sysroot.
-	set -- $("$real_pkg_config" "$@")
+	# Keep dependency failures fatal before filtering or adding include flags.
+	pkg_config_output=$("$real_pkg_config" "$@")
+	# shellcheck disable=SC2086
+	set -- $pkg_config_output
 	filtered=()
 	sysroot_prefix=""
 	if [ -n "${PKG_CONFIG_SYSROOT_DIR:-}" ]; then
