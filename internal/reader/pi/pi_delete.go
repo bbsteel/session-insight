@@ -6,44 +6,49 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/bbsteel/session-insight/internal/model"
 	"github.com/bbsteel/session-insight/internal/reader/shared"
 )
 
-// Pi has no OS-visible process↔session mapping to offer. Its native
-// SessionManager closes the transcript descriptor after each write and appends
-// with appendFileSync, so fd holders only exist during a write (verified with
-// the installed Pi 1.3.0 SessionManager) — an idle-but-alive Pi process holds
-// no descriptor on the session file. There is also no heartbeat or lock
-// registry, so an exact PID cannot be recovered from the OS.
+// SessionRunning reports whether a live Pi process may still own this session.
 //
-// Therefore this adapter does not implement reader.SessionProcessFinder and
-// declares terminate unsupported. Delete safety comes from SessionRunning,
-// which is conservative: it reports a session as running while its transcript
-// was written inside model.LiveWindow, so a session that a live Pi process may
-// still be appending to is never deleted out from under it.
+// It is a block-only liveness check (no PIDs are returned, because Pi's
+// process↔session mapping is a working directory, not a per-session process, so
+// a PID here could not be attributed to one session safely enough to kill).
+//
+// The evidence is process-based and time-independent:
+//
+//   - a trailing in_progress marker on a transcript written inside LiveWindow
+//     (the turn is mid-flight), or
+//   - a live `pi` process whose working directory encodes to this session's
+//     directory, which is how Pi scopes sessions to a project.
+//
+// Deliberately NOT used: the transcript's own mtime. Pi keeps a session open
+// and idle at its prompt without touching the file, so any mtime window —
+// including model.LiveWindow — eventually reports a living session as stopped,
+// after which deleting it would lose its history: Pi's next append recreates a
+// headerless transcript.
 func (r *PiReader) SessionRunning(id string) (bool, error) {
 	path := r.findSessionFile(id)
 	if path == "" {
 		return false, fmt.Errorf("%w: %s", errSessionNotFound, id)
 	}
+
+	// A turn still in flight is unambiguous, and the marker is only emitted
+	// for a transcript written inside LiveWindow.
 	events, err := r.GetRenderEvents(id)
 	if err != nil {
 		return false, err
 	}
-	// Trailing in_progress is already LiveWindow-bounded at emission.
 	if shared.HasTrailingInProgress(events) {
 		return true, nil
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return false, err
+
+	// Any live Pi process working in this session's cwd may hold the session
+	// open or resume it later. Ignoring mtime is what makes this sound.
+	if len(r.sessionProcessCandidates(path)) > 0 {
+		return true, nil
 	}
-	// A closed turn does not mean the session is over: Pi keeps the session
-	// open and idle at its prompt without touching the file. Recent on-disk
-	// activity is the only remaining signal, and refusing a delete for one
-	// LiveWindow is the safe direction for a destructive action.
-	return model.IsSessionLive(info.ModTime()), nil
+	return false, nil
 }
 
 // DeleteSession permanently removes every JSONL whose filename encodes this

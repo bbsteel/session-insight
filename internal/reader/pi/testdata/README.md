@@ -26,9 +26,16 @@ IDs, prompts, provider credentials, or user data.
   has not been verified on a live Windows Pi installation in this change.
 - Terminate is unsupported: Pi closes the transcript descriptor after every
   write (`appendFileSync`) and keeps no heartbeat or lock registry, so an
-  idle-but-alive Pi process exposes no exact PID. Delete safety comes from
-  `SessionRunning`, which treats a transcript written inside
-  `model.LiveWindow` as a live session.
+  idle-but-alive Pi process exposes no per-session PID that could safely be
+  killed.
+- Delete safety (`SessionRunning`) is process-based, not time-based. Pi scopes
+  sessions to a working directory, encoding it as
+  `--<abs cwd with / \ : replaced by ->--`, so a live `pi` process whose cwd
+  encodes to a session's directory is treated as its owner. The transcript
+  mtime is deliberately ignored: Pi keeps a session open and idle at its
+  prompt without writing, so any freshness window would eventually declare a
+  living session stopped, and deleting it would lose history (Pi's next append
+  recreates a headerless transcript).
 - Lookup keys files by the `_<session-id>.jsonl` filename suffix under the
   sessions root and its encoded-cwd directories. Duplicate ids (copy, crash
   leftover, in-progress rewrite) always resolve to the newest file by mtime,

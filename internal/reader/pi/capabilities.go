@@ -18,10 +18,13 @@ import (
 //   - subtasks: not applicable — Pi does not persist sub-agents (fork/clone
 //     create independent sessions, not a nested invocation graph)
 //   - resume: header session id is the native `pi --session {id}` identity
-//   - delete: SessionDeleter removes every JSONL whose filename encodes the id
+//   - delete: SessionDeleter removes every JSONL whose filename encodes the id,
+//     guarded by SessionRunning
 //   - terminate: unsupported — Pi closes the transcript descriptor after each
-//     write and keeps no heartbeat/lock registry, so no exact PID exists while
-//     a session is idle-but-alive. Delete safety comes from SessionRunning.
+//     write and keeps no heartbeat/lock registry, so no per-session PID exists
+//     that could safely be killed. SessionRunning still detects a live owner
+//     from the process's working directory, which protects delete without
+//     depending on any freshness window.
 func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
 		AgentType:       agentType,

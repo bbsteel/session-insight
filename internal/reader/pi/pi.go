@@ -19,6 +19,12 @@ import (
 const (
 	agentType   = "pi"
 	displayName = "Pi"
+
+	// processName is the OS-visible name Pi gives its process (it sets
+	// process.title to the configured app name, "pi" by default). It is the
+	// only process identity this adapter trusts, and it is matched against the
+	// kernel's comm/exe fields — never against argv.
+	processName = "pi"
 )
 
 // PiReader reads Pi coding-agent sessions from a sessions directory tree.
@@ -43,6 +49,12 @@ type PiReader struct {
 	// transcript must cost one stat instead of a full decode.
 	metaMu    sync.Mutex
 	metaCache map[string]metaCacheEntry
+
+	// Process sources for liveness evidence. They default to the OS-backed
+	// implementation and exist as fields so tests can supply a deterministic
+	// process table without spawning a real Pi.
+	processCwd    processCwd
+	listProcesses processList
 }
 
 // metaCacheEntry is one listing scan result plus the stat it was computed
@@ -56,11 +68,13 @@ type metaCacheEntry struct {
 // New constructs a reader rooted at sessionsDir (~/.pi/agent/sessions).
 func New(sessionsDir string) *PiReader {
 	return &PiReader{
-		sessionsDir: sessionsDir,
-		paths:       make(map[string]string),
-		lastSeen:    make(map[string]string),
-		idDirs:      make(map[string]map[string]struct{}),
-		metaCache:   make(map[string]metaCacheEntry),
+		sessionsDir:   sessionsDir,
+		paths:         make(map[string]string),
+		lastSeen:      make(map[string]string),
+		idDirs:        make(map[string]map[string]struct{}),
+		metaCache:     make(map[string]metaCacheEntry),
+		processCwd:    defaultProcessCwd,
+		listProcesses: defaultProcessList,
 	}
 }
 

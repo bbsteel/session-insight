@@ -654,39 +654,125 @@ func TestFindSessionFileRecoversFromRemovedCanonicalPath(t *testing.T) {
 	}
 }
 
-// TestDeleteRefusesLiveSession pins the delete safety signal that replaces an
-// exact PID: Pi holds no transcript descriptor while idle, so a recently
-// written transcript is treated as an owned live session.
-func TestDeleteRefusesLiveSession(t *testing.T) {
+// TestSessionRunningUsesProcessEvidenceNotMtime is the regression test for the
+// P1 finding: a Pi session that has been idle far longer than model.LiveWindow
+// is still owned by its live process, and deleting it would lose history (Pi's
+// next append recreates a headerless transcript). Liveness must therefore come
+// from process evidence, never from the transcript's mtime.
+func TestSessionRunningUsesProcessEvidenceNotMtime(t *testing.T) {
 	root := t.TempDir()
-	path := writeSessionFile(t, root, basicID, `{"type":"session","version":3,"id":"`+basicID+`","timestamp":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","cwd":"/tmp/demo"}
-{"type":"message","id":"u1","parentId":null,"timestamp":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","message":{"role":"user","content":[{"type":"text","text":"still working"}]}}
-`)
-	now := time.Now()
-	if err := os.Chtimes(path, now, now); err != nil {
+	path := writeSessionFile(t, root, basicID, readTestdata(t, "basic.jsonl"))
+	// Far outside any freshness window.
+	stale := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(path, stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	r := New(root)
+	// writeSessionFile() places the transcript in "--tmp-demo--", which Pi
+	// produces from the working directory /tmp/demo.
+	cwd := "/tmp/demo"
+
+	// A live Pi working in the session's own directory: still running.
+	r := withProcessTable(New(root), map[int]string{4242: cwd})
+	if _, err := r.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
 	running, err := r.SessionRunning(basicID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !running {
-		t.Fatal("a transcript written inside LiveWindow must count as running (Pi holds no fd while idle)")
+		t.Fatal("a 24h-idle session with a live Pi in its cwd must still count as running")
 	}
 
-	// Once the transcript is older than LiveWindow the session is treated as
-	// stopped, so the delete guard releases.
-	stale := now.Add(-(model.LiveWindow + time.Minute))
-	if err := os.Chtimes(path, stale, stale); err != nil {
+	// Same session, no Pi process anywhere: deletable, despite being idle.
+	idle := withProcessTable(New(root), map[int]string{})
+	if _, err := idle.ListSessions(); err != nil {
 		t.Fatal(err)
 	}
-	running, err = New(root).SessionRunning(basicID)
+	running, err = idle.SessionRunning(basicID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if running {
-		t.Fatal("a transcript older than LiveWindow must not count as running")
+		t.Fatal("with no live Pi process the session must not count as running")
+	}
+
+	// A live Pi in a *different* project must not protect this session.
+	other := withProcessTable(New(root), map[int]string{4243: "/home/deck/projects/elsewhere"})
+	if _, err := other.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	running, err = other.SessionRunning(basicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running {
+		t.Fatal("a Pi process in another project must not count as this session's owner")
+	}
+}
+
+// TestSessionRunningDetectsInFlightTurn covers the second, independent signal: a
+// transcript whose last turn never closed, written inside LiveWindow.
+func TestSessionRunningDetectsInFlightTurn(t *testing.T) {
+	id := "dddddddd-eeee-ffff-0000-111111111111"
+	root := t.TempDir()
+	path := writeSessionFileIn(t, root, "--tmp-demo--", id, readTestdata(t, "interrupted.jsonl"))
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err != nil {
+		t.Fatal(err)
+	}
+	r := withProcessTable(New(root), map[int]string{})
+	if _, err := r.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	running, err := r.SessionRunning(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !running {
+		t.Fatal("a trailing in_progress turn written inside LiveWindow must count as running")
+	}
+}
+
+// TestEncodesPiSessionDirMatchesPi pins the directory encoding against Pi's own
+// getDefaultSessionDirPath: "<abs cwd>" → "--<cwd with separators as dashes>--".
+func TestEncodesPiSessionDirMatchesPi(t *testing.T) {
+	cases := map[string]string{
+		"/home/deck/projects/session-insight": "--home-deck-projects-session-insight--",
+		"/home/deck":                          "--home-deck--",
+		"/":                                   "----",
+		"/tmp/demo":                           "--tmp-demo--",
+	}
+	for cwd, want := range cases {
+		if got := encodesPiSessionDir(cwd); got != want {
+			t.Fatalf("encodesPiSessionDir(%q)=%q want %q", cwd, got, want)
+		}
+	}
+}
+
+// TestDeleteSessionRefusesLongIdleLiveSession asserts the guard at the API
+// boundary the server uses: DeleteSession is not reached for a running session.
+// The pairing test for the server handler lives in internal/server.
+func TestDeleteSessionRefusesLongIdleLiveSession(t *testing.T) {
+	root := t.TempDir()
+	path := writeSessionFile(t, root, basicID, readTestdata(t, "basic.jsonl"))
+	stale := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	r := withProcessTable(New(root), map[int]string{777: "/tmp/demo"})
+	if _, err := r.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	running, err := r.SessionRunning(basicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !running {
+		t.Fatal("a month-idle session with a live Pi in its cwd must be treated as running")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("transcript must still exist: %v", err)
 	}
 }
 
