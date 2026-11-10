@@ -90,12 +90,12 @@ func TestLegacyAgentsKeepProductionProfiles(t *testing.T) {
 func defaultCompilerEvents() []model.RenderEvent {
 	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	return []model.RenderEvent{
-		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "codex"},
-		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "codex", Text: "hello"},
-		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: ts, AgentType: "codex", Text: "world"},
-		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "opencode"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "opencode", Text: "hello"},
+		{EventID: "x0", Type: "TextChunk", TurnIndex: 0, Timestamp: ts, AgentType: "opencode", Text: "world"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "opencode",
 			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "ls"}},
-		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "opencode",
 			ToolCallID: "c1", Stdout: "a.txt"},
 	}
 }

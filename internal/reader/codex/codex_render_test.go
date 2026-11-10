@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,5 +234,114 @@ func TestCodexRenderRollbackCreatesFoldAndActivePath(t *testing.T) {
 	}
 	if !rollbackFold {
 		t.Fatalf("rollback fold position missing: %+v", positions)
+	}
+}
+
+func TestCodexExecOutputUnwrapsEnvelopeAndSummarizes(t *testing.T) {
+	envelope := `{"chunk_id":"abc123","wall_time_seconds":0.2,"exit_code":0,"original_token_count":42,"output":"line one\nline two\n"}`
+	input := `text(await tools.exec_command({cmd:"sed -n '1,5p' clients/src/a.js; cat docs/spec.md","max_output_tokens":400}));`
+	lines := []string{
+		`{"timestamp":"2026-07-20T12:00:00Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		fmt.Sprintf(`{"timestamp":"2026-07-20T12:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"exec-1","name":"exec","input":%q}}`, input),
+		fmt.Sprintf(`{"timestamp":"2026-07-20T12:00:02Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"exec-1","output":[{"type":"input_text","text":"Script completed\nWall time 0.2 seconds\nOutput:\n"},{"type":"input_text","text":%q}]}}`, envelope),
+	}
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := codexToRenderEvents(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inv, res *model.RenderEvent
+	for i := range events {
+		switch events[i].Type {
+		case "ToolInvocation":
+			inv = &events[i]
+		case "ToolResult":
+			res = &events[i]
+		}
+	}
+	if inv == nil || res == nil {
+		t.Fatalf("missing invocation/result: %#v", events)
+	}
+	if got := inv.ToolSummary; !strings.HasPrefix(got, "Explored · ") || !strings.Contains(got, "a.js") || !strings.Contains(got, "spec.md") {
+		t.Fatalf("summary = %q, want Explored listing a.js and spec.md", got)
+	}
+	if got, _ := inv.ToolInput["command"].(string); !strings.Contains(got, "sed -n '1,5p'") {
+		t.Fatalf("command = %q, want the real command", got)
+	}
+	if strings.Contains(res.Stdout, "chunk_id") || strings.Contains(res.Stdout, "Script completed") {
+		t.Fatalf("stdout still wrapped in the exec wire format: %q", res.Stdout)
+	}
+	if res.Stdout != "line one\nline two\n" {
+		t.Fatalf("stdout = %q, want the unwrapped output", res.Stdout)
+	}
+}
+
+func TestCodexExecEnvelopeFailureCarriesExitCode(t *testing.T) {
+	envelope := `{"chunk_id":"x","exit_code":2,"original_token_count":3,"output":"boom\n"}`
+	if got := codexExecExitCode("Script completed\nOutput:\n" + envelope); got != 2 {
+		t.Fatalf("exit code = %d, want 2 from envelope", got)
+	}
+	if got := normalizeCodexExecOutput("Script completed\nWall time 0.1 seconds\nOutput:\n" + envelope); got != "boom\n" {
+		t.Fatalf("normalized output = %q, want boom", got)
+	}
+}
+
+func TestSummarizeExecCommand(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{
+			name:    "reads are explored",
+			command: `sed -n '100,135p' clients/src/pages/sets/detail.uvue; sed -n '145,185p' clients/src/pages/parts/detail.uvue; cat docs/proposals/spec.md`,
+			want:    "Explored · detail.uvue, spec.md",
+		},
+		{
+			name:    "git inspection is explored",
+			command: `git status -sb; git diff --check`,
+			want:    "Explored",
+		},
+		{
+			name:    "python heredoc is a run",
+			command: "python3 - <<'PY'\nimport json\nprint(1)\nPY",
+			want:    "Ran · python3 - <<'PY'",
+		},
+		{
+			name:    "empty command has no summary",
+			command: "   ",
+			want:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := summarizeExecCommand(tc.command); got != tc.want {
+				t.Fatalf("summarizeExecCommand(%q) = %q, want %q", tc.command, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSummarizeExecBridge(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"web search", `text(await tools.web__run({search_query:[{q:"site:dev brickref"}],max_results:5}));`, "Searched web · site:dev brickref"},
+		{"web open", `text(await tools.web__run({open:[{ref_id:"https://developer.mozilla.org/x/y"}]}));`, "Opened web · https://developer.mozilla.org/x/y"},
+		{"apply patch", `text(await tools.apply_patch("*** Begin Patch\n*** End Patch"));`, "Applied patch"},
+		{"unknown", `const x = 1`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := summarizeExecBridge(tc.input); got != tc.want {
+				t.Fatalf("summarizeExecBridge(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
 	}
 }

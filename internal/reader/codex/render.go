@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -72,6 +73,172 @@ func summarizeExecInput(name, input string) (string, map[string]any) {
 		return name, parseArguments(input)
 	}
 	return name, map[string]any{"command": command}
+}
+
+// readOnlyCommands are shell programs that only inspect files, so a run of
+// them reads as an exploration ("Explored · a, b") rather than a command with
+// side effects ("Ran · …"), mirroring Codex's own collapsed summary.
+var readOnlyCommands = map[string]bool{
+	"cat": true, "head": true, "tail": true, "sed": true, "wc": true,
+	"file": true, "stat": true, "ls": true, "tree": true, "bat": true,
+	"nl": true, "du": true, "realpath": true, "readlink": true,
+}
+
+var exploreGitSubcommands = map[string]bool{
+	"status": true, "diff": true, "log": true, "show": true, "blame": true,
+	"ls-files": true, "rev-parse": true, "grep": true, "shortlog": true,
+	"describe": true, "show-ref": true, "cat-file": true,
+}
+
+func splitCommandSegments(command string) []string {
+	normalized := strings.ReplaceAll(command, "&&", "\n")
+	normalized = strings.ReplaceAll(normalized, "||", "\n")
+	// Split only on statement separators. Do NOT split on "|": a pipeline is a
+	// single logical command here, and "|" is extremely common inside rg/grep
+	// alternation patterns (rg 'a|b|c'), which would otherwise fragment one
+	// search into meaningless pseudo-commands.
+	return strings.FieldsFunc(normalized, func(r rune) bool { return r == ';' || r == '\n' })
+}
+
+func commandFileArgs(base string, args []string) []string {
+	var out []string
+	firstNonFlag := true
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "" {
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			if (base == "head" || base == "tail") && (a == "-n" || a == "-c") {
+				i++ // -n N / -c N consume a value
+			} else if base == "sed" && a == "-e" {
+				i++ // -e SCRIPT consumes a value
+			}
+			continue
+		}
+		if base == "sed" && firstNonFlag {
+			firstNonFlag = false
+			continue // sed's first non-flag argument is the script expression
+		}
+		firstNonFlag = false
+		out = append(out, a)
+	}
+	return out
+}
+
+func gitSubcommandIsExplore(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "-C", "--git-dir", "--work-tree":
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		return exploreGitSubcommands[a]
+	}
+	return false
+}
+
+func clipSummary(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max < 1 {
+		return ""
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// summarizeExecCommand produces the compact collapsed-fold summary for a
+// Codex exec_command: "Explored · fileA, fileB" when every segment only
+// inspects files, otherwise "Ran · <first command>" so the collapsed row reads
+// as intent instead of a raw multi-line shell script.
+func summarizeExecCommand(command string) string {
+	cmd := strings.TrimSpace(command)
+	if cmd == "" {
+		return ""
+	}
+	segments := splitCommandSegments(cmd)
+	firstSegment := ""
+	for _, seg := range segments {
+		if t := strings.TrimSpace(seg); t != "" {
+			firstSegment = t
+			break
+		}
+	}
+	if firstSegment == "" {
+		return ""
+	}
+	allExplore := true
+	var files []string
+	seen := make(map[string]bool)
+	for _, seg := range segments {
+		fields := strings.Fields(seg)
+		if len(fields) == 0 {
+			continue
+		}
+		base := filepath.Base(fields[0])
+		switch {
+		case readOnlyCommands[base]:
+			for _, f := range commandFileArgs(base, fields[1:]) {
+				name := filepath.Base(f)
+				if name != "" && name != "." && !seen[name] {
+					seen[name] = true
+					files = append(files, name)
+				}
+			}
+		case base == "git":
+			allExplore = gitSubcommandIsExplore(fields[1:])
+		case base == "rg" || base == "grep" || base == "find" || base == "which" ||
+			base == "pwd" || base == "echo" || base == "printf" || base == "type" ||
+			base == "true" || base == "test":
+			// Read-only inspection that has no single clear file target.
+		default:
+			allExplore = false
+		}
+		if !allExplore {
+			break
+		}
+	}
+	if allExplore {
+		if len(files) > 0 {
+			return "Explored · " + strings.Join(files, ", ")
+		}
+		return "Explored"
+	}
+	return "Ran · " + clipSummary(firstSegment, 60)
+}
+
+var (
+	webSearchRe = regexp.MustCompile(`search_query:\s*\[\s*\{\s*q:\s*("(?:\\.|[^"\\])*")`)
+	webOpenRe   = regexp.MustCompile(`open:\s*\[\s*\{\s*ref_id:\s*("(?:\\.|[^"\\])*")`)
+)
+
+// summarizeExecBridge recognises the non-shell helpers Codex also routes
+// through the `exec` tool (web search/open, apply_patch) so the collapsed row
+// reads as intent instead of "args: text(await tools.web__run(...))".
+// It returns "" for anything it does not recognise.
+func summarizeExecBridge(input string) string {
+	if m := webSearchRe.FindStringSubmatch(input); len(m) == 2 {
+		var query string
+		if json.Unmarshal([]byte(m[1]), &query) == nil && query != "" {
+			return "Searched web · " + clipSummary(query, 50)
+		}
+	}
+	if m := webOpenRe.FindStringSubmatch(input); len(m) == 2 {
+		var ref string
+		if json.Unmarshal([]byte(m[1]), &ref) == nil && ref != "" {
+			return "Opened web · " + clipSummary(ref, 50)
+		}
+	}
+	if strings.Contains(input, "tools.apply_patch(") {
+		return "Applied patch"
+	}
+	return ""
 }
 
 type codexRenderAttempt struct {
@@ -407,6 +574,7 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 
 			case "function_call_output":
 				output := outputText(p.Output)
+				stdout := normalizeCodexExecOutput(output)
 				if task, ok := waitTasks[p.CallID]; ok {
 					delete(waitTasks, p.CallID)
 					if cellIDFromText(output) != "" {
@@ -417,8 +585,8 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 						Timestamp:     ts,
 						TurnIndex:     len(attempts) - 1,
 						ToolCallID:    task.toolCallID,
-						Stdout:        output,
-						ExitCode:      extractExitCode(output),
+						Stdout:        stdout,
+						ExitCode:      codexExecExitCode(output),
 						ParentEventID: task.parentEventID,
 					})
 					for cellID, active := range cellTasks {
@@ -438,8 +606,8 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 					Timestamp:     ts,
 					TurnIndex:     len(attempts) - 1,
 					ToolCallID:    p.CallID,
-					Stdout:        output,
-					ExitCode:      extractExitCode(output),
+					Stdout:        stdout,
+					ExitCode:      codexExecExitCode(output),
 					ParentEventID: parentEventID,
 				})
 
@@ -454,13 +622,23 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 				}
 				name, input = unwrapApplyPatchExec(name, input)
 				name, toolInput := summarizeExecInput(name, input)
+				summary := ""
+				if name == "exec" {
+					if cmd, ok := toolInput["command"].(string); ok {
+						summary = summarizeExecCommand(cmd)
+					}
+					if summary == "" {
+						summary = summarizeExecBridge(input)
+					}
+				}
 				invID := emit(model.RenderEvent{
-					Type:       "ToolInvocation",
-					Timestamp:  ts,
-					TurnIndex:  len(attempts) - 1,
-					ToolName:   name,
-					ToolCallID: p.CallID,
-					ToolInput:  toolInput,
+					Type:        "ToolInvocation",
+					Timestamp:   ts,
+					TurnIndex:   len(attempts) - 1,
+					ToolName:    name,
+					ToolCallID:  p.CallID,
+					ToolInput:   toolInput,
+					ToolSummary: summary,
 				})
 				if p.CallID != "" {
 					pendingTools[p.CallID] = invID
@@ -468,6 +646,7 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 
 			case "custom_tool_call_output":
 				output := outputText(p.Output)
+				stdout := normalizeCodexExecOutput(output)
 				if cellID := cellIDFromText(output); cellID != "" {
 					if parentEventID := pendingTools[p.CallID]; parentEventID != "" {
 						cellTasks[cellID] = codexCellTask{toolCallID: p.CallID, parentEventID: parentEventID}
@@ -489,8 +668,8 @@ func codexToRenderEventsDetailedReader(path string, source io.Reader, sourceModT
 					Timestamp:     ts,
 					TurnIndex:     len(attempts) - 1,
 					ToolCallID:    p.CallID,
-					Stdout:        output,
-					ExitCode:      extractExitCode(output),
+					Stdout:        stdout,
+					ExitCode:      codexExecExitCode(output),
 					ParentEventID: parentEventID,
 				})
 			}

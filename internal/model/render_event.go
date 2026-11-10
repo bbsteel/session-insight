@@ -20,6 +20,12 @@ type RenderEvent struct {
 	ToolInput  map[string]any `json:"tool_input,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 
+	// ToolSummary is an optional agent-supplied one-line description of the call
+	// for the collapsed per-tool fold header (e.g. Codex exec "Explored · a, b"
+	// or "Ran · python3 - <<'PY'"). Empty means the formatter derives the
+	// summary from ToolInput.
+	ToolSummary string `json:"tool_summary,omitempty"`
+
 	Stdout     string `json:"stdout,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
 	ExitCode   int    `json:"exit_code,omitempty"`
