@@ -408,6 +408,8 @@ var exitCodeRe = regexp.MustCompile(`Process exited with code (\d+)`)
 var applyPatchExecRe = regexp.MustCompile(`(?s)\b(?:const|let|var)\s+patch\s*=\s*("(?:\\.|[^"\\])*")\s*;.*?tools\.apply_patch\(\s*patch\s*\)`)
 var cellIDRe = regexp.MustCompile(`Script running with cell ID ([^\s]+)`)
 var execCommandRe = regexp.MustCompile(`(?s)tools\.exec_command\(\s*\{.*?["']?cmd["']?\s*:\s*("(?:\\.|[^"\\])*")`)
+var execScriptStatusRe = regexp.MustCompile(`^Script (?:completed|running with cell ID .+)$`)
+var execWallTimeRe = regexp.MustCompile(`^Wall time [\d.]+ seconds$`)
 
 // ---- helpers ----
 
@@ -441,6 +443,75 @@ func outputText(raw json.RawMessage) string {
 		return strings.Join(parts, "")
 	}
 	return ""
+}
+
+// codexExecEnvelope mirrors the JSON object Codex's exec_command bridge wraps
+// around a finished command: {"chunk_id":…,"wall_time_seconds":…,
+// "exit_code":…,"original_token_count":…,"output":"<real output>"}.
+type codexExecEnvelope struct {
+	ChunkID         string  `json:"chunk_id"`
+	WallTimeSeconds float64 `json:"wall_time_seconds"`
+	ExitCode        *int    `json:"exit_code"`
+	Output          *string `json:"output"`
+}
+
+// parseCodexExecEnvelope locates and parses the exec envelope inside text. It
+// starts at the first `{"chunk_id"` marker so a stray prefix (older Codex
+// emits a bare "{}" block before the envelope) does not defeat the parse.
+func parseCodexExecEnvelope(text string) (codexExecEnvelope, bool) {
+	i := strings.Index(text, `{"chunk_id"`)
+	if i < 0 {
+		return codexExecEnvelope{}, false
+	}
+	var env codexExecEnvelope
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text[i:])), &env); err != nil {
+		return codexExecEnvelope{}, false
+	}
+	return env, env.Output != nil
+}
+
+// stripExecFraming removes the leading status banner Codex prepends to every
+// exec_command result ("Script completed" / "Wall time … seconds" / "Output:")
+// so the replay shows the command's real output, not Codex's own status lines.
+func stripExecFraming(text string) string {
+	if text == "" {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	i := 0
+	for i < len(lines) {
+		t := strings.TrimSpace(lines[i])
+		if t == "" || t == "Output:" || execScriptStatusRe.MatchString(t) || execWallTimeRe.MatchString(t) {
+			i++
+			continue
+		}
+		break
+	}
+	if i >= len(lines) {
+		return ""
+	}
+	return strings.Join(lines[i:], "\n")
+}
+
+// normalizeCodexExecOutput unwraps Codex's exec_command wire format: the status
+// banner plus the JSON envelope. The replay renders the inner `output` verbatim
+// (with real newlines) instead of an escaped, single-line JSON blob. Output
+// that is not an exec envelope is returned with only the banner stripped.
+func normalizeCodexExecOutput(text string) string {
+	stripped := stripExecFraming(text)
+	if env, ok := parseCodexExecEnvelope(stripped); ok {
+		return *env.Output
+	}
+	return stripped
+}
+
+// codexExecExitCode prefers the envelope's exit_code so a failed exec_command
+// still renders as an error; falls back to the legacy "Process exited" regex.
+func codexExecExitCode(text string) int {
+	if env, ok := parseCodexExecEnvelope(text); ok && env.ExitCode != nil {
+		return *env.ExitCode
+	}
+	return extractExitCode(text)
 }
 
 // unwrapApplyPatchExec recognises Codex's tool-wrapper form. Recent Codex

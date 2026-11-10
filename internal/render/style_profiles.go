@@ -64,10 +64,27 @@ var grokProfile = Profile{
 	},
 }
 
+// codexProfile keeps Codex's double-line box but adds per-tool folds: each
+// exec / tool call collapses to a single "▼ <summary>" row (Codex's
+// "Explored · files" / "Ran · cmd" style) with the command box and its output
+// hidden until the user expands it. FoldSummaryMaxCols bounds the collapsed
+// row so a long compound shell script cannot wrap across the whole transcript.
+var codexProfile = Profile{
+	Name: "codex",
+	Style: Style{
+		Box:                BoxSet{TL: "╔", TR: "╗", BL: "╚", BR: "╝", H: "═", V: "║"},
+		Palette:            DefaultPalette,
+		ToolFoldHeader:     true,
+		FoldSummaryMaxCols: 78,
+		ToolBox:            standardToolBox{},
+	},
+}
+
 // profiles maps known agent types to their style. The default profile is used
 // for any agent not listed here.
 var profiles = map[string]*Profile{
 	"chrys":  &chrysProfile,
 	"claude": &claudeProfile,
 	"grok":   &grokProfile,
+	"codex":  &codexProfile,
 }
