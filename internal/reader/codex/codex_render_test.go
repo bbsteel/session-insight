@@ -345,3 +345,50 @@ func TestSummarizeExecBridge(t *testing.T) {
 		})
 	}
 }
+
+// An exec script can emit text or another tool result before its final
+// exec_command envelope. That leading content must survive normalization;
+// previously parseCodexExecEnvelope skipped it and replaced the whole result
+// with only the envelope's output, silently losing "important result".
+func TestNormalizeCodexExecOutputPreservesPrefix(t *testing.T) {
+	envelope := `{"chunk_id":"abc","exit_code":0,"output":"command output\n"}`
+	text := "Script completed\nWall time 0.1 seconds\nOutput:\nimportant result\n" + envelope
+	if got := normalizeCodexExecOutput(text); got != "important result\ncommand output\n" {
+		t.Fatalf("normalized output = %q, want the preserved prefix plus the envelope output", got)
+	}
+}
+
+func TestCodexExecPrefixPreservedInReplay(t *testing.T) {
+	envelope := `{"chunk_id":"abc","exit_code":0,"output":"command output\n"}`
+	output := []string{
+		`{"type":"input_text","text":"Script completed\nWall time 0.1 seconds\nOutput:\n"}`,
+		fmt.Sprintf(`{"type":"input_text","text":%q}`, "important result\n"),
+		fmt.Sprintf(`{"type":"input_text","text":%q}`, envelope),
+	}
+	lines := []string{
+		`{"timestamp":"2026-07-20T12:00:00Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		fmt.Sprintf(`{"timestamp":"2026-07-20T12:00:01Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"exec-1","name":"exec","input":%q}}`, `text(await tools.exec_command({cmd:"echo hi"}));`),
+		fmt.Sprintf(`{"timestamp":"2026-07-20T12:00:02Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"exec-1","output":[%s]}}`, strings.Join(output, ",")),
+	}
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events, err := codexToRenderEvents(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout string
+	var found bool
+	for _, event := range events {
+		if event.Type == "ToolResult" {
+			stdout, found = event.Stdout, true
+		}
+	}
+	if !found {
+		t.Fatalf("missing ToolResult: %#v", events)
+	}
+	if !strings.Contains(stdout, "important result") || !strings.Contains(stdout, "command output") {
+		t.Fatalf("stdout = %q, want both the preserved prefix and the envelope output", stdout)
+	}
+}

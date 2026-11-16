@@ -455,19 +455,29 @@ type codexExecEnvelope struct {
 	Output          *string `json:"output"`
 }
 
+// execEnvelopeMarker starts a Codex exec envelope object. Envelopes are
+// emitted one per line, so the marker reliably starts the tail of an output
+// block that ends with an envelope.
+const execEnvelopeMarker = `{"chunk_id"`
+
 // parseCodexExecEnvelope locates and parses the exec envelope inside text. It
 // starts at the first `{"chunk_id"` marker so a stray prefix (older Codex
-// emits a bare "{}" block before the envelope) does not defeat the parse.
-func parseCodexExecEnvelope(text string) (codexExecEnvelope, bool) {
-	i := strings.Index(text, `{"chunk_id"`)
+// emits a bare "{}" block before the envelope) does not defeat the parse. The
+// returned prefix is everything before the envelope; callers that must not
+// discard arbitrary leading content (a text() or another tool result that came
+// before the exec_command result) should preserve it.
+func parseCodexExecEnvelope(text string) (env codexExecEnvelope, prefix string, ok bool) {
+	i := strings.Index(text, execEnvelopeMarker)
 	if i < 0 {
-		return codexExecEnvelope{}, false
+		return codexExecEnvelope{}, "", false
 	}
-	var env codexExecEnvelope
 	if err := json.Unmarshal([]byte(strings.TrimSpace(text[i:])), &env); err != nil {
-		return codexExecEnvelope{}, false
+		return codexExecEnvelope{}, "", false
 	}
-	return env, env.Output != nil
+	if env.Output == nil {
+		return codexExecEnvelope{}, "", false
+	}
+	return env, text[:i], true
 }
 
 // stripExecFraming removes the leading status banner Codex prepends to every
@@ -495,20 +505,30 @@ func stripExecFraming(text string) string {
 
 // normalizeCodexExecOutput unwraps Codex's exec_command wire format: the status
 // banner plus the JSON envelope. The replay renders the inner `output` verbatim
-// (with real newlines) instead of an escaped, single-line JSON blob. Output
-// that is not an exec envelope is returned with only the banner stripped.
+// (with real newlines) instead of an escaped, single-line JSON blob.
+//
+// An exec script may emit text (or another tool result) before its final
+// exec_command envelope, e.g. `text("important result"); text(await
+// tools.exec_command(...))`. That leading content is preserved rather than
+// discarded so it is not silently lost from replay. Output that is not an exec
+// envelope is returned with only the banner stripped.
 func normalizeCodexExecOutput(text string) string {
 	stripped := stripExecFraming(text)
-	if env, ok := parseCodexExecEnvelope(stripped); ok {
+	env, prefix, ok := parseCodexExecEnvelope(stripped)
+	if !ok {
+		return stripped
+	}
+	preservedPrefix := strings.TrimRight(stripExecFraming(prefix), "\n")
+	if preservedPrefix == "" {
 		return *env.Output
 	}
-	return stripped
+	return preservedPrefix + "\n" + *env.Output
 }
 
 // codexExecExitCode prefers the envelope's exit_code so a failed exec_command
 // still renders as an error; falls back to the legacy "Process exited" regex.
 func codexExecExitCode(text string) int {
-	if env, ok := parseCodexExecEnvelope(text); ok && env.ExitCode != nil {
+	if env, _, ok := parseCodexExecEnvelope(text); ok && env.ExitCode != nil {
 		return *env.ExitCode
 	}
 	return extractExitCode(text)
