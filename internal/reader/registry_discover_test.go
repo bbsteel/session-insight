@@ -29,3 +29,19 @@ func TestDiscoverHonorsWorktreeReviewOverride(t *testing.T) {
 		t.Fatal("worktree-review reader not discovered despite a valid journal root override")
 	}
 }
+
+func TestDiscoverHonorsDSHHomeWithoutUserHome(t *testing.T) {
+	dshHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dshHome, "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DSH_HOME", dshHome)
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	for _, source := range reader.Discover() {
+		if source.AgentType() == "dsh" {
+			return
+		}
+	}
+	t.Fatal("dsh reader not discovered from explicit DSH_HOME")
+}

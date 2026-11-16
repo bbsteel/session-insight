@@ -13,6 +13,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/claude"
 	"github.com/bbsteel/session-insight/internal/reader/codex"
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
+	"github.com/bbsteel/session-insight/internal/reader/dsh"
 	"github.com/bbsteel/session-insight/internal/reader/grok"
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/imported"
@@ -34,6 +35,7 @@ type RegisteredAgentDefinition struct {
 // catalog for every supported Agent. Order is stable: sorted by AgentType.
 func RegisteredAgentDefinitions() []RegisteredAgentDefinition {
 	defs := []RegisteredAgentDefinition{
+		{Capabilities: dsh.Capabilities(), Presentation: dsh.Presentation(), MigrationState: dsh.PresentationMigrationState()},
 		{Capabilities: claude.Capabilities(), Presentation: claude.Presentation(), MigrationState: claude.PresentationMigrationState()},
 		{Capabilities: chrys.Capabilities(), Presentation: chrys.Presentation(), MigrationState: chrys.PresentationMigrationState()},
 		{Capabilities: codex.Capabilities(), Presentation: codex.Presentation(), MigrationState: codex.PresentationMigrationState()},
@@ -113,6 +115,9 @@ func codexSnapshotDir(homeDir string) string {
 // always has a matching catalog entry.
 func Discover() []BaseSessionReader {
 	var readers []BaseSessionReader
+	if sessionsRoot, ok := dsh.ResolveSessionsDir(); ok {
+		readers = append(readers, dsh.New(sessionsRoot))
+	}
 
 	hermesDBPath, ok := hermes.ResolveDBPath()
 	if ok {

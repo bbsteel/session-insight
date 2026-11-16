@@ -6,6 +6,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/hexops/gotextdiff v1.0.3
+	github.com/klauspost/compress v1.19.0
 	github.com/mattn/go-sqlite3 v1.14.45
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	github.com/yuin/goldmark v1.8.2
