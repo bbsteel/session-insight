@@ -155,6 +155,7 @@ export interface HomeCoverage {
   untimed_token_sessions: number
   cost_omitted_sessions: number
   spanning_cost_sessions: number
+  missing_code_line_changes: number
   untimed_code_changes: number
   code_sessions: number
   unattributed_child_sessions: number
@@ -214,7 +215,7 @@ export function emptyHomeQuery(): HomeQuery {
   return { windowDays: 7, day: '', project: '', agent: '', focusKind: '', focusValue: '' }
 }
 
-export async function fetchHome(query: HomeQuery): Promise<HomeReport> {
+export async function fetchHome(query: HomeQuery, signal?: AbortSignal): Promise<HomeReport> {
   const params = new URLSearchParams({ days: String(query.windowDays) })
   if (query.day) params.set('day', query.day)
   if (query.project) params.set('project', query.project)
@@ -223,7 +224,7 @@ export async function fetchHome(query: HomeQuery): Promise<HomeReport> {
     params.set('focus_kind', query.focusKind)
     params.set('focus_value', query.focusValue)
   }
-  const res = await fetch(`/api/home?${params.toString()}`)
+  const res = await fetch(`/api/home?${params.toString()}`, { signal })
   if (!res.ok) throw await responseError(res, 'home_load_failed')
   return readJson<HomeReport>(res, 'home')
 }

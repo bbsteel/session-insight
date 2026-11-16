@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import {
   fetchCodingQuotas,
   fetchHome,
@@ -37,25 +37,40 @@ export default function HomeDashboard({ query, onQueryChange, onSelect, onOpenCo
   const [toolsExpanded, setToolsExpanded] = useState(false)
   const [skillsExpanded, setSkillsExpanded] = useState(false)
 
-  const load = useCallback(() => {
-    setLoading(true)
-    setError(false)
-    fetchHome(query)
-      .then(next => {
-        setReport(next)
-        setLoading(false)
-      })
-      .catch(() => {
-        setError(true)
-        setLoading(false)
-      })
-  }, [query])
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const load = () => setRefreshVersion(version => version + 1)
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    let pendingRequest: AbortController | null = null
+    const loadReport = () => {
+      pendingRequest?.abort()
+      const requestController = new AbortController()
+      pendingRequest = requestController
+      setLoading(true)
+      setError(false)
+      fetchHome(query, requestController.signal)
+        .then(next => {
+          if (requestController.signal.aborted) return
+          setReport(next)
+          setLoading(false)
+        })
+        .catch(() => {
+          if (requestController.signal.aborted) return
+          setError(true)
+          setLoading(false)
+        })
+    }
+    setReport(null)
+    loadReport()
+    const stopWatching = watchSessionsChanged(loadReport)
+    return () => {
+      pendingRequest?.abort()
+      stopWatching()
+    }
+  }, [query, refreshVersion])
   useEffect(() => {
     fetchCodingQuotas().then(setQuotas).catch(() => setQuotas(null))
   }, [])
-  useEffect(() => watchSessionsChanged(load), [load])
 
   const openSession = (event: MouseEvent, session: HomeSessionCard) => {
     if (openOnModifiedClick(event, session.agent_type, session.id)) return
@@ -115,7 +130,7 @@ export default function HomeDashboard({ query, onQueryChange, onSelect, onOpenCo
               <Stat label={t('home.summaryTurns')} value={formatNumber(locale, report.summary.turns)} />
               <Stat label={t('home.summaryTokens')} value={formatNumber(locale, report.summary.tokens)} mark={tokenMark(t, report)} />
               <Stat label={t('home.summaryCost')} value={costText(report)} mark={costMark(t, report)} />
-              <Stat label={t('home.summaryCode')} value={`${formatNumber(locale, report.summary.additions)} / ${formatNumber(locale, report.summary.deletions)}`} mark={report.coverage.untimed_code_changes > 0 ? t('home.coverage.untimedCode', { count: report.coverage.untimed_code_changes }) : ''} />
+              <Stat label={t('home.summaryCode')} value={`${formatNumber(locale, report.summary.additions)} / ${formatNumber(locale, report.summary.deletions)}`} mark={codeMark(t, report)} />
             </section>
             <p className="text-helper text-[var(--text-muted)]">
               {t('home.codeNote', {
@@ -403,4 +418,11 @@ function costMark(t: (key: string, vars?: Record<string, string | number>) => st
 function focusLabel(t: (key: string, vars?: Record<string, string | number>) => string, kind: string, value: string): string {
   if (kind === 'health') return t(`home.health.${value}`)
   return value
+}
+
+function codeMark(t: (key: string, vars?: Record<string, string | number>) => string, report: HomeReport): string {
+  const coverageExplanations = []
+  if (report.coverage.untimed_code_changes > 0) coverageExplanations.push(t('home.coverage.untimedCode', { count: report.coverage.untimed_code_changes }))
+  if (report.coverage.missing_code_line_changes > 0) coverageExplanations.push(t('home.coverage.missingCodeLines', { count: report.coverage.missing_code_line_changes }))
+  return coverageExplanations.join(' ')
 }

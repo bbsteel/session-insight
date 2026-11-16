@@ -91,6 +91,7 @@ type Coverage struct {
 	UntimedTokenSessions      int      `json:"untimed_token_sessions"`
 	CostOmittedSessions       int      `json:"cost_omitted_sessions"`
 	SpanningCostSessions      int      `json:"spanning_cost_sessions"`
+	MissingCodeLineChanges    int      `json:"missing_code_line_changes"`
 	UntimedCodeChanges        int      `json:"untimed_code_changes"`
 	CodeSessions              int      `json:"code_sessions"`
 	UnattributedChildSessions int      `json:"unattributed_child_sessions"`
@@ -177,7 +178,7 @@ func Aggregate(facts []SessionFact, query Query, generatedAt time.Time) Report {
 		report.Coverage.UntimedSkills += fact.UntimedSkills
 		addHealth(&report.Health, fact, start, end)
 		addCosts(costs, &report.Coverage, fact, start, end)
-		if added := addCode(&report.Summary, fact, start, end); added {
+		if added := addCode(&report.Summary, &report.Coverage, fact, start, end); added {
 			codeSessions[fact.AgentType+"\x00"+fact.ID] = true
 		}
 		report.Coverage.UntimedCodeChanges += fact.UntimedCode
@@ -442,7 +443,7 @@ func activityOutside(fact SessionFact, start, end time.Time) bool {
 	return false
 }
 
-func addCode(summary *Summary, fact SessionFact, start, end time.Time) bool {
+func addCode(summary *Summary, coverage *Coverage, fact SessionFact, start, end time.Time) bool {
 	added := false
 	for _, change := range fact.Code {
 		if !inside(change.RecordedAt, start, end) {
@@ -452,6 +453,8 @@ func addCode(summary *Summary, fact SessionFact, start, end time.Time) bool {
 		if change.HasLines {
 			summary.Additions += change.Additions
 			summary.Deletions += change.Deletions
+		} else {
+			coverage.MissingCodeLineChanges++
 		}
 		added = true
 	}

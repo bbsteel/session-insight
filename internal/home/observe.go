@@ -195,7 +195,7 @@ func BuildFact(detail *model.SessionDetail, events []model.RenderEvent) SessionF
 func turnTimesFrom(events []model.RenderEvent, turns []model.TurnVM) map[int]time.Time {
 	times := map[int]time.Time{}
 	for _, event := range events {
-		if event.Timestamp.IsZero() {
+		if event.InvocationID != "" || event.Timestamp.IsZero() {
 			continue
 		}
 		current, ok := times[event.TurnIndex]
@@ -227,8 +227,13 @@ func applyEventTokens(fact *SessionFact, detail *model.SessionDetail, events []m
 		}
 		usedEvent = true
 		usage := event.TokenUsage
+		promptTokens := usage.InputTokens
+		// Grok render input includes cache hits; home buckets are exclusive.
+		if detail.AgentType == "grok" {
+			promptTokens = max(0, promptTokens-usage.CacheReadTokens)
+		}
 		fact.Tokens = append(fact.Tokens, TokenEvent{
-			At: usageTime(event.Timestamp), Prompt: usage.InputTokens, CacheRead: usage.CacheReadTokens,
+			At: usageTime(event.Timestamp), Prompt: promptTokens, CacheRead: usage.CacheReadTokens,
 			CacheWrite: usage.CacheCreationTokens, Completion: usage.OutputTokens,
 		})
 	}
