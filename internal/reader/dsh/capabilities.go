@@ -12,7 +12,7 @@ import (
 // Capabilities declares only behavior exercised against persisted v3/v4 logs.
 func Capabilities() capability.AgentCapabilities {
 	return capability.AgentCapabilities{
-		AgentType: agentType, DisplayName: displayName, AdapterRevision: 1,
+		AgentType: agentType, DisplayName: displayName, AdapterRevision: 2,
 		Capabilities: map[capability.CapabilityID]capability.CapabilityDeclaration{
 			capability.CapabilityDiscovery:   capability.Exact(),
 			capability.CapabilityReplay:      capability.Exact(),

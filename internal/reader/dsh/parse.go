@@ -2,11 +2,14 @@ package dsh
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,6 +109,12 @@ func canonicalUsage(native *nativeUsage) model.TokenUsage {
 // Zstandard frames. An unfinished final frame/line retains the verified prefix
 // and reports degradation instead of manufacturing a normal completion.
 func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderEvent, error) {
+	return readSessionWithFingerprint(path, expectedID, nil)
+}
+
+// The indexing path captures compressed source bytes once, before decoding.
+// Its fingerprint and parsed snapshot therefore describe the same byte view.
+func readSessionWithFingerprint(path, expectedID string, fingerprint *model.SourceFingerprint) (*model.SessionDetail, []model.RenderEvent, error) {
 	sources := sourceInventory(path)
 	fail := func(kind readerr.Kind, err error) (*model.SessionDetail, []model.RenderEvent, error) {
 		return nil, nil, readerr.New(kind, string(kind), err).WithSources(sources)
@@ -123,6 +132,15 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 		return fail(readerr.SourceUnreadable, err)
 	}
 	transcript := io.LimitReader(file, before.Size())
+	if fingerprint != nil {
+		sourceBytes, err := io.ReadAll(transcript)
+		if err != nil {
+			return fail(readerr.SourceUnreadable, err)
+		}
+		sourceDigest := sha256.Sum256(sourceBytes)
+		*fingerprint = model.SourceFingerprint{Algorithm: model.SourceFingerprintSHA256, Digest: fmt.Sprintf("%x", sourceDigest), SizeBytes: int64(len(sourceBytes))}
+		transcript = bytes.NewReader(sourceBytes)
+	}
 	if strings.HasSuffix(path, ".zstd") {
 		decoder, err := zstd.NewReader(transcript, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(256<<20))
 		if err != nil {
@@ -154,10 +172,19 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 	}, Turns: []model.TurnVM{}}
 	events := []model.RenderEvent{}
 	warnings := []model.ParseWarning{}
+	missingUsage := false
 	warn := func(code string, impacts ...string) {
+		for _, impact := range impacts {
+			if impact == model.ImpactTokens {
+				missingUsage = true
+			}
+		}
 		warnings = append(warnings, provenance.Warning(code, model.WarningSeverityWarning, true, impacts, model.SourceRolePrimaryTranscript, nil, 1))
 	}
 	attach := func(state model.RecordCompletenessState) {
+		if detail.Billing != nil && missingUsage {
+			detail.Billing.Precision = model.PrecisionMissing
+		}
 		facts := provenance.Input{AdapterRevision: Capabilities().AdapterRevision, Sources: sources, Warnings: warnings, HasReplayableBody: len(detail.Turns) > 0, StateOverride: state}
 		result := provenance.Build(facts)
 		detail.Provenance = &result
@@ -172,7 +199,6 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 	toolInvocations := map[string]model.RenderEvent{}
 	toolResults := map[string]bool{}
 	modelUsage := map[string]*model.ModelUsage{}
-	missingUsage := false
 	currentTurn := -1
 	ensureTurn := func(nativeTurn int) int {
 		if index, exists := turnIndices[nativeTurn]; exists {
@@ -203,7 +229,11 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 		previousSeq = record.Seq
 		var data eventData
 		if err := json.Unmarshal(record.Data, &data); err != nil {
-			warn(model.WarnMalformedRecordSkipped, model.ImpactReplay)
+			impacts := []string{model.ImpactReplay}
+			if record.Type == "assistant/message" {
+				impacts = append(impacts, model.ImpactTokens)
+			}
+			warn(model.WarnMalformedRecordSkipped, impacts...)
 			continue
 		}
 		timestamp := time.UnixMilli(record.Time).UTC()
@@ -275,6 +305,9 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 			detail.Turns[currentTurn].RequestCount++
 			if data.Usage != nil {
 				usage := canonicalUsage(data.Usage)
+				if usage.Present.Input != model.PresenceExact || usage.Present.Output != model.PresenceExact {
+					missingUsage = true
+				}
 				detail.Turns[currentTurn].TokenUsage.AddUsage(usage)
 				if detail.Billing == nil {
 					detail.Billing = &model.SessionBilling{Precision: model.PrecisionExact}
@@ -339,6 +372,16 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 			if failed {
 				event.ExitCode = 1
 				event.ErrorKind = "tool_error"
+			}
+			if event.ToolName == "bash" {
+				if exitCode, recorded := bashExitCode(event.Stdout); recorded && exitCode != 0 {
+					event.ExitCode = exitCode
+					if event.ErrorKind == "" {
+						event.ErrorKind = "command_failed"
+					}
+				}
+			}
+			if event.ErrorKind != "" {
 				detail.Turns[currentTurn].ErrorCount++
 			}
 			detail.Turns[currentTurn].ToolDetails = append(detail.Turns[currentTurn].ToolDetails, model.ToolCallVM{Name: event.ToolName, ExitCode: event.ExitCode, ErrorKind: event.ErrorKind, Duration: event.DurationMs})
@@ -352,16 +395,13 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 		}
 	}
 	if detail.Billing != nil {
-		if missingUsage {
-			detail.Billing.Precision = model.PrecisionMissing
-		}
 		for _, bucket := range modelUsage {
 			detail.Billing.ByModel = append(detail.Billing.ByModel, *bucket)
 		}
 		sort.Slice(detail.Billing.ByModel, func(i, j int) bool { return detail.Billing.ByModel[i].Model < detail.Billing.ByModel[j].Model })
 	}
 	if after, err := file.Stat(); err == nil && (after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime())) {
-		warn(model.WarnSourceChangedDuringRead, model.ImpactReplay)
+		warn(model.WarnSourceChangedDuringRead, model.ImpactReplay, model.ImpactTokens)
 	}
 	attach("")
 	return detail, events, nil
@@ -375,4 +415,17 @@ func joinText(previous, next string) string {
 		return previous
 	}
 	return previous + "\n" + next
+}
+
+// dsh-tool-bash appends this marker as the final line for a nonzero
+// command exit. isError reports tool-delivery failures, not command exits.
+var bashExitMarker = regexp.MustCompile(`(?:^|\n)\[exit code: (-?[0-9]+)\]$`)
+
+func bashExitCode(output string) (int, bool) {
+	match := bashExitMarker.FindStringSubmatch(strings.TrimSpace(output))
+	if match == nil {
+		return 0, false
+	}
+	exitCode, err := strconv.Atoi(match[1])
+	return exitCode, err == nil
 }

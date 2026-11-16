@@ -43,9 +43,18 @@ cache read, cache write, and output buckets. Reasoning is an output subset.
 Absent optional counters remain missing, not zero or not-applicable. Per-response
 usage is grouped by the recorded model; auxiliary title/search model calls are
 not guessed into the session bill. Sessions lacking assistant usage keep missing
-billing precision. Native `edit` arguments already use the shared edit contract.
+billing precision, as do snapshots with skipped or truncated token-bearing
+records; retained counters remain partial totals. Native `edit` arguments already
+use the shared edit contract. Bash nonzero command exits are represented by the
+final `[exit code: N]` line, even when `isError` is false; `isError` instead
+indicates delivery/infrastructure errors.
 Live refresh watches the sessions root and detects primary-file size/mtime
-changes. It is not a declaration of exact process liveness.
+changes. Indexing independently captures and hashes raw source bytes through
+the authoritative snapshot contract. It revalidates those bytes even when event
+timestamps, file size, or mtime stay unchanged, so malformed tails and generation
+replacements update persisted provenance. Event timestamps remain presentation
+metadata rather than source revision identifiers. It is not a declaration of
+exact process liveness.
 
 ## Sources, privacy, and operation boundaries
 

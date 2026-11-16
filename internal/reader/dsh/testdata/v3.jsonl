@@ -6,7 +6,7 @@
 {"type":"tool/call","seq":4,"time":1760000000500,"data":{"turn":1,"step":1,"callId":"call-edit","name":"edit","arguments":"{\"file_path\": \"/workspace/example/a.go\", \"old_string\": \"foo\", \"new_string\": \"bar\"}"}}
 {"type":"tool/result","seq":5,"time":1760000000600,"data":{"turn":1,"step":1,"message":{"role":"user","id":"result-edit","source":{"kind":"tool","callId":"call-edit"},"content":[{"type":"tool-result","toolCallId":"call-edit","content":[{"type":"text","text":"File updated"}],"isError":false}]}}}
 {"type":"tool/call","seq":6,"time":1760000000700,"data":{"turn":1,"step":1,"callId":"call-bash","name":"bash","arguments":"{\"command\": \"go test ./...\"}"}}
-{"type":"tool/result","seq":7,"time":1760000000800,"data":{"turn":1,"step":1,"message":{"role":"user","id":"result-bash","source":{"kind":"tool","callId":"call-bash"},"content":[{"type":"tool-result","toolCallId":"call-bash","content":[{"type":"text","text":"FAIL: example test"}],"isError":true}]}}}
+{"type":"tool/result","seq":7,"time":1760000000800,"data":{"turn":1,"step":1,"message":{"role":"user","id":"result-bash","source":{"kind":"tool","callId":"call-bash"},"content":[{"type":"tool-result","toolCallId":"call-bash","content":[{"type":"text","text":"FAIL: example test\n[exit code: 7]"}],"isError":false}]}}}
 {"type":"turn/end","seq":8,"time":1760000000900,"data":{"turn":1,"reason":{"kind":"completed"}}}
 {"type":"turn/start","seq":9,"time":1760000001000,"data":{"turn":2}}
 {"type":"user/message","seq":10,"time":1760000001100,"data":{"role":"user","content":[{"type":"text","text":"Explain the result"}],"source":{"kind":"user"},"id":"message-user-2"}}
