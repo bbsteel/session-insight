@@ -18,6 +18,7 @@ __asm__(".weak gdk_display_manager_get");
 __asm__(".weak gdk_display_manager_get_default_display");
 __asm__(".weak gdk_x11_display_get_type");
 __asm__(".weak g_free");
+__asm__(".weak g_free_sized");
 __asm__(".weak g_idle_add_full");
 __asm__(".weak g_signal_connect_data");
 __asm__(".weak g_signal_handlers_disconnect_matched");
