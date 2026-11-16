@@ -65,7 +65,7 @@ func TestChrysProfileLayout(t *testing.T) {
 func TestDefaultProfileUnchangedShapes(t *testing.T) {
 	events := chrysEvents()
 	for i := range events {
-		events[i].AgentType = "codex" // any agent without a profile
+		events[i].AgentType = "opencode" // any agent without a dedicated profile
 	}
 	out := FormatEvents(events, 100)
 
@@ -164,11 +164,11 @@ func TestTruncPositionsFlatLayoutOrder(t *testing.T) {
 	ts := time.Now()
 	long := strings.Repeat("l\n", 30)
 	events := []model.RenderEvent{
-		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "codex"},
-		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "codex", Text: "hi"},
-		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "opencode"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "opencode", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "opencode",
 			ToolName: "Bash", ToolCallID: "c1", ToolInput: map[string]any{"command": "x"}},
-		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "opencode",
 			ToolCallID: "c1", Stdout: long, Stderr: long, ExitCode: 1},
 	}
 	_, positions := FormatEventsWithPositions(events, 100)
@@ -577,5 +577,64 @@ func TestFencedPythonCodeUsesThemeForegroundForNames(t *testing.T) {
 	}
 	if regexp.MustCompile(`\x1b\[38;5;(1[6-9]|[2-9][0-9]|1[0-9][0-9]|2[0-5][0-9])m`).MatchString(out) {
 		t.Errorf("Python code must not contain fixed 256-cube foregrounds:\n%q", out)
+	}
+}
+
+func TestCodexProfileEmitsPerToolFolds(t *testing.T) {
+	ts := time.Now()
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "codex"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "codex", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
+			ToolName: "exec", ToolCallID: "c1", ToolInput: map[string]any{"command": "sed -n '1,5p' a.js; cat b.md"}, ToolSummary: "Explored · a.js, b.md"},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
+			ToolCallID: "c1", Stdout: "line one\nline two"},
+	}
+	ansi, positions := FormatEventsWithPositions(events, 100)
+	plain := stripANSIForTest(ansi)
+	if !strings.Contains(plain, "▼ Explored · a.js, b.md") {
+		t.Fatalf("collapsed header missing codex summary:\n%s", plain)
+	}
+	folds := 0
+	for _, p := range positions {
+		if p.Kind == "fold" {
+			folds++
+			if lvl := p.Payload["level"]; lvl != "tool" {
+				t.Errorf("fold level = %v, want tool", lvl)
+			}
+		}
+	}
+	if folds != 1 {
+		t.Fatalf("want 1 tool fold, got %d (%+v)", folds, positions)
+	}
+}
+
+func TestCodexProfileTruncatesLongSummary(t *testing.T) {
+	ts := time.Now()
+	long := strings.Repeat("verylongcommand ", 20)
+	events := []model.RenderEvent{
+		{EventID: "b0", Type: "TurnBoundary", TurnIndex: 0, Timestamp: ts, AgentType: "codex"},
+		{EventID: "u0", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, AgentType: "codex", Text: "hi"},
+		{EventID: "i0", Type: "ToolInvocation", TurnIndex: 0, Timestamp: ts, AgentType: "codex",
+			ToolName: "exec", ToolCallID: "c1", ToolInput: map[string]any{"command": long}, ToolSummary: "Ran · " + long},
+		{EventID: "r0", Type: "ToolResult", TurnIndex: 0, Timestamp: ts, AgentType: "codex", ToolCallID: "c1", Stdout: "ok"},
+	}
+	ansi, _ := FormatEventsWithPositions(events, 100)
+	plain := stripANSIForTest(ansi)
+	header := ""
+	for _, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "▼ Ran") {
+			header = strings.TrimSpace(line)
+			break
+		}
+	}
+	if header == "" {
+		t.Fatalf("fold header not found:\n%s", plain)
+	}
+	if !strings.Contains(header, "…") {
+		t.Fatalf("long summary should be truncated with an ellipsis, got %q", header)
+	}
+	if w := displayWidth(header); w > 100 {
+		t.Fatalf("truncated header width %d exceeds terminal width: %q", w, header)
 	}
 }

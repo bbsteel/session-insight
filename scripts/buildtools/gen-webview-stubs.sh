@@ -46,11 +46,15 @@ g++ -fPIC -DWEBVIEW_STATIC -DWEBVIEW_GTK -std=c++11 \
 	-c "${webview_mod}/webview.cc" -o "${work_dir}/webview.o"
 
 # icon_linux.go calls this one directly.
-extra_syms="gtk_window_set_default_icon_from_file"
+# g_free_sized is the replacement newer GLib (>=2.76) inlines `g_free` to; on
+# such hosts nm already lists it, but pin it here so a regen on an older host
+# (which emits plain g_free) does not silently drop it and break the link.
+extra_syms="gtk_window_set_default_icon_from_file g_free_sized"
 
 {
 	nm -u "${work_dir}/webview.o" | awk '{print $2}'
-	echo "${extra_syms}"
+	# shellcheck disable=SC2086
+	printf '%s\n' ${extra_syms}
 } | grep -E '^(gtk|gdk|webkit|g_|jsc_)' | sort -u > "${work_dir}/syms"
 
 {

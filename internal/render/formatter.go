@@ -631,7 +631,7 @@ func formatEventsWithProfile(events []model.RenderEvent, cols int, opts Options,
 // shifts line numbers, so cached line positions keyed on it are invalidated.
 // It also covers position-set changes (e.g. a new position kind), since
 // positions are cached under the same key.
-const FormatVersion int64 = 33
+const FormatVersion int64 = 34
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
@@ -1307,6 +1307,12 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 	} else {
 		inputForBox = evt.ToolInput
 	}
+	// An agent-supplied summary (Codex "Explored · a, b" / "Ran · cmd") wins
+	// over the derived one for the collapsed fold header while the expanded box
+	// still renders the full input.
+	if evt.ToolSummary != "" {
+		purpose = evt.ToolSummary
+	}
 
 	if p.ToolBullet {
 		bullet := p.Bullet
@@ -1330,10 +1336,11 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 		}
 		sb.WriteString("\n")
 	} else if asFoldHeader {
-		// Box profile with per-tool folds (claude): the "▼ Tool: Name · summary"
-		// line above the box is the fold header; the box top loses its embedded
-		// header so the collapsed row is the only place the summary shows.
-		headerBadgeOffset = writeBoxFoldHeader(p, sb, prefix, toolName, borderColor, evt.ToolInput, durationMs, ts)
+		// Box profile with per-tool folds (claude/codex): the "▼ Tool: Name ·
+		// summary" (or Codex "▼ Explored · files") line above the box is the
+		// fold header; the box top loses its embedded header so the collapsed
+		// row is the only place the summary shows.
+		headerBadgeOffset = writeBoxFoldHeader(p, sb, prefix, toolName, borderColor, evt.ToolInput, purpose, durationMs, ts, bWidth)
 	}
 
 	// Body starts after the (possibly wrapped) header line: everything from
@@ -1361,12 +1368,12 @@ func writeToolInvocation(p *Profile, sb *trackingBuilder, evt model.RenderEvent,
 }
 
 // writeBoxFoldHeader renders the fold header line for box-style profiles
-// (claude): "▼ Tool: Name · summary · duration", mirroring the bullet fold
-// header of bullet profiles. The summary is NOT width-truncated — the full
-// path/command stays on the header and soft-wraps when long, so the collapsed
-// row shows the whole invocation. Returns the UTF-16 index just past the tool
-// name run for the frontend's "(N 行)" badge splice.
-func writeBoxFoldHeader(p *Profile, sb *trackingBuilder, prefix, toolName string, c Color, input map[string]any, durationMs int64, ts string) int {
+// (claude/codex): "▼ Tool: Name · summary · duration", or, when a tool supplies
+// its own summary (Codex exec), "▼ Explored · files" / "▼ Ran · cmd". The
+// summary soft-wraps unless FoldSummaryMaxCols caps it, so a long compound
+// command collapses to one tidy row. Returns the UTF-16 index just past the
+// title run for the frontend's "(N 行)" badge splice.
+func writeBoxFoldHeader(p *Profile, sb *trackingBuilder, prefix, toolName string, c Color, input map[string]any, purpose string, durationMs int64, ts string, bWidth int) int {
 	sb.WriteString(prefix)
 	off := utf16Len(prefix)
 	if ts != "" {
@@ -1374,12 +1381,30 @@ func writeBoxFoldHeader(p *Profile, sb *trackingBuilder, prefix, toolName string
 		sb.WriteString(tsRun)
 		off += utf16Len(tsRun)
 	}
-	nameRun := styled("▼ Tool: "+toolName, c, ColNone, true, false)
+	title := ""
+	if s := oneLine(purpose); s != "" {
+		title = "▼ " + sanitizeControlChars(s)
+	} else {
+		title = "▼ Tool: " + toolName
+		if s := toolSummary("", input); s != "" {
+			title += " · " + s
+		}
+	}
+	// Cap the collapsed row so a long compound command cannot wrap across the
+	// transcript. Reserve room for the fold badge ("(N 行)") and duration.
+	if p.FoldSummaryMaxCols > 0 {
+		avail := bWidth - displayWidth(prefix) - displayWidth(ts) - 12
+		if p.FoldSummaryMaxCols < avail {
+			avail = p.FoldSummaryMaxCols
+		}
+		if avail < 16 {
+			avail = 16
+		}
+		title = truncateToWidth(title, avail)
+	}
+	nameRun := styled(title, c, ColNone, true, false)
 	sb.WriteString(nameRun)
 	off += utf16Len(nameRun)
-	if s := toolSummary("", input); s != "" {
-		sb.WriteString(styled(" · "+s, c, ColNone, false, false))
-	}
 	if durationMs > 0 {
 		sb.WriteString(fgWrap(" · "+fmtDurationShort(durationMs), p.Palette.Muted))
 	}

@@ -113,6 +113,12 @@ type Style struct {
 	// header, and the box top loses its embedded header for folded tools.
 	ToolFoldHeader bool
 
+	// FoldSummaryMaxCols caps the width of the summary shown on a box fold
+	// header (ToolFoldHeader). 0 means no cap (the full summary soft-wraps).
+	// Codex sets a cap so a long compound exec command collapses to one tidy
+	// row instead of wrapping the whole invocation across many rows.
+	FoldSummaryMaxCols int
+
 	// ResultIndent is extra indentation applied to depth-0 tool results when
 	// the style uses per-tool bullets (e.g. grok indents results to line up
 	// under the bullet).
