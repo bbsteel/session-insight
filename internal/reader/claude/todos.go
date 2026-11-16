@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,13 +17,27 @@ func readClaudeTodos(root, sessionID string) []model.Todo {
 	if root == "" || !validSessionID(sessionID) {
 		return nil
 	}
-	matches, err := filepath.Glob(filepath.Join(root, "todos", sessionID+"*.json"))
-	if err != nil || len(matches) == 0 {
+	// Resolve sidecars within the todo store, including when an entry is a symlink.
+	todoRoot, err := os.OpenRoot(filepath.Join(root, "todos"))
+	if err != nil {
+		return nil
+	}
+	defer todoRoot.Close()
+	entries, err := fs.ReadDir(todoRoot.FS(), ".")
+	if err != nil {
 		return nil
 	}
 	var todos []model.Todo
-	for _, path := range matches {
-		body, err := os.ReadFile(path)
+	for _, entry := range entries {
+		filename := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(filename, ".json") {
+			continue
+		}
+		// Match the ID literally so glob characters cannot select other sessions.
+		if filename != sessionID+".json" && !strings.HasPrefix(filename, sessionID+"-agent-") {
+			continue
+		}
+		body, err := todoRoot.ReadFile(filename)
 		if err != nil {
 			continue
 		}
@@ -42,7 +57,7 @@ func readClaudeTodos(root, sessionID string) []model.Todo {
 			}
 			id := item.ID
 			if id == "" {
-				id = fmt.Sprintf("%s:%d", filepath.Base(path), index)
+				id = fmt.Sprintf("%s:%d", filename, index)
 			}
 			todos = append(todos, model.Todo{ID: id, Title: title, Status: item.Status})
 		}
