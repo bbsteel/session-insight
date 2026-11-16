@@ -8,6 +8,10 @@ const chrysIcon = '/icons/chrys-c.png'
 const hermesBlackIcon = '/icons/hermes-logo-black.svg'
 const hermesWhiteIcon = '/icons/hermes-logo-white.svg'
 const piIcon = '/icons/pi.svg'
+// Official dsh Web favicon (@deepseek-ai/dsh-web-frontend 0.2.1-rc.2).
+// Source: https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/web/public
+// License: /icons/dsh.LICENSE.txt
+const dshIcon = '/icons/dsh.svg'
 import { resolveAgentStyle } from '../agentStyles'
 
 interface AgentIconProps {
@@ -42,6 +46,10 @@ function resolveIcon(agentType?: string): AgentIconPair | null {
   if (normalized.includes('hermes')) return {
     light: { src: hermesBlackIcon },
     dark: { src: hermesWhiteIcon },
+  }
+  if (normalized === 'dsh') return {
+    light: { src: dshIcon, color: '#000000' },
+    dark: { src: dshIcon, color: '#ffffff' },
   }
   if (normalized === 'pi') return {
     light: { src: piIcon },

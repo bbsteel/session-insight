@@ -16,6 +16,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/claude"
 	"github.com/bbsteel/session-insight/internal/reader/codex"
 	"github.com/bbsteel/session-insight/internal/reader/copilot"
+	"github.com/bbsteel/session-insight/internal/reader/dsh"
 	"github.com/bbsteel/session-insight/internal/reader/grok"
 	"github.com/bbsteel/session-insight/internal/reader/hermes"
 	"github.com/bbsteel/session-insight/internal/reader/imported"
@@ -28,13 +29,13 @@ import (
 
 // expectedAgentTypes is the closed set of supported Agents for phase 1.
 var expectedAgentTypes = []string{
-	"chrys", "claude", "codex", "copilot", "grok", "hermes", "imported", "opencode", "pi", "worktree-review",
+	"chrys", "claude", "codex", "copilot", "dsh", "grok", "hermes", "imported", "opencode", "pi", "worktree-review",
 }
 
-func TestAgentDefinitionsHasSevenAgents(t *testing.T) {
+func TestAgentDefinitionsCatalog(t *testing.T) {
 	defs := reader.AgentDefinitions()
-	if len(defs) != 10 {
-		t.Fatalf("catalog length = %d, want 10: %v", len(defs), agentTypes(defs))
+	if len(defs) != 11 {
+		t.Fatalf("catalog length = %d, want 11: %v", len(defs), agentTypes(defs))
 	}
 
 	got := agentTypes(defs)
@@ -211,6 +212,7 @@ func TestAgentDefinitionsMatchReaderIdentity(t *testing.T) {
 		{imported.Capabilities(), imported.New(tmp)},
 		{opencode.Capabilities(), ocReader},
 		{pi.Capabilities(), pi.New(tmp)},
+		{dsh.Capabilities(), dsh.New(tmp)},
 		{worktreereview.Capabilities(), worktreereview.New(tmp)},
 	}
 	for _, p := range pairs {
@@ -248,6 +250,7 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 		"imported":        imported.New(tmp),
 		"opencode":        ocReader,
 		"pi":              pi.New(tmp),
+		"dsh":             dsh.New(tmp),
 		"worktree-review": worktreereview.New(tmp),
 	}
 	hermesDB := filepath.Join(tmp, "hermes-operation.db")
@@ -293,7 +296,7 @@ func TestOperationDeclarationsMatchOptionalInterfaces(t *testing.T) {
 	}
 }
 
-// TestCatalogMatrixDump prints the ten×ten matrix for evidence capture.
+// TestCatalogMatrixDump prints the catalog capability matrix for evidence capture.
 // Always asserts; also writes a human-readable dump when CAPABILITY_MATRIX_OUT is set.
 func TestCatalogMatrixDump(t *testing.T) {
 	var b strings.Builder
@@ -307,9 +310,10 @@ func TestCatalogMatrixDump(t *testing.T) {
 	matrix := b.String()
 	// Structural proof of catalog content.
 	lines := strings.Split(strings.TrimSpace(matrix), "\n")
-	// header + 10*10
-	if len(lines) != 1+100 {
-		t.Fatalf("matrix lines = %d, want 101", len(lines))
+	// Header plus every declared capability for every registered Agent.
+	expectedLines := 1 + len(reader.AgentDefinitions())*len(capability.BaselineIDs())
+	if len(lines) != expectedLines {
+		t.Fatalf("matrix lines = %d, want %d", len(lines), expectedLines)
 	}
 	if out := os.Getenv("CAPABILITY_MATRIX_OUT"); out != "" {
 		if err := os.WriteFile(out, []byte(matrix), 0o644); err != nil {
@@ -322,8 +326,8 @@ func TestCatalogMatrixDump(t *testing.T) {
 
 func TestRegisteredAgentDefinitionsPresentationsConform(t *testing.T) {
 	defs := reader.RegisteredAgentDefinitions()
-	if len(defs) != 10 {
-		t.Fatalf("registered catalog length=%d want 10", len(defs))
+	if len(defs) != 11 {
+		t.Fatalf("registered catalog length=%d want 11", len(defs))
 	}
 	legacy := map[string]bool{"claude": true, "chrys": true, "grok": true}
 	for _, def := range defs {
