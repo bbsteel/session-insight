@@ -199,6 +199,13 @@ EOF
 do_build() {
   cd "$ROOT_DIR"
 
+  local build_temporary_dir="/tmp"
+  if [[ -d "$HOME/tmp" ]]; then
+    build_temporary_dir="$HOME/tmp"
+  fi
+  export TMPDIR="${TMPDIR:-$build_temporary_dir}"
+  export GOCACHE="${GOCACHE:-${TMPDIR%/}/session-insight-go-build}"
+
   # Go toolchain 未在系统 PATH 时，自动查找 module cache 中的版本
   if ! command -v go &>/dev/null; then
     local go_toolchain go_path
@@ -220,7 +227,6 @@ do_build() {
   (cd "$FRONTEND_DIR" && npm run build)
 
   echo "==> Building Go binary"
-  export GOCACHE="${GOCACHE:-/tmp/session-insight-go-build}"
   # Linux 统一二进制：webview 的 GTK/WebKit 符号以弱引用链接、运行 --app
   # 时才 dlopen 加载（见 scripts/buildtools/）；需要在构建环境里接好包装
   # pkg-config 与弱符号头文件。SI_APP_SYSROOT 供不可变系统免 root 构建。
