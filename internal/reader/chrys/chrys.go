@@ -641,9 +641,14 @@ func buildTurns(sf *sessionFile) []model.TurnVM {
 			if m.interruptedBy() != "" && currentTurn != nil {
 				currentTurn.Anomalies = append(currentTurn.Anomalies, "interrupted")
 				currentTurn.ErrorCount++
+				interruptionTimestamp := ""
+				if !ts.IsZero() {
+					interruptionTimestamp = ts.Format(time.RFC3339)
+				}
 				currentTurn.Events = append(currentTurn.Events, model.EventVM{
-					Type: "interrupted",
-					Data: map[string]any{"by": m.interruptedBy()},
+					Type:      "interrupted",
+					Timestamp: interruptionTimestamp,
+					Data:      map[string]any{"by": m.interruptedBy()},
 				})
 			}
 			continue

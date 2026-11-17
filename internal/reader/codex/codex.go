@@ -1568,13 +1568,13 @@ func parseCodexEventsReader(source io.Reader) (codexParsedTurns, string, string,
 					// OpenAI prompt caching is automatic and free: the
 					// cache_write concept does not exist for this agent.
 					u.Present.CacheWrite = model.PresenceNA
-					if p.RateLimits != nil && p.RateLimits.ReachedType != "" {
-						current.turn.Events = append(current.turn.Events, model.EventVM{
-							Type:      "quota_exhausted",
-							Timestamp: evt.Timestamp,
-							Data:      map[string]any{"reached_type": p.RateLimits.ReachedType},
-						})
-					}
+				}
+				if current != nil && p.RateLimits != nil && p.RateLimits.ReachedType != "" {
+					current.turn.Events = append(current.turn.Events, model.EventVM{
+						Type:      "quota_exhausted",
+						Timestamp: evt.Timestamp,
+						Data:      map[string]any{"reached_type": p.RateLimits.ReachedType},
+					})
 				}
 
 			case "patch_apply_end":

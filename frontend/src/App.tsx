@@ -120,8 +120,9 @@ export default function App() {
     setSearchTarget(null)
     setSearchRootRef(null)
     if (window.location.hash.startsWith('#/session/')) {
-      window.history.pushState(null, '', window.location.pathname + window.location.search)
-      setHash('')
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      currentHashRef.current = window.location.hash
+      setHash(currentHashRef.current)
     }
   }
 
