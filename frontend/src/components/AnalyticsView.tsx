@@ -48,6 +48,7 @@ interface AnalyticsData {
   todo_done: number
   todos: { id: string; title: string; description: string; status: string; deps?: string[] }[]
   prompt_tokens: number
+  input_tokens: number
   completion_tokens: number
   cache_read_tokens: number
   cache_hit_rate: number
@@ -309,7 +310,7 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
           [t('analytics.metric.avgTokens'), present?.input === 'exact' ? formatNumber(locale, Math.round(data.token_efficiency)) : '—'],
           [t('analytics.metric.contextPeak'), formatNumber(locale, data.context_peak)],
           [t('analytics.metric.pressure'), `${data.pressure_pct.toFixed(1)}%`],
-          [t('analytics.metric.promptTokens'), bucketText(locale, data.prompt_tokens, present?.input)],
+          [t('analytics.metric.promptTokens'), bucketText(locale, data.input_tokens, present?.input)],
           [t('analytics.metric.todos'), data.todo_count > 0 ? `${data.todo_done}/${data.todo_count}` : '-'],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2.5 text-center">

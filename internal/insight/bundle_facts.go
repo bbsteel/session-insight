@@ -152,7 +152,7 @@ func buildTurnFact(t model.TurnVM) EvidenceFact {
 		}
 		parts = append(parts, fmt.Sprintf("工具报错[%s]: %s", tc.Name, truncateRunes(tc.ErrorMessage, toolErrMaxRunes)))
 	}
-	tok := t.TokenUsage.PromptTokens + t.TokenUsage.CompletionTokens
+	tok := t.TokenUsage.TotalTokens()
 	values := map[string]any{
 		"requests":    t.RequestCount,
 		"tool_calls":  t.ToolCallCount,

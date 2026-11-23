@@ -1236,7 +1236,7 @@ func (s *Server) handleExportSession(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintf(&md, "*Tools: %s*\n\n", strings.Join(t.ToolNames, ", "))
 			}
 			fmt.Fprintf(&md, "*%d tokens | %s*\n\n---\n\n",
-				t.TokenUsage.PromptTokens+t.TokenUsage.CompletionTokens,
+				t.TokenUsage.TotalTokens(),
 				formatDur(t.DurationMs))
 		}
 

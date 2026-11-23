@@ -12,6 +12,7 @@ import { getMiniMapTurnPositionPercent, getTokenPressureTone, type TokenPressure
 import { TERMINAL_LINE_HEIGHT } from '../terminalControl'
 import type { VisibleTurnRange } from '../scrollSync'
 import { formatNumber, useI18n } from '../i18n'
+import { totalTokenCount } from '../tokenBuckets'
 import InstantTooltip from './InstantTooltip'
 
 type ReplayScrollBehavior = 'auto' | 'smooth'
@@ -30,7 +31,7 @@ export interface MiniMapControl {
 }
 
 function getTotalTokens(t: TurnVM): number {
-  return t.token_usage.prompt_tokens + t.token_usage.completion_tokens
+  return totalTokenCount(t.token_usage)
 }
 
 function clamp(n: number, min: number, max: number): number {

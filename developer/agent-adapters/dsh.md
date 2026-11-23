@@ -32,22 +32,35 @@ not a completed run. The adapter does not declare authoritative finalization.
 
 `user/message`, `assistant/message`, `tool/call`, and `tool/result` are the
 transcript facts. `agent/inbox/spliced` and assistant stream chunks are not
-replayed again, avoiding duplicate messages. Turn numbers and event sequences
-provide stable ordering and pairing. Tool arguments are JSON strings;
+replayed again, avoiding duplicate messages. Every model-visible message is
+written as `user/message`; the adapter classifies it by the producer
+`source.kind`. Only `kind: "user"` is a human prompt. Subagent interaction
+(`agent-message`, `subagent-settled`, `subagent-report`, `team-message`,
+`coordinator`) renders as an agent message, while harness injections
+(`time-context`, `runtime-context`, `agent-instructions`, `skill-catalog`,
+`tool-jobs`, `goal`, `tool-goal`, `repeat-tool-reminder`, `compact-checkpoint`,
+`model-selection`, `user-approval`, plugin notices, ...) render as system
+messages. Neither counts as a user prompt, contributes to a turn's user
+message, or appears in the user-message navigation list. Turn numbers and event
+sequences provide stable ordering and pairing. Tool arguments are JSON strings;
 `callId` joins results to invocations. Generation 3 wraps results in a user
 message containing `tool-result` blocks; generation 4 uses a tool-role message
 with `toolCallId`, ordinary content blocks, and `isError`.
 
 `dsh-llm`'s TokenUsage contract explicitly defines disjoint uncached input,
 cache read, cache write, and output buckets. Reasoning is an output subset.
-Absent optional counters remain missing, not zero or not-applicable. Per-response
-usage is grouped by the recorded model; auxiliary title/search model calls are
-not guessed into the session bill. Sessions lacking assistant usage keep missing
-billing precision, as do snapshots with skipped or truncated token-bearing
-records; retained counters remain partial totals. Native `edit` arguments already
-use the shared edit contract. Bash nonzero command exits are represented by the
-final `[exit code: N]` line, even when `isError` is false; `isError` instead
-indicates delivery/infrastructure errors.
+Absent optional counters remain missing, not zero or not-applicable. One
+assistant response is one provider request, so the adapter also records its
+full input side (`input + cache read + cache write`) as the session's peak
+context, and takes the context window from `request/context.contextWindow`
+instead of guessing from the model name. Per-response usage is grouped by the
+recorded model; auxiliary title/search model calls are not guessed into the
+session bill. Sessions lacking assistant usage keep missing billing precision,
+as do snapshots with skipped or truncated token-bearing records; retained
+counters remain partial totals. Native `edit` arguments already use the shared
+edit contract. Bash nonzero command exits are represented by the final
+`[exit code: N]` line, even when `isError` is false; `isError` instead indicates
+delivery/infrastructure errors.
 Live refresh watches the sessions root and detects primary-file size/mtime
 changes. Indexing independently captures and hashes raw source bytes through
 the authoritative snapshot contract. It revalidates those bytes even when event

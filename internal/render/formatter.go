@@ -454,6 +454,10 @@ func formatEventsWithProfile(events []model.RenderEvent, cols int, opts Options,
 			// Trailing blank line: visually separates the user message from
 			// the assistant reply / tool output that follows.
 			tb.WriteString("\n")
+		case "AgentMessage":
+			writeNotice(p, tb, evt, prefix, "Agent 消息", p.Palette.Subagent, p.Palette.Fg, tsFor(evt, opts.TimestampUser))
+		case "SystemMessage":
+			writeNotice(p, tb, evt, prefix, "系统消息", p.Palette.Muted, p.Palette.Muted, tsFor(evt, opts.TimestampUser))
 		case "ThinkingStart":
 			if p.Thought != nil && evt.Text != "" {
 				openThoughtFold = p.Thought.Start(p, tb, evt, prefix, tsFor(evt, opts.TimestampAssistant))
@@ -631,7 +635,7 @@ func formatEventsWithProfile(events []model.RenderEvent, cols int, opts Options,
 // shifts line numbers, so cached line positions keyed on it are invalidated.
 // It also covers position-set changes (e.g. a new position kind), since
 // positions are cached under the same key.
-const FormatVersion int64 = 34
+const FormatVersion int64 = 35
 
 // toolOutcome aggregates a tool call's result(s): merged status and best
 // available duration. status "" means no result was seen (still running or
@@ -1087,6 +1091,24 @@ func writeUserPrompt(p *Profile, sb *trackingBuilder, evt model.RenderEvent, pre
 			sb.WriteString(fgWrap(ts+" ", p.Palette.Muted))
 		}
 		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+}
+
+// writeNotice renders a harness-injected or subagent-relayed message. These
+// are user-role carrier messages in the source record, but they are not user
+// prompts: the transcript labels them separately and they never produce a
+// "user" position.
+func writeNotice(p *Profile, sb *trackingBuilder, evt model.RenderEvent, prefix, label string, labelColor, textColor Color, ts string) {
+	sb.WriteString(prefix)
+	if ts != "" {
+		sb.WriteString(fgWrap(ts+" ", p.Palette.Muted))
+	}
+	sb.WriteString(styled(label, labelColor, ColNone, true, false))
+	sb.WriteString("\n")
+	for _, line := range strings.Split(sanitizeControlChars(evt.Text), "\n") {
+		sb.WriteString(prefix)
+		sb.WriteString(fgWrap(line, textColor))
 		sb.WriteString("\n")
 	}
 }
