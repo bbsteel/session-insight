@@ -57,15 +57,16 @@ type nativeUsage struct {
 	Reasoning  *int64 `json:"reasoningTokens"`
 }
 type eventData struct {
-	Turn      int          `json:"turn"`
-	Message   message      `json:"message"`
-	Usage     *nativeUsage `json:"usage"`
-	CallID    string       `json:"callId"`
-	Name      string       `json:"name"`
-	Arguments string       `json:"arguments"`
-	Title     string       `json:"title"`
-	Model     string       `json:"model"`
-	Provider  string       `json:"provider"`
+	Turn          int          `json:"turn"`
+	Message       message      `json:"message"`
+	Usage         *nativeUsage `json:"usage"`
+	CallID        string       `json:"callId"`
+	Name          string       `json:"name"`
+	Arguments     string       `json:"arguments"`
+	Title         string       `json:"title"`
+	Model         string       `json:"model"`
+	Provider      string       `json:"provider"`
+	ContextWindow int64        `json:"contextWindow"`
 }
 type nativeEvent struct {
 	Type string          `json:"type"`
@@ -82,6 +83,24 @@ func blockText(blocks []contentBlock, blockType string) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// DSH writes every model-visible message as `user/message` and records the
+// producer in `source.kind`. Only kind "user" is a human prompt; subagent
+// relays and harness injections are user-role carrier messages, not user
+// input.
+const userMessageSource = "user"
+
+// agentMessageSources are subagent-to-parent interaction payloads. They carry
+// information the parent agent must see, so the transcript keeps them as agent
+// messages instead of dropping them.
+func agentMessageSource(kind string) bool {
+	switch kind {
+	case "agent-message", "subagent-settled", "subagent-report", "team-message", "coordinator":
+		return true
+	default:
+		return false
+	}
 }
 
 func canonicalUsage(native *nativeUsage) model.TokenUsage {
@@ -261,12 +280,46 @@ func readSessionWithFingerprint(path, expectedID string, fingerprint *model.Sour
 		case "session/title":
 			detail.Name = data.Title
 		case "request/context", "model/selection":
-			detail.ModelName = data.Model
+			previousModel := detail.ModelName
+			if data.Model != "" {
+				detail.ModelName = data.Model
+			}
 			detail.ModelProvider = data.Provider
+			switch {
+			case data.ContextWindow > 0:
+				detail.ContextWindow = data.ContextWindow
+			case data.Model != "" && data.Model != previousModel:
+				// A model switch without a recorded window must not keep the
+				// previous model's window; analytics falls back until the new
+				// model reports its own.
+				detail.ContextWindow = 0
+			}
 		case "user/message":
 			var userMessage message
 			if err := json.Unmarshal(record.Data, &userMessage); err != nil {
 				warn(model.WarnMalformedRecordSkipped, model.ImpactReplay)
+				continue
+			}
+			event.TurnIndex = currentTurn
+			event.Text = blockText(userMessage.Content, "text")
+			// An absent kind only appears in pre-source-tagging or hand-built
+			// records; keep those visible as user input rather than dropping
+			// the message entirely.
+			if userMessage.Source.Kind != userMessageSource && userMessage.Source.Kind != "" {
+				// Harness-injected context, notices, and subagent relays: keep
+				// the text visible but never as a user prompt.
+				event.Subtype = userMessage.Source.Kind
+				if event.TurnIndex < 0 {
+					event.TurnIndex = 0
+				}
+				if agentMessageSource(userMessage.Source.Kind) {
+					event.Type = "AgentMessage"
+				} else {
+					event.Type = "SystemMessage"
+				}
+				if event.Text != "" {
+					events = append(events, event)
+				}
 				continue
 			}
 			if currentTurn < 0 {
@@ -274,7 +327,6 @@ func readSessionWithFingerprint(path, expectedID string, fingerprint *model.Sour
 			}
 			event.TurnIndex = currentTurn
 			event.Type = "UserPrompt"
-			event.Text = blockText(userMessage.Content, "text")
 			detail.Turns[currentTurn].UserMessage = joinText(detail.Turns[currentTurn].UserMessage, event.Text)
 			detail.MessageCount++
 			if detail.PreviewText == "" {
@@ -307,6 +359,11 @@ func readSessionWithFingerprint(path, expectedID string, fingerprint *model.Sour
 				usage := canonicalUsage(data.Usage)
 				if usage.Present.Input != model.PresenceExact || usage.Present.Output != model.PresenceExact {
 					missingUsage = true
+				}
+				// One assistant message is one provider response, so its full
+				// input side is that request's context size.
+				if contextTokens := usage.TotalInputTokens(); contextTokens > detail.PeakContextTokens {
+					detail.PeakContextTokens = contextTokens
 				}
 				detail.Turns[currentTurn].TokenUsage.AddUsage(usage)
 				if detail.Billing == nil {

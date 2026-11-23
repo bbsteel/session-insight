@@ -16,7 +16,7 @@ import (
 // It participates in an Insight's source fingerprint: changing rule semantics
 // (thresholds, codes, evidence) must bump this so old Insights are marked
 // stale, since the model saw a different first layer.
-const FindingsVersion = 1
+const FindingsVersion = 2
 
 type TurnToken struct {
 	TurnIndex  int   `json:"turn_index"`
@@ -38,6 +38,7 @@ type TurnToken struct {
 type Result struct {
 	TotalTokens         int64                 `json:"total_tokens"`
 	PromptTokens        int64                 `json:"prompt_tokens"`
+	InputTokens         int64                 `json:"input_tokens"`
 	CompletionTokens    int64                 `json:"completion_tokens"`
 	CacheReadTokens     int64                 `json:"cache_read_tokens"`
 	CacheHitRate        float64               `json:"cache_hit_rate"`
@@ -70,7 +71,7 @@ type Result struct {
 // Compute derives all session analytics from a SessionDetail.
 func Compute(detail *model.SessionDetail) Result {
 	var turnTotals, activeTotals model.TokenUsage
-	var maxCumulative, cumul int64
+	var maxTurnInput int64
 	var totalTools, totalErrors int
 	timeline := make([]TurnToken, 0, len(detail.Turns))
 	toolFreq := make(map[string]int)
@@ -81,13 +82,12 @@ func Compute(detail *model.SessionDetail) Result {
 	for _, t := range detail.Turns {
 		turnTotals.AddUsage(t.TokenUsage)
 		activeTotals.AddUsage(t.TokenUsage)
-		tok := t.TokenUsage.PromptTokens + t.TokenUsage.CompletionTokens
+		tok := t.TokenUsage.TotalTokens()
+		if input := t.TokenUsage.TotalInputTokens(); input > maxTurnInput {
+			maxTurnInput = input
+		}
 		totalTools += t.ToolCallCount
 		totalErrors += t.ErrorCount
-		cumul += tok
-		if cumul > maxCumulative {
-			maxCumulative = cumul
-		}
 
 		timeline = append(timeline, TurnToken{
 			TurnIndex:         t.TurnIndex,
@@ -117,7 +117,7 @@ func Compute(detail *model.SessionDetail) Result {
 	for _, group := range detail.RollbackGroups {
 		for _, t := range group.Turns {
 			turnTotals.AddUsage(t.TokenUsage)
-			tok := t.TokenUsage.PromptTokens + t.TokenUsage.CompletionTokens
+			tok := t.TokenUsage.TotalTokens()
 			rolledBackTokens += tok
 			timeline = append(timeline, TurnToken{
 				TurnIndex:         -(t.OriginalTurnIndex + 1),
@@ -157,20 +157,33 @@ func Compute(detail *model.SessionDetail) Result {
 
 	cacheRate := 0.0
 	// A cache rate needs both sides of the fraction to be real data.
+	inputSide := headline.TotalInputTokens()
 	if headline.Present.Input == model.PresenceExact && headline.Present.CacheRead == model.PresenceExact &&
-		headline.PromptTokens+headline.CacheReadTokens > 0 {
-		cacheRate = float64(headline.CacheReadTokens) / float64(headline.PromptTokens+headline.CacheReadTokens) * 100
+		inputSide > 0 {
+		cacheRate = float64(headline.CacheReadTokens) / float64(inputSide) * 100
 	}
 
+	// Context pressure is the largest single request's input context against
+	// the model window, not the session's cumulative token volume. Readers
+	// that expose per-request usage declare the peak; the largest per-turn
+	// input total is the best available fallback for readers that only
+	// aggregate by turn.
+	peakContext := detail.PeakContextTokens
+	if peakContext <= 0 {
+		peakContext = maxTurnInput
+	}
+	ctxWindow := detail.ContextWindow
+	if ctxWindow <= 0 {
+		ctxWindow = int64(estimateContext(detail.ModelName))
+	}
 	pressurePct := 0.0
-	ctxWindow := int64(estimateContext(detail.ModelName))
-	if ctxWindow > 0 && maxCumulative > 0 {
-		pressurePct = float64(maxCumulative) / float64(ctxWindow) * 100
+	if ctxWindow > 0 && peakContext > 0 {
+		pressurePct = float64(peakContext) / float64(ctxWindow) * 100
 	}
 
-	totalTokens := headline.PromptTokens + headline.CompletionTokens
+	totalTokens := headline.TotalTokens()
 	tokenEfficiency := 0.0
-	activeTokens := activeTotals.PromptTokens + activeTotals.CompletionTokens
+	activeTokens := activeTotals.TotalTokens()
 	if activeTokens > 0 && len(detail.Turns) > 0 {
 		tokenEfficiency = float64(activeTokens) / float64(len(detail.Turns))
 	}
@@ -178,6 +191,7 @@ func Compute(detail *model.SessionDetail) Result {
 	return Result{
 		TotalTokens:         totalTokens,
 		PromptTokens:        headline.PromptTokens,
+		InputTokens:         inputSide,
 		CompletionTokens:    headline.CompletionTokens,
 		CacheReadTokens:     headline.CacheReadTokens,
 		CacheHitRate:        cacheRate,
@@ -197,8 +211,8 @@ func Compute(detail *model.SessionDetail) Result {
 		TodoCount:           len(detail.Todos),
 		Todos:               detail.Todos,
 		TodoDone:            countDone(detail.Todos),
-		ContextWindow:       estimateContext(detail.ModelName),
-		ContextPeak:         maxCumulative,
+		ContextWindow:       int(ctxWindow),
+		ContextPeak:         peakContext,
 		PressurePct:         pressurePct,
 		Billing:             billing,
 		CostPrecision:       costPrecision,

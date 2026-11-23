@@ -42,6 +42,12 @@ func TestComputeHeadlineFromBilling(t *testing.T) {
 	if res.CacheHitRate != 90.0 {
 		t.Errorf("expected cache rate 90%% (9000/10000), got %v", res.CacheHitRate)
 	}
+	if res.InputTokens != 10000 {
+		t.Errorf("input tokens = %d, want 10000 (1000 uncached + 9000 cache read)", res.InputTokens)
+	}
+	if res.TotalTokens != 10500 {
+		t.Errorf("total tokens = %d, want 10500 (input + 500 output)", res.TotalTokens)
+	}
 	if res.Billing == nil || res.Billing.BillingAmount != 1.5 {
 		t.Errorf("bill must pass through, got %+v", res.Billing)
 	}
@@ -132,5 +138,81 @@ func TestComputeBuildsBillingFromExactTurns(t *testing.T) {
 	}
 	if res.CacheHitRate <= 0 {
 		t.Errorf("expected real cache rate from exact turn data, got %v", res.CacheHitRate)
+	}
+}
+
+func TestComputeTotalTokensIncludeCacheBuckets(t *testing.T) {
+	exact := model.TokenPresence{
+		Input: model.PresenceExact, Output: model.PresenceExact,
+		CacheRead: model.PresenceExact, CacheWrite: model.PresenceExact,
+	}
+	detail := &model.SessionDetail{
+		Turns: []model.TurnVM{{
+			TurnIndex: 0,
+			TokenUsage: model.TokenUsage{
+				PromptTokens: 100, CompletionTokens: 50,
+				CacheReadTokens: 1000, CacheWriteTokens: 200,
+				Present: exact,
+			},
+		}},
+	}
+
+	res := Compute(detail)
+	if res.InputTokens != 1300 {
+		t.Errorf("input tokens = %d, want 1300 (uncached + cache read + cache write)", res.InputTokens)
+	}
+	if res.TotalTokens != 1350 {
+		t.Errorf("total tokens = %d, want 1350 (input + output)", res.TotalTokens)
+	}
+	if res.Timeline[0].Tokens != 1350 {
+		t.Errorf("turn tokens = %d, want 1350", res.Timeline[0].Tokens)
+	}
+	if res.TokenEfficiency != 1350 {
+		t.Errorf("average tokens/turn = %v, want 1350", res.TokenEfficiency)
+	}
+}
+
+func TestComputeContextPeakUsesRequestPeakAndRecordedWindow(t *testing.T) {
+	detail := &model.SessionDetail{
+		Session:           model.Session{ModelName: "codex/gpt-6.1-terra"},
+		ContextWindow:     500000,
+		PeakContextTokens: 272839,
+		Turns: []model.TurnVM{{
+			TurnIndex: 0,
+			TokenUsage: model.TokenUsage{
+				PromptTokens: 908389, CacheReadTokens: 58765440, CompletionTokens: 77275,
+				Present: model.TokenPresence{Input: model.PresenceExact, Output: model.PresenceExact, CacheRead: model.PresenceExact},
+			},
+		}},
+	}
+
+	res := Compute(detail)
+	if res.ContextPeak != 272839 {
+		t.Errorf("context peak = %d, want the largest single request input 272839", res.ContextPeak)
+	}
+	if res.ContextWindow != 500000 {
+		t.Errorf("context window = %d, want the recorded 500000", res.ContextWindow)
+	}
+	if want := 272839.0 / 500000.0 * 100; res.PressurePct != want {
+		t.Errorf("pressure = %v, want %v", res.PressurePct, want)
+	}
+}
+
+func TestComputeContextPeakFallsBackToLargestTurnInput(t *testing.T) {
+	exact := model.TokenPresence{Input: model.PresenceExact, Output: model.PresenceExact, CacheRead: model.PresenceExact}
+	detail := &model.SessionDetail{
+		Session: model.Session{ModelName: "deepseek-chat"},
+		Turns: []model.TurnVM{
+			{TurnIndex: 0, TokenUsage: model.TokenUsage{PromptTokens: 100, CacheReadTokens: 400, CompletionTokens: 50, Present: exact}},
+			{TurnIndex: 1, TokenUsage: model.TokenUsage{PromptTokens: 200, CacheReadTokens: 700, CompletionTokens: 60, Present: exact}},
+		},
+	}
+
+	res := Compute(detail)
+	if res.ContextPeak != 900 {
+		t.Errorf("context peak = %d, want the largest turn input 900", res.ContextPeak)
+	}
+	if res.ContextWindow != 131072 {
+		t.Errorf("context window = %d, want the model-name estimate 131072", res.ContextWindow)
 	}
 }

@@ -133,6 +133,21 @@ func (u *TokenUsage) AddUsage(o TokenUsage) {
 	MergePresence(&u.Present, o.Present)
 }
 
+// TotalInputTokens is the true prompt-side volume: the sum of the three
+// mutually exclusive input buckets. Cache reads are real tokens processed by
+// the model, so totals that only add PromptTokens undercount long sessions by
+// orders of magnitude.
+func (u TokenUsage) TotalInputTokens() int64 {
+	return u.PromptTokens + u.CacheReadTokens + u.CacheWriteTokens
+}
+
+// TotalTokens is every token the model processed for this usage slice: full
+// input (uncached + cache read + cache write) plus generated output.
+// Reasoning is a subset of CompletionTokens and must not be added again.
+func (u TokenUsage) TotalTokens() int64 {
+	return u.TotalInputTokens() + u.CompletionTokens
+}
+
 // MergePresence widens dst so a bucket counts as present when any
 // contributing source reported it; "n/a" only sticks when no source has data.
 func MergePresence(dst *TokenPresence, src TokenPresence) {
@@ -260,6 +275,15 @@ type SessionDetail struct {
 	Todos          []Todo            `json:"todos,omitempty"`
 	Billing        *SessionBilling   `json:"billing,omitempty"`
 	RollbackGroups []RollbackGroupVM `json:"rollback_groups,omitempty"`
+	// ContextWindow is the model's input window as recorded by the agent's
+	// request metadata. Zero means the source did not record it, so analytics
+	// falls back to a model-name estimate.
+	ContextWindow int64 `json:"context_window,omitempty"`
+	// PeakContextTokens is the largest full input context (prompt + cache read
+	// + cache write) observed for a single request. It measures context
+	// pressure; it is not a session total. Zero means the source does not
+	// expose per-request usage.
+	PeakContextTokens int64 `json:"peak_context_tokens,omitempty"`
 	// Provenance is the independent record-completeness / source inventory
 	// contract (v0.5.1). Nil means never snapshotted (API should report
 	// provenance unavailable, never fake complete).

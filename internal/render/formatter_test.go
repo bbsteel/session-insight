@@ -937,3 +937,33 @@ func TestAssistantSummaryExactCapContinuation(t *testing.T) {
 			assistantSummaryMaxRunes, len(r), got[max(0, len(got)-6):])
 	}
 }
+
+func TestNoticeEventsRenderOutsideUserPositions(t *testing.T) {
+	ts := time.Date(2026, 11, 23, 11, 36, 21, 0, time.UTC)
+	events := []model.RenderEvent{
+		{EventID: "u1", Type: "UserPrompt", TurnIndex: 0, Timestamp: ts, Text: "real question"},
+		{EventID: "s1", Type: "SystemMessage", TurnIndex: 0, Timestamp: ts, Subtype: "time-context", Text: "Time sampled while preparing turn 1"},
+		{EventID: "a1", Type: "AgentMessage", TurnIndex: 0, Timestamp: ts, Subtype: "agent-message", Text: "Agent child sent a message: result"},
+		{EventID: "t1", Type: "TextChunk", TurnIndex: 0, Timestamp: ts, Text: "assistant reply"},
+	}
+
+	ansi, positions := FormatEventsWithPositions(events, 100)
+	for _, label := range []string{"系统消息", "Agent 消息"} {
+		if !strings.Contains(ansi, label) {
+			t.Fatalf("render missing %q:\n%s", label, ansi)
+		}
+	}
+	userPositions := 0
+	for _, position := range positions {
+		if position.Kind != "user" {
+			continue
+		}
+		userPositions++
+		if text, _ := position.Payload["text"].(string); text != "real question" {
+			t.Fatalf("non-user text became a user position: %+v", position)
+		}
+	}
+	if userPositions != 1 {
+		t.Fatalf("user positions = %d, want 1", userPositions)
+	}
+}

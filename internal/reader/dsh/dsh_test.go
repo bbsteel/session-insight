@@ -10,6 +10,7 @@ import (
 	"github.com/bbsteel/session-insight/internal/reader/adaptertest"
 	"github.com/bbsteel/session-insight/internal/reader/capability"
 	"github.com/bbsteel/session-insight/internal/reader/readerr"
+	"github.com/bbsteel/session-insight/internal/render"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -319,5 +320,138 @@ func TestHeaderIdentityMismatchIsTyped(t *testing.T) {
 	failure, ok := readerr.As(err)
 	if !ok || failure.Kind != readerr.ParseFailed || len(failure.Sources) != 1 {
 		t.Fatalf("identity failure=%+v err=%v", failure, err)
+	}
+}
+
+func TestUserMessageSourceClassificationAndContextMetrics(t *testing.T) {
+	root := t.TempDir()
+	lines := []string{
+		`{"type":"session","version":4,"id":"session-example","createdAt":1760000000000,"cwd":"/workspace/example"}`,
+		`{"type":"turn/start","seq":0,"time":1760000000100,"data":{"turn":1}}`,
+		`{"type":"user/message","seq":1,"time":1760000000200,"data":{"role":"user","content":[{"type":"text","text":"real prompt"}],"source":{"kind":"user"}}}`,
+		`{"type":"user/message","seq":2,"time":1760000000300,"data":{"role":"user","content":[{"type":"text","text":"Time sampled while preparing turn 1"}],"source":{"kind":"time-context"}}}`,
+		`{"type":"user/message","seq":3,"time":1760000000400,"data":{"role":"user","content":[{"type":"text","text":"Agent child sent a message: detail"}],"source":{"kind":"agent-message","senderSessionId":"child"}}}`,
+		`{"type":"user/message","seq":4,"time":1760000000500,"data":{"role":"user","content":[{"type":"text","text":"Background subagent child finished"}],"source":{"kind":"subagent-settled","senderSessionId":"child"}}}`,
+		`{"type":"request/context","seq":5,"time":1760000000600,"data":{"model":"example-model","provider":"example-provider","contextWindow":500000}}`,
+		`{"type":"assistant/message","seq":6,"time":1760000000700,"data":{"turn":1,"step":1,"message":{"role":"assistant","content":[{"type":"text","text":"first reply"}],"source":{"kind":"model"}},"usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":400}}}`,
+		`{"type":"assistant/message","seq":7,"time":1760000000800,"data":{"turn":1,"step":2,"message":{"role":"assistant","content":[{"type":"text","text":"second reply"}],"source":{"kind":"model"}},"usage":{"inputTokens":50,"outputTokens":10,"cacheReadTokens":600}}}`,
+		`{"type":"turn/end","seq":8,"time":1760000000900,"data":{"turn":1}}`,
+	}
+	path := filepath.Join(root, "--workspace-example--", exampleID, "session.v4.jsonl")
+	adaptertest.MustWrite(t, path, strings.Join(lines, "\n")+"\n")
+
+	reader := New(root)
+	detail, err := reader.GetSession(exampleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.PreviewText != "real prompt" {
+		t.Fatalf("preview = %q, want the real user prompt", detail.PreviewText)
+	}
+	if len(detail.Turns) != 1 || detail.Turns[0].UserMessage != "real prompt" {
+		t.Fatalf("turn user message = %+v", detail.Turns)
+	}
+	if detail.MessageCount != 3 {
+		t.Fatalf("message count = %d, want 1 user + 2 assistant", detail.MessageCount)
+	}
+	if detail.ContextWindow != 500000 {
+		t.Fatalf("context window = %d, want the recorded 500000", detail.ContextWindow)
+	}
+	if detail.PeakContextTokens != 650 {
+		t.Fatalf("peak context = %d, want 650 (largest single request input)", detail.PeakContextTokens)
+	}
+	if detail.Billing == nil || detail.Billing.Totals.PromptTokens != 150 || detail.Billing.Totals.CompletionTokens != 30 || detail.Billing.Totals.CacheReadTokens != 1000 {
+		t.Fatalf("billing totals = %+v", detail.Billing)
+	}
+
+	events, err := reader.GetRenderEvents(exampleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userPrompts, agentMessages, systemMessages []model.RenderEvent
+	for _, event := range events {
+		switch event.Type {
+		case "UserPrompt":
+			userPrompts = append(userPrompts, event)
+		case "AgentMessage":
+			agentMessages = append(agentMessages, event)
+		case "SystemMessage":
+			systemMessages = append(systemMessages, event)
+		}
+	}
+	if len(userPrompts) != 1 || userPrompts[0].Text != "real prompt" {
+		t.Fatalf("user prompts = %+v", userPrompts)
+	}
+	if len(agentMessages) != 2 || agentMessages[0].Subtype != "agent-message" || agentMessages[1].Subtype != "subagent-settled" {
+		t.Fatalf("agent messages = %+v", agentMessages)
+	}
+	if len(systemMessages) != 1 || systemMessages[0].Subtype != "time-context" {
+		t.Fatalf("system messages = %+v", systemMessages)
+	}
+
+	ansi, positions := render.FormatEventsWithPositions(events, 100)
+	userPositions := 0
+	for _, position := range positions {
+		if position.Kind == "user" {
+			userPositions++
+		}
+	}
+	if userPositions != 1 {
+		t.Fatalf("user positions = %d, want only the real prompt", userPositions)
+	}
+	for _, label := range []string{"Agent 消息", "系统消息"} {
+		if !strings.Contains(ansi, label) {
+			t.Fatalf("render missing notice label %q:\n%s", label, ansi)
+		}
+	}
+}
+
+func TestContextWindowTracksCurrentModel(t *testing.T) {
+	header := `{"type":"session","version":4,"id":"session-example","createdAt":1760000000000,"cwd":"/workspace/example"}`
+	cases := []struct {
+		name  string
+		lines []string
+		want  int64
+	}{
+		{
+			name: "model change without window clears the window",
+			lines: []string{
+				`{"type":"request/context","seq":0,"time":1760000000100,"data":{"model":"model-a","provider":"provider-a","contextWindow":1000}}`,
+				`{"type":"model/selection","seq":1,"time":1760000000200,"data":{"model":"model-b","provider":"provider-b"}}`,
+			},
+			want: 0,
+		},
+		{
+			name: "same model without window preserves the window",
+			lines: []string{
+				`{"type":"request/context","seq":0,"time":1760000000100,"data":{"model":"model-a","provider":"provider-a","contextWindow":1000}}`,
+				`{"type":"request/context","seq":1,"time":1760000000200,"data":{"model":"model-a","provider":"provider-a"}}`,
+			},
+			want: 1000,
+		},
+		{
+			name: "new model reports its own window",
+			lines: []string{
+				`{"type":"request/context","seq":0,"time":1760000000100,"data":{"model":"model-a","provider":"provider-a","contextWindow":1000}}`,
+				`{"type":"model/selection","seq":1,"time":1760000000200,"data":{"model":"model-b","provider":"provider-b"}}`,
+				`{"type":"request/context","seq":2,"time":1760000000300,"data":{"model":"model-b","provider":"provider-b","contextWindow":2000}}`,
+			},
+			want: 2000,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "--workspace-example--", exampleID, "session.v4.jsonl")
+			adaptertest.MustWrite(t, path, strings.Join(append([]string{header}, tc.lines...), "\n")+"\n")
+
+			detail, err := New(root).GetSession(exampleID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.ContextWindow != tc.want {
+				t.Fatalf("context window = %d, want %d", detail.ContextWindow, tc.want)
+			}
+		})
 	}
 }

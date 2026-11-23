@@ -38,6 +38,7 @@ import { parseEditHeaderLine } from '../terminalInteractionGeometry'
 import { foldKeysContainingTarget, foldKeysInTurn, foldsFromPositions } from '../terminalFolds'
 import { editIndexForRow, editPositionForIndex, editPositionsSorted } from '../editPositionMatch'
 import { isSessionLive, LIVE_WINDOW_MS, getAgentLabel } from '../sidebarRows'
+import { totalTokenCount } from '../tokenBuckets'
 import { getNavOpenPref } from '../navPrefs'
 import { formatTokenCount } from '../formatTokenCount'
 import {
@@ -1826,9 +1827,9 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   // are empty. Prefer the session bill when present and keep the turn sum as
   // the fallback for readers that only expose per-turn usage.
   const totalTokens = session.billing?.totals
-    ? session.billing.totals.prompt_tokens + session.billing.totals.completion_tokens
+    ? totalTokenCount(session.billing.totals)
     : [...session.turns, ...rolledBackTurns].reduce(
-      (sum, t) => sum + t.token_usage.prompt_tokens + t.token_usage.completion_tokens,
+      (sum, t) => sum + totalTokenCount(t.token_usage),
       0,
     )
   const modelName = session.model_name || session.agent_type || 'unknown'
