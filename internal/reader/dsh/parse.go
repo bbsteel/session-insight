@@ -280,10 +280,19 @@ func readSessionWithFingerprint(path, expectedID string, fingerprint *model.Sour
 		case "session/title":
 			detail.Name = data.Title
 		case "request/context", "model/selection":
-			detail.ModelName = data.Model
+			previousModel := detail.ModelName
+			if data.Model != "" {
+				detail.ModelName = data.Model
+			}
 			detail.ModelProvider = data.Provider
-			if data.ContextWindow > 0 {
+			switch {
+			case data.ContextWindow > 0:
 				detail.ContextWindow = data.ContextWindow
+			case data.Model != "" && data.Model != previousModel:
+				// A model switch without a recorded window must not keep the
+				// previous model's window; analytics falls back until the new
+				// model reports its own.
+				detail.ContextWindow = 0
 			}
 		case "user/message":
 			var userMessage message

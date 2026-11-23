@@ -294,6 +294,17 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
 
   const present = data.billing?.totals?.present
   const cacheKnown = present?.input === 'exact' && present?.cache_read === 'exact'
+  // input_tokens includes all three mutually exclusive input buckets. Cache
+  // write may be absent for sources whose provider never reports it (DSH on
+  // DeepSeek routes), so a total with an unsettled cache-write bucket is a
+  // lower bound rather than an exact value.
+  const cacheWriteSettled = present?.cache_write === 'exact' || present?.cache_write === 'n/a'
+  const inputTokensKnown = present?.input === 'exact' && present?.cache_read === 'exact'
+  const inputTokensText = !inputTokensKnown
+    ? '—'
+    : cacheWriteSettled
+      ? formatNumber(locale, data.input_tokens)
+      : `≥ ${formatNumber(locale, data.input_tokens)}`
   const agentRef = agentType ? AGENT_REFERENCES[agentType] : undefined
 
   return (
@@ -310,7 +321,7 @@ export default function AnalyticsView({ sessionId, agentType, isLive, onJumpToTu
           [t('analytics.metric.avgTokens'), present?.input === 'exact' ? formatNumber(locale, Math.round(data.token_efficiency)) : '—'],
           [t('analytics.metric.contextPeak'), formatNumber(locale, data.context_peak)],
           [t('analytics.metric.pressure'), `${data.pressure_pct.toFixed(1)}%`],
-          [t('analytics.metric.promptTokens'), bucketText(locale, data.input_tokens, present?.input)],
+          [t('analytics.metric.promptTokens'), inputTokensText],
           [t('analytics.metric.todos'), data.todo_count > 0 ? `${data.todo_done}/${data.todo_count}` : '-'],
         ].map(([label, value]) => (
           <div key={label} className="bg-[var(--bg-inset)] rounded-md p-2.5 text-center">

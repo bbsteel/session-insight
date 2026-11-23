@@ -405,3 +405,53 @@ func TestUserMessageSourceClassificationAndContextMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestContextWindowTracksCurrentModel(t *testing.T) {
+	header := `{"type":"session","version":4,"id":"session-example","createdAt":1760000000000,"cwd":"/workspace/example"}`
+	cases := []struct {
+		name  string
+		lines []string
+		want  int64
+	}{
+		{
+			name: "model change without window clears the window",
+			lines: []string{
+				`{"type":"request/context","seq":0,"time":1760000000100,"data":{"model":"model-a","provider":"provider-a","contextWindow":1000}}`,
+				`{"type":"model/selection","seq":1,"time":1760000000200,"data":{"model":"model-b","provider":"provider-b"}}`,
+			},
+			want: 0,
+		},
+		{
+			name: "same model without window preserves the window",
+			lines: []string{
+				`{"type":"request/context","seq":0,"time":1760000000100,"data":{"model":"model-a","provider":"provider-a","contextWindow":1000}}`,
+				`{"type":"request/context","seq":1,"time":1760000000200,"data":{"model":"model-a","provider":"provider-a"}}`,
+			},
+			want: 1000,
+		},
+		{
+			name: "new model reports its own window",
+			lines: []string{
+				`{"type":"request/context","seq":0,"time":1760000000100,"data":{"model":"model-a","provider":"provider-a","contextWindow":1000}}`,
+				`{"type":"model/selection","seq":1,"time":1760000000200,"data":{"model":"model-b","provider":"provider-b"}}`,
+				`{"type":"request/context","seq":2,"time":1760000000300,"data":{"model":"model-b","provider":"provider-b","contextWindow":2000}}`,
+			},
+			want: 2000,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "--workspace-example--", exampleID, "session.v4.jsonl")
+			adaptertest.MustWrite(t, path, strings.Join(append([]string{header}, tc.lines...), "\n")+"\n")
+
+			detail, err := New(root).GetSession(exampleID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.ContextWindow != tc.want {
+				t.Fatalf("context window = %d, want %d", detail.ContextWindow, tc.want)
+			}
+		})
+	}
+}
