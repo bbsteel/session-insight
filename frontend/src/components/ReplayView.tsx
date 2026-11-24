@@ -19,7 +19,7 @@ import { resolveAnchorJump } from '../collaboration/jumpTargets'
 import type { SourceAnchorDTO } from '../collaboration/types'
 import type { BookmarkChange } from '../bookmarkState'
 import type { ScrollMetrics } from '../minimapGeometry'
-import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalFileMatch, type UserHighlightRange, type ViewportAnchor } from '../terminalControl'
+import { TERMINAL_LINE_HEIGHT, type TerminalActivateMeta, type TerminalContextMenuEvent, type TerminalControl, type TerminalFileMatch, type TerminalLineMatcher, type UserHighlightRange, type ViewportAnchor } from '../terminalControl'
 import MiniMap, { type MiniMapControl } from './MiniMap'
 import GlobalSearch from './GlobalSearch'
 import GitEvidencePanel from './GitEvidencePanel'
@@ -170,7 +170,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const [positionsData, setPositionsData] = useState<PositionsResponse | null>(null)
   const [positionsBuilding, setPositionsBuilding] = useState(false)
   const [foldVersion, setFoldVersion] = useState(0)
-  const [outputModalIdx, setOutputModalIdx] = useState<number | null>(null)
+  const [outputModal, setOutputModal] = useState<{ sessionId: string; outputIndex: number } | null>(null)
   const [edits, setEdits] = useState<EditCall[]>([])
   // Ref mirror for the edit-header matcher: it is registered once per session
   // but must resolve rows against the latest edits payload.
@@ -213,8 +213,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const wasCollabDockOpenRef = useRef(false)
   const terminalColumnRef = useRef<HTMLDivElement | null>(null)
   const [terminalColumnHeight, setTerminalColumnHeight] = useState(0)
-  // Set when a backing child session was opened from the dock; drives the
-  // breadcrumb chip and Escape-back until the user leaves the child session.
+  // Track the parent of a standalone child opened through global search.
   const [childContext, setChildContext] = useState<{
     childId: string
     childAgentType: string
@@ -222,6 +221,27 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     parentAgentType: string
     parentLabel: string
   } | null>(null)
+  const [inlineChild, setInlineChild] = useState<{
+    parentId: string
+    sessionId: string
+    agentType: string
+    label: string
+  } | null>(null)
+  const activeInlineChild = inlineChild?.parentId === sessionId ? inlineChild : null
+  const inlineChildControlRef = useRef<TerminalControl | null>(null)
+  const inlineChildSourceRef = useRef<{ sessionId: string; cwd: string } | null>(null)
+  const inlineChildSessionId = activeInlineChild?.sessionId
+  useEffect(() => {
+    inlineChildSourceRef.current = null
+    if (!inlineChildSessionId) return
+    let cancelled = false
+    void fetchSession(inlineChildSessionId).then(detail => {
+      if (!cancelled) inlineChildSourceRef.current = { sessionId: inlineChildSessionId, cwd: detail.cwd ?? '' }
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [inlineChildSessionId])
+  const closeInlineChild = useCallback(() => setInlineChild(null), [])
+  useEffect(() => { setInlineChild(null) }, [sessionId])
   const collabDockOpen = collabMode !== 'closed'
   const collabAvailable = collabStatus.kind === 'ready' && !isGraphEmpty(collabStatus.detail)
   // True once the current session has shown confirmed collaboration data: a
@@ -382,8 +402,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   // Resolve one path candidate on disk (cached). Keeping this per candidate
   // lets multiple path matches on one row validate independently.
-  const resolveFileCandidate = useCallback(async (candidate: TerminalFileMatch): Promise<TerminalFileMatch | null> => {
-    const cwd = sessionCwdRef.current
+  const resolveFileCandidate = useCallback(async (candidate: TerminalFileMatch, cwd = sessionCwdRef.current): Promise<TerminalFileMatch | null> => {
     const key = cwd + '\0' + candidate.path
     let ok = pathCheckCache.current.get(key)
     let resolved: string | null = null
@@ -463,25 +482,10 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
           const idx = pos && typeof pos.payload?.output_index === 'number'
             ? (pos.payload.output_index as number)
             : matchIndex
-          setOutputModalIdx(idx)
+          if (sessionId) setOutputModal({ sessionId, outputIndex: idx })
         },
       },
-      {
-        // Rendered Markdown links retain their destination in parentheses;
-        // open only http(s) URLs in a new tab. URL matching comes before the
-        // file matcher because URL path fragments are not local files.
-        // Tooltip includes the full destination so truncated terminal rows
-        // still show where a click will navigate.
-        match: (text: string) => extractTerminalUrlMatches(text).map((urlMatch: TerminalUrlMatch) => ({
-          data: urlMatch,
-          textRange: { start: urlMatch.start, end: urlMatch.end },
-        })),
-        tooltip: (data) => t('replay.openLink', { url: (data as TerminalUrlMatch).value }),
-        onActivate: (_bufLine: number, url: unknown) => {
-          const urlMatch = url as TerminalUrlMatch
-          window.open(urlMatch.value, '_blank', 'noopener,noreferrer')
-        },
-      },
+      replayLinkMatcher(t),
       {
         // Rows containing an allowlisted file-path token → same file popover.
         // Registered last: edit headers and truncation lines take precedence.
@@ -499,7 +503,52 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         },
       },
     ])
-  }, [openFilePopover, resolveFileCandidate, t])
+  }, [openFilePopover, resolveFileCandidate, sessionId, t])
+
+  const registerInlineChildMatchers = useCallback((cols: number) => {
+    const control = inlineChildControlRef.current
+    if (!inlineChildSessionId || !control) return
+    control.setLineMatchers([
+      {
+        match: text => (/\[\+\] \d+ 行被截断/.test(text) ? [{ data: {} }] : []),
+        tooltip: t('replay.expandOutput'),
+        onActivate: (bufferRow, _data, matchIndex) => {
+          const originalRow = control.toOriginalLine(bufferRow)
+          void fetchPositions(inlineChildSessionId, cols, tsKinds ?? '').then(result => {
+            if (inlineChildControlRef.current !== control) return
+            const position = result.status === 'ready'
+              ? result.data.positions.find(item => item.kind === 'trunc' && item.line_start === originalRow)
+              : undefined
+            const outputIndex = typeof position?.payload?.output_index === 'number' ? position.payload.output_index : matchIndex
+            setOutputModal({ sessionId: inlineChildSessionId, outputIndex })
+          }).catch(() => {
+            if (inlineChildControlRef.current === control) setOutputModal({ sessionId: inlineChildSessionId, outputIndex: matchIndex })
+          })
+        },
+      },
+      replayLinkMatcher(t),
+      {
+        match: text => extractPathMatches(text, fileExtsRef.current).map(fileMatch => ({
+          data: fileMatch,
+          textRange: { start: fileMatch.start, end: fileMatch.end },
+        })),
+        tooltip: t('replay.openFileMenu'),
+        validate: async (_lineText, data) => {
+          const source = inlineChildSourceRef.current
+          return source?.sessionId === inlineChildSessionId && (await resolveFileCandidate(data as PathMatch, source.cwd)) !== null
+        },
+        onActivate: (_bufferRow, data, _index, meta) => {
+          const source = inlineChildSourceRef.current
+          if (!meta || source?.sessionId !== inlineChildSessionId) return
+          setCtxMenu({
+            clientX: meta.clientX, clientY: meta.clientY, cellColumn: meta.cellColumn, textOffset: meta.textOffset,
+            originalRow: null, lineText: meta.lineText, selectionText: '', collapsedFoldKeys: [],
+            selectedFile: data as PathMatch, fileOnly: true, childCwd: source.cwd,
+          })
+        },
+      },
+    ])
+  }, [inlineChildSessionId, resolveFileCandidate, t, tsKinds])
 
   // Position-dependent matchers (e.g. truncation rows) read positions through
   // a ref; rescan when positions arrive so they work without a resize.
@@ -554,9 +603,12 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
 
   // Terminal context menu: opened by right-click with a snapshot of the
   // collapse state so item enablement is stable while the menu is up.
-  const [ctxMenu, setCtxMenu] = useState<(TerminalContextMenuEvent & { fileOnly?: boolean; editIdx?: number }) | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<(TerminalContextMenuEvent & { fileOnly?: boolean; editIdx?: number; childCwd?: string }) | null>(null)
   const handleTerminalContextMenu = useCallback((e: TerminalContextMenuEvent) => setCtxMenu(e), [])
-  useEffect(() => { setCtxMenu(null) }, [sessionId, viewMode])
+  useEffect(() => {
+    setCtxMenu(null)
+    setOutputModal(null)
+  }, [sessionId, viewMode, inlineChildSessionId])
 
   const toggleBookmark = useCallback(async () => {
     if (!session || bookmarkBusy) return
@@ -774,21 +826,24 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   }, [collabMode, collabAutoFit])
 
   const openBackingSession = useCallback(
-    (id: string, agentType: string) => {
-      const parent = sessionDetailRef.current
-      if (parent) {
-        setChildContext({
-          childId: id,
-          childAgentType: agentType,
-          parentId: parent.id,
-          parentAgentType: parent.agent_type,
-          parentLabel: parent.name || parent.id,
-        })
-      }
-      onSelect?.(id, agentType)
+    (id: string, agentType: string, label: string) => {
+      if (!sessionId) return
+      setInlineChild({ parentId: sessionId, sessionId: id, agentType, label })
     },
-    [onSelect],
+    [sessionId],
   )
+
+  useEffect(() => {
+    if (!activeInlineChild || outputModal || ctxMenu?.childCwd !== undefined) return
+    const returnOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closeInlineChild()
+    }
+    document.addEventListener('keydown', returnOnEscape, true)
+    return () => document.removeEventListener('keydown', returnOnEscape, true)
+  }, [activeInlineChild, closeInlineChild, ctxMenu?.childCwd, outputModal])
 
   const returnToParentSession = useCallback(() => {
     setChildContext((ctx) => {
@@ -823,6 +878,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       const target = resolveAnchorJump(anchor, positions, targetKind)
       const control = termControlRef.current
       if (!target || !control) return
+      setInlineChild(null)
 
       // A Chrys sub-agent call lives inside the parent Tools fold. Resolve in
       // the original coordinate space, open every collapsed ancestor first,
@@ -970,6 +1026,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   // Bumped on every open so an already-open bar pulls focus back to itself.
   const [searchFocusToken, setSearchFocusToken] = useState(0)
   const openTerminalSearch = useCallback(() => {
+    setInlineChild(null)
     setViewMode('terminal')
     setSearchOpen(true)
     setSearchFocusToken(t => t + 1)
@@ -986,7 +1043,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     if (viewMode !== 'terminal') setSearchOpen(false)
   }, [viewMode])
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId || activeInlineChild) return
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
         const target = e.target
@@ -1006,27 +1063,28 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [sessionId, openTerminalSearch])
+  }, [sessionId, openTerminalSearch, activeInlineChild])
 
   // Ctrl+C / Ctrl+Shift+C / Ctrl+Insert to copy terminal selection.
   // Capture phase: xterm's helper textarea stops keydown propagation before
   // the bubble phase, so we must intercept the event during capture.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (viewMode !== 'terminal') return
+      if (viewMode !== 'terminal' && !activeInlineChild) return
       const isCopy =
         ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === 'c') ||
         ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C') ||
         (e.ctrlKey && e.key === 'Insert')
       if (!isCopy) return
-      const selectedText = termControlRef.current?.getSelectionText() ?? ''
+      const control = activeInlineChild ? inlineChildControlRef.current : termControlRef.current
+      const selectedText = control?.getSelectionText() ?? ''
       if (selectedText.length === 0) return
       e.preventDefault()
       void navigator.clipboard.writeText(selectedText)
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [viewMode])
+  }, [viewMode, activeInlineChild])
 
   // "Open in editor" target for the clicked row, resolved asynchronously so
   // the item only appears for files that actually exist. Edit header rows use
@@ -1053,7 +1111,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       const search = (e.new_string || e.old_string).split('\n').find(l => l.trim())
       void resolveFile(e.file_path, cwd).then(p => { if (p) show(p, null, search) })
     } else if (ctxMenu.selectedFile) {
-      void resolveFileCandidate(ctxMenu.selectedFile).then(hit => {
+      void resolveFileCandidate(ctxMenu.selectedFile, ctxMenu.childCwd).then(hit => {
         if (hit) show(hit.path, hit.line)
       })
     } else {
@@ -1110,7 +1168,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       handleToggleFollow()
       setCtxMenu(null)
     }
-    const sessionCwd = (session as (SessionDetail & { cwd?: string }) | null)?.cwd ?? ''
+    const sessionCwd = ctxMenu?.childCwd ?? session?.cwd ?? ''
 
     // File actions shared by the left-click popover and the full menu.
     const openWithEditor = () => {
@@ -1557,6 +1615,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   useEffect(() => {
     if (!sessionId || !session?.turns?.length) return
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (activeInlineChild) return
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
@@ -1570,7 +1629,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [jump, session?.turns?.length, sessionId, childContext, returnToParentSession])
+  }, [jump, session?.turns?.length, sessionId, childContext, returnToParentSession, activeInlineChild])
 
   useEffect(() => {
     if (!sessionId) { setSession(null); setEdits([]); return }
@@ -1973,7 +2032,10 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             {t('replay.find')}
           </button>
           <button
-            onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
+            onClick={() => {
+              setInlineChild(null)
+              startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))
+            }}
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
             {t('replay.analytics')}
@@ -2075,17 +2137,21 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         <div className="flex items-center gap-2 mr-4">
           <span className="text-nav text-[var(--text-muted)]">{t('replay.navigation')}</span>
           <button
-            onClick={() => setShowUserPanel(v => {
-              const next = !v
-              if (next) {
-                setShowToolPanel(false)
-                setShowOutlinePanel(false)
-                setToolFilterRequest(null)
-              } else {
-                setNavPinned(false)
-              }
-              return next
-            })}
+            onClick={() => {
+              closeInlineChild()
+              if (activeInlineChild) setViewMode('terminal')
+              setShowUserPanel(v => {
+                const next = Boolean(activeInlineChild) || !v
+                if (next) {
+                  setShowToolPanel(false)
+                  setShowOutlinePanel(false)
+                  setToolFilterRequest(null)
+                } else {
+                  setNavPinned(false)
+                }
+                return next
+              })
+            }}
             className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showUserPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
@@ -2096,17 +2162,21 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             {t('replay.messages')}{interactionCount > 0 ? ` ${formatNumber(locale, interactionCount)}` : ''}
           </button>
           <button
-            onClick={() => setShowToolPanel(v => {
-              const next = !v
-              if (next) {
-                setShowUserPanel(false)
-                setShowOutlinePanel(false)
-              } else {
-                setToolFilterRequest(null)
-                setNavPinned(false)
-              }
-              return next
-            })}
+            onClick={() => {
+              closeInlineChild()
+              if (activeInlineChild) setViewMode('terminal')
+              setShowToolPanel(v => {
+                const next = Boolean(activeInlineChild) || !v
+                if (next) {
+                  setShowUserPanel(false)
+                  setShowOutlinePanel(false)
+                } else {
+                  setToolFilterRequest(null)
+                  setNavPinned(false)
+                }
+                return next
+              })
+            }}
             className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showToolPanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
@@ -2117,17 +2187,21 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             {t('replay.toolCalls')}{toolCallCount > 0 ? ` ${formatNumber(locale, toolCallCount)}` : ''}
           </button>
           <button
-            onClick={() => setShowOutlinePanel(v => {
-              const next = !v
-              if (next) {
-                setShowUserPanel(false)
-                setShowToolPanel(false)
-                setToolFilterRequest(null)
-              } else {
-                setNavPinned(false)
-              }
-              return next
-            })}
+            onClick={() => {
+              closeInlineChild()
+              if (activeInlineChild) setViewMode('terminal')
+              setShowOutlinePanel(v => {
+                const next = Boolean(activeInlineChild) || !v
+                if (next) {
+                  setShowUserPanel(false)
+                  setShowToolPanel(false)
+                  setToolFilterRequest(null)
+                } else {
+                  setNavPinned(false)
+                }
+                return next
+              })
+            }}
             className={`h-7 whitespace-nowrap rounded-md border px-2 text-nav ${
               showOutlinePanel
                 ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/10 text-[var(--accent-blue)]'
@@ -2213,8 +2287,8 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         />
       )}
 
-      {outputModalIdx !== null && session && (
-        <OutputModal sessionId={session.id} outputIndex={outputModalIdx} onClose={() => setOutputModalIdx(null)} />
+      {outputModal && (
+        <OutputModal key={outputModal.sessionId} sessionId={outputModal.sessionId} outputIndex={outputModal.outputIndex} onClose={() => setOutputModal(null)} />
       )}
 
       {showAIPanel && session && (
@@ -2241,7 +2315,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         />
       )}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className={`flex min-h-0 flex-1 overflow-hidden ${activeInlineChild ? '[&>.minimap-shell]:invisible' : ''}`}>
         <div ref={terminalColumnRef} className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {childContext && sessionId === childContext.childId && (
             <div
@@ -2281,12 +2355,14 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               onResizeEnd={persistCollabHeight}
               onContentHeightChange={setCollabContentHeight}
               onOpenSession={openBackingSession}
+              onReturnToParent={closeInlineChild}
               onJumpToLaunch={(_id, anchor) => jumpToCollabAnchor(anchor, 'launch')}
               onJumpToResult={(_id, anchor) => jumpToCollabAnchor(anchor, 'result')}
               returnToParentActive={Boolean(childContext && sessionId === childContext.childId)}
             />
           )}
           <div className="relative flex min-w-0 flex-1 overflow-hidden">
+          <div className={`relative flex min-w-0 flex-1 overflow-hidden ${activeInlineChild ? 'invisible' : ''}`}>
           {viewMode === 'terminal' && searchOpen && (
             <TerminalSearchBar
               controlRef={termControlRef}
@@ -2403,6 +2479,34 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               }}
             />
           )}
+          </div>
+          {activeInlineChild && (
+            <div className="absolute inset-0 flex min-h-0 flex-col bg-[var(--bg-surface)]" data-testid="collaboration-inline-child">
+              <div className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-3 py-1">
+                <span className="min-w-0 flex-1 break-words text-meta text-[var(--text-secondary)]">
+                  {t('collaboration.backing.inlineChild', { label: activeInlineChild.label })}
+                </span>
+                <button
+                  type="button"
+                  onClick={closeInlineChild}
+                  className="h-6 flex-shrink-0 rounded-md px-2 text-meta text-[var(--accent-blue)] hover:bg-[var(--bg-surface-hover)]"
+                  data-testid="collaboration-inline-return"
+                >
+                  ← {t('collaboration.backing.back')}
+                </button>
+              </div>
+              <Suspense fallback={<div className="flex-1 bg-[var(--bg-inset)]" />}>
+                <TerminalPanel
+                  key={`${activeInlineChild.agentType}:${activeInlineChild.sessionId}`}
+                  sessionId={activeInlineChild.sessionId}
+                  agentType={activeInlineChild.agentType}
+                  tsKinds={tsKinds ?? ''}
+                  controlRef={inlineChildControlRef}
+                  onColsReady={registerInlineChildMatchers}
+                />
+              </Suspense>
+            </div>
+          )}
         </div>
         </div>
         <MiniMap
@@ -2441,6 +2545,20 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       />
     </main>
   )
+}
+
+function replayLinkMatcher(t: ReturnType<typeof useI18n>['t']): TerminalLineMatcher {
+  // Keep URL matching before file tokens so a path inside a link stays a link.
+  return {
+    match: text => extractTerminalUrlMatches(text).map(urlMatch => ({
+      data: urlMatch,
+      textRange: { start: urlMatch.start, end: urlMatch.end },
+    })),
+    tooltip: data => t('replay.openLink', { url: (data as TerminalUrlMatch).value }),
+    onActivate: (_bufferRow, data) => {
+      window.open((data as TerminalUrlMatch).value, '_blank', 'noopener,noreferrer')
+    },
+  }
 }
 
 function AnalyticsSkeleton() {

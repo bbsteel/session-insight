@@ -86,8 +86,13 @@ torn frames, rather than requiring an external `zstd` executable.
 
 The shipped web profile has no verified interactive terminal-resume command;
 the headless `--session-id` option is a one-task runner, not the interactive
-terminal workflow SI launches. Resume remains unavailable in SI. Parent IDs are
-preserved, but a complete nested invocation graph is not implemented. Deletion
+terminal workflow SI launches. Resume remains unavailable in SI. Collaboration
+joins `subagent/catalog` and child transcript headers by native session ID.
+Each closed child `turn/start` to `turn/end` interval is shown separately so
+continuable children leave gaps between assignments. The peak counts children
+with overlapping recorded turn intervals. Open turns and missing transcripts
+cannot contribute a closed interval. Settled notices in the parent replay
+provide result anchors. Deletion
 would also need to reconcile project-cache records and lease ownership; simply
 unlinking a transcript is insufficient.
 

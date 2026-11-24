@@ -477,6 +477,10 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	started := time.Now()
 	agentType := r.AgentType()
 	revision := sess.UpdatedAt.UnixNano()
+	collaborationRevision := revision
+	if source, ok := r.(reader.CollaborationRevisionReader); ok && !sess.IsSubagent {
+		collaborationRevision = source.CollaborationSourceRevision(sess)
+	}
 
 	storedRev, exists, err := ix.db.GetWatermark(agentType, sess.ID)
 	if err != nil {
@@ -503,7 +507,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 		// cleanup) must still fall through to a full pass — otherwise the
 		// collaboration index could stay permanently "unchanged".
 		var err error
-		collabCurrent, err = ix.collaborationCurrent(r, agentType, sess, revision)
+		collabCurrent, err = ix.collaborationCurrent(r, agentType, sess, collaborationRevision)
 		if err != nil {
 			return false, err
 		}
@@ -637,7 +641,7 @@ func (ix *Indexer) indexSession(ctx context.Context, r reader.BaseSessionReader,
 	// failure aborts the session (watermark not advanced) so the next cycle
 	// retries. The previous complete graph is preserved either way.
 	collabStarted := time.Now()
-	if err := ix.indexCollaboration(ctx, r, persisted, revision, collabCurrentKnown, collabCurrent); err != nil {
+	if err := ix.indexCollaboration(ctx, r, persisted, collaborationRevision, collabCurrentKnown, collabCurrent); err != nil {
 		return false, err
 	}
 	collabElapsed := time.Since(collabStarted)
@@ -839,7 +843,7 @@ func (ix *Indexer) handleReadFailure(r reader.BaseSessionReader, agentType strin
 }
 
 // collaborationCurrent reports whether the stored collaboration graph already
-// matches the session revision. Readers without the optional
+// matches its source revision. Readers without the optional
 // reader.CollaborationReader interface and non-root (backing child) sessions
 // are always "current": no graph is fabricated or indexed for them.
 func (ix *Indexer) collaborationCurrent(r reader.BaseSessionReader, agentType string, sess model.Session, revision int64) (bool, error) {
@@ -898,8 +902,8 @@ func (ix *Indexer) indexCollaboration(ctx context.Context, r reader.BaseSessionR
 		ix.markCollaborationStale(agentType, sess.ID, err)
 		return err
 	}
-	// Collaboration and turn indexing share the session revision; the store
-	// advances it only when the replacement transaction commits.
+	// Graph readers with independent child transcripts can use a different
+	// revision from the root replay. Only a successful replace advances it.
 	graph.Revision = revision
 	if err := ix.withIndexWrite(func() error {
 		return ix.db.ReplaceCollaborationGraph(graph)

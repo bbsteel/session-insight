@@ -194,6 +194,10 @@ func (db *DB) ReplaceCollaborationGraph(g collaboration.CollaborationGraph) erro
 		if err != nil {
 			return fmt.Errorf("marshal source identity for %q: %w", inv.ID, err)
 		}
+		activityJSON, err := json.Marshal(inv.Activity)
+		if err != nil {
+			return fmt.Errorf("marshal activity for %q: %w", inv.ID, err)
+		}
 		var backingAgent, backingSession string
 		if inv.BackingSession != nil {
 			backingAgent = inv.BackingSession.AgentType
@@ -210,14 +214,14 @@ func (db *DB) ReplaceCollaborationGraph(g collaboration.CollaborationGraph) erro
 			    started_at, ended_at,
 			    time_precision_state, time_precision_reason,
 			    content_precision_state, content_precision_reason,
-			    backing_agent_type, backing_session_id, source_identity_json)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    backing_agent_type, backing_session_id, source_identity_json, activity_json)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			g.RootAgentType, g.RootSessionID, inv.ID, i, isRoot,
 			inv.DisplayName, inv.AgentType, inv.ModelName, inv.RoleLabel, string(inv.Status),
 			collabTimeString(inv.StartedAt), collabTimeString(inv.EndedAt),
 			string(inv.TimePrecision.State), string(inv.TimePrecision.ReasonCode),
 			string(inv.ContentPrecision.State), string(inv.ContentPrecision.ReasonCode),
-			backingAgent, backingSession, string(identityJSON),
+			backingAgent, backingSession, string(identityJSON), string(activityJSON),
 		); err != nil {
 			return fmt.Errorf("insert collaboration invocation %q: %w", inv.ID, err)
 		}
@@ -374,7 +378,7 @@ func (db *DB) GetCollaboration(agentType, sessionID string) (*StoredCollaboratio
 		        started_at, ended_at,
 		        time_precision_state, time_precision_reason,
 		        content_precision_state, content_precision_reason,
-		        backing_agent_type, backing_session_id, source_identity_json
+		        backing_agent_type, backing_session_id, source_identity_json, activity_json
 		 FROM collaboration_invocations
 		 WHERE root_agent_type = ? AND root_session_id = ?
 		 ORDER BY ordinal`,
@@ -390,12 +394,12 @@ func (db *DB) GetCollaboration(agentType, sessionID string) (*StoredCollaboratio
 		var inv collaboration.AgentInvocation
 		var startedAt, endedAt sql.NullString
 		var timeState, timeReason, contentState, contentReason string
-		var backingAgent, backingSession, identityJSON string
+		var backingAgent, backingSession, identityJSON, activityJSON string
 		var status string
 		if err := invRows.Scan(&inv.ID, &inv.DisplayName, &inv.AgentType, &inv.ModelName, &inv.RoleLabel, &status,
 			&startedAt, &endedAt,
 			&timeState, &timeReason, &contentState, &contentReason,
-			&backingAgent, &backingSession, &identityJSON); err != nil {
+			&backingAgent, &backingSession, &identityJSON, &activityJSON); err != nil {
 			return nil, fmt.Errorf("scan collaboration invocation: %w", err)
 		}
 		inv.Status = collaboration.InvocationStatus(status)
@@ -429,6 +433,9 @@ func (db *DB) GetCollaboration(agentType, sessionID string) (*StoredCollaboratio
 		}
 		if err := json.Unmarshal([]byte(identityJSON), &inv.SourceIdentity); err != nil {
 			return nil, fmt.Errorf("unmarshal source identity for %q: %w", inv.ID, err)
+		}
+		if err := json.Unmarshal([]byte(activityJSON), &inv.Activity); err != nil {
+			return nil, fmt.Errorf("unmarshal activity for %q: %w", inv.ID, err)
 		}
 		stored.Graph.Invocations = append(stored.Graph.Invocations, inv)
 	}

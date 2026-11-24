@@ -47,6 +47,7 @@ function mkGraph(children, delegations = null) {
     status: c.status ?? 'completed',
     ...(c.start !== null && c.start !== undefined ? { started_at: iso(c.start) } : {}),
     ...(c.end !== null && c.end !== undefined ? { ended_at: iso(c.end) } : {}),
+    ...(c.activity ? { activity: c.activity.map(([start, end]) => ({ started_at: iso(start), ended_at: iso(end) })) } : {}),
     time_precision: c.precision ?? exact,
     content_precision: exact,
     source_identity: { kind: 'tool_call_id', native_id: c.id },
@@ -287,6 +288,16 @@ for (const key of ['typical', 'stress']) {
 }
 
 // --- live extension and estimated styling ----------------------------------------------------
+
+{
+  const model = normalizeTimelineModel(mkGraph([{
+    id: 'recorded', start: 1000, status: 'running', activity: [[2000, 3000], [5000, 6000]],
+  }]))
+  const result = layoutTimeline(model, new Set(), baseParams({ nowMs: EPOCH + 9000 }))
+  const childId = 'test:root-1:child:recorded'
+  assert.equal(result.intervals.filter(interval => interval.invocationId === childId).length, 2, 'idle time is not recorded activity')
+  assert.ok(result.markers.some(marker => marker.invocationId === childId && marker.type === 'running'))
+}
 
 {
   const model = normalizeTimelineModel(

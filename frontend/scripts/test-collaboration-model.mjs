@@ -17,6 +17,10 @@ const collaborationBuildDir = process.env.SI_COLLABORATION_TEST_BUILD_DIR || '/t
 const core = `${collaborationBuildDir}/src/collaboration`
 const {
   normalizeTimelineModel,
+  activityDomain,
+  concurrentChildActivity,
+  peakActivity,
+  peakConcurrentChildren,
   selectedPathIds,
   rootInvocationID,
   UNLINKED_GROUP_ID,
@@ -32,6 +36,36 @@ const ms = (iso) => Date.parse(iso)
 assert.equal(rootInvocationID('copilot', 'collab-copilot-1'), 'copilot:collab-copilot-1:root')
 // Percent-escaping matches the Go helpers (% first, then ':' and '>').
 assert.equal(rootInvocationID('a%b:c>d', 's:x'), 'a%25b%3Ac%3Ed:s%3Ax:root')
+
+{
+  const graph = load('embedded-child.json')
+  const [root, child] = graph.invocations
+  const span = (started_at, ended_at) => ({ started_at, ended_at })
+  const first = span('2026-01-02T00:00:05Z', '2026-01-02T00:00:09Z')
+  const second = span('2026-01-02T00:00:15Z', '2026-01-02T00:00:19Z')
+  root.activity = [span('2026-01-02T00:00:00Z', '2026-01-02T00:01:00Z')]
+  child.activity = [first, second]
+  const other = { ...child, id: 'another-child', activity: [span(first.ended_at, second.started_at)] }
+  graph.invocations.push(other)
+  assert.equal(peakConcurrentChildren(graph), 1, 'idle gaps and touching endpoints do not overlap')
+  other.activity = [span(first.ended_at, second.ended_at)]
+  assert.equal(peakConcurrentChildren(graph), 2, 'resumed child overlaps the other child')
+  const activity = concurrentChildActivity(graph)
+  const peak = peakActivity(activity)
+  assert.deepEqual(peak, {
+    startMs: ms(second.started_at),
+    endMs: ms(second.ended_at),
+    childIds: [other.id, child.id].sort(),
+  })
+  assert.deepEqual(activityDomain(activity, peak), {
+    startMs: ms(first.started_at) - 1000,
+    endMs: ms(second.ended_at) + 1000,
+  }, 'default batch fits child activity and excludes the surrounding root-only time')
+  assert.deepEqual(normalizeTimelineModel(graph).invocations[1].spans, [
+    { startMs: ms(first.started_at), endMs: ms(first.ended_at) },
+    { startMs: ms(second.started_at), endMs: ms(second.ended_at) },
+  ])
+}
 
 // --- embedded-child (Chrys): exact two-sided anchors --------------------------
 

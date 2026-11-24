@@ -134,6 +134,10 @@ func readSession(path, expectedID string) (*model.SessionDetail, []model.RenderE
 // The indexing path captures compressed source bytes once, before decoding.
 // Its fingerprint and parsed snapshot therefore describe the same byte view.
 func readSessionWithFingerprint(path, expectedID string, fingerprint *model.SourceFingerprint) (*model.SessionDetail, []model.RenderEvent, error) {
+	return readSessionRecords(path, expectedID, fingerprint, nil)
+}
+
+func readSessionRecords(path, expectedID string, fingerprint *model.SourceFingerprint, observe func(nativeEvent)) (*model.SessionDetail, []model.RenderEvent, error) {
 	sources := sourceInventory(path)
 	fail := func(kind readerr.Kind, err error) (*model.SessionDetail, []model.RenderEvent, error) {
 		return nil, nil, readerr.New(kind, string(kind), err).WithSources(sources)
@@ -246,6 +250,11 @@ func readSessionWithFingerprint(path, expectedID string, fingerprint *model.Sour
 			continue
 		}
 		previousSeq = record.Seq
+		// A seeded transcript can carry events from an earlier session.
+		// Keep those in replay but exclude them from this session's activity.
+		if observe != nil && record.Time >= header.CreatedAt {
+			observe(record)
+		}
 		var data eventData
 		if err := json.Unmarshal(record.Data, &data); err != nil {
 			impacts := []string{model.ImpactReplay}

@@ -179,3 +179,51 @@ func TestDSHIndexerDetectsGenerationAndSameStatReplacements(t *testing.T) {
 		}
 	}
 }
+
+func TestDSHChildTurnRefreshesCollaborationWithoutChangingParentWatermark(t *testing.T) {
+	root := t.TempDir()
+	parentPath := filepath.Join(root, "project", "session-example", "session.v4.jsonl")
+	childPath := filepath.Join(root, "project", "session-child", "session.v4.jsonl")
+	for _, path := range []string{parentPath, childPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(parentPath, dshFixtureBytes(t, "4"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeChild := func(completion string) {
+		t.Helper()
+		body := `{"type":"session","version":4,"id":"session-child","parentSession":"session-example","createdAt":1760000000000}
+{"type":"turn/start","seq":1,"time":1760000000010,"data":{"turn":1}}
+` + completion
+		if err := os.WriteFile(childPath, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	database := openIndexerDB(t)
+	index := New(database, []reader.BaseSessionReader{dsh.New(root)})
+	readGraph := func() (int64, int64, int) {
+		t.Helper()
+		if err := index.RunOnce(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		graph, err := database.GetCollaboration("dsh", "session-example")
+		if err != nil || graph == nil || len(graph.Graph.Invocations) != 2 {
+			t.Fatalf("collaboration graph=%+v err=%v", graph, err)
+		}
+		parentWatermark, exists, err := database.GetWatermark("dsh", "session-example")
+		if err != nil || !exists {
+			t.Fatalf("parent watermark exists=%v err=%v", exists, err)
+		}
+		return parentWatermark, graph.Graph.Revision, len(graph.Graph.Invocations[1].Activity)
+	}
+	writeChild("")
+	originalWatermark, originalGraphRevision, originalSpans := readGraph()
+	writeChild("{\"type\":\"turn/end\",\"seq\":2,\"time\":1760000000040,\"data\":{\"turn\":1,\"reason\":{\"kind\":\"completed\"}}}\n")
+	watermark, graphRevision, spans := readGraph()
+	if watermark != originalWatermark || graphRevision == originalGraphRevision || originalSpans != 0 || spans != 1 {
+		t.Fatalf("child change: watermark %d -> %d, graph %d -> %d, spans %d -> %d",
+			originalWatermark, watermark, originalGraphRevision, graphRevision, originalSpans, spans)
+	}
+}

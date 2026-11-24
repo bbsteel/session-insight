@@ -187,6 +187,12 @@ type SourceAnchor struct {
 	Precision  FactEvidence `json:"precision"`
 }
 
+// ActivitySpan is a recorded interval of work within an invocation.
+type ActivitySpan struct {
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
+}
+
 // AgentInvocation is one bounded execution of a main or child Agent within
 // the selected Session's work. It may be backed by the root Session, by
 // another standalone native Session, by an embedded transcript, or only by
@@ -214,6 +220,9 @@ type AgentInvocation struct {
 	// guessed timestamps.
 	StartedAt *time.Time `json:"started_at,omitempty"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
+	// Activity records bounded work windows separately from the invocation's
+	// overall lifetime. A nil value means the source did not supply windows.
+	Activity []ActivitySpan `json:"activity,omitempty"`
 	// TimePrecision is the evidence state for the timing fields as a whole.
 	TimePrecision FactEvidence `json:"time_precision"`
 	// ContentPrecision is the evidence state for content availability:

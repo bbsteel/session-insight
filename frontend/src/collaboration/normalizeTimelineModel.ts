@@ -60,6 +60,8 @@ export interface TimelineInvocation {
    * boundaries, and the current-time input instead.
    */
   spans: ActivitySpan[]
+  /** True when the source separates recorded turns from the lane lifecycle. */
+  hasRecordedActivity?: boolean
   /** First known time anchor, used to place markers when the start is missing. */
   fallbackAnchorMs: number | null
   depth: number
@@ -113,6 +115,94 @@ function parseTimeMs(value: string | undefined): number | null {
   if (!value) return null
   const ms = Date.parse(value)
   return Number.isNaN(ms) ? null : ms
+}
+
+function recordedActivity(invocation: AgentInvocationDTO): ActivitySpan[] {
+  const spans: ActivitySpan[] = []
+  for (const span of invocation.activity ?? []) {
+    const startMs = parseTimeMs(span.started_at)
+    const endMs = parseTimeMs(span.ended_at)
+    if (startMs !== null && endMs !== null && endMs > startMs) {
+      spans.push({ startMs, endMs })
+    }
+  }
+  return spans
+}
+
+export interface ConcurrentActivitySpan extends ActivitySpan {
+  childIds: readonly string[]
+}
+
+export function concurrentChildActivity(graph: CollaborationGraphDTO): ConcurrentActivitySpan[] {
+  const rootId = rootInvocationID(graph.root_agent_type, graph.root_session_id)
+  const boundaries = new Map<number, { childId: string; delta: number }[]>()
+  const addBoundary = (time: number, childId: string, delta: number) => {
+    const events = boundaries.get(time) ?? []
+    events.push({ childId, delta })
+    boundaries.set(time, events)
+  }
+  for (const invocation of graph.invocations) {
+    if (invocation.id === rootId) continue
+    for (const span of recordedActivity(invocation)) {
+      addBoundary(span.startMs, invocation.id, 1)
+      addBoundary(span.endMs, invocation.id, -1)
+    }
+  }
+  const times = [...boundaries.keys()].sort((a, b) => a - b)
+  const active = new Map<string, number>()
+  const windows: ConcurrentActivitySpan[] = []
+  for (let index = 0; index < times.length - 1; index++) {
+    const startMs = times[index]
+    for (const { childId, delta } of boundaries.get(startMs) ?? []) {
+      const count = (active.get(childId) ?? 0) + delta
+      if (count === 0) active.delete(childId)
+      else active.set(childId, count)
+    }
+    if (active.size === 0) continue
+    const endMs = times[index + 1]
+    const childIds = [...active.keys()].sort()
+    const previous = windows[windows.length - 1]
+    if (previous?.endMs === startMs && previous.childIds.length === childIds.length &&
+      childIds.every((id, childIndex) => id === previous.childIds[childIndex])) {
+      previous.endMs = endMs
+    } else {
+      windows.push({ startMs, endMs, childIds })
+    }
+  }
+  return windows
+}
+
+export function peakActivity(windows: readonly ConcurrentActivitySpan[]): ConcurrentActivitySpan | null {
+  return windows.reduce<ConcurrentActivitySpan | null>((peak, window) => {
+    if (!peak || window.childIds.length > peak.childIds.length ||
+      (window.childIds.length === peak.childIds.length && window.endMs - window.startMs > peak.endMs - peak.startMs)) {
+      return window
+    }
+    return peak
+  }, null)
+}
+
+export function peakConcurrentChildren(graph: CollaborationGraphDTO): number {
+  return peakActivity(concurrentChildActivity(graph))?.childIds.length ?? 0
+}
+
+export function activityDomain(windows: readonly ConcurrentActivitySpan[], peak: ActivitySpan): ActivitySpan {
+  // Keep the surrounding batch together across short idle gaps.
+  const batchGapMs = 10 * 60_000
+  let startMs = peak.startMs
+  let endMs = peak.endMs
+  for (const window of [...windows].reverse()) {
+    if (window.endMs > startMs) continue
+    if (startMs - window.endMs > batchGapMs) break
+    startMs = window.startMs
+  }
+  for (const window of windows) {
+    if (window.startMs < endMs) continue
+    if (window.startMs - endMs > batchGapMs) break
+    endMs = window.endMs
+  }
+  const paddingMs = Math.max(1_000, (endMs - startMs) * 0.02)
+  return { startMs: startMs - paddingMs, endMs: endMs + paddingMs }
 }
 
 function anchorTimeMs(anchor: SourceAnchorDTO | undefined): number | null {
@@ -263,8 +353,9 @@ export function normalizeTimelineModel(graph: CollaborationGraphDTO): TimelineMo
     const startedAtMs = startOf(inv)
     const endedAtMs = endOf(inv)
     if (isLiveStatus(inv.status)) live = true
-    const spans: ActivitySpan[] =
-      startedAtMs !== null && endedAtMs !== null && endedAtMs > startedAtMs
+    const spans: ActivitySpan[] = inv.activity
+      ? recordedActivity(inv)
+      : startedAtMs !== null && endedAtMs !== null && endedAtMs > startedAtMs
         ? [{ startMs: startedAtMs, endMs: endedAtMs }]
         : []
     const parent = parentId ? byId.get(parentId) : undefined
@@ -287,6 +378,7 @@ export function normalizeTimelineModel(graph: CollaborationGraphDTO): TimelineMo
       contentPrecision: inv.content_precision,
       hasBackingSession: inv.backing_session != null,
       spans,
+      hasRecordedActivity: inv.activity !== undefined,
       fallbackAnchorMs: anchorCandidates.length > 0 ? Math.min(...anchorCandidates) : null,
       depth,
       isGroup: false,

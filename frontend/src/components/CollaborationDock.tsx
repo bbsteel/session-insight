@@ -19,6 +19,7 @@ import { reasonCodeLabelKey } from '../capabilityPresentation'
 import { openSessionInNewTab } from '../sessionLink'
 import {
   normalizeTimelineModel,
+  peakConcurrentChildren,
   UNLINKED_GROUP_ID,
   type TimelineInvocation,
 } from '../collaboration/normalizeTimelineModel'
@@ -64,7 +65,8 @@ interface Props {
   onResizeEnd: () => void
   /** Minimum height required by the visible timeline lanes. */
   onContentHeightChange: (heightPx: number) => void
-  onOpenSession: (id: string, agentType: string) => void
+  onOpenSession: (id: string, agentType: string, label: string) => void
+  onReturnToParent: () => void
   onJumpToLaunch: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   onJumpToResult: (invocationId: string, anchor: SourceAnchorDTO) => void
   /**
@@ -87,6 +89,7 @@ export default function CollaborationDock({
   onResizeEnd,
   onContentHeightChange,
   onOpenSession,
+  onReturnToParent,
   onJumpToLaunch,
   onJumpToResult,
   returnToParentActive,
@@ -95,6 +98,7 @@ export default function CollaborationDock({
   const detail = status.kind === 'ready' ? status.detail : null
   const model = useMemo(() => (detail ? normalizeTimelineModel(detail) : null), [detail])
   const summary = useMemo(() => (model ? summarizeTimeline(model) : null), [model])
+  const peakParallel = useMemo(() => (detail && mode === 'collapsed' ? peakConcurrentChildren(detail) : 0), [detail, mode])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [invocationMissing, setInvocationMissing] = useState(false)
@@ -125,7 +129,10 @@ export default function CollaborationDock({
       const backing = backingSessionOf(detail, invocationId)
       if (!backing) return
       if (newTab) openSessionInNewTab(backing.agent_type, backing.session_id)
-      else onOpenSession(backing.session_id, backing.agent_type)
+      else {
+        const label = detail.invocations.find(invocation => invocation.id === invocationId)?.display_name
+        onOpenSession(backing.session_id, backing.agent_type, label || backing.session_id)
+      }
     },
     [detail, onOpenSession],
   )
@@ -133,6 +140,7 @@ export default function CollaborationDock({
   const summaryText = summary
     ? [
         t('collaboration.dock.childCount', { count: summary.childCount }),
+        peakParallel > 0 ? t('collaboration.dock.peakParallel', { count: peakParallel }) : null,
         summary.activeCount > 0 ? t('collaboration.dock.activeCount', { count: summary.activeCount }) : null,
         summary.problemCount > 0 ? t('collaboration.dock.problemCount', { count: summary.problemCount }) : null,
       ]
@@ -287,6 +295,7 @@ export default function CollaborationDock({
               selectedId={selectedId}
               onSelect={handleSelect}
               onOpenChildContent={openBacking}
+              onReturnToParent={onReturnToParent}
               onJumpToLaunch={onJumpToLaunch}
               onJumpToResult={onJumpToResult}
               onContentHeightChange={(timelineHeightPx) => onContentHeightChange(Math.max(
@@ -425,7 +434,7 @@ function InvocationDetail({
       aria-label={t('collaboration.detail.heading')}
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="truncate text-nav font-medium text-[var(--text-primary)]" title={inv.label}>
+        <h3 className="min-w-0 break-words text-nav font-medium text-[var(--text-primary)]">
           {inv.label}
         </h3>
         <DetailCloseButton onClose={onClose} />

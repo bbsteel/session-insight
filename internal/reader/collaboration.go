@@ -28,3 +28,10 @@ import (
 type CollaborationReader interface {
 	ReadCollaboration(ctx context.Context, root model.Session) (collaboration.CollaborationGraph, error)
 }
+
+// CollaborationRevisionReader accounts for backing transcripts that can change
+// independently of the root replay. The revision is an opaque equality key
+// for the graph and does not replace the root session watermark.
+type CollaborationRevisionReader interface {
+	CollaborationSourceRevision(root model.Session) int64
+}
