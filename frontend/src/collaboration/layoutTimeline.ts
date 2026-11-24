@@ -143,6 +143,7 @@ export function flattenVisibleLanes(model: TimelineModel, collapsedIds: Readonly
 /** Effective activity spans for one lane at the given current time. */
 function effectiveSpans(inv: TimelineInvocation, nowMs: number): { startMs: number; endMs: number }[] {
   const spans = [...inv.spans]
+  if (inv.hasRecordedActivity) return spans
   const live = inv.status === 'running' || inv.status === 'waiting' || inv.status === 'pending'
   if (inv.startedAtMs !== null && inv.endedAtMs === null && live) {
     spans.push({ startMs: inv.startedAtMs, endMs: Math.max(nowMs, inv.startedAtMs) })

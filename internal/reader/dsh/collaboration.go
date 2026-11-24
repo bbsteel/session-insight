@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 	"time"
@@ -97,11 +98,11 @@ func (transcript *collaborationTranscript) observe(sessionID string, record nati
 			return
 		}
 		startedAt, found := transcript.active[turn.Turn]
-		delete(transcript.active, turn.Turn)
 		if !found || timestamp.Before(startedAt) {
 			transcript.complete = false
 			return
 		}
+		delete(transcript.active, turn.Turn)
 		if timestamp.After(startedAt) {
 			transcript.activity = append(transcript.activity, collaboration.ActivitySpan{StartedAt: startedAt, EndedAt: timestamp})
 		}
@@ -116,6 +117,45 @@ func (transcript *collaborationTranscript) observe(sessionID string, record nati
 			transcript.lastStatus = collaboration.StatusUnknown
 		}
 	}
+}
+
+// collaborationChildren uses the reader's current discovery snapshot. Each
+// independent transcript has its own selected generation and file revision.
+func (reader *Reader) collaborationChildren() map[string][]metadataSnapshot {
+	childrenByParent := make(map[string][]metadataSnapshot)
+	reader.mutex.RLock()
+	defer reader.mutex.RUnlock()
+	for _, snapshot := range reader.metadata {
+		parentID := snapshot.session.ParentSessionID
+		if parentID != "" {
+			childrenByParent[parentID] = append(childrenByParent[parentID], snapshot)
+		}
+	}
+	return childrenByParent
+}
+
+func (reader *Reader) CollaborationSourceRevision(root model.Session) int64 {
+	digest := fnv.New64a()
+	fmt.Fprintln(digest, model.SessionRevision(root))
+	childrenByParent := reader.collaborationChildren()
+	seen := map[string]bool{root.ID: true}
+	var writeDescendants func(string)
+	writeDescendants = func(parentID string) {
+		children := childrenByParent[parentID]
+		sort.Slice(children, func(i, j int) bool { return children[i].session.ID < children[j].session.ID })
+		for _, child := range children {
+			childID := child.session.ID
+			if seen[childID] {
+				continue
+			}
+			seen[childID] = true
+			fmt.Fprintf(digest, "%q %q %q %d %d %d\n", parentID, childID, child.path,
+				child.size, child.modified.UnixNano(), model.SessionRevision(child.session))
+			writeDescendants(childID)
+		}
+	}
+	writeDescendants(root.ID)
+	return int64(digest.Sum64() & (1<<63 - 1))
 }
 
 // ReadCollaboration builds one lane per native child session. A continuable
@@ -135,20 +175,12 @@ func (reader *Reader) ReadCollaboration(ctx context.Context, root model.Session)
 	}
 	rootID := collaboration.RootInvocationID(agentType, root.ID)
 	graph = collaboration.CollaborationGraph{
-		RootAgentType: agentType, RootSessionID: root.ID, Revision: model.SessionRevision(root),
+		RootAgentType: agentType, RootSessionID: root.ID, Revision: reader.CollaborationSourceRevision(root),
 		Completeness: collaboration.ExactFact(),
 		Invocations:  []collaboration.AgentInvocation{rootTranscript.invocation(rootID, rootTranscript.session.Name, collaboration.IdentityRootSession)},
 	}
 
-	childrenByParent := make(map[string][]string)
-	reader.mutex.RLock()
-	for _, snapshot := range reader.metadata {
-		child := snapshot.session
-		if child.ParentSessionID != "" {
-			childrenByParent[child.ParentSessionID] = append(childrenByParent[child.ParentSessionID], child.ID)
-		}
-	}
-	reader.mutex.RUnlock()
+	childrenByParent := reader.collaborationChildren()
 
 	seen := map[string]bool{root.ID: true}
 	var addChildren func(collaborationTranscript, string) error
@@ -160,7 +192,8 @@ func (reader *Reader) ReadCollaboration(ctx context.Context, root model.Session)
 		for childID := range parent.catalog {
 			childIDs = append(childIDs, childID)
 		}
-		for _, childID := range childrenByParent[parent.session.ID] {
+		for _, snapshot := range childrenByParent[parent.session.ID] {
+			childID := snapshot.session.ID
 			if _, recorded := parent.catalog[childID]; !recorded {
 				childIDs = append(childIDs, childID)
 			}

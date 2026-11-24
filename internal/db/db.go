@@ -873,6 +873,11 @@ func migrate(conn *sql.DB) error {
 				return fmt.Errorf("v45 add collaboration_invocations.activity_json: %w", err)
 			}
 		}
+		if maxVersion < 45 || !hasActivity {
+			if _, err := conn.Exec(`DELETE FROM collaboration_roots`); err != nil {
+				return fmt.Errorf("v45 clear collaboration graphs: %w", err)
+			}
+		}
 	}
 
 	// Version 30: session_provenance — independent record-completeness snapshots

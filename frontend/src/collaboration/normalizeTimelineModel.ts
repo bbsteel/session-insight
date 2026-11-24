@@ -60,6 +60,8 @@ export interface TimelineInvocation {
    * boundaries, and the current-time input instead.
    */
   spans: ActivitySpan[]
+  /** True when the source separates recorded turns from the lane lifecycle. */
+  hasRecordedActivity?: boolean
   /** First known time anchor, used to place markers when the start is missing. */
   fallbackAnchorMs: number | null
   depth: number
@@ -376,6 +378,7 @@ export function normalizeTimelineModel(graph: CollaborationGraphDTO): TimelineMo
       contentPrecision: inv.content_precision,
       hasBackingSession: inv.backing_session != null,
       spans,
+      hasRecordedActivity: inv.activity !== undefined,
       fallbackAnchorMs: anchorCandidates.length > 0 ? Math.min(...anchorCandidates) : null,
       depth,
       isGroup: false,

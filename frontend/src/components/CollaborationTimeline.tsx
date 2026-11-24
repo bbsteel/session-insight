@@ -221,10 +221,10 @@ export default function CollaborationTimeline({
   const nowMs = nowMsProp ?? Date.now()
   // Extend the domain while work is live so active intervals reach "now".
   useEffect(() => {
-    if (!peak && model.live && nowMs > domain.endMs) {
+    if (!showPeak && model.live && nowMs > domain.endMs) {
       setDomain((d) => ({ ...d, endMs: nowMs }))
     }
-  }, [model.live, nowMs, domain.endMs, peak])
+  }, [model.live, nowMs, domain.endMs, showPeak])
 
   // Measure the graphics viewport (ResizeObserver; width follows the dock).
   useEffect(() => {

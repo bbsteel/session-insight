@@ -193,3 +193,34 @@ func TestV44DropsModelLessDerivedGraphs(t *testing.T) {
 		t.Fatalf("legacy collaboration graph survived v44 backfill: %+v", storedGraph)
 	}
 }
+
+func TestV45DropsDerivedGraphsWithoutActivity(t *testing.T) {
+	directory := t.TempDir()
+	database, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE collaboration_invocations DROP COLUMN activity_json`,
+		`DELETE FROM schema_migrations WHERE version >= 45`,
+		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (44)`,
+		`INSERT INTO collaboration_roots(root_agent_type, root_session_id, revision) VALUES ('dsh', 's1', 1)`,
+	} {
+		if _, err := database.Conn().Exec(statement); err != nil {
+			database.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	_, exists, err := database.CollaborationRevision("dsh", "s1")
+	if err != nil || exists {
+		t.Fatalf("legacy graph exists=%v err=%v", exists, err)
+	}
+}
