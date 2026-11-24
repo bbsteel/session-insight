@@ -103,6 +103,11 @@ bash run.sh all
 
 The app starts at **http://127.0.0.1:8080** and opens automatically in your browser.
 
+Linux source builds require a C compiler for SQLite. If the GTK 3 and
+WebKitGTK development files are missing, the build scripts automatically
+produce a browser-only binary. To build with desktop window support, install
+those development files or point `SI_APP_SYSROOT` at a sysroot containing them.
+
 ### Desktop window mode (`--app`)
 
 The same binary can open its UI in a native desktop window instead of a
