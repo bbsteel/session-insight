@@ -17,6 +17,9 @@ const collaborationBuildDir = process.env.SI_COLLABORATION_TEST_BUILD_DIR || '/t
 const core = `${collaborationBuildDir}/src/collaboration`
 const {
   normalizeTimelineModel,
+  activityDomain,
+  concurrentChildActivity,
+  peakActivity,
   peakConcurrentChildren,
   selectedPathIds,
   rootInvocationID,
@@ -47,6 +50,17 @@ assert.equal(rootInvocationID('a%b:c>d', 's:x'), 'a%25b%3Ac%3Ed:s%3Ax:root')
   assert.equal(peakConcurrentChildren(graph), 1, 'idle gaps and touching endpoints do not overlap')
   other.activity = [span(first.ended_at, second.ended_at)]
   assert.equal(peakConcurrentChildren(graph), 2, 'resumed child overlaps the other child')
+  const activity = concurrentChildActivity(graph)
+  const peak = peakActivity(activity)
+  assert.deepEqual(peak, {
+    startMs: ms(second.started_at),
+    endMs: ms(second.ended_at),
+    childIds: [other.id, child.id].sort(),
+  })
+  assert.deepEqual(activityDomain(activity, peak), {
+    startMs: ms(first.started_at) - 1000,
+    endMs: ms(second.ended_at) + 1000,
+  }, 'default batch fits child activity and excludes the surrounding root-only time')
   assert.deepEqual(normalizeTimelineModel(graph).invocations[1].spans, [
     { startMs: ms(first.started_at), endMs: ms(first.ended_at) },
     { startMs: ms(second.started_at), endMs: ms(second.ended_at) },

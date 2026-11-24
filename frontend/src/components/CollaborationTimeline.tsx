@@ -17,11 +17,14 @@
  * Not mounted anywhere yet; validated by frontend/harness/collab-timeline.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { formatDate, useI18n } from '../i18n.js'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { formatDate, formatNumber, useI18n } from '../i18n.js'
 import { reasonCodeLabelKey } from '../capabilityPresentation.js'
 import {
   normalizeTimelineModel,
+  activityDomain,
+  concurrentChildActivity,
+  peakActivity,
   selectedPathIds,
   type TimelineInvocation,
 } from '../collaboration/normalizeTimelineModel.js'
@@ -36,10 +39,13 @@ import { openSessionInNewTab, shouldOpenInNewTab } from '../sessionLink'
 import BackingCopyButton from './BackingCopyButton'
 import type { CollaborationGraphDTO, InvocationStatus, SourceAnchorDTO } from '../collaboration/types.js'
 
-const DEFAULT_ROW_HEIGHT = 28
+const DEFAULT_ROW_HEIGHT = 40
 const DEFAULT_OVERSCAN = 3
 const DEFAULT_MIN_SEGMENT_PX = 3
-const DEFAULT_LABEL_WIDTH = 220
+const DEFAULT_LABEL_WIDTH = 320
+const MIN_LABEL_WIDTH = 180
+const MAX_LABEL_WIDTH = 540
+const CONCURRENCY_HEIGHT = 48
 const DEFAULT_HEIGHT = 240
 const MIN_LIVE_INTERVAL_MS = 250
 const MAX_LIVE_INTERVAL_MS = 1000
@@ -151,6 +157,21 @@ export default function CollaborationTimeline({
   const { t, locale } = useI18n()
   const model = useMemo(() => normalizeTimelineModel(graph), [graph])
   const byId = useMemo(() => new Map(model.invocations.map((inv) => [inv.id, inv])), [model])
+  const activity = useMemo(() => concurrentChildActivity(graph), [graph])
+  const peak = useMemo(() => peakActivity(activity), [activity])
+  const fullDomain = useMemo(() => ({ startMs: model.domainStartMs, endMs: model.domainEndMs }), [model.domainStartMs, model.domainEndMs])
+  const batchDomain = useMemo(() => peak ? activityDomain(activity, peak) : fullDomain, [activity, fullDomain, peak])
+  const [showPeak, setShowPeak] = useState(false)
+  const [labelWidth, setLabelWidth] = useState(labelWidthPx)
+  const resizeDrag = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null)
+  const visibleModel = useMemo(() => {
+    if (!showPeak || !peak) return model
+    const visibleIds = new Set<string>([model.rootId])
+    for (const childId of peak.childIds) {
+      for (const pathId of selectedPathIds(model, childId)) visibleIds.add(pathId)
+    }
+    return { ...model, invocations: model.invocations.filter(invocation => visibleIds.has(invocation.id)) }
+  }, [model, peak, showPeak])
 
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set())
   const isControlled = selectedIdProp !== undefined
@@ -160,7 +181,7 @@ export default function CollaborationTimeline({
   const [activeRowIndex, setActiveRowIndex] = useState(0)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportSize, setViewportSize] = useState({ width: 1, height: Math.max(0, heightPx - 33) })
-  const [domain, setDomain] = useState({ startMs: model.domainStartMs, endMs: model.domainEndMs })
+  const [domain, setDomain] = useState(batchDomain)
   const [tooltip, setTooltip] = useState<{ id: string; x: number; y: number } | null>(null)
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -172,14 +193,15 @@ export default function CollaborationTimeline({
 
   // Reset view state when the payload changes.
   useEffect(() => {
-    setDomain({ startMs: model.domainStartMs, endMs: model.domainEndMs })
+    setDomain(batchDomain)
+    setShowPeak(false)
     setCollapsedIds(new Set())
     setHoverId(null)
     setTooltip(null)
     setActiveRowIndex(0)
     setScrollTop(0)
     if (scrollRef.current) scrollRef.current.scrollTop = 0
-  }, [model])
+  }, [batchDomain, model])
 
   // Live cadence: geometry updates for active intervals, 250–1000 ms.
   const liveEnabled = model.live && liveIntervalMs !== 0
@@ -194,10 +216,10 @@ export default function CollaborationTimeline({
   const nowMs = nowMsProp ?? Date.now()
   // Extend the domain while work is live so active intervals reach "now".
   useEffect(() => {
-    if (model.live && nowMs > domain.endMs) {
+    if (!peak && model.live && nowMs > domain.endMs) {
       setDomain((d) => ({ ...d, endMs: nowMs }))
     }
-  }, [model.live, nowMs, domain.endMs])
+  }, [model.live, nowMs, domain.endMs, peak])
 
   // Measure the graphics viewport (ResizeObserver; width follows the dock).
   useEffect(() => {
@@ -220,7 +242,7 @@ export default function CollaborationTimeline({
 
   const prims: RenderPrimitives = useMemo(
     () =>
-      layoutTimeline(model, collapsedIds, {
+      layoutTimeline(visibleModel, collapsedIds, {
         widthPx: viewportSize.width,
         viewportHeightPx: viewportSize.height,
         rowHeightPx,
@@ -233,7 +255,7 @@ export default function CollaborationTimeline({
         selectedPathIds: selectedPath,
         hoverId,
       }),
-    [model, collapsedIds, viewportSize, rowHeightPx, scrollTop, overscanRows, domain, layoutNowMs, minSegmentPx, selectedPath, hoverId],
+    [visibleModel, collapsedIds, viewportSize, rowHeightPx, scrollTop, overscanRows, domain, layoutNowMs, minSegmentPx, selectedPath, hoverId],
   )
 
   useEffect(() => {
@@ -242,13 +264,13 @@ export default function CollaborationTimeline({
     const report = () => {
       const toolbarHeight = toolbar.offsetHeight
       onToolbarHeightChange?.(toolbarHeight)
-      onContentHeightChange?.(toolbarHeight + 20 + prims.totalHeightPx)
+      onContentHeightChange?.(toolbarHeight + 20 + (peak ? CONCURRENCY_HEIGHT : 0) + prims.totalHeightPx)
     }
     report()
     const ro = new ResizeObserver(report)
     ro.observe(toolbar)
     return () => ro.disconnect()
-  }, [onToolbarHeightChange, onContentHeightChange, prims.totalHeightPx])
+  }, [onToolbarHeightChange, onContentHeightChange, peak, prims.totalHeightPx])
 
   const select = useCallback(
     (id: string | null) => {
@@ -345,6 +367,7 @@ export default function CollaborationTimeline({
   )
 
   // ---- Pan / zoom ----------------------------------------------------------
+  const minimumZoomSpan = showPeak ? 1_000 : MIN_ZOOM_SPAN_MS
 
   const shiftDomain = useCallback((dxMs: number) => {
     setDomain((d) => {
@@ -361,14 +384,14 @@ export default function CollaborationTimeline({
       setDomain((d) => {
         const center = centerMs ?? (d.startMs + d.endMs) / 2
         const fullSpan = model.domainEndMs - model.domainStartMs
-        const span = Math.max(MIN_ZOOM_SPAN_MS, Math.min(fullSpan, (d.endMs - d.startMs) * factor))
+        const span = Math.max(minimumZoomSpan, Math.min(fullSpan, (d.endMs - d.startMs) * factor))
         const ratio = (center - d.startMs) / Math.max(1, d.endMs - d.startMs)
         const start = center - ratio * span
         const clamped = Math.max(model.domainStartMs - span * 0.1, Math.min(model.domainEndMs + span * 0.1 - span, start))
         return { startMs: clamped, endMs: clamped + span }
       })
     },
-    [model.domainStartMs, model.domainEndMs],
+    [minimumZoomSpan, model.domainStartMs, model.domainEndMs],
   )
 
   // Ctrl/cmd + wheel zoom must be non-passive, so it is attached natively.
@@ -383,7 +406,7 @@ export default function CollaborationTimeline({
       setDomain((d) => {
         const center = d.startMs + frac * (d.endMs - d.startMs)
         const fullSpan = model.domainEndMs - model.domainStartMs
-        const span = Math.max(MIN_ZOOM_SPAN_MS, Math.min(fullSpan, (d.endMs - d.startMs) * (e.deltaY > 0 ? 1.25 : 0.8)))
+        const span = Math.max(minimumZoomSpan, Math.min(fullSpan, (d.endMs - d.startMs) * (e.deltaY > 0 ? 1.25 : 0.8)))
         const ratio = (center - d.startMs) / Math.max(1, d.endMs - d.startMs)
         const start = center - ratio * span
         const clamped = Math.max(model.domainStartMs - span * 0.1, Math.min(model.domainEndMs + span * 0.1 - span, start))
@@ -392,7 +415,7 @@ export default function CollaborationTimeline({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [model.domainStartMs, model.domainEndMs])
+  }, [minimumZoomSpan, model.domainStartMs, model.domainEndMs])
 
   const onGraphPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (e.button !== 0) return
@@ -545,9 +568,36 @@ export default function CollaborationTimeline({
   // ---- Render ---------------------------------------------------------------
 
   const regionLabel = ariaLabel ?? t('collaboration.timeline')
+  const peakCount = peak?.childIds.length ?? 0
+  const peakLeft = peak ? Math.max(0, axisX(peak.startMs)) : 0
+  const peakRight = peak ? Math.min(viewportSize.width, axisX(peak.endMs)) : 0
+  const peakVisible = peakRight > peakLeft
+  const peakWidth = Math.max(1, peakRight - peakLeft)
+  const countY = (count: number) => CONCURRENCY_HEIGHT - 5 - (count / Math.max(1, peakCount)) * (CONCURRENCY_HEIGHT - 14)
+  const widthStyle = { '--ct-label-width': `min(${labelWidth}px, 48%)` } as CSSProperties
+  const updateLabelWidth = (width: number) => setLabelWidth(Math.max(MIN_LABEL_WIDTH, Math.min(MAX_LABEL_WIDTH, width)))
+  const changeScope = (scope: 'full' | 'batch' | 'peak') => {
+    const focusPeak = scope === 'peak' && peak !== null
+    setShowPeak(focusPeak)
+    if (focusPeak) {
+      const padding = Math.max(2_500, (peak.endMs - peak.startMs) * 0.25)
+      setDomain({ startMs: peak.startMs - padding, endMs: peak.endMs + padding })
+      setCollapsedIds(new Set())
+      if (selectedId && !peak.childIds.includes(selectedId)) select(null)
+      setActiveRowIndex(0)
+      if (scrollRef.current) scrollRef.current.scrollTop = 0
+    } else {
+      setDomain(scope === 'full' ? fullDomain : batchDomain)
+    }
+  }
+  const formatPeakTime = (time: number) => {
+    const seconds = formatDate(locale, time, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+    const milliseconds = formatNumber(locale, new Date(time).getMilliseconds(), { minimumIntegerDigits: 3, useGrouping: false })
+    return `${seconds}.${milliseconds}`
+  }
 
   return (
-    <div className="collab-timeline" style={{ height: heightPx }} role="region" aria-label={regionLabel} data-testid="collab-timeline">
+    <div className="collab-timeline" style={{ ...widthStyle, height: heightPx }} role="region" aria-label={regionLabel} data-testid="collab-timeline">
       <div className="ct-toolbar" ref={toolbarRef}>
         <div className="ct-toolbar-group">
           <button type="button" className="ct-btn" title={t('collaboration.zoomOut')} aria-label={t('collaboration.zoomOut')} onClick={() => zoomDomain(1.25, selectedCenterMs ?? undefined)}>
@@ -556,9 +606,21 @@ export default function CollaborationTimeline({
           <button type="button" className="ct-btn" title={t('collaboration.zoomIn')} aria-label={t('collaboration.zoomIn')} onClick={() => zoomDomain(0.8, selectedCenterMs ?? undefined)}>
             +
           </button>
-          <button type="button" className="ct-btn" title={t('collaboration.zoomReset')} aria-label={t('collaboration.zoomReset')} onClick={() => setDomain({ startMs: model.domainStartMs, endMs: model.domainEndMs })}>
-            ⤾
+          <button type="button" className="ct-btn" aria-label={t(peak ? 'collaboration.fullTimeline' : 'collaboration.zoomReset')} onClick={() => changeScope('full')}>
+            {peak ? t('collaboration.fullTimeline') : '⤾'}
           </button>
+          {peak && <>
+            <button type="button" className="ct-btn" onClick={() => changeScope('batch')}>{t('collaboration.activityBatch')}</button>
+            <button type="button" className="ct-btn ct-peak-button" aria-pressed={showPeak} onClick={() => changeScope('peak')}>
+              {t('collaboration.focusPeak', { count: formatNumber(locale, peakCount) })}
+            </button>
+            {showPeak && <span className="ct-peak-time" data-testid="ct-peak-time">
+              {t('collaboration.peakWindow', {
+                start: formatPeakTime(peak.startMs), end: formatPeakTime(peak.endMs),
+                duration: formatNumber(locale, peak.endMs - peak.startMs),
+              })}
+            </span>}
+          </>}
           <button
             type="button"
             className="ct-btn"
@@ -626,8 +688,46 @@ export default function CollaborationTimeline({
           </button>
         </div>
       </div>
+      {peak && <div className="ct-concurrency" style={{ height: CONCURRENCY_HEIGHT }} data-testid="ct-concurrency">
+        <div className="ct-axis-spacer ct-series-label">{t('collaboration.concurrentChildren')}</div>
+        <svg width={viewportSize.width} height={CONCURRENCY_HEIGHT} role="img" aria-label={t('collaboration.concurrentChildren')}>
+          <line x1={0} x2={viewportSize.width} y1={countY(0)} y2={countY(0)} className="ct-grid-line" />
+          {peakVisible && <rect x={peakLeft} width={peakWidth} height={CONCURRENCY_HEIGHT} className="ct-peak-band" />}
+          {activity.filter(window => window.endMs > domain.startMs && window.startMs < domain.endMs).map(window => {
+            const left = Math.max(0, axisX(window.startMs))
+            const right = Math.min(viewportSize.width, axisX(window.endMs))
+            const count = window.childIds.length
+            return <rect key={window.startMs} x={left} y={countY(count)} width={right - left}
+              height={countY(0) - countY(count)} className="ct-concurrent-area" data-count={count} />
+          })}
+          <text x={4} y={12} className="ct-count-label">{formatNumber(locale, peakCount)}</text>
+          <text x={4} y={CONCURRENCY_HEIGHT - 6} className="ct-count-label">{formatNumber(locale, 0)}</text>
+        </svg>
+      </div>}
       <div className="ct-axis" data-testid="ct-axis">
-        <div className="ct-axis-spacer" style={{ width: labelWidthPx, flexBasis: labelWidthPx }} />
+        <div className="ct-axis-spacer">
+          <div role="separator" aria-orientation="vertical" aria-label={t('collaboration.resizeTitles')}
+            title={t('collaboration.resizeTitles')}
+            aria-valuemin={MIN_LABEL_WIDTH} aria-valuemax={MAX_LABEL_WIDTH} aria-valuenow={labelWidth}
+            tabIndex={0} className="ct-label-resizer"
+            onPointerDown={event => {
+              if (event.button !== 0) return
+              const width = event.currentTarget.parentElement?.offsetWidth ?? labelWidth
+              resizeDrag.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: width }
+              event.currentTarget.setPointerCapture(event.pointerId)
+            }}
+            onPointerMove={event => {
+              const drag = resizeDrag.current
+              if (drag?.pointerId === event.pointerId) updateLabelWidth(drag.startWidth + event.clientX - drag.startX)
+            }}
+            onLostPointerCapture={() => { resizeDrag.current = null }}
+            onKeyDown={event => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+              event.preventDefault()
+              updateLabelWidth(labelWidth + (event.key === 'ArrowLeft' ? -20 : 20))
+            }}
+          />
+        </div>
         <div className="ct-axis-track">
           {ticks.map((ms) => (
             <span key={ms} className="ct-axis-tick" style={{ left: axisX(ms) }} data-testid="ct-axis-tick">
@@ -643,7 +743,6 @@ export default function CollaborationTimeline({
             ref={labelsRef}
             role="tree"
             aria-label={t('collaboration.lanes')}
-            style={{ width: labelWidthPx, flexBasis: labelWidthPx }}
             onKeyDown={onLabelKeyDown}
           >
             {prims.lanes.map((lane) => {
@@ -696,7 +795,7 @@ export default function CollaborationTimeline({
                       {STATUS_GLYPH[lane.status] ?? '?'}
                     </span>
                   )}
-                  <span className="ct-label-text">{label}</span>
+                  <span className="ct-label-text" title={label}>{label}</span>
                   {lane.hasChildren && (
                     <span
                       className="ct-collapse"
@@ -726,6 +825,7 @@ export default function CollaborationTimeline({
               }}
             >
               <g aria-hidden="true">
+                {peakVisible && <rect x={peakLeft} width={peakWidth} height={prims.totalHeightPx} className="ct-peak-band" data-testid="ct-peak-band" />}
                 {ticks.map((ms) => {
                   const gx = axisX(ms)
                   return <line key={ms} x1={gx} x2={gx} y1={0} y2={prims.totalHeightPx} className="ct-grid-line" />

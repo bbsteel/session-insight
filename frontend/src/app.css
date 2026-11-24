@@ -476,7 +476,7 @@ body {
 .ct-labels {
   position: sticky;
   left: 0;
-  flex: 0 0 220px;
+  flex: 0 0 var(--ct-label-width, 220px);
   background: var(--bg-surface);
   border-right: 1px solid var(--border-muted);
   z-index: 1;
@@ -498,7 +498,6 @@ body {
   padding-right: 6px;
   font-size: var(--text-helper-size);
   color: var(--text-primary);
-  white-space: nowrap;
   overflow: hidden;
   cursor: default;
   outline: none;
@@ -518,8 +517,13 @@ body {
 }
 .ct-label-text {
   overflow: hidden;
-  text-overflow: ellipsis;
   flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .ct-collapse {
   border: none;
@@ -567,8 +571,52 @@ body {
   overflow: hidden;
 }
 .ct-axis-spacer {
-  flex: 0 0 220px;
+  position: relative;
+  flex: 0 0 var(--ct-label-width, 220px);
   border-right: 1px solid var(--border-muted);
+}
+.ct-label-resizer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 12px;
+  background: linear-gradient(90deg, transparent 60%, var(--border-default) 60%, var(--border-default) 78%, transparent 78%);
+  cursor: col-resize;
+  touch-action: none;
+}
+.ct-label-resizer:focus-visible,
+.ct-label-resizer:hover {
+  box-shadow: inset -2px 0 var(--accent-blue);
+}
+.ct-concurrency {
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-muted);
+}
+.ct-concurrency svg { flex-shrink: 0; }
+.ct-series-label {
+  align-content: center;
+  padding-inline: 8px;
+  color: var(--text-secondary);
+}
+.ct-peak-band {
+  fill: var(--ct-interval-activity);
+  opacity: 0.20;
+  pointer-events: none;
+}
+.ct-concurrent-area {
+  fill: var(--ct-interval-activity);
+  opacity: 0.65;
+}
+.ct-count-label { fill: var(--text-primary); font-size: var(--text-meta-size); }
+.ct-peak-button[aria-pressed='true'] {
+  background: var(--bg-surface-hover);
+  border-color: var(--accent-blue);
+}
+.ct-peak-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
 }
 .ct-axis-track {
   position: relative;
@@ -626,9 +674,7 @@ body {
 }
 .ct-tooltip-title {
   font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .ct-tooltip-task {
   overflow: hidden;

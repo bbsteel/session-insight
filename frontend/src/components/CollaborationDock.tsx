@@ -96,7 +96,7 @@ export default function CollaborationDock({
   const detail = status.kind === 'ready' ? status.detail : null
   const model = useMemo(() => (detail ? normalizeTimelineModel(detail) : null), [detail])
   const summary = useMemo(() => (model ? summarizeTimeline(model) : null), [model])
-  const peakParallel = useMemo(() => (detail ? peakConcurrentChildren(detail) : 0), [detail])
+  const peakParallel = useMemo(() => (detail && mode === 'collapsed' ? peakConcurrentChildren(detail) : 0), [detail, mode])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [invocationMissing, setInvocationMissing] = useState(false)
@@ -428,7 +428,7 @@ function InvocationDetail({
       aria-label={t('collaboration.detail.heading')}
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="truncate text-nav font-medium text-[var(--text-primary)]" title={inv.label}>
+        <h3 className="min-w-0 break-words text-nav font-medium text-[var(--text-primary)]">
           {inv.label}
         </h3>
         <DetailCloseButton onClose={onClose} />

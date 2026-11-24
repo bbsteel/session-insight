@@ -127,29 +127,80 @@ function recordedActivity(invocation: AgentInvocationDTO): ActivitySpan[] {
   return spans
 }
 
-export function peakConcurrentChildren(graph: CollaborationGraphDTO): number {
+export interface ConcurrentActivitySpan extends ActivitySpan {
+  childIds: readonly string[]
+}
+
+export function concurrentChildActivity(graph: CollaborationGraphDTO): ConcurrentActivitySpan[] {
   const rootId = rootInvocationID(graph.root_agent_type, graph.root_session_id)
-  const boundaries: { time: number; delta: number }[] = []
+  const boundaries = new Map<number, { childId: string; delta: number }[]>()
+  const addBoundary = (time: number, childId: string, delta: number) => {
+    const events = boundaries.get(time) ?? []
+    events.push({ childId, delta })
+    boundaries.set(time, events)
+  }
   for (const invocation of graph.invocations) {
     if (invocation.id === rootId) continue
-    let endMs = Number.NEGATIVE_INFINITY
-    const spans = recordedActivity(invocation).sort((a, b) => a.startMs - b.startMs)
-    for (const span of spans) {
-      // Count each child once, even if its recorded windows overlap.
-      if (span.endMs <= endMs) continue
-      boundaries.push({ time: Math.max(span.startMs, endMs), delta: 1 })
-      boundaries.push({ time: span.endMs, delta: -1 })
-      endMs = span.endMs
+    for (const span of recordedActivity(invocation)) {
+      addBoundary(span.startMs, invocation.id, 1)
+      addBoundary(span.endMs, invocation.id, -1)
     }
   }
-  boundaries.sort((a, b) => a.time - b.time || a.delta - b.delta)
-  let active = 0
-  let peak = 0
-  for (const boundary of boundaries) {
-    active += boundary.delta
-    peak = Math.max(peak, active)
+  const times = [...boundaries.keys()].sort((a, b) => a - b)
+  const active = new Map<string, number>()
+  const windows: ConcurrentActivitySpan[] = []
+  for (let index = 0; index < times.length - 1; index++) {
+    const startMs = times[index]
+    for (const { childId, delta } of boundaries.get(startMs) ?? []) {
+      const count = (active.get(childId) ?? 0) + delta
+      if (count === 0) active.delete(childId)
+      else active.set(childId, count)
+    }
+    if (active.size === 0) continue
+    const endMs = times[index + 1]
+    const childIds = [...active.keys()].sort()
+    const previous = windows[windows.length - 1]
+    if (previous?.endMs === startMs && previous.childIds.length === childIds.length &&
+      childIds.every((id, childIndex) => id === previous.childIds[childIndex])) {
+      previous.endMs = endMs
+    } else {
+      windows.push({ startMs, endMs, childIds })
+    }
   }
-  return peak
+  return windows
+}
+
+export function peakActivity(windows: readonly ConcurrentActivitySpan[]): ConcurrentActivitySpan | null {
+  return windows.reduce<ConcurrentActivitySpan | null>((peak, window) => {
+    if (!peak || window.childIds.length > peak.childIds.length ||
+      (window.childIds.length === peak.childIds.length && window.endMs - window.startMs > peak.endMs - peak.startMs)) {
+      return window
+    }
+    return peak
+  }, null)
+}
+
+export function peakConcurrentChildren(graph: CollaborationGraphDTO): number {
+  return peakActivity(concurrentChildActivity(graph))?.childIds.length ?? 0
+}
+
+export function activityDomain(windows: readonly ConcurrentActivitySpan[], peak: ActivitySpan): ActivitySpan {
+  // Keep the surrounding batch together across short idle gaps.
+  const batchGapMs = 10 * 60_000
+  let startMs = peak.startMs
+  let endMs = peak.endMs
+  for (const window of [...windows].reverse()) {
+    if (window.endMs > startMs) continue
+    if (startMs - window.endMs > batchGapMs) break
+    startMs = window.startMs
+  }
+  for (const window of windows) {
+    if (window.startMs < endMs) continue
+    if (window.startMs - endMs > batchGapMs) break
+    endMs = window.endMs
+  }
+  const paddingMs = Math.max(1_000, (endMs - startMs) * 0.02)
+  return { startMs: startMs - paddingMs, endMs: endMs + paddingMs }
 }
 
 function anchorTimeMs(anchor: SourceAnchorDTO | undefined): number | null {
