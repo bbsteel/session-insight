@@ -282,6 +282,13 @@ export default function CollaborationTimeline({
     [isControlled, onSelect],
   )
 
+  const activateLane = useCallback((invocationId: string | null) => {
+    select(invocationId)
+    if (invocationId && invocationId !== model.rootId && byId.get(invocationId)?.hasBackingSession) {
+      onOpenChildContent?.(invocationId)
+    }
+  }, [select, model.rootId, byId, onOpenChildContent])
+
   const toggleBranch = useCallback((id: string) => {
     setCollapsedIds((prev) => {
       const next = new Set(prev)
@@ -362,10 +369,12 @@ export default function CollaborationTimeline({
         }
       } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        select(row.dataset.invocation ?? null)
+        const invocationId = row.dataset.invocation ?? null
+        if (e.key === 'Enter') activateLane(invocationId)
+        else select(invocationId)
       }
     },
-    [prims.lanes, focusRow, toggleBranch, byId, select],
+    [prims.lanes, focusRow, toggleBranch, byId, select, activateLane],
   )
 
   // ---- Pan / zoom ----------------------------------------------------------
@@ -774,13 +783,7 @@ export default function CollaborationTimeline({
                       toggleBranch(toggle.getAttribute('data-toggle') ?? '')
                       return
                     }
-                    select(lane.invocationId)
-                  }}
-                  onDoubleClick={(event) => {
-                    if ((event.target as HTMLElement).closest('[data-toggle]')) return
-                    if (inv?.hasBackingSession && inv.id !== model.rootId) {
-                      onOpenChildContent?.(inv.id)
-                    }
+                    activateLane(lane.invocationId)
                   }}
                   onFocus={(e) => {
                     setActiveRowIndex(lane.rowIndex)
