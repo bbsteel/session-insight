@@ -13,7 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const currentSchemaVersion = 44
+const currentSchemaVersion = 45
 
 type DB struct {
 	conn *sql.DB
@@ -861,6 +861,16 @@ func migrate(conn *sql.DB) error {
 		if maxVersion < 44 || modelColumnAdded {
 			if _, err := conn.Exec(`DELETE FROM collaboration_roots`); err != nil {
 				return fmt.Errorf("v44 clear collaboration graphs: %w", err)
+			}
+		}
+		hasActivity, err := tableHasColumn(ctx, conn, "collaboration_invocations", "activity_json")
+		if err != nil {
+			return fmt.Errorf("v45 inspect collaboration_invocations.activity_json: %w", err)
+		}
+		if !hasActivity {
+			if _, err := conn.Exec(`ALTER TABLE collaboration_invocations ADD COLUMN activity_json TEXT NOT NULL DEFAULT 'null'`); err != nil &&
+				!strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("v45 add collaboration_invocations.activity_json: %w", err)
 			}
 		}
 	}

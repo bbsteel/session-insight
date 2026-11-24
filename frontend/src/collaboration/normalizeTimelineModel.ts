@@ -115,6 +115,43 @@ function parseTimeMs(value: string | undefined): number | null {
   return Number.isNaN(ms) ? null : ms
 }
 
+function recordedActivity(invocation: AgentInvocationDTO): ActivitySpan[] {
+  const spans: ActivitySpan[] = []
+  for (const span of invocation.activity ?? []) {
+    const startMs = parseTimeMs(span.started_at)
+    const endMs = parseTimeMs(span.ended_at)
+    if (startMs !== null && endMs !== null && endMs > startMs) {
+      spans.push({ startMs, endMs })
+    }
+  }
+  return spans
+}
+
+export function peakConcurrentChildren(graph: CollaborationGraphDTO): number {
+  const rootId = rootInvocationID(graph.root_agent_type, graph.root_session_id)
+  const boundaries: { time: number; delta: number }[] = []
+  for (const invocation of graph.invocations) {
+    if (invocation.id === rootId) continue
+    let endMs = Number.NEGATIVE_INFINITY
+    const spans = recordedActivity(invocation).sort((a, b) => a.startMs - b.startMs)
+    for (const span of spans) {
+      // Count each child once, even if its recorded windows overlap.
+      if (span.endMs <= endMs) continue
+      boundaries.push({ time: Math.max(span.startMs, endMs), delta: 1 })
+      boundaries.push({ time: span.endMs, delta: -1 })
+      endMs = span.endMs
+    }
+  }
+  boundaries.sort((a, b) => a.time - b.time || a.delta - b.delta)
+  let active = 0
+  let peak = 0
+  for (const boundary of boundaries) {
+    active += boundary.delta
+    peak = Math.max(peak, active)
+  }
+  return peak
+}
+
 function anchorTimeMs(anchor: SourceAnchorDTO | undefined): number | null {
   return anchor ? parseTimeMs(anchor.timestamp) : null
 }
@@ -263,8 +300,9 @@ export function normalizeTimelineModel(graph: CollaborationGraphDTO): TimelineMo
     const startedAtMs = startOf(inv)
     const endedAtMs = endOf(inv)
     if (isLiveStatus(inv.status)) live = true
-    const spans: ActivitySpan[] =
-      startedAtMs !== null && endedAtMs !== null && endedAtMs > startedAtMs
+    const spans: ActivitySpan[] = inv.activity
+      ? recordedActivity(inv)
+      : startedAtMs !== null && endedAtMs !== null && endedAtMs > startedAtMs
         ? [{ startMs: startedAtMs, endMs: endedAtMs }]
         : []
     const parent = parentId ? byId.get(parentId) : undefined

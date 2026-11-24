@@ -59,6 +59,7 @@ export interface AgentInvocationDTO {
   status: InvocationStatus
   started_at?: string
   ended_at?: string
+  activity?: { started_at: string; ended_at: string }[]
   time_precision: FactEvidenceDTO
   content_precision: FactEvidenceDTO
   backing_session?: BackingSessionRefDTO

@@ -19,6 +19,7 @@ import { reasonCodeLabelKey } from '../capabilityPresentation'
 import { openSessionInNewTab } from '../sessionLink'
 import {
   normalizeTimelineModel,
+  peakConcurrentChildren,
   UNLINKED_GROUP_ID,
   type TimelineInvocation,
 } from '../collaboration/normalizeTimelineModel'
@@ -95,6 +96,7 @@ export default function CollaborationDock({
   const detail = status.kind === 'ready' ? status.detail : null
   const model = useMemo(() => (detail ? normalizeTimelineModel(detail) : null), [detail])
   const summary = useMemo(() => (model ? summarizeTimeline(model) : null), [model])
+  const peakParallel = useMemo(() => (detail ? peakConcurrentChildren(detail) : 0), [detail])
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [invocationMissing, setInvocationMissing] = useState(false)
@@ -133,6 +135,7 @@ export default function CollaborationDock({
   const summaryText = summary
     ? [
         t('collaboration.dock.childCount', { count: summary.childCount }),
+        peakParallel > 0 ? t('collaboration.dock.peakParallel', { count: peakParallel }) : null,
         summary.activeCount > 0 ? t('collaboration.dock.activeCount', { count: summary.activeCount }) : null,
         summary.problemCount > 0 ? t('collaboration.dock.problemCount', { count: summary.problemCount }) : null,
       ]

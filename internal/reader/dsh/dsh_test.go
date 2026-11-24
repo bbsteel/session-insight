@@ -58,6 +58,12 @@ func TestConformance(t *testing.T) {
 				adaptertest.RunFull(t, adaptertest.FullConfig{
 					Config: adaptertest.Config{Capabilities: Capabilities(), NewReader: newReader, Expect: adaptertest.Expectations{SessionCount: 1, SessionIDs: []string{exampleID}}},
 					Evidence: []adaptertest.EvidenceCase{
+						{Scenario: "collaboration-turn-windows", Synthetic: true, Sanitized: true,
+							Covers: []capability.CapabilityID{capability.CapabilitySubtasks},
+							NewReader: func(t *testing.T) adaptertest.Reader {
+								return collaborationFixture(t, fixture == "v3.jsonl", compressed)
+							},
+							Assert: assertCollaborationFixture},
 						{Scenario: "tokens-tools-diff", Synthetic: true, Sanitized: true,
 							Covers: []capability.CapabilityID{capability.CapabilityTokens, capability.CapabilityToolResults, capability.CapabilityDiff}, NewReader: newReader,
 							Assert: func(t *testing.T, reader adaptertest.Reader) {
