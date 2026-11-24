@@ -227,13 +227,8 @@ do_build() {
   (cd "$FRONTEND_DIR" && npm run build)
 
   echo "==> Building Go binary"
-  # Linux 统一二进制：webview 的 GTK/WebKit 符号以弱引用链接、运行 --app
-  # 时才 dlopen 加载（见 scripts/buildtools/）；需要在构建环境里接好包装
-  # pkg-config 与弱符号头文件。SI_APP_SYSROOT 供不可变系统免 root 构建。
-  if [[ "$(uname -s)" == "Linux" ]]; then
-    # shellcheck disable=SC1091
-    source "$ROOT_DIR/scripts/buildtools/linux-cgo-env.sh"
-  fi
+  # shellcheck source=scripts/buildtools/source-build-env.sh
+  source "$ROOT_DIR/scripts/buildtools/source-build-env.sh"
   # 开发构建注入 describe 版本与 commit（dirty 时标记），关于页据此展示开发信息；
   # release 构建由 .github/workflows/release.yml 只注入 tag 版本号。
   local version commit dirty=""
@@ -245,7 +240,7 @@ do_build() {
     [[ "$version" == *-dirty ]] || version="${version}-dirty"
   fi
   commit="$(git rev-parse --short HEAD 2>/dev/null || echo "")${dirty}"
-  go build -tags sqlite_fts5 -ldflags "-X main.version=${version} -X main.commit=${commit}" -o "$BIN_PATH" .
+  go build -tags "$session_insight_build_tags" -ldflags "-X main.version=${version} -X main.commit=${commit}" -o "$BIN_PATH" .
   echo "==> Build complete: $BIN_PATH"
 }
 
