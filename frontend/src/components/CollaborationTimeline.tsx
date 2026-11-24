@@ -39,7 +39,7 @@ import { openSessionInNewTab, shouldOpenInNewTab } from '../sessionLink'
 import BackingCopyButton from './BackingCopyButton'
 import type { CollaborationGraphDTO, InvocationStatus, SourceAnchorDTO } from '../collaboration/types.js'
 
-const DEFAULT_ROW_HEIGHT = 40
+const DEFAULT_ROW_HEIGHT = 30
 const DEFAULT_OVERSCAN = 3
 const DEFAULT_MIN_SEGMENT_PX = 3
 const DEFAULT_LABEL_WIDTH = 320
