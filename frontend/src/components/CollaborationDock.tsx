@@ -66,6 +66,7 @@ interface Props {
   /** Minimum height required by the visible timeline lanes. */
   onContentHeightChange: (heightPx: number) => void
   onOpenSession: (id: string, agentType: string, label: string) => void
+  onReturnToParent: () => void
   onJumpToLaunch: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   onJumpToResult: (invocationId: string, anchor: SourceAnchorDTO) => void
   /**
@@ -88,6 +89,7 @@ export default function CollaborationDock({
   onResizeEnd,
   onContentHeightChange,
   onOpenSession,
+  onReturnToParent,
   onJumpToLaunch,
   onJumpToResult,
   returnToParentActive,
@@ -293,6 +295,7 @@ export default function CollaborationDock({
               selectedId={selectedId}
               onSelect={handleSelect}
               onOpenChildContent={openBacking}
+              onReturnToParent={onReturnToParent}
               onJumpToLaunch={onJumpToLaunch}
               onJumpToResult={onJumpToResult}
               onContentHeightChange={(timelineHeightPx) => onContentHeightChange(Math.max(

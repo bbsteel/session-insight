@@ -229,6 +229,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   } | null>(null)
   const activeInlineChild = inlineChild?.parentId === sessionId ? inlineChild : null
   const inlineChildControlRef = useRef<TerminalControl | null>(null)
+  const closeInlineChild = useCallback(() => setInlineChild(null), [])
   useEffect(() => { setInlineChild(null) }, [sessionId])
   const collabDockOpen = collabMode !== 'closed'
   const collabAvailable = collabStatus.kind === 'ready' && !isGraphEmpty(collabStatus.detail)
@@ -795,11 +796,11 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
-      setInlineChild(null)
+      closeInlineChild()
     }
     document.addEventListener('keydown', returnOnEscape, true)
     return () => document.removeEventListener('keydown', returnOnEscape, true)
-  }, [activeInlineChild])
+  }, [activeInlineChild, closeInlineChild])
 
   const returnToParentSession = useCallback(() => {
     setChildContext((ctx) => {
@@ -2299,6 +2300,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
               onResizeEnd={persistCollabHeight}
               onContentHeightChange={setCollabContentHeight}
               onOpenSession={openBackingSession}
+              onReturnToParent={closeInlineChild}
               onJumpToLaunch={(_id, anchor) => jumpToCollabAnchor(anchor, 'launch')}
               onJumpToResult={(_id, anchor) => jumpToCollabAnchor(anchor, 'result')}
               returnToParentActive={Boolean(childContext && sessionId === childContext.childId)}
@@ -2431,7 +2433,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 </span>
                 <button
                   type="button"
-                  onClick={() => setInlineChild(null)}
+                  onClick={closeInlineChild}
                   className="h-6 flex-shrink-0 rounded-md px-2 text-meta text-[var(--accent-blue)] hover:bg-[var(--bg-surface-hover)]"
                   data-testid="collaboration-inline-return"
                 >

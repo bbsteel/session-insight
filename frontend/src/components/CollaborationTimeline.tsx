@@ -76,10 +76,12 @@ export interface CollaborationTimelineProps {
   /** Controlled selection. When omitted the component manages selection. */
   selectedId?: string | null
   defaultSelectedId?: string | null
-  /** Fired whenever selection changes (lane click or Enter). Never navigates. */
+  /** Fired whenever the selected lane changes. */
   onSelect?: (invocationId: string | null) => void
   /** Explicit "View child Agent record" action; newTab requests opening in a new browser tab. */
   onOpenChildContent?: (invocationId: string, newTab?: boolean) => void
+  /** Restore the root replay when the root lane is activated. */
+  onReturnToParent?: () => void
   /** Explicit jump to the launch anchor in the parent replay. */
   onJumpToLaunch?: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   /** Explicit jump to the returned-result anchor in the parent replay. */
@@ -148,6 +150,7 @@ export default function CollaborationTimeline({
   defaultSelectedId = null,
   onSelect,
   onOpenChildContent,
+  onReturnToParent,
   onJumpToLaunch,
   onJumpToResult,
   ariaLabel,
@@ -284,10 +287,12 @@ export default function CollaborationTimeline({
 
   const activateLane = useCallback((invocationId: string | null) => {
     select(invocationId)
-    if (invocationId && invocationId !== model.rootId && byId.get(invocationId)?.hasBackingSession) {
+    if (invocationId === model.rootId) {
+      onReturnToParent?.()
+    } else if (invocationId && byId.get(invocationId)?.hasBackingSession) {
       onOpenChildContent?.(invocationId)
     }
-  }, [select, model.rootId, byId, onOpenChildContent])
+  }, [select, model.rootId, byId, onOpenChildContent, onReturnToParent])
 
   const toggleBranch = useCallback((id: string) => {
     setCollapsedIds((prev) => {
