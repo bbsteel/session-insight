@@ -65,7 +65,7 @@ interface Props {
   onResizeEnd: () => void
   /** Minimum height required by the visible timeline lanes. */
   onContentHeightChange: (heightPx: number) => void
-  onOpenSession: (id: string, agentType: string) => void
+  onOpenSession: (id: string, agentType: string, label: string) => void
   onJumpToLaunch: (invocationId: string, anchor: SourceAnchorDTO | null) => void
   onJumpToResult: (invocationId: string, anchor: SourceAnchorDTO) => void
   /**
@@ -127,7 +127,10 @@ export default function CollaborationDock({
       const backing = backingSessionOf(detail, invocationId)
       if (!backing) return
       if (newTab) openSessionInNewTab(backing.agent_type, backing.session_id)
-      else onOpenSession(backing.session_id, backing.agent_type)
+      else {
+        const label = detail.invocations.find(invocation => invocation.id === invocationId)?.display_name
+        onOpenSession(backing.session_id, backing.agent_type, label || backing.session_id)
+      }
     },
     [detail, onOpenSession],
   )

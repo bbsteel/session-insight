@@ -159,8 +159,10 @@ export default function CollaborationTimeline({
   const byId = useMemo(() => new Map(model.invocations.map((inv) => [inv.id, inv])), [model])
   const activity = useMemo(() => concurrentChildActivity(graph), [graph])
   const peak = useMemo(() => peakActivity(activity), [activity])
-  const fullDomain = useMemo(() => ({ startMs: model.domainStartMs, endMs: model.domainEndMs }), [model.domainStartMs, model.domainEndMs])
-  const batchDomain = useMemo(() => peak ? activityDomain(activity, peak) : fullDomain, [activity, fullDomain, peak])
+  const batchDomain = useMemo(
+    () => peak ? activityDomain(activity, peak) : { startMs: model.domainStartMs, endMs: model.domainEndMs },
+    [activity, model.domainStartMs, model.domainEndMs, peak],
+  )
   const [showPeak, setShowPeak] = useState(false)
   const [labelWidth, setLabelWidth] = useState(labelWidthPx)
   const resizeDrag = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null)
@@ -576,7 +578,7 @@ export default function CollaborationTimeline({
   const countY = (count: number) => CONCURRENCY_HEIGHT - 5 - (count / Math.max(1, peakCount)) * (CONCURRENCY_HEIGHT - 14)
   const widthStyle = { '--ct-label-width': `min(${labelWidth}px, 48%)` } as CSSProperties
   const updateLabelWidth = (width: number) => setLabelWidth(Math.max(MIN_LABEL_WIDTH, Math.min(MAX_LABEL_WIDTH, width)))
-  const changeScope = (scope: 'full' | 'batch' | 'peak') => {
+  const changeScope = (scope: 'batch' | 'peak') => {
     const focusPeak = scope === 'peak' && peak !== null
     setShowPeak(focusPeak)
     if (focusPeak) {
@@ -587,7 +589,7 @@ export default function CollaborationTimeline({
       setActiveRowIndex(0)
       if (scrollRef.current) scrollRef.current.scrollTop = 0
     } else {
-      setDomain(scope === 'full' ? fullDomain : batchDomain)
+      setDomain(batchDomain)
     }
   }
   const formatPeakTime = (time: number) => {
@@ -606,12 +608,12 @@ export default function CollaborationTimeline({
           <button type="button" className="ct-btn" title={t('collaboration.zoomIn')} aria-label={t('collaboration.zoomIn')} onClick={() => zoomDomain(0.8, selectedCenterMs ?? undefined)}>
             +
           </button>
-          <button type="button" className="ct-btn" aria-label={t(peak ? 'collaboration.fullTimeline' : 'collaboration.zoomReset')} onClick={() => changeScope('full')}>
-            {peak ? t('collaboration.fullTimeline') : '⤾'}
-          </button>
+          {!peak && <button type="button" className="ct-btn" aria-label={t('collaboration.zoomReset')} onClick={() => changeScope('batch')}>⤾</button>}
           {peak && <>
-            <button type="button" className="ct-btn" onClick={() => changeScope('batch')}>{t('collaboration.activityBatch')}</button>
-            <button type="button" className="ct-btn ct-peak-button" aria-pressed={showPeak} onClick={() => changeScope('peak')}>
+            <button type="button" className="ct-btn ct-scope-button" aria-pressed={!showPeak} onClick={() => changeScope('batch')}>
+              {t('collaboration.activityBatch')}
+            </button>
+            <button type="button" className="ct-btn ct-scope-button" aria-pressed={showPeak} onClick={() => changeScope('peak')}>
               {t('collaboration.focusPeak', { count: formatNumber(locale, peakCount) })}
             </button>
             {showPeak && <span className="ct-peak-time" data-testid="ct-peak-time">
@@ -773,6 +775,12 @@ export default function CollaborationTimeline({
                       return
                     }
                     select(lane.invocationId)
+                  }}
+                  onDoubleClick={(event) => {
+                    if ((event.target as HTMLElement).closest('[data-toggle]')) return
+                    if (inv?.hasBackingSession && inv.id !== model.rootId) {
+                      onOpenChildContent?.(inv.id)
+                    }
                   }}
                   onFocus={(e) => {
                     setActiveRowIndex(lane.rowIndex)

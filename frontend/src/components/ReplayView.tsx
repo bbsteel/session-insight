@@ -213,8 +213,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   const wasCollabDockOpenRef = useRef(false)
   const terminalColumnRef = useRef<HTMLDivElement | null>(null)
   const [terminalColumnHeight, setTerminalColumnHeight] = useState(0)
-  // Set when a backing child session was opened from the dock; drives the
-  // breadcrumb chip and Escape-back until the user leaves the child session.
+  // Track the parent of a standalone child opened through global search.
   const [childContext, setChildContext] = useState<{
     childId: string
     childAgentType: string
@@ -222,6 +221,15 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     parentAgentType: string
     parentLabel: string
   } | null>(null)
+  const [inlineChild, setInlineChild] = useState<{
+    parentId: string
+    sessionId: string
+    agentType: string
+    label: string
+  } | null>(null)
+  const activeInlineChild = inlineChild?.parentId === sessionId ? inlineChild : null
+  const inlineChildControlRef = useRef<TerminalControl | null>(null)
+  useEffect(() => { setInlineChild(null) }, [sessionId])
   const collabDockOpen = collabMode !== 'closed'
   const collabAvailable = collabStatus.kind === 'ready' && !isGraphEmpty(collabStatus.detail)
   // True once the current session has shown confirmed collaboration data: a
@@ -774,21 +782,24 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   }, [collabMode, collabAutoFit])
 
   const openBackingSession = useCallback(
-    (id: string, agentType: string) => {
-      const parent = sessionDetailRef.current
-      if (parent) {
-        setChildContext({
-          childId: id,
-          childAgentType: agentType,
-          parentId: parent.id,
-          parentAgentType: parent.agent_type,
-          parentLabel: parent.name || parent.id,
-        })
-      }
-      onSelect?.(id, agentType)
+    (id: string, agentType: string, label: string) => {
+      if (!sessionId) return
+      setInlineChild({ parentId: sessionId, sessionId: id, agentType, label })
     },
-    [onSelect],
+    [sessionId],
   )
+
+  useEffect(() => {
+    if (!activeInlineChild) return
+    const returnOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      setInlineChild(null)
+    }
+    document.addEventListener('keydown', returnOnEscape, true)
+    return () => document.removeEventListener('keydown', returnOnEscape, true)
+  }, [activeInlineChild])
 
   const returnToParentSession = useCallback(() => {
     setChildContext((ctx) => {
@@ -823,6 +834,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
       const target = resolveAnchorJump(anchor, positions, targetKind)
       const control = termControlRef.current
       if (!target || !control) return
+      setInlineChild(null)
 
       // A Chrys sub-agent call lives inside the parent Tools fold. Resolve in
       // the original coordinate space, open every collapsed ancestor first,
@@ -970,6 +982,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   // Bumped on every open so an already-open bar pulls focus back to itself.
   const [searchFocusToken, setSearchFocusToken] = useState(0)
   const openTerminalSearch = useCallback(() => {
+    setInlineChild(null)
     setViewMode('terminal')
     setSearchOpen(true)
     setSearchFocusToken(t => t + 1)
@@ -986,7 +999,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     if (viewMode !== 'terminal') setSearchOpen(false)
   }, [viewMode])
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId || activeInlineChild) return
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
         const target = e.target
@@ -1006,27 +1019,28 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [sessionId, openTerminalSearch])
+  }, [sessionId, openTerminalSearch, activeInlineChild])
 
   // Ctrl+C / Ctrl+Shift+C / Ctrl+Insert to copy terminal selection.
   // Capture phase: xterm's helper textarea stops keydown propagation before
   // the bubble phase, so we must intercept the event during capture.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (viewMode !== 'terminal') return
+      if (viewMode !== 'terminal' && !activeInlineChild) return
       const isCopy =
         ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === 'c') ||
         ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C') ||
         (e.ctrlKey && e.key === 'Insert')
       if (!isCopy) return
-      const selectedText = termControlRef.current?.getSelectionText() ?? ''
+      const control = activeInlineChild ? inlineChildControlRef.current : termControlRef.current
+      const selectedText = control?.getSelectionText() ?? ''
       if (selectedText.length === 0) return
       e.preventDefault()
       void navigator.clipboard.writeText(selectedText)
     }
     document.addEventListener('keydown', onKey, true)
     return () => document.removeEventListener('keydown', onKey, true)
-  }, [viewMode])
+  }, [viewMode, activeInlineChild])
 
   // "Open in editor" target for the clicked row, resolved asynchronously so
   // the item only appears for files that actually exist. Edit header rows use
@@ -1557,6 +1571,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
   useEffect(() => {
     if (!sessionId || !session?.turns?.length) return
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (activeInlineChild) return
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
@@ -1570,7 +1585,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [jump, session?.turns?.length, sessionId, childContext, returnToParentSession])
+  }, [jump, session?.turns?.length, sessionId, childContext, returnToParentSession, activeInlineChild])
 
   useEffect(() => {
     if (!sessionId) { setSession(null); setEdits([]); return }
@@ -1973,7 +1988,10 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             {t('replay.find')}
           </button>
           <button
-            onClick={() => startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))}
+            onClick={() => {
+              setInlineChild(null)
+              startTransition(() => setViewMode(v => v === 'analytics' ? 'terminal' : 'analytics'))
+            }}
             className={`h-7 rounded-md px-2 text-nav ${viewMode === 'analytics' ? 'text-[var(--accent-blue)] bg-[var(--accent-blue)]/10' : 'text-[var(--text-secondary)]'} hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-blue)]`}
           >
             {t('replay.analytics')}
@@ -2241,7 +2259,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
         />
       )}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className={`flex min-h-0 flex-1 overflow-hidden ${activeInlineChild ? '[&>.minimap-shell]:invisible' : ''}`}>
         <div ref={terminalColumnRef} className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {childContext && sessionId === childContext.childId && (
             <div
@@ -2287,6 +2305,7 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
             />
           )}
           <div className="relative flex min-w-0 flex-1 overflow-hidden">
+          <div className={`relative flex min-w-0 flex-1 overflow-hidden ${activeInlineChild ? 'invisible' : ''}`}>
           {viewMode === 'terminal' && searchOpen && (
             <TerminalSearchBar
               controlRef={termControlRef}
@@ -2402,6 +2421,33 @@ export default function ReplayView({ sessionId, searchTarget, searchRootRef, onS
                 setNavPinned(false)
               }}
             />
+          )}
+          </div>
+          {activeInlineChild && (
+            <div className="absolute inset-0 flex min-h-0 flex-col bg-[var(--bg-surface)]" data-testid="collaboration-inline-child">
+              <div className="flex flex-shrink-0 items-center gap-2 border-b border-[var(--border-default)] px-3 py-1">
+                <span className="min-w-0 flex-1 break-words text-meta text-[var(--text-secondary)]">
+                  {t('collaboration.backing.inlineChild', { label: activeInlineChild.label })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInlineChild(null)}
+                  className="h-6 flex-shrink-0 rounded-md px-2 text-meta text-[var(--accent-blue)] hover:bg-[var(--bg-surface-hover)]"
+                  data-testid="collaboration-inline-return"
+                >
+                  ← {t('collaboration.backing.back')}
+                </button>
+              </div>
+              <Suspense fallback={<div className="flex-1 bg-[var(--bg-inset)]" />}>
+                <TerminalPanel
+                  key={`${activeInlineChild.agentType}:${activeInlineChild.sessionId}`}
+                  sessionId={activeInlineChild.sessionId}
+                  agentType={activeInlineChild.agentType}
+                  tsKinds={tsKinds ?? ''}
+                  controlRef={inlineChildControlRef}
+                />
+              </Suspense>
+            </div>
           )}
         </div>
         </div>

@@ -609,7 +609,7 @@ body {
   opacity: 0.65;
 }
 .ct-count-label { fill: var(--text-primary); font-size: var(--text-meta-size); }
-.ct-peak-button[aria-pressed='true'] {
+.ct-scope-button[aria-pressed='true'] {
   background: var(--bg-surface-hover);
   border-color: var(--accent-blue);
 }
